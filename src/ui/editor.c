@@ -64,6 +64,7 @@ struct Editor {
     bool submit_on_enter;   /* Enter submits, Shift+Enter inserts a newline */
     bool submit_pending;
     bool single_line;       /* a one-line field: no overscroll or scrollbar */
+    bool modal_owner;       /* belongs to the prompt: not blocked while it is open */
     char placeholder[128];
     /* Tracked anchor: the passage an edit request/proposal targets. Its
      * position follows every insert/delete (including undo/redo); any change
@@ -844,6 +845,10 @@ static void select_paragraph_at(Editor *e, int i)
 
 static void handle_mouse(Editor *e, Rectangle b)
 {
+    if (input_mouse_blocked() && !e->modal_owner) {
+        e->mouse_selecting = false;
+        return;
+    }
     Vector2 m = GetMousePosition();
     bool inside = CheckCollisionPointRec(m, b);
     float lx = m.x - e->text_x;
@@ -1321,6 +1326,7 @@ void editor_set_layout(Editor *e, float side_pad, float top_pad, float max_col)
 
 void editor_set_submit_on_enter(Editor *e, bool on) { e->submit_on_enter = on; }
 void editor_set_single_line(Editor *e, bool on) { e->single_line = on; }
+void editor_set_modal_owner(Editor *e, bool on) { e->modal_owner = on; }
 
 bool editor_take_submit(Editor *e)
 {

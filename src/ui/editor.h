@@ -133,6 +133,8 @@ void editor_set_layout(Editor *e, float side_pad, float top_pad, float max_col);
 void editor_set_submit_on_enter(Editor *e, bool on);
 /* A one-line field (prompts): no overscroll, no scrollbar. */
 void editor_set_single_line(Editor *e, bool on);
+/* The prompt's own field keeps the mouse while views are blocked. */
+void editor_set_modal_owner(Editor *e, bool on);
 bool editor_take_submit(Editor *e);
 /* Height of the laid-out text, for auto-sizing an input box. */
 float editor_content_height(Editor *e);

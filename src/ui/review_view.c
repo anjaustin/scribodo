@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "core/diff.h"
+#include "ui/input.h"
 #include "core/text_buffer.h"
 #include "core/utf8.h"
 #include "core/wrap.h"
@@ -160,7 +161,7 @@ Rectangle review_reject_rect(Rectangle r) { return (Rectangle){ r.x + r.width - 
 void review_update(ReviewView *v, Rectangle r)
 {
     relayout(v, r.width - 2 * PAD);
-    if (CheckCollisionPointRec(GetMousePosition(), r)) {
+    if (!input_mouse_blocked() && CheckCollisionPointRec(GetMousePosition(), r)) {
         float w = GetMouseWheelMoveV().y;
         v->scroll -= w * v->text->line_height * 1.5f;
     }

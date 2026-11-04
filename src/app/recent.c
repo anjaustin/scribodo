@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "cJSON.h"
@@ -21,8 +22,10 @@ static bool is_dir(const char *p)
     return stat(p, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
-static size_t load_all(RecentProject *out, size_t max, bool existing_only)
+/* *corrupt is set when the file exists but can't be read as a list. */
+static size_t load_all(RecentProject *out, size_t max, bool existing_only, bool *corrupt)
 {
+    if (corrupt) *corrupt = false;
     if (!g_dir[0]) return 0;
     char path[PATH_MAX + 32];
     snprintf(path, sizeof(path), "%s/recent.json", g_dir);
@@ -33,6 +36,7 @@ static size_t load_all(RecentProject *out, size_t max, bool existing_only)
     fclose(f);
     buf[n] = '\0';
     cJSON *j = cJSON_Parse(buf), *it;
+    if (corrupt && n > 0 && !cJSON_IsArray(cJSON_GetObjectItem(j, "projects"))) *corrupt = true;
     size_t k = 0;
     cJSON_ArrayForEach(it, cJSON_GetObjectItem(j, "projects"))
     {
@@ -48,13 +52,36 @@ static size_t load_all(RecentProject *out, size_t max, bool existing_only)
     return k;
 }
 
-size_t recent_load(RecentProject *out, size_t max) { return load_all(out, max, true); }
+size_t recent_load(RecentProject *out, size_t max) { return load_all(out, max, true, NULL); }
+
+static void mkdir_p(const char *dir)
+{
+    char p[PATH_MAX];
+    snprintf(p, sizeof(p), "%s", dir);
+    for (char *c = p + 1; *c; c++)
+        if (*c == '/') {
+            *c = '\0';
+            mkdir(p, 0755);
+            *c = '/';
+        }
+    mkdir(p, 0755);
+}
+
+static void save_list(RecentProject *list, size_t n);
 
 void recent_touch(const char *project, const char *doc)
 {
     if (!g_dir[0] || !project || project[0] != '/') return;
     RecentProject list[RECENT_MAX + 1];
-    size_t n = load_all(list, RECENT_MAX, false);
+    bool corrupt = false;
+    /* Folders that are gone don't keep their places (red-team 006). */
+    size_t n = load_all(list, RECENT_MAX, true, &corrupt);
+    if (corrupt) { /* keep the unreadable file for inspection, never overwrite it silently */
+        char a[PATH_MAX + 32], b[PATH_MAX + 64];
+        snprintf(a, sizeof(a), "%s/recent.json", g_dir);
+        snprintf(b, sizeof(b), "%s/recent.json.corrupt-%ld", g_dir, (long)time(NULL));
+        rename(a, b);
+    }
     RecentProject cur = { 0 };
     snprintf(cur.path, sizeof(cur.path), "%s", project);
     for (size_t i = 0; i < n; i++)
@@ -68,7 +95,24 @@ void recent_touch(const char *project, const char *doc)
     memmove(&list[1], &list[0], n * sizeof(RecentProject));
     list[0] = cur;
     n = n + 1 > RECENT_MAX ? RECENT_MAX : n + 1;
+    save_list(list, n);
+}
 
+void recent_rename_doc(const char *project, const char *from, const char *to)
+{
+    RecentProject list[RECENT_MAX + 1];
+    size_t n = load_all(list, RECENT_MAX, true, NULL);
+    bool changed = false;
+    for (size_t i = 0; i < n; i++)
+        if (!strcmp(list[i].path, project) && !strcmp(list[i].doc, from)) {
+            snprintf(list[i].doc, sizeof(list[i].doc), "%s", to);
+            changed = true;
+        }
+    if (changed) save_list(list, n);
+}
+
+static void save_list(RecentProject *list, size_t n)
+{
     cJSON *j = cJSON_CreateObject();
     cJSON *arr = cJSON_AddArrayToObject(j, "projects");
     for (size_t i = 0; i < n; i++) {
@@ -80,7 +124,7 @@ void recent_touch(const char *project, const char *doc)
     char *s = cJSON_PrintUnformatted(j);
     cJSON_Delete(j);
     if (!s) return;
-    mkdir(g_dir, 0755);
+    mkdir_p(g_dir);
     char path[PATH_MAX + 32], tmp[PATH_MAX + 64];
     snprintf(path, sizeof(path), "%s/recent.json", g_dir);
     snprintf(tmp, sizeof(tmp), "%s.tmp-XXXXXX", path);

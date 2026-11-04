@@ -159,7 +159,7 @@ void chat_view_update(ChatView *v, Rectangle list, Rectangle input, bool input_f
     size_t n = chat_count(v->chat);
 
     Vector2 m = GetMousePosition();
-    if (CheckCollisionPointRec(m, list)) {
+    if (!input_mouse_blocked() && CheckCollisionPointRec(m, list)) {
         float wheel = GetMouseWheelMoveV().y;
         if (wheel != 0.0f) {
             v->scroll -= wheel * v->text->line_height * 1.5f;

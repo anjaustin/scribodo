@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "raygui.h"
+#include "ui/input.h"
 
 #define PAD 8.0f
 #define GAP 6.0f
@@ -193,6 +194,7 @@ static float item_height(FindingsView *v, size_t i, float w)
 void findings_view_update(FindingsView *v, Rectangle r)
 {
     v->r = r;
+    if (input_mouse_blocked()) return;
     if (CheckCollisionPointRec(GetMousePosition(), r)) v->scroll -= GetMouseWheelMoveV().y * 30.0f;
     float total = 0;
     for (size_t i = 0; i < v->n; i++) total += item_height(v, i, r.width) + GAP;

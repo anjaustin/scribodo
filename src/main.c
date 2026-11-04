@@ -9,6 +9,7 @@
  */
 #define _DARWIN_C_SOURCE
 #include <dirent.h>
+#include <pwd.h>
 #include <time.h>
 #include <strings.h>
 #include <unistd.h>
@@ -149,6 +150,8 @@ typedef struct {
     PromptView *prompt;
     MenuView menu;
     char rename_from[256];        /* document being renamed */
+    char prompt_project[PATH_MAX]; /* the project the prompt was opened in */
+    char menu_doc[256];           /* the document a context menu is for (by name) */
     RecentProject recents[RECENT_MAX];
     size_t nrecents;
     Rectangle welcome_btn[3], recent_rect[RECENT_MAX], empty_btn[2];
@@ -206,7 +209,8 @@ static void refresh_lists(App *app)
         while ((ent = readdir(d)) != NULL && app->ndocs < MAX_DOCS) {
             size_t n = strlen(ent->d_name);
             if (ent->d_name[0] == '.') continue;
-            if ((n > 3 && !strcasecmp(ent->d_name + n - 3, ".md")) || (n > 4 && !strcasecmp(ent->d_name + n - 4, ".txt")))
+            if ((n > 3 && !strcasecmp(ent->d_name + n - 3, ".md")) || (n > 4 && !strcasecmp(ent->d_name + n - 4, ".txt")) ||
+                (n > 9 && !strcasecmp(ent->d_name + n - 9, ".markdown")))
                 app->docs[app->ndocs++] = strdup(ent->d_name);
         }
         closedir(d);
@@ -274,6 +278,9 @@ static void project_of(const char *doc_path, char *out, size_t outlen);
 static void set_project(App *app, const char *real)
 {
     if (strcmp(real, app->project_dir) != 0) {
+        /* A prompt or menu was for the old project's files. */
+        if (app->prompt) prompt_close(app->prompt);
+        app->menu.active = false;
         snprintf(app->project_dir, sizeof(app->project_dir), "%s", real);
         if (app->observer) observer_set_project(app->observer, real);
         app->findings_version = UINT64_MAX; /* re-list */
@@ -623,6 +630,7 @@ static void begin_new_document(App *app)
     }
     char name[64] = "Untitled.md";
     for (int i = 2; name_taken(app, name) && i < 1000; i++) snprintf(name, sizeof(name), "Untitled %d.md", i);
+    snprintf(app->prompt_project, sizeof(app->prompt_project), "%s", app->project_dir);
     prompt_open(app->prompt, PT_NEW_DOC, "New document", name, "Create");
 }
 
@@ -631,7 +639,28 @@ static void begin_rename(App *app, const char *name)
     snprintf(app->rename_from, sizeof(app->rename_from), "%s", name);
     char title[320];
     snprintf(title, sizeof(title), "Rename \xE2\x80\x9C%s\xE2\x80\x9D", name);
+    snprintf(app->prompt_project, sizeof(app->prompt_project), "%s", app->project_dir);
     prompt_open(app->prompt, PT_RENAME_DOC, title, name, "Rename");
+}
+
+/* Returns true when the prompt can close. */
+static bool same_file(const char *a, const char *b)
+{
+    struct stat x, y;
+    return stat(a, &x) == 0 && stat(b, &y) == 0 && x.st_dev == y.st_dev && x.st_ino == y.st_ino;
+}
+
+/* History left under a name by an earlier, different document: set it
+ * aside so a new document of that name never inherits it (red-team 006). */
+static bool set_aside_history(App *app, const char *name)
+{
+    char rev[PATH_MAX + 300];
+    snprintf(rev, sizeof(rev), "%s/.scribodo/revisions/%s", app->project_dir, name);
+    struct stat st;
+    if (stat(rev, &st) != 0) return true;
+    char aside[PATH_MAX + 340];
+    snprintf(aside, sizeof(aside), "%s.earlier-%ld", rev, (long)time(NULL));
+    return rename(rev, aside) == 0;
 }
 
 /* Returns true when the prompt can close. */
@@ -643,13 +672,24 @@ static bool finish_prompt(App *app, const char *typed)
         return false;
     }
     int tag = prompt_tag(app->prompt);
+    /* The prompt belongs to the project it was opened in. */
+    if (strcmp(app->prompt_project, app->project_dir) != 0) {
+        set_status(app, "The project changed; nothing was done");
+        return true;
+    }
     if (tag == PT_RENAME_DOC && !strcmp(name, app->rename_from)) return true; /* unchanged */
-    if (name_taken(app, name) && !(tag == PT_RENAME_DOC && !strcasecmp(name, app->rename_from))) {
+    char full[PATH_MAX + 260], old_full[PATH_MAX + 260];
+    snprintf(full, sizeof(full), "%s/%s", app->project_dir, name);
+    snprintf(old_full, sizeof(old_full), "%s/%s", app->project_dir, app->rename_from);
+    /* "Same file" is decided by inode, never by comparing names: a case- or
+     * normalisation-only rename on a case-insensitive volume is the same
+     * file, but on a case-sensitive volume "A.md" is another document that
+     * must not be replaced (red-team 006). */
+    bool self = tag == PT_RENAME_DOC && same_file(old_full, full);
+    if (name_taken(app, name) && !self) {
         prompt_set_error(app->prompt, "A file with that name already exists");
         return false;
     }
-    char full[PATH_MAX + 260];
-    snprintf(full, sizeof(full), "%s/%s", app->project_dir, name);
     if (tag == PT_NEW_DOC) {
         int fd = open(full, O_WRONLY | O_CREAT | O_EXCL, 0644);
         if (fd < 0) {
@@ -657,43 +697,48 @@ static bool finish_prompt(App *app, const char *typed)
             return false;
         }
         close(fd);
+        bool aside = set_aside_history(app, name);
         open_path(app, full);
         char msg[320];
-        snprintf(msg, sizeof(msg), "Created %s", name);
+        snprintf(msg, sizeof(msg), aside ? "Created %s" : "Created %s (older History under this name couldn't be set aside)", name);
         set_status(app, msg);
         app->focus = FOCUS_DOC;
         app->lists_dirty = true;
         return true;
     }
-    /* Rename: the file, then its History, then the record of the rename (so
-     * sources under the old name still resolve), then observer state. */
-    char old_full[PATH_MAX + 260];
-    snprintf(old_full, sizeof(old_full), "%s/%s", app->project_dir, app->rename_from);
-    if (renamex_np(old_full, full, strcasecmp(name, app->rename_from) ? RENAME_EXCL : 0) != 0) {
+    /* Is the renamed file the open document? Decided by inode, before the
+     * rename (paths may differ in case or normalisation). */
+    bool is_open = editor_path(app->editor) && same_file(editor_path(app->editor), old_full);
+    if (is_open && editor_is_dirty(app->editor)) {
+        prompt_set_error(app->prompt, "Save the document before renaming it");
+        return false;
+    }
+    if (renamex_np(old_full, full, self ? 0 : RENAME_EXCL) != 0) {
         prompt_set_error(app->prompt, strerror(errno));
         return false;
     }
+    /* Then its History, the record of the rename (so sources made under the
+     * old name still resolve), and observer state. Failures are reported. */
+    char problems[300] = "";
     char rev_old[PATH_MAX + 300], rev_new[PATH_MAX + 300];
     snprintf(rev_old, sizeof(rev_old), "%s/.scribodo/revisions/%s", app->project_dir, app->rename_from);
     snprintf(rev_new, sizeof(rev_new), "%s/.scribodo/revisions/%s", app->project_dir, name);
     struct stat st;
     if (stat(rev_old, &st) == 0) {
-        if (stat(rev_new, &st) == 0) { /* history left by an earlier file of this name: keep it, aside */
-            char aside[PATH_MAX + 340];
-            snprintf(aside, sizeof(aside), "%s.earlier-%ld", rev_new, (long)time(NULL));
-            rename(rev_new, aside);
-        }
-        if (rename(rev_old, rev_new) != 0) set_status(app, "Renamed, but its History couldn't be moved");
+        bool same_dir = same_file(rev_old, rev_new); /* a case-only rename of the folder */
+        if (!same_dir && !set_aside_history(app, name)) snprintf(problems, sizeof(problems), "History couldn't be moved");
+        else if (renamex_np(rev_old, rev_new, same_dir ? 0 : RENAME_EXCL) != 0)
+            snprintf(problems, sizeof(problems), "History couldn't be moved");
     }
     if (!renames_record(app->project_dir, app->rename_from, name))
-        set_status(app, "Renamed, but the rename couldn't be recorded in .scribodo/renames.jsonl");
-    observer_rename_doc(app->observer, app->rename_from, name);
-    if (editor_path(app->editor) && !strcmp(base_name(editor_path(app->editor)), app->rename_from)) {
-        editor_set_path(app->editor, full);
-        recent_touch(app->project_dir, name);
-    }
-    char msg[600];
-    snprintf(msg, sizeof(msg), "Renamed to %s", name);
+        snprintf(problems + strlen(problems), sizeof(problems) - strlen(problems), "%sthe rename couldn't be recorded",
+                 problems[0] ? "; " : "");
+    observer_rename_doc(app->observer, app->project_dir, app->rename_from, name);
+    recent_rename_doc(app->project_dir, app->rename_from, name);
+    if (is_open) editor_set_path(app->editor, full);
+    char msg[700];
+    if (problems[0]) snprintf(msg, sizeof(msg), "Renamed to %s, but %s", name, problems);
+    else snprintf(msg, sizeof(msg), "Renamed to %s", name);
     set_status(app, msg);
     app->lists_dirty = true;
     return true;
@@ -726,7 +771,7 @@ static void import_documents(App *app)
         char buf[65536];
         size_t r;
         while (ok && (r = fread(buf, 1, sizeof(buf), in)) > 0) ok = write(fd, buf, r) == (ssize_t)r;
-        ok = ok && fsync(fd) == 0;
+        ok = ok && !ferror(in) && fsync(fd) == 0; /* a read error is not the end of the file */
         if (fd >= 0) ok = close(fd) == 0 && ok;
         if (in) fclose(in);
         if (!ok && fd >= 0) unlink(dst);
@@ -1072,8 +1117,18 @@ static void open_source(App *app, const SourceRef *s)
         set_status(app, "The source chat is no longer in this project");
         return;
     }
+    /* The document may have been renamed since the source was made; the
+     * source's snapshot name ("YYYYMMDD-HHMMSS-…") says when that was. */
     char doc[256];
-    renames_resolve(app->project_dir, s->doc, doc, sizeof(doc)); /* the document may have been renamed since */
+    double made = 0;
+    struct tm tmv = { 0 };
+    const char *rest = strptime(s->revision, "%Y%m%d-%H%M%S", &tmv);
+    if (rest) {
+        tmv.tm_isdst = -1;
+        made = (double)mktime(&tmv);
+        if (rest[0] == '-' && rest[1] >= '0' && rest[1] <= '9') made += (double)atoi(rest + 1) / 1000.0; /* "-846" ms */
+    }
+    renames_resolve_since(app->project_dir, s->doc, made, doc, sizeof(doc));
     char full[PATH_MAX + 300];
     snprintf(full, sizeof(full), "%s/%s", app->project_dir, doc);
     if (!editor_path(app->editor) || strcmp(base_name(editor_path(app->editor)), doc) != 0) {
@@ -1328,7 +1383,8 @@ static int draw_empty(App *app, Rectangle r)
                 char dir[PATH_MAX];
                 const char *home = getenv("HOME");
                 const char *p = app->recents[i].path;
-                if (home && !strncmp(p, home, strlen(home))) snprintf(dir, sizeof(dir), "~%s", p + strlen(home));
+                size_t hl = home ? strlen(home) : 0;
+                if (hl && !strncmp(p, home, hl) && (p[hl] == '/' || p[hl] == '\0')) snprintf(dir, sizeof(dir), "~%s", p + hl);
                 else snprintf(dir, sizeof(dir), "%s", p);
                 char *slash = strrchr(dir, '/');
                 if (slash && slash != dir) *slash = '\0';
@@ -1742,7 +1798,11 @@ static bool host_model_ready(void *ctx)
     App *app = ctx;
     return !app->llm || llm_server_state(app->llm, NULL, 0) == LLM_READY;
 }
-static void host_drop(void *ctx, const char *path) { drop_path(ctx, path); }
+static void host_drop(void *ctx, const char *path)
+{
+    App *app = ctx; /* the same rule as a real drop: ignored behind a prompt or menu */
+    if (!prompt_active(app->prompt) && !app->menu.active) drop_path(app, path);
+}
 
 static void clay_error(Clay_ErrorData err)
 {
@@ -1888,6 +1948,10 @@ int main(int argc, char **argv)
     {
         char state[PATH_MAX];
         const char *home = getenv("HOME");
+        if (!home || home[0] != '/') { /* Finder launches have HOME; be safe anyway */
+            struct passwd *pw = getpwuid(getuid());
+            home = pw ? pw->pw_dir : "/tmp";
+        }
         if (script_path) snprintf(state, sizeof(state), "%s/.scribodo-state", getenv("SCRIBODO_SCRIPT_DIR") ? getenv("SCRIBODO_SCRIPT_DIR") : ".");
         else snprintf(state, sizeof(state), "%s/Library/Application Support/Scribodo", home ? home : ".");
         recent_set_dir(state);
@@ -1982,7 +2046,7 @@ int main(int argc, char **argv)
 
         if (IsFileDropped()) {
             FilePathList dropped = LoadDroppedFiles();
-            if (dropped.count > 0) drop_path(&app, dropped.paths[0]);
+            if (dropped.count > 0 && !prompt_active(app.prompt) && !app.menu.active) drop_path(&app, dropped.paths[0]);
             UnloadDroppedFiles(dropped);
         }
 
@@ -1996,6 +2060,7 @@ int main(int argc, char **argv)
 
         /* A prompt or menu takes all input until it closes. */
         bool modal = prompt_active(app.prompt) || app.menu.active;
+        input_block_mouse(modal);
         /* Clicks (pointer state reflects last frame's layout). */
         if (!modal && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             if (trace) fprintf(stderr, "trace: click (%.0f, %.0f) focus=%d\n", mouse.x, mouse.y, app.focus);
@@ -2057,6 +2122,7 @@ int main(int argc, char **argv)
             for (size_t i = 0; i < app.ndocs; i++)
                 if (Clay_PointerOver(CLAY_IDI("DocItem", (uint32_t)i))) {
                     static const char *const items[] = { "Rename\xE2\x80\xA6", "Reveal in Finder" };
+                    snprintf(app.menu_doc, sizeof(app.menu_doc), "%s", app.docs[i]); /* by name: the list may re-sort */
                     menu_open(&app.menu, MT_DOC, (int)i, mouse, items, 2);
                     break;
                 }
@@ -2094,7 +2160,7 @@ int main(int argc, char **argv)
         /* From the document only: the chat box has no selection to quote. */
         if (primary && shift && shortcut_pressed('n') && app.focus == FOCUS_DOC) note_from_selection(&app);
         if (primary && shift && shortcut_pressed('c') && app.focus == FOCUS_DOC) canon_from_selection(&app);
-        if (app.focus == FOCUS_RECORD && IsKeyPressed(KEY_ESCAPE)) app.focus = FOCUS_DOC;
+        if (!modal && app.focus == FOCUS_RECORD && IsKeyPressed(KEY_ESCAPE)) app.focus = FOCUS_DOC;
         if (primary && shortcut_pressed('l')) app.focus = FOCUS_CHAT;
         if (primary && shortcut_pressed('k')) begin_edit(&app);
         /* Cmd+Enter accepts only outside the chat box, where it also sends the
@@ -2278,16 +2344,10 @@ int main(int argc, char **argv)
         {
             Rectangle screen = { 0, 0, (float)GetScreenWidth(), (float)GetScreenHeight() };
             int pick = menu_draw(&app.menu, &app.fonts[FONT_UI], screen);
-            if (pick >= 0 && app.menu.tag == MT_DOC && (size_t)app.menu.target < app.ndocs) {
-                if (pick == 0) {
-                    if (editor_path(app.editor) && editor_is_dirty(app.editor) &&
-                        !strcmp(base_name(editor_path(app.editor)), app.docs[app.menu.target]))
-                        set_status(&app, "Save the document before renaming it");
-                    else
-                        begin_rename(&app, app.docs[app.menu.target]);
-                } else {
-                    reveal_document(&app, app.docs[app.menu.target]);
-                }
+            if (pick >= 0 && app.menu.tag == MT_DOC) {
+                if (!name_taken(&app, app.menu_doc)) set_status(&app, "That document is no longer in this project");
+                else if (pick == 0) begin_rename(&app, app.menu_doc); /* a dirty open document is refused on OK */
+                else reveal_document(&app, app.menu_doc);
             }
             if (prompt_active(app.prompt)) {
                 PromptResult pr = prompt_draw(app.prompt, screen);

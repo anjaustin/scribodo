@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -27,7 +28,11 @@ bool renames_record(const char *project_dir, const char *from, const char *to)
     cJSON *j = cJSON_CreateObject();
     cJSON_AddStringToObject(j, "from", from);
     cJSON_AddStringToObject(j, "to", to);
-    cJSON_AddNumberToObject(j, "ts", (double)time(NULL));
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    /* Milliseconds: a rename, a new file with the old name and a note on it
+     * can all happen within one second. */
+    cJSON_AddNumberToObject(j, "ts", (double)tv.tv_sec + (double)(tv.tv_usec / 1000) / 1000.0);
     char *s = cJSON_PrintUnformatted(j);
     cJSON_Delete(j);
     if (!s) return false;
@@ -54,6 +59,11 @@ bool renames_record(const char *project_dir, const char *from, const char *to)
 
 void renames_resolve(const char *project_dir, const char *name, char *out, size_t outlen)
 {
+    renames_resolve_since(project_dir, name, 0, out, outlen);
+}
+
+void renames_resolve_since(const char *project_dir, const char *name, double since, char *out, size_t outlen)
+{
     snprintf(out, outlen, "%s", name);
     char path[1200];
     path_for(project_dir, path, sizeof(path));
@@ -65,8 +75,11 @@ void renames_resolve(const char *project_dir, const char *name, char *out, size_
     char line[2048];
     while (fgets(line, sizeof(line), f)) {
         cJSON *j = cJSON_Parse(line);
-        cJSON *from = cJSON_GetObjectItem(j, "from"), *to = cJSON_GetObjectItem(j, "to");
-        if (cJSON_IsString(from) && cJSON_IsString(to) && !strchr(to->valuestring, '/') && !strcmp(out, from->valuestring))
+        cJSON *from = cJSON_GetObjectItem(j, "from"), *to = cJSON_GetObjectItem(j, "to"), *ts = cJSON_GetObjectItem(j, "ts");
+        /* Only renames made after the source was recorded apply to it: a name
+         * reused later by another document is not this one (red-team 006). */
+        bool after = !cJSON_IsNumber(ts) || ts->valuedouble >= since;
+        if (after && cJSON_IsString(from) && cJSON_IsString(to) && !strchr(to->valuestring, '/') && !strcmp(out, from->valuestring))
             snprintf(out, outlen, "%s", to->valuestring);
         cJSON_Delete(j);
     }

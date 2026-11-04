@@ -38,8 +38,10 @@ struct Observer {
     pthread_cond_t cv;
     bool stop, poked, enabled, running;
     bool io_error;           /* can't write the observer's files: back off */
-    char renames[16][2][256]; /* document renames to apply to state (from, to) */
-    int nrenames;
+    struct PendingRename {
+        char project[PATH_MAX], from[256], to[256];
+    } *renames;              /* document renames to apply to that project's state */
+    size_t nrenames;
     char project[PATH_MAX];
     uint64_t gen;            /* bumps on project change: stale results are discarded */
     double idle_since;       /* last time chat was active */
@@ -837,7 +839,8 @@ static bool find_job(const char *project, cJSON *st, Job *j)
     while (d && (ent = readdir(d)) != NULL) {
         size_t n = strlen(ent->d_name);
         if (ent->d_name[0] == '.') continue;
-        if (!((n > 3 && !strcasecmp(ent->d_name + n - 3, ".md")) || (n > 4 && !strcasecmp(ent->d_name + n - 4, ".txt"))))
+        if (!((n > 3 && !strcasecmp(ent->d_name + n - 3, ".md")) || (n > 4 && !strcasecmp(ent->d_name + n - 4, ".txt")) ||
+              (n > 9 && !strcasecmp(ent->d_name + n - 9, ".markdown"))))
             continue;
         if (nn == cap) {
             cap = cap ? cap * 2 : 64;
@@ -1367,17 +1370,24 @@ static void *worker(void *arg)
         pthread_mutex_unlock(&o->mu);
 
         cJSON *st = state_load(project);
-        /* Renamed documents keep what was already read. */
+        /* Renamed documents keep what was already read: apply this project's
+         * renames, in order; other projects' wait until they're open
+         * (red-team 006: they used to be applied to whatever was open). */
         pthread_mutex_lock(&o->mu);
         cJSON *sdocs = cJSON_GetObjectItem(st, "docs");
-        for (int r = 0; r < o->nrenames; r++) {
-            cJSON *seen = cJSON_DetachItemFromObject(sdocs, o->renames[r][0]);
+        size_t keep = 0;
+        for (size_t r = 0; r < o->nrenames; r++) {
+            if (strcmp(o->renames[r].project, project) != 0) {
+                o->renames[keep++] = o->renames[r];
+                continue;
+            }
+            cJSON *seen = cJSON_DetachItemFromObject(sdocs, o->renames[r].from);
             if (seen) {
-                cJSON_DeleteItemFromObject(sdocs, o->renames[r][1]);
-                cJSON_AddItemToObject(sdocs, o->renames[r][1], seen);
+                cJSON_DeleteItemFromObject(sdocs, o->renames[r].to);
+                cJSON_AddItemToObject(sdocs, o->renames[r].to, seen);
             }
         }
-        o->nrenames = 0;
+        o->nrenames = keep;
         pthread_mutex_unlock(&o->mu);
         Job j;
         if (!find_job(project, st, &j)) {
@@ -1458,6 +1468,7 @@ void observer_destroy(Observer *o)
     if (o->thread_started) pthread_join(o->thread, NULL);
     pthread_mutex_destroy(&o->mu);
     pthread_cond_destroy(&o->cv);
+    free(o->renames);
     free(o);
 }
 
@@ -1477,12 +1488,15 @@ void observer_set_project(Observer *o, const char *project_dir)
     pthread_mutex_unlock(&o->mu);
 }
 
-void observer_rename_doc(Observer *o, const char *from, const char *to)
+void observer_rename_doc(Observer *o, const char *project_dir, const char *from, const char *to)
 {
     pthread_mutex_lock(&o->mu);
-    if (o->nrenames < 16) {
-        snprintf(o->renames[o->nrenames][0], sizeof(o->renames[0][0]), "%s", from);
-        snprintf(o->renames[o->nrenames][1], sizeof(o->renames[0][1]), "%s", to);
+    struct PendingRename *r = realloc(o->renames, (o->nrenames + 1) * sizeof(*r));
+    if (r) {
+        o->renames = r;
+        snprintf(r[o->nrenames].project, sizeof(r[0].project), "%s", project_dir);
+        snprintf(r[o->nrenames].from, sizeof(r[0].from), "%s", from);
+        snprintf(r[o->nrenames].to, sizeof(r[0].to), "%s", to);
         o->nrenames++;
     }
     o->poked = true;

@@ -2,6 +2,7 @@
  * building, chat persistence, the fake backend, and (with --live) the real
  * llama-server end to end. */
 #define _DARWIN_C_SOURCE
+#include <dirent.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,6 +10,7 @@
 #include <unistd.h>
 
 #include "../src/app/chat_store.h"
+#include "../src/app/recent.h"
 #include "../src/app/records.h"
 #include "../src/app/revisions.h"
 #include "../src/llm/chat.h"
@@ -876,6 +878,81 @@ static void test_observer_redteam(void)
     observer_destroy(o);
 }
 
+/* Red-team 006: recent projects and the observer's per-project renames. */
+static void test_recent_and_renames(void)
+{
+    char dir[700], a[800], b[800];
+    snprintf(dir, sizeof(dir), "%s/state", g_dir);
+    snprintf(a, sizeof(a), "%s/projA", g_dir);
+    snprintf(b, sizeof(b), "%s/projB", g_dir);
+    mkdir(a, 0755);
+    mkdir(b, 0755);
+    recent_set_dir(dir); /* created with its parents on first save */
+    char deep[900];
+    snprintf(deep, sizeof(deep), "%s/state/deeper/still", g_dir);
+    recent_set_dir(deep);
+    recent_touch(a, "one.md");
+    recent_touch(b, NULL);
+    RecentProject list[RECENT_MAX];
+    CHECK(recent_load(list, RECENT_MAX) == 2 && !strcmp(list[0].path, b) && !strcmp(list[1].doc, "one.md"));
+    recent_rename_doc(a, "one.md", "two.md");
+    CHECK(recent_load(list, RECENT_MAX) == 2 && !strcmp(list[1].doc, "two.md"));
+    /* A folder that's gone is dropped from the file on the next save. */
+    char gone[800];
+    snprintf(gone, sizeof(gone), "%s/projGone", g_dir);
+    mkdir(gone, 0755);
+    recent_touch(gone, NULL);
+    rmdir(gone);
+    recent_touch(a, NULL);
+    char path[1000];
+    snprintf(path, sizeof(path), "%s/recent.json", deep);
+    FILE *f = fopen(path, "rb");
+    char buf[4096] = "";
+    if (f) {
+        buf[fread(buf, 1, sizeof(buf) - 1, f)] = '\0';
+        fclose(f);
+    }
+    CHECK(!strstr(buf, "projGone") && strstr(buf, "projA"));
+    /* A corrupt file is kept aside, not silently replaced. */
+    f = fopen(path, "wb");
+    fputs("{not json", f);
+    fclose(f);
+    recent_touch(b, NULL);
+    DIR *d = opendir(deep);
+    int kept = 0;
+    struct dirent *ent;
+    while (d && (ent = readdir(d)) != NULL) kept += strstr(ent->d_name, "recent.json.corrupt-") != NULL;
+    if (d) closedir(d);
+    CHECK(kept == 1 && recent_load(list, RECENT_MAX) == 1);
+
+    /* A rename queued for project A is never applied to project B. */
+    snprintf(path, sizeof(path), "%s/a.md", a);
+    f = fopen(path, "wb");
+    fputs("Alda waited.\n", f);
+    fclose(f);
+    snprintf(path, sizeof(path), "%s/a.md", b);
+    f = fopen(path, "wb");
+    fputs("Brin waited.\n", f);
+    fclose(f);
+    Observer *o = observer_create(NULL);
+    observer_set_project(o, b);
+    CHECK(wait_jobs(o, 1, 10));
+    observer_rename_doc(o, a, "a.md", "renamed.md"); /* made in A while B is open */
+    unsigned done = observer_jobs_done(o);
+    observer_poke(o);
+    usleep(400000);
+    CHECK(observer_jobs_done(o) == done); /* B's document wasn't moved away and re-read */
+    snprintf(path, sizeof(path), "%s/.scribodo/observer/state.json", b);
+    f = fopen(path, "rb");
+    buf[0] = '\0';
+    if (f) {
+        buf[fread(buf, 1, sizeof(buf) - 1, f)] = '\0';
+        fclose(f);
+    }
+    CHECK(strstr(buf, "\"a.md\"") && !strstr(buf, "renamed.md"));
+    observer_destroy(o);
+}
+
 static void test_revisions(void)
 {
     char doc[700];
@@ -1303,6 +1380,7 @@ int main(int argc, char **argv)
         { "observer_text", test_observer_text },
         { "observer_run", test_observer_run },
         { "observer_redteam", test_observer_redteam },
+        { "recent_and_renames", test_recent_and_renames },
         { "truncated_stream_is_an_error", test_truncated_stream_is_an_error },
         { "ok_stream_and_context_error", test_ok_stream_and_context_error },
         { "stop_never_hangs", test_stop_never_hangs },

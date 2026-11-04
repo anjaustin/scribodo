@@ -34,6 +34,7 @@ PromptView *prompt_create(SFont *text_font, SFont *label_font)
     editor_set_layout(v->field, 8.0f, 6.0f, 4000.0f);
     editor_set_submit_on_enter(v->field, true);
     editor_set_single_line(v->field, true);
+    editor_set_modal_owner(v->field, true);
     editor_set_max_chars(v->field, 200);
     return v;
 }

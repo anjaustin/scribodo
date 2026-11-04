@@ -76,3 +76,7 @@ void input_discard_chars(void)
 {
     while (input_get_char() > 0) {}
 }
+
+static bool g_mouse_blocked;
+void input_block_mouse(bool blocked) { g_mouse_blocked = blocked; }
+bool input_mouse_blocked(void) { return g_mouse_blocked; }

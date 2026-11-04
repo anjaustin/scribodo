@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "raygui.h"
+#include "ui/input.h"
 #include "ui/editor.h"
 
 #define PAD 12.0f
@@ -280,7 +281,7 @@ void record_view_update(RecordView *v, Rectangle r, bool focused)
     layout(v, r);
     editor_update(v->ed, v->ed_rect, focused);
     /* A history line loads that wording into the editor; Revise stores it. */
-    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+    if (!input_mouse_blocked() && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
         Vector2 m = GetMousePosition();
         for (size_t i = 0; i < MAX_HISTORY && i < v->nhist; i++)
             if (v->hist_rect[i].width > 0 && CheckCollisionPointRec(m, v->hist_rect[i])) {
@@ -329,7 +330,8 @@ RecordAction record_view_draw(RecordView *v, Rectangle r, bool focused)
         if (GuiButton(v->btn[i], v->btn_label[i])) act = v->btn_action[i];
         GuiEnable();
     }
-    if (v->nsources && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(GetMousePosition(), v->src_rect))
+    if (!input_mouse_blocked() && v->nsources && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
+        CheckCollisionPointRec(GetMousePosition(), v->src_rect))
         act = RA_SOURCE;
     return act;
 }

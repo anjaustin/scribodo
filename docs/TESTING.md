@@ -149,6 +149,17 @@ Red-teamed in [`REDTEAM-005-observer.md`](REDTEAM-005-observer.md): 16 findings,
 
 UI scripts start with the observer **off**, so other scripts' file expectations stay deterministic. A script turns it on with `observer on` and waits with `wait_observer`.
 
+## Projects and documents
+
+- **`projects.scribo`** (35 checks) and **`projects_rt.scribo`** (25 checks) cover:
+  - the welcome screen;
+  - opening projects;
+  - New document, Import, and Rename via the context menu;
+  - modal input;
+  - sources across renames.
+- **`make cstest`** runs `case_sensitive.scribo` on a temporary case-sensitive APFS image.
+- Red-teamed in [`REDTEAM-006-projects.md`](REDTEAM-006-projects.md): 13 findings, all fixed, 13 of 13 mutations caught.
+
 ## Findings from the chat work
 
 Each of these was caught by the suites and has a regression check:

@@ -20,5 +20,7 @@ void recent_set_dir(const char *dir);
 size_t recent_load(RecentProject *out, size_t max);
 /* Move `project` to the front (recording `doc` if non-NULL) and save. */
 void recent_touch(const char *project, const char *doc);
+/* A document in `project` was renamed: keep "last open" pointing at it. */
+void recent_rename_doc(const char *project, const char *from, const char *to);
 
 #endif

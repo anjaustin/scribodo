@@ -67,7 +67,7 @@ APP_OBJS  += $(BUILD)/src/platform/dialogs_mac.o
 APP   := $(BUILD)/scribodo
 TESTS := $(BUILD)/test_core $(BUILD)/test_doc_io $(BUILD)/test_editor $(BUILD)/test_llm
 
-.PHONY: all run test uitest uitest-real sanitize tsan clean distclean llama model llmtest
+.PHONY: all run test uitest uitest-real sanitize tsan cstest clean distclean llama model llmtest
 
 all: $(APP)
 
@@ -115,7 +115,7 @@ test: $(TESTS)
 # Scripted UI tests: each script drives the real app in a hidden window against
 # its own copy of tests/ui/fixtures in build/ui/<script>/work, where its
 # screenshots also land. build/ui is wiped (a fixed path) at the start.
-UI_SCRIPTS := $(filter-out tests/ui/real-%,$(wildcard tests/ui/*.scribo))
+UI_SCRIPTS := $(filter-out tests/ui/real-% tests/ui/case_sensitive.scribo,$(wildcard tests/ui/*.scribo))
 # tests/ui/real-*.scribo drive the real model through the UI (make uitest-real).
 REAL_UI_SCRIPTS := $(wildcard tests/ui/real-*.scribo)
 uitest: $(APP)
@@ -127,6 +127,10 @@ uitest: $(APP)
 	    $(WATCHDOG) 120 ui-$$name ./$(APP) 2>build/ui/$$name/stderr.log || fail=1; \
 	  echo; \
 	done; exit $$fail
+
+# Rename safety on a case-sensitive volume (builds a temporary disk image).
+cstest: $(APP)
+	tools/cstest.sh
 
 # --- Local model runtime -------------------------------------------------------
 # llama-server from the pinned submodule, built static so build/llama/bin is

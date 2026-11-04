@@ -1,0 +1,18 @@
+# On a case-sensitive volume "a.md" and "A.md" are different documents:
+# renaming one to the other's name is refused, and both keep their text.
+# Run with tools/cstest.sh.
+wait 5
+mkdir "$DIR/book"
+write "$DIR/book/a.md" "lowercase draft"
+write "$DIR/book/A.md" "UPPERCASE CHAPTER"
+dialog "$DIR/book"
+click_element WelcomeOpen
+right_click_element DocItem1
+click_element MenuItem0
+key A cmd
+type "A"
+key ENTER
+expect element_w PromptField 100 2000
+key ESC
+expect file "$DIR/book/a.md" "lowercase draft"
+expect file "$DIR/book/A.md" "UPPERCASE CHAPTER"

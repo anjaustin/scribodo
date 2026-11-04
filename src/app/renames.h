@@ -8,9 +8,13 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <time.h>
 
 bool renames_record(const char *project_dir, const char *from, const char *to);
 /* Follow renames from `name` to the document's current name. */
 void renames_resolve(const char *project_dir, const char *name, char *out, size_t outlen);
+/* Only renames recorded at or after `since` (when the source was made,
+ * seconds with milliseconds). */
+void renames_resolve_since(const char *project_dir, const char *name, double since, char *out, size_t outlen);
 
 #endif

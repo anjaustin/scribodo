@@ -28,6 +28,11 @@ int input_get_char(void);
  * focus are discarded instead of appearing later. */
 void input_discard_chars(void);
 
+/* While a prompt or menu is open, views ignore the mouse (clicks, drags,
+ * wheel): raygui's lock only covers raygui widgets (red-team 006). */
+void input_block_mouse(bool blocked);
+bool input_mouse_blocked(void);
+
 /* --- test hooks ------------------------------------------------------- */
 
 /* Queue codepoints to be returned by input_get_char() this frame. */
