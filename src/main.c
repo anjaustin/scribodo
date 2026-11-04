@@ -38,6 +38,7 @@
 #include "app/renames.h"
 #include "app/store.h"
 #include "app/store_backends.h"
+#include "app/store_entities.h"
 #include "app/revisions.h"
 #include "llm/llm_text.h"
 #include "app/script.h"
@@ -89,6 +90,8 @@ static const Clay_Color COL_ERR     = RGB(0xE5, 0x73, 0x73);
 #define REV_SHOW 100
 /* Notes / canon entries listed in the Explorer (most recent first). */
 #define REC_SHOW 200
+#define ENT_SHOW 60   /* entities listed in the Explorer */
+#define ENT_ROWS 60   /* relationships and mentions shown for the open one */
 
 typedef struct {
     Editor *editor;
@@ -141,6 +144,14 @@ typedef struct {
     size_t nnotes, ncanon;
     char note_labels[REC_SHOW][72];
     char canon_labels[REC_SHOW][72];
+    /* The entity graph (store projects): the list, and the open entity. */
+    EntityRow *ents;
+    size_t nents;
+    char ent_labels[ENT_SHOW][96];
+    char ent_open[40];
+    EntityDetail ent;
+    char ent_row_labels[ENT_ROWS][160];
+    char ent_backfilled[PATH_MAX]; /* the project whose graph was rebuilt this session */
     RecordView *record;
     Rectangle record_rect;
     char canon_finding[40];      /* the open canon draft came from this finding */
@@ -243,6 +254,7 @@ static int cmp_str(const void *a, const void *b) { return strcasecmp(*(char *con
 
 static void refresh_records(App *app);
 static void refresh_findings(App *app);
+static void refresh_entities(App *app);
 
 static void refresh_lists(App *app)
 {
@@ -289,7 +301,7 @@ static void refresh_lists(App *app)
         snprintf(app->rev_labels[i], sizeof(app->rev_labels[i]), "%s \xC2\xB7 %s", when, lbl);
     }
     refresh_records(app);
-    refresh_findings(app); /* conflicts are shown against the current canon */
+    refresh_findings(app); /* against the current canon; also refreshes the entities */
 }
 
 /* First line of a record, shortened, as an Explorer label. */
@@ -303,6 +315,75 @@ static void record_label(char *out, size_t outlen, const char *prefix, const cha
     }
     snprintf(line, sizeof(line), "%.*s%s", (int)n, content, strlen(content) > n ? "\xE2\x80\xA6" : "");
     snprintf(out, outlen, "%s%s", prefix, line[0] ? line : "(empty)");
+}
+
+static void refresh_entities(App *app)
+{
+    entity_list_free(app->ents, app->nents);
+    app->ents = NULL;
+    app->nents = 0;
+    char pid[64];
+    Db *db = NULL;
+    if (!app->project_dir[0] || store_mode(app->project_dir, pid, sizeof(pid), &db) != STORE_DB || !db) {
+        entity_detail_free(&app->ent);
+        app->ent_open[0] = '\0';
+        return;
+    }
+    /* Findings from before the graph existed (or a failed update) are
+     * folded in once per session; it's idempotent. */
+    if (strcmp(app->ent_backfilled, app->project_dir) != 0) {
+        sdb_entities_backfill(db, pid);
+        snprintf(app->ent_backfilled, sizeof(app->ent_backfilled), "%s", app->project_dir);
+    }
+    app->nents = sdb_entity_list(db, pid, &app->ents);
+    for (size_t i = 0; i < app->nents && i < ENT_SHOW; i++) {
+        char name[64];
+        utf8_clip(name, sizeof(name), app->ents[i].name, 48);
+        snprintf(app->ent_labels[i], sizeof(app->ent_labels[i]), "%s \xC2\xB7 %d", name, app->ents[i].mentions);
+    }
+    entity_detail_free(&app->ent);
+    if (app->ent_open[0] && !sdb_entity_detail(db, pid, app->ent_open, &app->ent)) app->ent_open[0] = '\0';
+    for (size_t i = 0; i < app->ent.nrows && i < ENT_ROWS; i++) {
+        const EntityDetailRow *r = &app->ent.rows[i];
+        char a[100], b[80];
+        if (r->is_link) {
+            utf8_clip(a, sizeof(a), r->relation, 40);
+            utf8_clip(b, sizeof(b), r->other_name, 40);
+            if (r->outgoing) snprintf(app->ent_row_labels[i], sizeof(app->ent_row_labels[i]), "  %s \xE2\x86\x92 %s", a, b);
+            else snprintf(app->ent_row_labels[i], sizeof(app->ent_row_labels[i]), "  %s %s \xE2\x86\x92 this", b, a);
+        } else {
+            utf8_clip(a, sizeof(a), r->text, 60);
+            snprintf(app->ent_row_labels[i], sizeof(app->ent_row_labels[i]), "  \xC2\xB7 %s%s", a, strlen(r->text) > strlen(a) ? "\xE2\x80\xA6" : "");
+        }
+    }
+}
+
+/* Open (or close, if it's open) an entity in the Explorer. */
+static void toggle_entity(App *app, const char *id)
+{
+    if (!strcmp(app->ent_open, id)) app->ent_open[0] = '\0';
+    else snprintf(app->ent_open, sizeof(app->ent_open), "%s", id);
+    refresh_entities(app);
+}
+
+static void open_source(App *app, const SourceRef *s);
+
+/* The passage a finding came from: a relationship's evidence, or a
+ * mention. */
+static void open_finding_source(App *app, const char *finding_id)
+{
+    Record *r = NULL;
+    size_t n = records_list(app->project_dir, REC_FINDING, &r);
+    SourceRef *copy = NULL;
+    for (size_t i = 0; i < n && !copy; i++)
+        if (!strcmp(r[i].id, finding_id)) {
+            const RecordVersion *v = record_current(&r[i]);
+            if (v->nsources) copy = records_copy_sources(v->sources, 1);
+        }
+    records_free(r, n);
+    if (copy) open_source(app, copy);
+    else set_status(app, "That finding has no source passage");
+    records_free_sources(copy, copy ? 1 : 0);
 }
 
 static void refresh_records(App *app)
@@ -1619,6 +1700,7 @@ static void refresh_findings(App *app)
     for (size_t i = 0; i < app->nflist; i++) fresh += !strcmp(record_current(&app->flist[i])->status, "new");
     if (fresh) snprintf(app->observer_button, sizeof(app->observer_button), "Observer (%zu)", fresh);
     else snprintf(app->observer_button, sizeof(app->observer_button), "Observer");
+    refresh_entities(app); /* the graph follows the findings */
 }
 
 static const Record *find_finding(App *app, const char *id)
@@ -2144,6 +2226,35 @@ static Clay_RenderCommandArray build_layout(App *app)
                 if (app->project_dir[0] && app->ncanon == 0) coming_soon("Select a passage, then \xE2\x8C\x98\xE2\x87\xA7" "C");
                 for (size_t i = 0; i < app->ncanon && i < REC_SHOW; i++)
                     list_item(CLAY_IDI("CanonItem", (uint32_t)i), app->canon_labels[i], !strcmp(open_id, app->canon[i].id));
+                if (store_mode(app->project_dir, NULL, 0, NULL) == STORE_DB) {
+                    section_header("ENTITIES");
+                    if (app->nents == 0) coming_soon("The observer lists who and what appears here");
+                    for (size_t i = 0; i < app->nents && i < ENT_SHOW; i++) {
+                        bool open = !strcmp(app->ent_open, app->ents[i].id);
+                        list_item(CLAY_IDI("EntityItem", (uint32_t)i), app->ent_labels[i], open);
+                        if (!open) continue;
+                        /* Its relationships (click: the passage; \xE2\x80\xBA: go to the other one)
+                         * and mentions (click: the passage). */
+                        for (size_t k = 0; k < app->ent.nrows && k < ENT_ROWS; k++) {
+                            if (!app->ent.rows[k].is_link) {
+                                list_item(CLAY_IDI("EntRow", (uint32_t)k), app->ent_row_labels[k], false);
+                                continue;
+                            }
+                            CLAY({ .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) } } }) {
+                                list_item(CLAY_IDI("EntRow", (uint32_t)k), app->ent_row_labels[k], false);
+                                bool hover = Clay_PointerOver(CLAY_IDI("EntGo", (uint32_t)k));
+                                CLAY({ .id = CLAY_IDI("EntGo", (uint32_t)k),
+                                       .layout = { .sizing = { CLAY_SIZING_FIXED(24), CLAY_SIZING_FIXED(24) },
+                                                   .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER } },
+                                       .backgroundColor = hover ? COL_HOVER : (Clay_Color){ 0 },
+                                       .cornerRadius = CLAY_CORNER_RADIUS(4) }) {
+                                    label("\xE2\x80\xBA", FONT_UI, COL_MUTED);
+                                }
+                            }
+                        }
+                        if (app->ent.nrows == 0) coming_soon("  No relationships or mentions left");
+                    }
+                }
             }
             splitter(CLAY_ID("SplitLeft"), app->dragging == DRAG_EXPLORER);
 
@@ -2324,11 +2435,16 @@ static char *host_explorer_text(void *ctx)
     size_t cap = 2;
     for (size_t i = 0; i < app->ndocs; i++) cap += strlen(app->docs[i]) + 1;
     for (size_t i = 0; i < app->nchats; i++) cap += strlen(app->chats[i].title) + 1;
+    cap += (sizeof(app->ent_labels[0]) + 1) * ENT_SHOW + (sizeof(app->ent_row_labels[0]) + 1) * ENT_ROWS;
     char *s = malloc(cap);
     if (!s) return NULL;
     s[0] = '\0';
     for (size_t i = 0; i < app->ndocs; i++) strcat(strcat(s, app->docs[i]), "\n");
     for (size_t i = 0; i < app->nchats; i++) strcat(strcat(s, app->chats[i].title), "\n");
+    /* Entities, and the open one's rows (without their indent). */
+    for (size_t i = 0; i < app->nents && i < ENT_SHOW; i++) strcat(strcat(s, app->ent_labels[i]), "\n");
+    for (size_t i = 0; app->ent_open[0] && i < app->ent.nrows && i < ENT_ROWS; i++)
+        strcat(strcat(s, app->ent_row_labels[i] + strspn(app->ent_row_labels[i], " ")), "\n");
     return s;
 }
 
@@ -2698,6 +2814,27 @@ int main(int argc, char **argv)
                         show_record(&app, REC_CANON, &app.canon[i], NULL, NULL, 0);
                         break;
                     }
+                /* Entities: copy what's needed first (opening refreshes the lists). */
+                for (size_t i = 0; i < app.nents && i < ENT_SHOW; i++)
+                    if (Clay_PointerOver(CLAY_IDI("EntityItem", (uint32_t)i))) {
+                        char id[40];
+                        snprintf(id, sizeof(id), "%s", app.ents[i].id);
+                        toggle_entity(&app, id);
+                        break;
+                    }
+                for (size_t k = 0; app.ent_open[0] && k < app.ent.nrows && k < ENT_ROWS; k++) {
+                    char id[40];
+                    if (app.ent.rows[k].is_link && Clay_PointerOver(CLAY_IDI("EntGo", (uint32_t)k))) {
+                        snprintf(id, sizeof(id), "%s", app.ent.rows[k].other_id);
+                        toggle_entity(&app, id);
+                        break;
+                    }
+                    if (Clay_PointerOver(CLAY_IDI("EntRow", (uint32_t)k))) {
+                        snprintf(id, sizeof(id), "%s", app.ent.rows[k].finding_id);
+                        open_finding_source(&app, id);
+                        break;
+                    }
+                }
             }
             /* Toolbar, chat header/footer and message list keep the focus. */
         }

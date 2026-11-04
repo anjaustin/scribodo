@@ -11,6 +11,7 @@
  */
 #define _DARWIN_C_SOURCE
 #include "store_backends.h"
+#include "store_entities.h"
 
 #include <CommonCrypto/CommonDigest.h>
 #include <dirent.h>
@@ -462,6 +463,7 @@ static bool import_once(Db *db, const char *project_dir, const char *pid, char *
     ok = ok && import_records(db, project_dir, pid, REC_CANON, map, nmap, &recs, &chats);
     ok = ok && import_records(db, project_dir, pid, REC_FINDING, map, nmap, &recs, &chats);
     ok = ok && import_observer(db, project_dir, pid);
+    ok = ok && sdb_entities_backfill(db, pid); /* the graph, from the imported findings */
     if (ok) ok = db_commit(db);
     else db_rollback(db);
     free(map);

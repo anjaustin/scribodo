@@ -169,7 +169,7 @@ UI scripts start with the observer **off**, so other scripts' file expectations 
 
 ## Project store
 
-**`make dbtest`** (178 checks) runs against the local MariaDB in throwaway databases. It covers:
+**`make dbtest`** (214 checks) runs against the local MariaDB in throwaway databases. It covers:
 - migrations, including 003 applied to a database that already has data;
 - prepared statements, with hostile text and a 3 MB value;
 - NULLs, foreign keys, rollback and cascades;
@@ -178,15 +178,17 @@ UI scripts start with the observer **off**, so other scripts' file expectations 
 - the revision, record and chat backends: History in recorded order whatever the timestamps, and sources never linked across projects;
 - the importer: revisions, notes, canon and chats, a rename made before the import, idempotence, legacy files kept, and paused mode;
 - import safety: one importer at a time, a stale project row not reused, a copied folder detected and forked into its own project, a folder moved across volumes kept as the project, and a project missing from the store restored from its saved files;
+- the entity graph: name normalisation, mentions and links from findings, an unnamed end left unlinked, dismissal, idempotent backfill, and no links across projects;
 - semantic retrieval against Qdrant with the fake embedder.
 
 It's also clean under ASan/UBSan.
 
-**`make uitest-db`** runs the app four times on one database:
+**`make uitest-db`** runs the app five times on one database:
 1. A project with existing files is moved into the store, then notes, canon, a chat, a rename and the observer are used.
 2. After a restart everything comes back, the chat resumes (SOW acceptance 1), and the observer reads nothing twice.
-3. A copy of the folder (`cp -R`) is recognised as a copy and paused (chat refuses). "Make it its own project" brings over the original's documents, chats and canon under a new project.
-4. With the database unreachable, documents stay editable and saveable. Chat, rename and New pause, and nothing falls back to files.
+3. The entity graph (`5_entities.scribo`): the fake observer's relationship finding ("Zoë is Mara's sister.") becomes two entities and a link. "›" goes to the other entity, and the relationship opens its passage.
+4. A copy of the folder (`cp -R`) is recognised as a copy and paused (chat refuses). "Make it its own project" brings over the original's documents, chats and canon under a new project.
+5. With the database unreachable, documents stay editable and saveable. Chat, rename and New pause, and nothing falls back to files.
 
 ## Findings from the chat work
 

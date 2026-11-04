@@ -426,7 +426,18 @@ static const char *const k_migration_003[] = {
     NULL,
 };
 
-static const char *const *const k_migrations[] = { k_migration_001, k_migration_002, k_migration_003 };
+/* 004: which findings mention which entity (step 3, the entity graph).
+ * Ids keep utf8mb4_bin to match the columns their foreign keys name. */
+static const char *const k_migration_004[] = {
+    "CREATE TABLE IF NOT EXISTS entity_mentions ("
+    " entity_id VARCHAR(40) COLLATE utf8mb4_bin NOT NULL, finding_id VARCHAR(40) COLLATE utf8mb4_bin NOT NULL,"
+    " PRIMARY KEY (entity_id, finding_id), KEY mention_finding (finding_id),"
+    " FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE,"
+    " FOREIGN KEY (finding_id) REFERENCES records(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+    NULL,
+};
+
+static const char *const *const k_migrations[] = { k_migration_001, k_migration_002, k_migration_003, k_migration_004 };
 
 int db_schema_version(Db *db)
 {

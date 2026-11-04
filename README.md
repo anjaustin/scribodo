@@ -81,7 +81,7 @@ The local model must run with BF16 weights and BF16 compute. Quantized checkpoin
 2. **Foundation.** Workbench layout, projects, Markdown documents, MariaDB schema and migrations, revision history.
 3. **Creative workflow.** Persistent chat, the BF16 inference adapter, document context, reviewed AI edits.
 4. **Semantic and observer pipeline.** Embeddings, Qdrant indexing and retrieval, async extraction, provenance, the findings panel, and note and canon actions.
-5. **Connections and verification.** Entity and link navigation, canon conflict checks, the optional remote adapter, offline integration tests, backup and recovery, acceptance tests.
+5. **Connections and verification.** Entity and link navigation (done), canon conflict checks (done), the optional remote adapter, offline integration tests, backup and recovery, acceptance tests.
 
 The full acceptance criteria are in [`docs/SOW.md` §8](docs/SOW.md#8-acceptance-criteria).
 

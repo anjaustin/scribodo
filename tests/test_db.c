@@ -9,6 +9,7 @@
 #include "../src/app/db.h"
 #include "../src/app/store.h"
 #include "../src/app/store_backends.h"
+#include "../src/app/store_entities.h"
 #include "../src/llm/semantic.h"
 #include <fcntl.h>
 #include <sys/file.h>
@@ -55,8 +56,8 @@ static void test_db(void)
     }
     bool migrated = db_migrate(db, err, sizeof(err));
     if (!migrated) fprintf(stderr, "    %s\n", err);
-    CHECK(migrated && db_schema_version(db) == 3);
-    CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 3); /* idempotent */
+    CHECK(migrated && db_schema_version(db) == 4);
+    CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 4); /* idempotent */
 
     /* Author text with quotes, backslashes, SQL and Unicode goes through
      * prepared statements untouched. */
@@ -151,7 +152,7 @@ static void test_migration(void)
                      NULL, 0, NULL));
         bool migrated = db_migrate(db, err, sizeof(err));
         if (!migrated) fprintf(stderr, "    %s\n", err);
-        CHECK(migrated && db_schema_version(db) == 3);
+        CHECK(migrated && db_schema_version(db) == 4);
         DbRows r;
         CHECK(db_query(db, "SELECT id FROM revisions ORDER BY seq", NULL, 0, &r) && r.nrows == 2 &&
               !strcmp(db_cell(&r, 0, 0), "r-a") && !strcmp(db_cell(&r, 1, 0), "r-b"));
@@ -576,6 +577,110 @@ static void test_import_safety(void)
     system(cmd);
 }
 
+/* The entity graph from findings (SOW §4.3, acceptance 7). */
+static bool add_finding(Db *db, const char *pid, char *id, const char *type, const char *sub, const char *rel, const char *obj,
+                        const char *text)
+{
+    FindingInfo f = { 0 };
+    snprintf(f.type, sizeof(f.type), "%s", type);
+    snprintf(f.subject, sizeof(f.subject), "%s", sub);
+    snprintf(f.relation, sizeof(f.relation), "%s", rel);
+    snprintf(f.object, sizeof(f.object), "%s", obj);
+    store_new_id('f', id, 40);
+    SourceRef src = { .kind = SRC_DOC, .start = 0, .len = 3, .quote = "Zoë" };
+    snprintf(src.doc, sizeof(src.doc), "ch1.md");
+    return sdb_record_append(db, pid, REC_FINDING, id, "new", text, &src, 1, &f, true, NULL);
+}
+
+static const EntityRow *find_entity(const EntityRow *e, size_t n, const char *name)
+{
+    for (size_t i = 0; i < n; i++)
+        if (!strcmp(e[i].name, name)) return &e[i];
+    return NULL;
+}
+
+static void test_entities(void)
+{
+    char why[256], norm[64];
+    entity_norm("Zoë Ångström's", norm, sizeof(norm));
+    CHECK(!strcmp(norm, "zoë ångström"));
+    entity_norm("  ZOË  ", norm, sizeof(norm));
+    CHECK(!strcmp(norm, "zoë"));
+    entity_norm("Zoë\xE2\x80\x99s", norm, sizeof(norm));
+    CHECK(!strcmp(norm, "zoë"));
+    entity_norm("Zo\xC3\xAB", norm, 3); /* "ë" doesn't fit: cut before it */
+    CHECK(!strcmp(norm, "zo"));
+    entity_norm("Ångström", norm, 3); /* room for "å" only: never half of "n…" or of a character */
+    CHECK(!strcmp(norm, "\xC3\xA5"));
+
+    CHECK(store_start(g_name, why, sizeof(why)));
+    Db *db = store_db();
+    char pid[40], other[40];
+    CHECK(store_project_id("/private/var/db", true, pid, sizeof(pid)));
+    CHECK(store_project_id("/private/var/log", true, other, sizeof(other)));
+    char f1[40], f2[40], f3[40], f4[40], f5[40], f6[40];
+    CHECK(add_finding(db, pid, f1, "entity", "Zoë", "", "", "Zoë is mentioned."));
+    CHECK(add_finding(db, pid, f2, "relationship", "Zoë's", "sister of", "Mara", "Zoë is Mara's sister."));
+    CHECK(add_finding(db, pid, f3, "event", "MARA", "", "", "Mara leaves the island."));
+    CHECK(add_finding(db, pid, f4, "relationship", "Zoë", "looks at", "the sea", "Zoë looks at the sea."));
+    CHECK(add_finding(db, pid, f5, "relationship", "Mara", "rows to", "Ytre Sula", "Mara rows to Ytre Sula."));
+    EntityRow *e = NULL;
+    size_t n = sdb_entity_list(db, pid, &e);
+    const EntityRow *zoe = find_entity(e, n, "Zoë"), *mara = find_entity(e, n, "Mara");
+    CHECK(n == 3 && zoe && mara && find_entity(e, n, "Ytre Sula")); /* "the sea" is not a named entity */
+    CHECK(zoe && zoe->mentions == 3 && zoe->links == 1);  /* f1, f2, f4 */
+    CHECK(mara && mara->mentions == 3 && mara->links == 2); /* f2, f3 ("MARA"), f5 */
+    char zid[40] = "", mid[40] = "";
+    if (zoe) snprintf(zid, sizeof(zid), "%s", zoe->id);
+    if (mara) snprintf(mid, sizeof(mid), "%s", mara->id);
+    entity_list_free(e, n);
+    EntityDetail d;
+    CHECK(sdb_entity_detail(db, pid, zid, &d));
+    CHECK(d.nrows == 3 && d.rows[0].is_link && d.rows[0].outgoing && !strcmp(d.rows[0].relation, "sister of") &&
+          !strcmp(d.rows[0].other_id, mid) && !strcmp(d.rows[0].finding_id, f2));
+    bool has_f1 = false, has_f4 = false;
+    for (size_t i = 1; i < d.nrows; i++) {
+        has_f1 = has_f1 || (!d.rows[i].is_link && !strcmp(d.rows[i].finding_id, f1) && !strcmp(d.rows[i].text, "Zoë is mentioned."));
+        has_f4 = has_f4 || (!d.rows[i].is_link && !strcmp(d.rows[i].finding_id, f4));
+    }
+    CHECK(has_f1 && has_f4);
+    entity_detail_free(&d);
+    CHECK(sdb_entity_detail(db, pid, mid, &d) && d.nrows >= 2 && d.rows[0].is_link && !d.rows[0].outgoing &&
+          !strcmp(d.rows[0].other_id, zid));
+    entity_detail_free(&d);
+    /* Dismissing a finding drops its link and mention. */
+    CHECK(sdb_record_append(db, pid, REC_FINDING, f2, "dismissed", "Zoë is Mara's sister.", NULL, 0, NULL, false, NULL));
+    n = sdb_entity_list(db, pid, &e);
+    zoe = find_entity(e, n, "Zoë");
+    CHECK(zoe && zoe->links == 0 && zoe->mentions == 2);
+    entity_list_free(e, n);
+    CHECK(sdb_entity_detail(db, pid, zid, &d) && (d.nrows == 0 || !d.rows[0].is_link));
+    entity_detail_free(&d);
+    /* Backfill is idempotent. */
+    CHECK(sdb_entities_backfill(db, pid) && sdb_entities_backfill(db, pid));
+    n = sdb_entity_list(db, pid, &e);
+    zoe = find_entity(e, n, "Zoë");
+    CHECK(n == 3 && zoe && zoe->mentions == 2);
+    entity_list_free(e, n);
+    DbRows r;
+    CHECK(db_query(db, "SELECT COUNT(*) FROM links WHERE project_id = ?", (DbArg[1]){ DB_S(pid) }, 1, &r) &&
+          !strcmp(db_cell(&r, 0, 0), "2"));
+    db_rows_free(&r);
+    /* Another project's finding is never linked into this one. */
+    FindingInfo xf = { 0 };
+    snprintf(xf.type, sizeof(xf.type), "entity");
+    snprintf(xf.subject, sizeof(xf.subject), "Intruder");
+    CHECK(sdb_entities_from_finding(db, other, f1, &xf));
+    CHECK(sdb_entity_list(db, other, &e) == 0);
+    entity_list_free(e, 0);
+    CHECK(add_finding(db, other, f6, "entity", "Zoë", "", "", "Elsewhere."));
+    n = sdb_entity_list(db, pid, &e);
+    zoe = find_entity(e, n, "Zoë");
+    CHECK(zoe && zoe->mentions == 2); /* still this project's two */
+    entity_list_free(e, n);
+    store_stop();
+}
+
 /* Semantic retrieval against the local Qdrant (fake embedder): committed
  * canon only, kinds kept apart, and a wiped index rebuilt from MariaDB with
  * exact provenance (SOW acceptance 10). */
@@ -656,8 +761,8 @@ int main(void)
         fprintf(stderr, "dbtest: can't set up a test database (is tools/services.sh up?)\n");
         return 1;
     }
-    TestCase tests[] = { { "db", test_db }, { "migration", test_migration }, { "store_ids", test_store_ids }, { "backends", test_backends }, { "import", test_import }, { "import_safety", test_import_safety }, { "semantic", test_semantic } };
-    int rc = run_tests(tests, 7);
+    TestCase tests[] = { { "db", test_db }, { "migration", test_migration }, { "store_ids", test_store_ids }, { "backends", test_backends }, { "import", test_import }, { "import_safety", test_import_safety }, { "entities", test_entities }, { "semantic", test_semantic } };
+    int rc = run_tests(tests, 8);
     admin("DROP DATABASE %s");
     return rc;
 }

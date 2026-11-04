@@ -33,6 +33,7 @@ Every table is InnoDB with utf8mb4 (`utf8mb4_uca1400_ai_ci`). IDs are the app's 
 | `record_versions(record_id, ver, status, content, finding_type, subject, relation, object, related_id, related_text, created_at)` | every version (canon history, finding status changes); PK `(record_id, ver)` |
 | `source_refs(id, record_id, ver, kind, document_id, revision_id, conversation_id, message_seq, start, len, quote)` | provenance. It points at **ids** (document, revision, conversation), so renames need no forwarding. |
 | `entities(id, project_id, name, norm_name, type)` / `links(id, project_id, from_entity, relation, to_entity, finding_id)` | the relationship graph (step 3); each link cites the finding it came from |
+| `entity_mentions(entity_id, finding_id)` (migration 004) | which findings mention which entity |
 | `observer_pieces(document_id, piece_hash)` / `observer_chats(conversation_id, msg, off)` | what the observer has read |
 | `jobs(id, project_id, kind, state, attempts, last_error, updated_at)` | background job state |
 
@@ -51,6 +52,15 @@ The import is idempotent: rows are keyed by the existing ids, so a crash mid-imp
 - **Never into someone else's rows.** A project row that already has this path (the folder's marker was lost) is superseded, not reused. Any record or chat id that belongs to another project gets an id of its own, derived from the project and the original id, so a re-run gets the same one.
 - **Files that change underneath.** A fingerprint (sizes and times) of the imported files is taken before and after each pass. If anything changed, the import runs again, up to four passes.
 - **Times** come from each snapshot's epoch timestamp plus the milliseconds in its file name, not from parsing the local-time name (which is ambiguous across a DST change).
+
+## The entity graph (SOW §4.3, acceptance 7)
+
+Derived from observer findings, in the store only (projects on files have no graph):
+- **Entities.** An entity, event, question or conflict finding with a named subject mentions that entity, and the entity is created on first mention. A relationship finding mentions both ends. If both ends are named, it also adds a typed link and cites itself as the evidence. "Named" means the name starts with a capital, so "the sea" never becomes an entity.
+- **Matching names.** Names match on a normalised form: lowercased (ASCII, Latin-1 and Latin Extended-A), with possessives, punctuation and extra spaces dropped. "ZOË", "Zoë's" and "Zoë’s" are one entity.
+- **Following the findings.** Dismissing a finding removes its mention and its link from what's shown, without deleting rows: restoring the finding brings them back.
+- **Building it.** New findings update the graph when they're saved. Imports, and each project's first open in a session, backfill from existing findings, which is idempotent.
+- **In the Explorer.** ENTITIES lists entities, most connected first. Opening one shows its relationships ("sister of → Mara"; "›" goes to the other entity) and its other mentions. Clicking either opens the supporting passage.
 
 ## Copies and missing projects
 

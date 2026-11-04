@@ -410,6 +410,18 @@ static void add_finding(cJSON *arr, const char *type, const char *desc, const ch
     cJSON_AddItemToArray(arr, f);
 }
 
+/* "Zoë is Mara's sister." -> Zoë, "sister of", Mara (the fake model's one
+ * relationship form). */
+static bool rel_pattern(const char *sent, char *a, char *rel, char *b)
+{
+    char tail[8] = "";
+    if (sscanf(sent, "%47[^ ] is %47[^' ]'s %47[a-z]%7s", a, b, rel, tail) != 4 || strcmp(tail, ".") != 0) return false;
+    if (!is_upper_start((const unsigned char *)a) || !is_upper_start((const unsigned char *)b)) return false;
+    size_t n = strlen(rel);
+    if (n + 4 < 48) memcpy(rel + n, " of", 4);
+    return true;
+}
+
 char *obs_fake_extract(const char *chunk)
 {
     cJSON *root = cJSON_CreateObject();
@@ -424,8 +436,14 @@ char *obs_fake_extract(const char *chunk)
         if (i - s < 3) continue;
         char *sent = dupn(chunk + s, i - s);
         if (!sent) break;
-        char nm[48], at[48], va[48];
+        char nm[48], at[48], va[48], ra[48], rr[48], rb[48];
         if (sent[strlen(sent) - 1] == '?') add_finding(arr, "question", sent, sent, "");
+        else if (rel_pattern(sent, ra, rr, rb)) {
+            add_finding(arr, "relationship", sent, sent, ra);
+            cJSON *last = cJSON_GetArrayItem(arr, cJSON_GetArraySize(arr) - 1);
+            cJSON_AddStringToObject(last, "relation", rr);
+            cJSON_AddStringToObject(last, "object", rb);
+        }
         else if (attr_pattern(sent, nm, at, va)) add_finding(arr, "event", sent, sent, nm);
         free(sent);
     }

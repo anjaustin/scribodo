@@ -2,6 +2,7 @@
  * and sources by id. Called by records.c for projects in the store. */
 #define _DARWIN_C_SOURCE
 #include "store_backends.h"
+#include "store_entities.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -89,6 +90,9 @@ bool sdb_record_append(Db *db, const char *project_id, RecordKind kind, const ch
     }
     if (ok) ok = db_commit(db);
     else db_rollback(db);
+    /* A new finding's entities and link (the graph is derived from
+     * findings; a failure here leaves it to the next backfill). */
+    if (ok && kind == REC_FINDING && finding && ver == 1) sdb_entities_from_finding(db, project_id, id, finding);
     if (ok && ver_out) *ver_out = ver;
     return ok;
 }

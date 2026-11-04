@@ -1,0 +1,29 @@
+# Run 5: the entity graph (SOW acceptance 7). The observer's findings
+# become entities and typed links; an entity's relationships lead to the
+# other entity and to the passage that supports them.
+wait 5
+mkdir "$DIR/graph"
+write "$DIR/graph/ch1.md" "Zoë is Mara's sister.\n\nMara rowed out at dawn.\n"
+dialog "$DIR/graph"
+click_element WelcomeOpen
+expect status "now kept in the project store"
+click_element DocItem0
+observer on
+click_element ObserverToggle
+wait_observer
+expect explorer_has "Mara · 2"
+expect explorer_has "Zoë · 2"
+# Most connected first; ties by name: Mara, then Zoë.
+click_element EntityItem0
+expect explorer_has "Zoë sister of → this"
+expect explorer_has "· Mara is mentioned."
+# › goes to the other end of the relationship.
+click_element EntGo0
+expect explorer_has "sister of → Mara"
+# The relationship opens its supporting passage.
+click_element EntRow0
+expect status "Source passage selected"
+expect selection 0 21
+# Clicking the open entity closes it.
+click_element EntityItem1
+expect explorer_has "Zoë · 2"
