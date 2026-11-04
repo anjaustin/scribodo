@@ -1,0 +1,10 @@
+# Smoke test: rendering in a hidden window and basic event injection.
+open "$DIR/chapter.md"
+shot opened
+expect text "The fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+key END cmd
+expect cursor 264
+type "!"
+expect dirty yes
+key Z cmd
+expect dirty no

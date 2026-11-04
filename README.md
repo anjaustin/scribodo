@@ -106,7 +106,10 @@ make run    # launch with assets/sample/sample.md
 
 ```sh
 make sanitize  # run the same tests under AddressSanitizer + UBSan
+make uitest    # scripted UI tests: the real app in a hidden window (needs an awake display)
 ```
+
+See [`docs/TESTING.md`](docs/TESTING.md) for how the UI tests work and what they can't cover.
 
 You can also drop a `.md` or `.txt` file onto the window to open it. Press ⌘S to save.
 

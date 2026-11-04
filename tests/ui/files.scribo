@@ -1,0 +1,37 @@
+# External modification, conflict copy, overwrite; drop rules; read-only files.
+open "$DIR/chapter.md"
+key END cmd
+type " Added."
+write "$DIR/chapter.md" "external edit\n"
+key S cmd
+expect status "changed on disk"
+expect files "$DIR" "Scribodo conflict" 1
+expect file "$DIR/chapter.md" "external edit\n"
+expect dirty yes
+# Saving again (no edits, within 30 s) overwrites the external version.
+key S cmd
+expect file "$DIR/chapter.md" "The fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n Added."
+expect dirty no
+# Dropping another file while dirty is refused.
+type "x"
+drop "$DIR/invalid.md"
+expect status "Save the current document"
+expect text "The fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n Added.x"
+key Z cmd
+expect dirty no
+# Invalid UTF-8 opens read-only; typing and saving do nothing.
+drop "$DIR/invalid.md"
+expect readonly yes
+expect status "invalid UTF-8"
+type "y"
+key BACKSPACE
+expect text "bad \u{FFFD} byte\n"
+key S cmd
+expect status "Read-only"
+shot readonly
+# Write-protected files open read-only (finding R2).
+write "$DIR/locked.md" "locked\n"
+chmod "$DIR/locked.md" 444
+drop "$DIR/locked.md"
+expect readonly yes
+expect status "write-protected"

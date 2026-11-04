@@ -15,11 +15,13 @@
 #include "clay.h"
 #include "raygui.h"
 #include "raylib.h"
+#include "rlgl.h"
 
+#include "app/script.h"
 #include "ui/clay_render.h"
 #include "ui/editor.h"
 #include "ui/font.h"
-#include "ui/keys.h"
+#include "ui/input.h"
 
 /* raylib re-reads GLFW's close flag every frame, so clearing it cancels a
  * close request. GLFWwindow is opaque; raylib hands us the pointer. */
@@ -46,6 +48,7 @@ typedef struct {
     float explorer_w, observer_w;
     int dragging; /* 0 none, 1 explorer splitter, 2 observer splitter */
     bool editor_focused;
+    Rectangle editor_rect;
     char status[512];
     double status_time;
     bool close_armed;
@@ -278,6 +281,21 @@ static void open_path(App *app, const char *path)
     }
 }
 
+/* File-drop handler (also used by UI scripts). */
+static void drop_path(App *app, const char *path)
+{
+    if (editor_is_dirty(app->editor)) set_status(app, "Save the current document before opening another");
+    else open_path(app, path);
+}
+
+static const char *host_status(void *ctx)
+{
+    App *app = ctx;
+    return GetTime() - app->status_time < 6.0 ? app->status : "";
+}
+static void host_open(void *ctx, const char *path) { open_path(ctx, path); }
+static void host_drop(void *ctx, const char *path) { drop_path(ctx, path); }
+
 static void save(App *app)
 {
     char msg[512];
@@ -289,8 +307,23 @@ int main(int argc, char **argv)
 {
     const char *path = argc > 1 ? argv[1] : NULL;
 
-    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_HIGHDPI | FLAG_VSYNC_HINT);
+    /* UI test mode: SCRIBODO_SCRIPT=file.scribo runs a scripted session in a
+     * hidden window (no focus stealing, immune to the real mouse) and exits
+     * non-zero if any expectation fails. See src/app/script.h. */
+    const char *script_path = getenv("SCRIBODO_SCRIPT");
+    unsigned flags = FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_HIGHDPI | FLAG_VSYNC_HINT;
+    if (script_path) {
+        flags |= FLAG_WINDOW_HIDDEN;
+        input_set_scripted(true);
+        SetTraceLogLevel(LOG_ERROR);
+    }
+    SetConfigFlags(flags);
     InitWindow(1280, 820, "Scribodo");
+    if (!IsWindowReady()) {
+        /* e.g. no display available (asleep, headless session). */
+        fprintf(stderr, "scribodo: could not create a window (is a display available?)\n");
+        return 3;
+    }
     SetWindowMinSize(720, 420);
     SetExitKey(KEY_NULL); /* Esc must never quit a writing app */
     SetTargetFPS(60);
@@ -334,7 +367,22 @@ int main(int argc, char **argv)
         snprintf(sample, sizeof(sample), "%s../assets/sample/sample.md", GetApplicationDirectory());
         path = sample;
     }
-    open_path(&app, path);
+    if (!script_path) open_path(&app, path);
+
+    Script *script = NULL;
+    ScriptHost host = { app.editor, &app.explorer_w, &app.observer_w, &app.editor_rect,
+                        host_status, host_open, host_drop, &app };
+    if (script_path) {
+        char err[256];
+        script = script_load(script_path, getenv("SCRIBODO_SCRIPT_DIR"), getenv("SCRIBODO_SHOT_DIR"), err, sizeof(err));
+        if (!script) {
+            fprintf(stderr, "scribodo: %s\n", err);
+            CloseWindow();
+            return 2;
+        }
+        printf("script %s\n", script_path);
+    }
+    bool closed_by_window = false;
 
     /* Debug hook: SCRIBODO_SCREENSHOT=out.png renders a few frames, saves the
      * framebuffer, and exits. Used to check rendering without interaction. */
@@ -344,10 +392,14 @@ int main(int argc, char **argv)
     int cursor_shape = MOUSE_CURSOR_DEFAULT;
     bool running = true;
     while (running) {
+        /* Scripted input is injected before anything reads input state. */
+        if (script && !script_frame(script, &host)) break;
+
         /* Close requests: never lose unsaved prose silently. */
         if (WindowShouldClose()) {
             if (!editor_is_dirty(app.editor) || (app.close_armed && GetTime() - app.close_armed_at < 5.0)) {
                 running = false;
+                closed_by_window = true;
                 break;
             }
             glfwSetWindowShouldClose(GetWindowHandle(), 0);
@@ -358,10 +410,7 @@ int main(int argc, char **argv)
 
         if (IsFileDropped()) {
             FilePathList dropped = LoadDroppedFiles();
-            if (dropped.count > 0) {
-                if (editor_is_dirty(app.editor)) set_status(&app, "Save the current document before opening another");
-                else open_path(&app, dropped.paths[0]);
-            }
+            if (dropped.count > 0) drop_path(&app, dropped.paths[0]);
             UnloadDroppedFiles(dropped);
         }
 
@@ -398,6 +447,7 @@ int main(int argc, char **argv)
 
         Clay_RenderCommandArray cmds = build_layout(&app);
         Rectangle editor_rect = ELEMENT_RECT("Editor");
+        app.editor_rect = editor_rect;
         Rectangle save_rect = ELEMENT_RECT("SaveButton");
 
         /* Always update so queued keystrokes are consumed or discarded. */
@@ -423,6 +473,16 @@ int main(int argc, char **argv)
         if (!can_save) GuiDisable();
         if (GuiButton(save_rect, "Save")) save(&app);
         GuiEnable();
+
+        const char *shot_path = script ? script_take_shot(script) : NULL;
+        if (shot_path) {
+            /* raylib batches draws until EndDrawing; flush so the capture
+             * includes everything drawn this frame (e.g. raygui controls). */
+            rlDrawRenderBatchActive();
+            Image shot = LoadImageFromScreen();
+            ExportImage(shot, shot_path);
+            UnloadImage(shot);
+        }
         EndDrawing();
 
         if (screenshot_path && ++frame == 10) {
@@ -433,9 +493,11 @@ int main(int argc, char **argv)
         }
     }
 
+    int rc = script ? script_finish(script, &host, closed_by_window) : 0;
+    script_free(script);
     editor_destroy(app.editor);
     for (int i = 0; i < FONT_COUNT; i++) sfont_unload(&app.fonts[i]);
     free(clay_buf);
     CloseWindow();
-    return 0;
+    return rc;
 }

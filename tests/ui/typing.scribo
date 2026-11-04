@@ -1,0 +1,40 @@
+# Typing, word-level undo/redo, word motion and deletion, save.
+open "$DIR/new.md"
+expect readonly no
+expect status "New file"
+type "The fog came in"
+expect text "The fog came in"
+key Z cmd
+expect text "The fog came "
+key Z cmd
+expect text "The fog "
+key Z shift cmd
+expect text "The fog came "
+key Z shift cmd
+expect text "The fog came in"
+# Option-arrow moves by word; Option-Backspace deletes a word.
+key LEFT alt
+expect cursor 13
+key BACKSPACE alt
+expect text "The fog in"
+key RIGHT cmd
+expect cursor 10
+key ENTER
+type "Second"
+key TAB
+type "line"
+expect text "The fog in\nSecond\tline"
+shot typed
+key S cmd
+expect dirty no
+expect status "Saved"
+expect file "$DIR/new.md" "The fog in\nSecond\tline"
+# Undo right after a save returns exactly to the saved text (finding R5).
+type "!"
+expect dirty yes
+key Z cmd
+expect text "The fog in\nSecond\tline"
+expect dirty no
+# Esc must never quit or edit.
+key ESC
+expect text "The fog in\nSecond\tline"

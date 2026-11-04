@@ -88,6 +88,11 @@ const char *editor_read_only_reason(const Editor *e);
 const char *editor_take_notice(Editor *e);
 /* Buffer position at text-column coordinates (y includes scroll). */
 size_t editor_hit_test(Editor *e, float x, float y);
+/* Screen position (caret x, row middle y) of buffer index `idx`, using the
+ * geometry from the latest editor_update(). */
+bool editor_index_screen_pos(Editor *e, size_t idx, float *x, float *y);
+bool editor_index_visible(Editor *e, size_t idx);
+float editor_scroll_y(const Editor *e);
 /* Lower the size limit (tests). Never raises it above the built-in cap. */
 void editor_set_max_chars(Editor *e, size_t max);
 bool editor_is_dirty(const Editor *e);

@@ -1,0 +1,19 @@
+# Scrolling: wheel, keyboard jumps keep the caret visible, drag auto-scroll.
+open "$DIR/long.md"
+expect scrolled no
+move 600 400
+wheel -5
+expect scrolled yes
+key UP cmd
+expect scrolled no
+expect visible 0 yes
+key DOWN cmd
+expect visible 16200 yes
+expect visible 0 no
+shot scrolled-end
+key UP cmd
+# Drag from the top to below the editor and hold: the view auto-scrolls and
+# the selection grows past what was initially visible.
+drag 300 80 300 805 90
+expect cursor_range 3000 16200
+expect scrolled yes

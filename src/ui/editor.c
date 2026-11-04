@@ -12,7 +12,7 @@
 #include "core/undo.h"
 #include "core/utf8.h"
 #include "core/wrap.h"
-#include "ui/keys.h"
+#include "ui/input.h"
 
 /* ---- stb_textedit configuration (header mode) ---------------------------- */
 
@@ -467,7 +467,7 @@ static void copy(Editor *e)
 {
     if (!has_selection(e)) return;
     char *s = selection_utf8(e);
-    if (s) SetClipboardText(s);
+    if (s) input_set_clipboard(s);
     free(s);
 }
 
@@ -518,7 +518,7 @@ bool editor_paste_utf8(Editor *e, const char *s)
     return ok != 0;
 }
 
-static void paste(Editor *e) { editor_paste_utf8(e, GetClipboardText()); }
+static void paste(Editor *e) { editor_paste_utf8(e, input_get_clipboard()); }
 
 bool editor_replace_range(Editor *e, size_t pos, size_t len, const uint32_t *cps, size_t n)
 {
@@ -897,7 +897,7 @@ static void handle_keyboard(Editor *e)
 
     /* Text input. Characters arrive already composed (dead keys, ⌥-symbols). */
     int cp;
-    while ((cp = GetCharPressed()) > 0) {
+    while ((cp = input_get_char()) > 0) {
         if (primary || !rw) continue;
         if (cp < 0x20 || cp == 0x7F) continue;
         if (cp >= 0xF700 && cp <= 0xF8FF) continue; /* macOS function-key codes */
@@ -914,7 +914,7 @@ void editor_update(Editor *e, Rectangle bounds, bool focused)
     } else {
         /* Discard keystrokes typed while unfocused so they are not inserted
          * later when focus returns. */
-        while (GetCharPressed() > 0) {}
+        while (input_get_char() > 0) {}
     }
     ensure_layout(e);
     if (e->want_cursor_visible) {
@@ -1115,6 +1115,25 @@ const char *editor_take_notice(Editor *e)
 }
 
 size_t editor_hit_test(Editor *e, float x, float y) { return hit_test(e, x, y); }
+
+bool editor_index_screen_pos(Editor *e, size_t idx, float *x, float *y)
+{
+    ensure_layout(e);
+    if (idx > tb_len(&e->buf)) return false;
+    size_t r = wrap_row_for_index(&e->layout, idx);
+    *x = e->text_x + row_x(e, &e->layout.rows[r], idx);
+    *y = e->text_y + ((float)r + 0.5f) * e->font->line_height - e->scroll_y;
+    return true;
+}
+
+bool editor_index_visible(Editor *e, size_t idx)
+{
+    float x, y;
+    if (!editor_index_screen_pos(e, idx, &x, &y)) return false;
+    return y >= e->text_y - TOP_PADDING && y <= e->text_y + e->view_h;
+}
+
+float editor_scroll_y(const Editor *e) { return e->scroll_y; }
 void editor_set_max_chars(Editor *e, size_t max) { e->max_chars = max < EDITOR_MAX_CHARS ? max : EDITOR_MAX_CHARS; }
 bool editor_is_read_only(const Editor *e) { return e->read_only; }
 

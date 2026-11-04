@@ -1,0 +1,37 @@
+# Click, double-click (word), triple-click (paragraph), drag, shift-click.
+open "$DIR/chapter.md"
+click_index 4
+expect selection 4 4
+wait 30
+click_index 5 2
+expect selection 4 7
+wait 30
+click_index 150 3
+expect selection 0 235
+wait 30
+drag_index 147 157
+expect selection 147 157
+type "beacon"
+expect text "The fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the beacon stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+wait 30
+click_index 110
+wait 30
+click_index 113 shift
+expect selection 110 113
+type "Ada"
+expect text "The fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Ada Ångström stood at the top of the beacon stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+shot mouse
+# Clicking far below the text puts the caret at the end.
+wait 30
+click 600 780
+expect cursor 260
+# Clicking in the Explorer takes focus from the editor: typing is ignored.
+wait 30
+click 100 400
+type "ignored"
+expect text "The fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Ada Ångström stood at the top of the beacon stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+# Clicking back into the editor restores focus; queued keys were discarded.
+wait 30
+click_index 0
+type "~"
+expect text "~The fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Ada Ångström stood at the top of the beacon stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"

@@ -1,0 +1,10 @@
+# The close guard: a dirty document survives the first close request.
+open "$DIR/chapter.md"
+type "x"
+close
+expect status "Unsaved changes"
+expect dirty yes
+expect text "xThe fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+# A second close within 5 seconds discards and exits.
+close
+expect running no

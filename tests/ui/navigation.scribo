@@ -1,0 +1,43 @@
+# Visual-line navigation (findings R6/R7) and document motion.
+open "$DIR/nav.md"
+key END cmd
+expect cursor 28
+# Up from the very end keeps the column, not the line start (R6).
+key UP
+expect cursor_range 5 8
+key END cmd
+key UP shift
+expect anchor 28
+expect cursor_range 5 8
+key DOWN
+expect cursor 28
+open "$DIR/chapter.md"
+# The first paragraph (234 chars) wraps into several visual rows.
+click_index 120
+key LEFT cmd
+expect cursor_range 40 119
+key RIGHT cmd
+expect cursor_range 121 233
+# Cmd-Backspace deletes back to the start of the visual row only (R7).
+key BACKSPACE cmd
+expect length 114 224
+key Z cmd
+expect length 264 264
+key DOWN cmd
+expect cursor 264
+key UP cmd
+expect cursor 0
+key PGDN
+expect cursor 264
+key PGUP
+expect cursor 0
+key END
+expect cursor_range 40 233
+key HOME
+expect cursor 0
+key RIGHT shift
+key RIGHT shift
+key RIGHT shift
+expect selection 0 3
+key LEFT
+expect cursor 0

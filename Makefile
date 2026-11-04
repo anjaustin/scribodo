@@ -53,13 +53,13 @@ $(RAYLIB_LIB): $(RAYLIB_OBJS)
 
 # --- Scribodo ----------------------------------------------------------------
 CORE_SRCS := src/core/utf8.c src/core/text_buffer.c src/core/undo.c src/core/wrap.c src/core/doc_io.c
-APP_SRCS  := src/main.c src/ui/font.c src/ui/clay_render.c src/ui/editor.c src/ui/keys.c src/ui/vendor_impl.c
+APP_SRCS  := src/main.c src/app/script.c src/ui/font.c src/ui/clay_render.c src/ui/editor.c src/ui/input.c src/ui/vendor_impl.c
 CORE_OBJS := $(patsubst %.c,$(BUILD)/%.o,$(CORE_SRCS))
 APP_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(APP_SRCS))
 APP   := $(BUILD)/scribodo
 TESTS := $(BUILD)/test_core $(BUILD)/test_doc_io $(BUILD)/test_editor
 
-.PHONY: all run test sanitize clean distclean
+.PHONY: all run test uitest sanitize clean distclean
 
 all: $(APP)
 
@@ -81,11 +81,25 @@ $(BUILD)/test_doc_io: $(CORE_OBJS) $(BUILD)/tests/test_doc_io.o
 	$(CC) $(CFLAGS) $^ -o $@
 
 # The real editor, linked against headless raylib stubs.
-$(BUILD)/test_editor: $(CORE_OBJS) $(BUILD)/src/ui/editor.o $(BUILD)/src/ui/keys.o $(BUILD)/tests/raylib_stubs.o $(BUILD)/tests/test_editor.o
+$(BUILD)/test_editor: $(CORE_OBJS) $(BUILD)/src/ui/editor.o $(BUILD)/src/ui/input.o $(BUILD)/tests/raylib_stubs.o $(BUILD)/tests/test_editor.o
 	$(CC) $(CFLAGS) $^ -o $@ -lm
 
 test: $(TESTS)
 	@set -e; for t in $(TESTS); do echo "== $$t"; ./$$t; echo; done
+
+# Scripted UI tests: each script drives the real app in a hidden window against
+# its own copy of tests/ui/fixtures in build/ui/<script>/work, where its
+# screenshots also land. build/ui is wiped (a fixed path) at the start.
+UI_SCRIPTS := $(wildcard tests/ui/*.scribo)
+uitest: $(APP)
+	@chmod -R u+w build/ui 2>/dev/null; rm -rf build/ui
+	@fail=0; for s in $(UI_SCRIPTS); do \
+	  name=$$(basename $$s .scribo); work=build/ui/$$name/work; \
+	  mkdir -p $$work && cp -R tests/ui/fixtures/. $$work/; \
+	  SCRIBODO_SCRIPT=$$s SCRIBODO_SCRIPT_DIR=$$PWD/$$work SCRIBODO_SHOT_DIR=$$PWD/build/ui/$$name \
+	    ./$(APP) 2>build/ui/$$name/stderr.log || fail=1; \
+	  echo; \
+	done; exit $$fail
 
 SAN_FLAGS := -O1 -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined
 sanitize:
@@ -98,7 +112,7 @@ $(BUILD)/raylib $(BUILD)/src/ui:
 	@mkdir -p $@
 
 clean:
-	rm -rf $(BUILD)/src $(BUILD)/tests $(APP) $(TESTS) build/asan
+	rm -rf $(BUILD)/src $(BUILD)/tests $(APP) $(TESTS) build/asan build/ui
 
 distclean:
 	rm -rf $(BUILD)

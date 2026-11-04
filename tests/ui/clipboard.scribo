@@ -1,0 +1,26 @@
+# Copy, cut, paste via the private clipboard (the user's clipboard is untouched).
+open "$DIR/chapter.md"
+click_index 5 2
+key C cmd
+expect clipboard "fog"
+wait 30
+click_index 0
+key V cmd
+expect text "fogThe fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+key Z cmd
+expect text "The fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+wait 30
+click_index 5 2
+key X cmd
+expect clipboard "fog"
+expect text "The  came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+key Z cmd
+expect text "The fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+# Pasted CRLF is normalised and control characters are dropped.
+clipboard "one\r\ntwo\u{1}"
+key END cmd
+key V cmd
+expect text "The fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\none\ntwo"
+key A cmd
+key C cmd
+expect clipboard "The fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\none\ntwo"

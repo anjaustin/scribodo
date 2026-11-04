@@ -1,0 +1,4 @@
+# A clean document closes on the first request.
+open "$DIR/chapter.md"
+close
+expect running no

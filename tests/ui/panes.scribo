@@ -1,0 +1,22 @@
+# Splitter dragging, clamping, and window resizing.
+open "$DIR/chapter.md"
+expect explorer_w 219 221
+expect observer_w 279 281
+expect editor_w 760 780
+drag 222 400 340 400
+expect explorer_w 335 340
+drag 997 400 900 400
+expect observer_w 374 381
+shot panes-wide
+# Dragging far past the limit clamps to 30% of the window.
+drag 340 400 1200 400
+expect explorer_w 383 385
+# Shrinking the window re-clamps both panes; the editor stays usable.
+resize 900 600
+expect explorer_w 269 271
+expect observer_w 269 271
+expect editor_w 340 360
+shot panes-narrow
+# The editor still has focus after splitter drags.
+type "x"
+expect dirty yes
