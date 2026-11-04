@@ -69,7 +69,7 @@ APP_OBJS  += $(BUILD)/src/platform/dialogs_mac.o
 APP   := $(BUILD)/scribodo
 TESTS := $(BUILD)/test_core $(BUILD)/test_doc_io $(BUILD)/test_editor $(BUILD)/test_llm
 
-.PHONY: all run test uitest uitest-real sanitize tsan cstest dbtest uitest-db clean distclean llama model llmtest
+.PHONY: all run test uitest uitest-real sanitize tsan cstest dbtest uitest-db backuptest clean distclean llama model llmtest
 
 all: $(APP)
 
@@ -172,6 +172,10 @@ uitest-db: $(APP)
 	  SCRIBODO_STORE=db SCRIBODO_DB_PORT=1 SCRIBODO_SCRIPT=tests/ui/store/3_paused.scribo SCRIBODO_SCRIPT_DIR=$$work \
 	    SCRIBODO_SHOT_DIR=$$PWD/build/ui/store $(WATCHDOG) 180 ui-store ./$(APP) 2>>build/ui/store/stderr.log || fail=1; \
 	  tools/services.sh testdb drop $$db >/dev/null; exit $$fail
+
+# Backup and recovery: back up, lose everything, restore, resume.
+backuptest: $(APP)
+	tools/backuptest.sh
 
 # Rename safety on a case-sensitive volume (builds a temporary disk image).
 cstest: $(APP)

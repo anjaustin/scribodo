@@ -188,16 +188,19 @@ static void hash16(const char *s, char out[17])
     snprintf(out, 17, "%016llx", (unsigned long long)h);
 }
 
-static bool ensure_collection(const char *pid)
+/* *created: it didn't exist (a new project, or a lost index). */
+static bool ensure_collection_ex(const char *pid, bool *created)
 {
     char name[160], path[220];
     collection_for(pid, name, sizeof(name));
     snprintf(path, sizeof(path), "/collections/%s", name);
+    if (created) *created = false;
     cJSON *j = NULL;
     if (qdrant("GET", path, NULL, &j)) {
         cJSON_Delete(j);
         return true;
     }
+    if (created) *created = true;
     cJSON *body = cJSON_CreateObject();
     cJSON *vec = cJSON_AddObjectToObject(body, "vectors");
     cJSON_AddNumberToObject(vec, "size", SEM_DIM);
@@ -206,6 +209,8 @@ static bool ensure_collection(const char *pid)
     cJSON_Delete(body);
     return ok;
 }
+
+static bool ensure_collection(const char *pid) { return ensure_collection_ex(pid, NULL); }
 
 /* Has this exact text already been indexed under `key`? */
 static bool marked(Db *db, const char *pid, const char *key, const char *hash)
@@ -300,10 +305,15 @@ static bool delete_points(const char *pid, const char *key, const char *value)
 bool semantic_sync_records(const char *project_id, char *err, size_t errlen)
 {
     Db *db = store_db();
-    if (!db || !ensure_collection(project_id)) {
+    bool created = false;
+    if (!db || !ensure_collection_ex(project_id, &created)) {
         snprintf(err, errlen, "The semantic index isn't available");
         return false;
     }
+    /* No collection: a new project, or an index that was lost (restored
+     * from a backup, Qdrant wiped). Its marks would say everything is
+     * indexed, so the whole index is rebuilt from the store instead. */
+    if (created) return semantic_rebuild(project_id, err, errlen) >= 0;
     DbRows r;
     /* The current version of every note and canon entry. */
     if (!db_query(db,
@@ -611,4 +621,12 @@ long semantic_rebuild(const char *project_id, char *err, size_t errlen)
         db_rows_free(&rc);
     }
     return count;
+}
+
+bool semantic_forget_collection(const char *project_id)
+{
+    char name[160], path[220];
+    collection_for(project_id, name, sizeof(name));
+    snprintf(path, sizeof(path), "/collections/%s", name);
+    return qdrant("DELETE", path, NULL, NULL);
 }

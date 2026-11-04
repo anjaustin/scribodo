@@ -678,6 +678,31 @@ static void test_entities(void)
     zoe = find_entity(e, n, "Zoë");
     CHECK(zoe && zoe->mentions == 2); /* still this project's two */
     entity_list_free(e, n);
+
+    /* Names look like names (the real model gives phrases as subjects);
+     * a first name joins the one full name it starts. */
+    char p3[40], g[40];
+    CHECK(store_project_id("/private/var/run", true, p3, sizeof(p3)));
+    CHECK(add_finding(db, p3, g, "event", "Dvořák confronts Zoë about being late", "", "", "x."));
+    CHECK(add_finding(db, p3, g, "event", "Zoë's eyes narrowing", "", "", "x."));
+    CHECK(add_finding(db, p3, g, "entity", "the sea", "", "", "x."));
+    CHECK(sdb_entity_list(db, p3, &e) == 0);
+    entity_list_free(e, 0);
+    CHECK(add_finding(db, p3, g, "entity", "Zoë", "", "", "Zoë is mentioned."));
+    CHECK(add_finding(db, p3, g, "entity", "Zoë Ångström", "", "", "Zoë Ångström climbs."));
+    CHECK(add_finding(db, p3, g, "event", "Zoë", "", "", "Zoë waits."));
+    CHECK(add_finding(db, p3, g, "entity", "Ludwig van Beethoven", "", "", "A bust of Beethoven."));
+    n = sdb_entity_list(db, p3, &e);
+    const EntityRow *full = find_entity(e, n, "Zoë Ångström");
+    CHECK(n == 2 && full && full->mentions == 3 && !find_entity(e, n, "Zoë") && find_entity(e, n, "Ludwig van Beethoven"));
+    entity_list_free(e, n);
+    /* Two full names with one first name: "Anna" alone stays apart. */
+    CHECK(add_finding(db, p3, g, "entity", "Anna Berg", "", "", "x."));
+    CHECK(add_finding(db, p3, g, "entity", "Anna Lund", "", "", "x."));
+    CHECK(add_finding(db, p3, g, "entity", "Anna", "", "", "x."));
+    n = sdb_entity_list(db, p3, &e);
+    CHECK(find_entity(e, n, "Anna") && find_entity(e, n, "Anna Berg") && find_entity(e, n, "Anna Lund"));
+    entity_list_free(e, n);
     store_stop();
 }
 
@@ -750,6 +775,16 @@ static void test_semantic(void)
           atol(db_cell(&r, 0, 0)) == count);
     db_rows_free(&r);
     CHECK(semantic_sync_records(pid, why, sizeof(why)));
+    /* The index lost but its marks kept (restored under another database,
+     * Qdrant wiped): the next sync rebuilds everything, documents too. */
+    CHECK(semantic_forget_collection(pid));
+    CHECK(semantic_sync_records(pid, why, sizeof(why)));
+    n = semantic_search(pid, "lighthouse stairs", "draft", 3, &h);
+    CHECK(n >= 1 && !strcmp(h[0].revision_id, rv) && h[0].start == 18);
+    semantic_hits_free(h, n);
+    n = semantic_canon_for(pid, "Zoë's brown eyes narrowed.", 3, &h);
+    CHECK(n >= 1 && !strcmp(h[0].record_id, c1));
+    semantic_hits_free(h, n);
     semantic_drop(pid);
     store_stop();
 }

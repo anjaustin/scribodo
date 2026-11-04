@@ -71,11 +71,23 @@ The marker (`.scribodo/store.json`, version 2) records the project id and the fo
 
 ## Backups (SOW §7)
 
-`tools/backup.sh` (and later a menu item) writes:
-- a copy of the project folder;
-- a `mariadb-dump --single-transaction` of that project's rows.
+`tools/backup.sh [--db NAME] PROJECT_DIR [DEST]` writes a folder (0700, by default under `~/Library/Application Support/Scribodo/backups/`) holding:
+- `db.sql.gz`: `mariadb-dump --single-transaction` of the store database. That's one consistent snapshot, taken without locking out the app. The whole database is dumped, so the rows of every project stay consistent with each other. A dump with no completion line is rejected.
+- `files/<project>`: the project folder, copied with `ditto`. That's the documents plus `.scribodo/`, which holds the store marker.
+- `manifest.json` (database, path, project id, schema version) and `SHA256SUMS`.
 
-Qdrant is not backed up. It's rebuilt from MariaDB and the documents (acceptance criterion 10).
+`tools/backup.sh verify BACKUP` checks the checksums. `tools/restore.sh BACKUP [--db NAME] [--to FOLDER] [--replace]` checks them first and changes nothing if one fails. It then loads the dump into an empty (or, with `--replace`, an existing) database and puts the folder back where it came from, or at `FOLDER`, which must not exist.
+
+Qdrant isn't backed up. When a project's collection is missing, the next sync rebuilds the whole index from the store (acceptance criterion 10), documents and chats included. The marks alone would otherwise claim everything was already indexed.
+
+`make backuptest` rehearses a disaster:
+1. a project is used;
+2. it's backed up;
+3. a tampered backup is refused;
+4. the folder, the database and the index are deleted;
+5. everything is restored;
+6. the store's resume run passes;
+7. restoring over a database with data is refused.
 
 ## Qdrant (step 4b)
 

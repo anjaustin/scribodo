@@ -69,5 +69,8 @@ size_t semantic_search(const char *project_id, const char *query, const char *ki
 long semantic_rebuild(const char *project_id, char *err, size_t errlen);
 /* Drop the project's collection (tests; "wipe"). */
 bool semantic_drop(const char *project_id);
+/* Tests: lose the collection but keep the marks, as a restore under another
+ * database or a wiped Qdrant would. The next sync rebuilds the index. */
+bool semantic_forget_collection(const char *project_id);
 
 #endif

@@ -156,7 +156,8 @@ On first launch the app checks the model file against its pinned hash (once), th
 make sanitize  # run the same tests under AddressSanitizer + UBSan
 make tsan      # the threaded code (chat, observer, supervisor) under ThreadSanitizer
 make dbtest    # the store against the local MariaDB (tools/services.sh up), in a throwaway database
-make uitest-db # the app on the store: move a project in, resume after a restart, a copied folder, database down
+make uitest-db # the app on the store: move a project in, resume after a restart, entities, a copied folder, database down
+make backuptest # back up, lose the folder, database and index, restore, resume
 make uitest    # scripted UI tests: the real app in a hidden window (needs an awake display)
 make llmtest   # end-to-end against the real model: supervisor, streaming, auth, crash recovery
 make uitest-real  # the real model through the real UI

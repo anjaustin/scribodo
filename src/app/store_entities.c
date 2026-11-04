@@ -65,13 +65,55 @@ void entity_norm(const char *name, char *out, size_t outlen)
     if (s) memmove(out, out + s, k - s + 1);
 }
 
-/* A named entity: starts with a capital letter, two characters or more. */
+static bool capitalised(const char *w, size_t len)
+{
+    uint32_t c;
+    int n = utf8_decode_one((const uint8_t *)w, len, &c);
+    return n > 0 && upper_cp(c);
+}
+
+/* A named entity looks like a name: one to four words, each capitalised
+ * ("Zoë Ångström", "Ytre Sula"), apart from particles ("Ludwig van
+ * Beethoven"). Phrases a model may give as a subject ("Dvořák confronts
+ * Zoë", "Zoë's eyes narrowing", "the sea") are not entities. */
 static bool a_name(const char *name)
 {
-    while (*name == ' ') name++;
-    uint32_t c;
-    int n = utf8_decode_one((const uint8_t *)name, strlen(name), &c);
-    return n > 0 && upper_cp(c) && strlen(name) >= 2;
+    static const char *const particles[] = { "van", "von", "de", "da", "del", "der", "den", "di", "du", "la", "le", "of", "af", "av" };
+    int words = 0;
+    bool first = true;
+    for (const char *p = name; *p;) {
+        while (*p == ' ') p++;
+        if (!*p) break;
+        const char *w = p;
+        while (*p && *p != ' ') p++;
+        size_t len = (size_t)(p - w);
+        words++;
+        bool particle = false;
+        for (size_t k = 0; !first && k < sizeof(particles) / sizeof(particles[0]) && !particle; k++)
+            particle = strlen(particles[k]) == len && !strncmp(particles[k], w, len);
+        if (!particle && !capitalised(w, len)) return false;
+        /* a possessive inside a name means a phrase ("Zoë's eyes") */
+        if (*p && len > 2 && (!strncmp(w + len - 2, "'s", 2) || (len > 4 && !strncmp(w + len - 4, "\xE2\x80\x99s", 4))))
+            return false;
+        first = false;
+    }
+    return words >= 1 && words <= 4 && strlen(name) >= 2;
+}
+
+/* "zoë" for "zoë ångström": the first word of a normalised name. */
+static size_t first_word(const char *norm) { return strcspn(norm, " "); }
+
+/* Fold entity `from` into `into` (a first name that turned out to be a
+ * full name's): mentions and links move, `from` goes. */
+static bool fold_entity(Db *db, const char *from, const char *into)
+{
+    DbArg a[2] = { DB_S(into), DB_S(from) };
+    return db_run(db, "INSERT IGNORE INTO entity_mentions (entity_id, finding_id) SELECT ?, finding_id FROM entity_mentions WHERE entity_id = ?",
+                  a, 2, NULL) &&
+           db_run(db, "UPDATE links SET from_entity = ? WHERE from_entity = ?", a, 2, NULL) &&
+           db_run(db, "UPDATE links SET to_entity = ? WHERE to_entity = ?", a, 2, NULL) &&
+           db_run(db, "DELETE FROM links WHERE from_entity = to_entity AND from_entity = ?", (DbArg[1]){ DB_S(into) }, 1, NULL) &&
+           db_run(db, "DELETE FROM entities WHERE id = ?", (DbArg[1]){ DB_S(from) }, 1, NULL);
 }
 
 /* The display name: trimmed, possessive dropped, at most 255 bytes. */
@@ -99,6 +141,20 @@ bool sdb_entity_upsert(Db *db, const char *pid, const char *name, const char *ty
         return true;
     }
     db_rows_free(&r);
+    /* A first name alone ("Zoë") is the one full name it starts, if there
+     * is exactly one ("Zoë Ångström"); two Zoës stay apart. */
+    size_t fw = first_word(norm);
+    if (!norm[fw]) {
+        char like[260];
+        snprintf(like, sizeof(like), "%s %%", norm);
+        if (!db_query(db, "SELECT id FROM entities WHERE project_id = ? AND norm_name LIKE ? LIMIT 2",
+                      (DbArg[2]){ DB_S(pid), DB_S(like) }, 2, &r))
+            return false;
+        bool one = r.nrows == 1;
+        if (one) snprintf(id_out, idlen, "%s", db_cell(&r, 0, 0));
+        db_rows_free(&r);
+        if (one) return true;
+    }
     char id[40], clean[256];
     store_new_id('e', id, sizeof(id));
     display_name(name, clean, sizeof(clean));
@@ -110,6 +166,24 @@ bool sdb_entity_upsert(Db *db, const char *pid, const char *name, const char *ty
     bool ok = r.nrows > 0;
     if (ok) snprintf(id_out, idlen, "%s", db_cell(&r, 0, 0));
     db_rows_free(&r);
+    /* A new full name absorbs an existing entity for its first name alone,
+     * unless another full name starts with it too. */
+    if (ok && norm[fw]) {
+        char firstn[256], like[260];
+        snprintf(firstn, sizeof(firstn), "%.*s", (int)fw, norm);
+        snprintf(like, sizeof(like), "%s %%", firstn);
+        DbRows f, others;
+        if (db_query(db, "SELECT id FROM entities WHERE project_id = ? AND norm_name = ?", (DbArg[2]){ DB_S(pid), DB_S(firstn) }, 2,
+                     &f)) {
+            if (f.nrows == 1 &&
+                db_query(db, "SELECT COUNT(*) FROM entities WHERE project_id = ? AND norm_name LIKE ?",
+                         (DbArg[2]){ DB_S(pid), DB_S(like) }, 2, &others)) {
+                if (!strcmp(db_cell(&others, 0, 0), "1")) ok = fold_entity(db, db_cell(&f, 0, 0), id_out);
+                db_rows_free(&others);
+            }
+            db_rows_free(&f);
+        }
+    }
     return ok;
 }
 
