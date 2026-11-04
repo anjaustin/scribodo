@@ -28,6 +28,7 @@
 #include "rlgl.h"
 
 #include "app/chat_store.h"
+#include "core/utf8.h"
 #include "app/recent.h"
 #include "app/records.h"
 #include "app/renames.h"
@@ -56,7 +57,7 @@ void glfwSetWindowShouldClose(void *window, int value);
 enum { FONT_UI = 0, FONT_PROSE = 1, FONT_CHAT = 2, FONT_COUNT };
 enum { FOCUS_NONE, FOCUS_DOC, FOCUS_CHAT, FOCUS_RECORD };
 enum { DRAG_NONE, DRAG_EXPLORER, DRAG_OBSERVER, DRAG_CHAT };
-enum { PT_NEW_DOC = 1, PT_RENAME_DOC, PT_RENAME_CHAT };  /* what the name prompt is for */
+enum { PT_NEW_DOC = 1, PT_RENAME_DOC, PT_RENAME_CHAT, PT_ATTACH_NAME };  /* what the name prompt is for */
 enum { MT_DOC = 1, MT_CHAT, MT_ATTACH };  /* what a context menu is for */
 #define MAX_ATTACH 8
 
@@ -100,7 +101,6 @@ typedef struct {
     LlmServer *llm;
     ChatSession *chat;
     ChatView *chat_view;
-    bool include_doc;
     /* A conversation belongs to the project it started in, even if the author
      * opens a document elsewhere while a reply is still streaming. */
     char chat_project[PATH_MAX];
@@ -160,6 +160,7 @@ typedef struct {
     char attached[MAX_ATTACH][256];
     size_t nattached;
     Rectangle attach_chip[MAX_ATTACH], attach_x[MAX_ATTACH], attach_add;
+    bool attach_touched;          /* the author changed them: opening a document no longer resets them */
     RecentProject recents[RECENT_MAX];
     size_t nrecents;
     Rectangle welcome_btn[3], recent_rect[RECENT_MAX], empty_btn[2];
@@ -217,6 +218,9 @@ static void refresh_lists(App *app)
         while ((ent = readdir(d)) != NULL && app->ndocs < MAX_DOCS) {
             size_t n = strlen(ent->d_name);
             if (ent->d_name[0] == '.') continue;
+            bool ctl = false; /* a name with a line break would break records and requests */
+            for (const unsigned char *c = (const unsigned char *)ent->d_name; *c && !ctl; c++) ctl = *c < 0x20;
+            if (ctl) continue;
             if ((n > 3 && !strcasecmp(ent->d_name + n - 3, ".md")) || (n > 4 && !strcasecmp(ent->d_name + n - 4, ".txt")) ||
                 (n > 9 && !strcasecmp(ent->d_name + n - 9, ".markdown")))
                 app->docs[app->ndocs++] = strdup(ent->d_name);
@@ -496,6 +500,8 @@ static void restore_revision(App *app, const Revision *r)
 
 static bool close_record(App *app, bool explicit_close);
 static void attach_reset(App *app);
+static bool listed_doc(App *app, const char *name);
+static bool attach(App *app, const char *name);
 static void open_project(App *app, const char *dir);
 
 /* The project folder a document belongs to (its directory, resolved). */
@@ -532,7 +538,7 @@ static void open_path(App *app, const char *path)
         chat_lock(app->chat);
         size_t nmsg = chat_count(app->chat);
         chat_unlock(app->chat);
-        if (nmsg == 0 && !app->clear_chat_when_idle) attach_reset(app);
+        if (nmsg == 0 && !app->clear_chat_when_idle && !app->attach_touched) attach_reset(app);
     } else {
         set_status(app, msg);
     }
@@ -680,11 +686,28 @@ static bool set_aside_history(App *app, const char *name)
 /* Returns true when the prompt can close. */
 static bool finish_prompt(App *app, const char *typed)
 {
+    if (prompt_tag(app->prompt) == PT_ATTACH_NAME) {
+        if (strcmp(app->prompt_project, app->project_dir) != 0) return true;
+        if (!listed_doc(app, typed)) {
+            prompt_set_error(app->prompt, "No document by that name in this project");
+            return false;
+        }
+        attach(app, typed);
+        app->attach_touched = true;
+        return true;
+    }
     if (prompt_tag(app->prompt) == PT_RENAME_CHAT) {
         if (!typed[0]) {
             prompt_set_error(app->prompt, "Type a title");
             return false;
         }
+        /* Titles are kept to 150 bytes, cut on a character boundary. */
+        char title[160];
+        snprintf(title, sizeof(title), "%.150s", typed);
+        size_t tl = strlen(title);
+        while (tl > 0 && ((unsigned char)title[tl] & 0xC0) == 0x80) title[tl--] = '\0';
+        if (tl < strlen(typed) && tl > 0 && ((unsigned char)title[tl - 1] & 0xC0) == 0xC0) title[--tl] = '\0';
+        typed = title;
         if (strcmp(app->prompt_project, app->project_dir) != 0) return true; /* project changed: nothing done */
         if (!chat_store_rename(app->project_dir, app->menu_chat, typed)) {
             prompt_set_error(app->prompt, "Couldn't rename that chat");
@@ -916,9 +939,29 @@ static bool is_attached(App *app, const char *name)
     return false;
 }
 
+/* A document the Explorer lists for this project: never a path, a hidden
+ * file or anything outside the folder (red-team 007: a chat log could name
+ * "../other/secret.md"). */
+static bool listed_doc(App *app, const char *name)
+{
+    if (!name[0] || name[0] == '.' || strchr(name, '/')) return false;
+    for (const unsigned char *p = (const unsigned char *)name; *p; p++)
+        if (*p < 0x20) return false; /* would break the record */
+    /* The open document (a new one isn't in the list until it refreshes). */
+    if (editor_path(app->editor) && !strcmp(base_name(editor_path(app->editor)), name)) {
+        char proj[PATH_MAX];
+        project_of(editor_path(app->editor), proj, sizeof(proj));
+        if (!strcmp(proj, app->project_dir)) return true;
+    }
+    for (size_t i = 0; i < app->ndocs; i++)
+        if (!strcmp(app->docs[i], name)) return true;
+    return false;
+}
+
 static bool attach(App *app, const char *name)
 {
     if (is_attached(app, name)) return true;
+    if (!listed_doc(app, name)) return false;
     if (app->nattached == MAX_ATTACH) {
         set_status(app, "A chat can have up to 8 documents attached");
         return false;
@@ -938,6 +981,7 @@ static void detach(App *app, size_t i)
 static void attach_reset(App *app)
 {
     app->nattached = 0;
+    app->attach_touched = false;
     if (editor_path(app->editor)) attach(app, base_name(editor_path(app->editor)));
 }
 
@@ -946,6 +990,7 @@ static void attach_reset(App *app)
  * normalised. NULL if it can't be read. */
 static char *attached_text(App *app, const char *name)
 {
+    if (!listed_doc(app, name)) return NULL;
     if (editor_path(app->editor) && !strcmp(base_name(editor_path(app->editor)), name)) return editor_text_utf8(app->editor);
     char full[PATH_MAX + 260];
     snprintf(full, sizeof(full), "%s/%s", app->project_dir, name);
@@ -968,7 +1013,26 @@ static char *attached_text(App *app, const char *name)
         }
     }
     buf[w] = '\0';
-    return buf;
+    /* Invalid UTF-8 becomes U+FFFD, as in the editor; raw bytes would make
+     * the request invalid JSON (red-team 007). */
+    uint32_t *cps = malloc((w + 1) * sizeof(uint32_t));
+    char *out = NULL;
+    if (cps) {
+        size_t invalid = 0, n = utf8_decode((const uint8_t *)buf, w, cps, &invalid);
+        if (invalid == 0) {
+            free(cps);
+            return buf;
+        }
+        size_t bytes = utf8_encoded_len(cps, n);
+        out = malloc(bytes + 1);
+        if (out) {
+            utf8_encode(cps, n, (uint8_t *)out);
+            out[bytes] = '\0';
+        }
+        free(cps);
+    }
+    free(buf);
+    return out;
 }
 
 static void new_chat(App *app)
@@ -997,15 +1061,18 @@ static void open_chat(App *app, const ChatSummary *c)
         set_status(app, "Could not open that chat");
         return;
     }
-    /* Its attachments are those of its last message (renames followed). */
+    /* Its attachments are those of its newest user message, exactly: if
+     * that one was sent with nothing, nothing is attached (red-team 007).
+     * Renames are followed only if they came after the message. */
     app->nattached = 0;
+    app->attach_touched = true;
     for (size_t i = n; i-- > 0;) {
-        if (msgs[i].role != CHAT_USER || !msgs[i].docs) continue;
-        char *copy = strdup(msgs[i].docs);
+        if (msgs[i].role != CHAT_USER) continue;
+        char *copy = msgs[i].docs ? strdup(msgs[i].docs) : NULL;
         for (char *save = NULL, *t = copy ? strtok_r(copy, "\n", &save) : NULL; t; t = strtok_r(NULL, "\n", &save)) {
             char cur[256];
-            renames_resolve(app->project_dir, t, cur, sizeof(cur));
-            if (name_taken(app, cur)) attach(app, cur);
+            renames_resolve_since(app->project_dir, t, msgs[i].ts, cur, sizeof(cur));
+            attach(app, cur); /* only if still a listed document */
         }
         free(copy);
         break;
@@ -1548,33 +1615,53 @@ static void empty_action(App *app, int act, const char *sample)
     else if (act == 21) import_documents(app);
 }
 
+/* `s` shortened with an ellipsis to fit `maxw` (whole UTF-8 characters). */
+static void fit_label(const SFont *f, const char *s, float maxw, char *out, size_t outlen)
+{
+    snprintf(out, outlen, "%s", s);
+    int n = (int)strlen(out);
+    if (sfont_measure_utf8(f, out, n) <= maxw) return;
+    float ell = sfont_measure_utf8(f, "\xE2\x80\xA6", 3);
+    while (n > 0 && sfont_measure_utf8(f, out, n) + ell > maxw) {
+        n--;
+        while (n > 0 && ((unsigned char)out[n] & 0xC0) == 0x80) n--;
+    }
+    if ((size_t)n + 4 <= outlen) snprintf(out + n, outlen - (size_t)n, "\xE2\x80\xA6");
+}
+
 /* The chat footer's attachments: "Attached:" then a chip per document
- * (with ×), then "+ Attach". Returns -2 for Attach, i >= 0 to remove chip i,
- * -1 for nothing. */
+ * (with ×), "+N more" if they don't all fit, then "+ Attach". Everything
+ * stays inside the row (red-team 007: a long name hid the only chip, and
+ * "+ Attach" overlapped Send). Returns -2 for Attach or "+N more", i >= 0 to
+ * remove chip i, -1 for nothing. */
 static int draw_attach_row(App *app, Rectangle r)
 {
     const SFont *ui = &app->fonts[FONT_UI];
     Color muted = { 0x8B, 0x8B, 0x8B, 0xFF }, chip_bg = { 0x2C, 0x30, 0x36, 0xFF }, text = { 0xD0, 0xD0, 0xD0, 0xFF };
     Color link = { 0x6C, 0xA8, 0xE0, 0xFF };
-    float x = r.x, y = r.y + (r.height - ui->line_height) / 2;
+    float x = r.x, y = r.y + (r.height - ui->line_height) / 2, right = r.x + r.width;
     Vector2 m = GetMousePosition();
     bool click = !input_mouse_blocked() && IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
     int act = -1;
     for (size_t i = 0; i < MAX_ATTACH; i++) app->attach_chip[i] = app->attach_x[i] = (Rectangle){ 0 };
     const char *lbl = app->nattached ? "Attached:" : "No documents attached";
+    const char *add = "+ Attach";
+    float add_w = sfont_measure_utf8(ui, add, (int)strlen(add)) + 8;
+    BeginScissorMode((int)r.x, (int)r.y, (int)r.width, (int)r.height);
     sfont_draw_utf8(ui, lbl, (int)strlen(lbl), x, y, muted);
     x += sfont_measure_utf8(ui, lbl, (int)strlen(lbl)) + 8;
-    BeginScissorMode((int)r.x, (int)r.y, (int)r.width, (int)r.height);
+    float more_w = sfont_measure_utf8(ui, "+8 more", 7) + 10;
+    size_t shown = 0;
     for (size_t i = 0; i < app->nattached; i++) {
-        char name[64];
-        snprintf(name, sizeof(name), "%.40s%s", app->attached[i], strlen(app->attached[i]) > 40 ? "\xE2\x80\xA6" : "");
+        bool more_after = i + 1 < app->nattached;
+        float limit = right - add_w - (more_after ? more_w : 0) - x; /* room for this chip */
+        char name[300];
+        snprintf(name, sizeof(name), "%s", app->attached[i]);
         float w = sfont_measure_utf8(ui, name, (int)strlen(name)) + 30;
-        if (x + w > r.x + r.width - 70) {
-            char more[32];
-            snprintf(more, sizeof(more), "+%zu more", app->nattached - i);
-            sfont_draw_utf8(ui, more, (int)strlen(more), x, y, muted);
-            x += sfont_measure_utf8(ui, more, (int)strlen(more)) + 8;
-            break;
+        if (w > limit) {
+            if (shown > 0 || limit < 60) break; /* the rest go under "+N more" */
+            fit_label(ui, app->attached[i], limit - 30, name, sizeof(name)); /* the first chip always shows */
+            w = sfont_measure_utf8(ui, name, (int)strlen(name)) + 30;
         }
         Rectangle chip = { x, r.y + 3, w, r.height - 6 };
         DrawRectangleRounded(chip, 0.5f, 6, chip_bg);
@@ -1586,10 +1673,18 @@ static int draw_attach_row(App *app, Rectangle r)
         app->attach_x[i] = xr;
         if (click && hot) act = (int)i;
         x += w + 6;
+        shown++;
     }
-    const char *add = "+ Attach";
-    float aw = sfont_measure_utf8(ui, add, (int)strlen(add));
-    app->attach_add = (Rectangle){ x, r.y + 3, aw + 8, r.height - 6 };
+    if (shown < app->nattached) {
+        char more[32];
+        snprintf(more, sizeof(more), "+%zu more", app->nattached - shown);
+        Rectangle mr = { x, r.y + 3, sfont_measure_utf8(ui, more, (int)strlen(more)) + 4, r.height - 6 };
+        sfont_draw_utf8(ui, more, (int)strlen(more), x, y, link);
+        if (click && CheckCollisionPointRec(m, mr)) act = -2; /* the menu shows them all */
+        x += mr.width + 6;
+    }
+    if (x + add_w > right) x = right - add_w;
+    app->attach_add = (Rectangle){ x, r.y + 3, add_w, r.height - 6 };
     sfont_draw_utf8(ui, add, (int)strlen(add), x + 4, y, link);
     if (click && CheckCollisionPointRec(m, app->attach_add)) act = -2;
     EndScissorMode();
@@ -1623,8 +1718,9 @@ static void send_chat(App *app, char *text)
         cdocs[ncd] = (ChatDoc){ app->attached[i], texts[ncd] };
         ncd++;
     }
-    ctx.docs = cdocs;
-    ctx.ndocs = ncd;
+    /* An edit request sends (and records) only the edited document. */
+    ctx.docs = app->edit_mode ? NULL : cdocs;
+    ctx.ndocs = app->edit_mode ? 0 : ncd;
     if (app->edit_mode && editor_path(app->editor) && is_attached(app, base_name(editor_path(app->editor)))) {
         doc = editor_text_utf8(app->editor);
         ctx.doc_title = base_name(editor_path(app->editor));
@@ -2102,7 +2198,6 @@ int main(int argc, char **argv)
     app.observer_w = 260;
     app.chat_w = 420;
     app.focus = FOCUS_DOC;
-    app.include_doc = true;
 
     float dpi = GetWindowScaleDPI().x;
     if (!load_fonts(&app, dpi)) {
@@ -2549,6 +2644,7 @@ int main(int argc, char **argv)
             int aa = draw_attach_row(&app, attach_rect);
             if (aa >= 0) {
                 detach(&app, (size_t)aa);
+                app.attach_touched = true;
             } else if (aa == -2) {
                 if (!app.project_dir[0] || app.ndocs == 0) {
                     set_status(&app, "Open a project with documents to attach them");
@@ -2557,11 +2653,20 @@ int main(int argc, char **argv)
                     const char *items[MENU_MAX_ITEMS];
                     char labels[MENU_MAX_ITEMS][48];
                     int n = 0;
-                    for (size_t i = 0; i < app.ndocs && n < MENU_MAX_ITEMS; i++, n++) {
+                    /* With more documents than fit, the last item asks for a name. */
+                    size_t room = app.ndocs > MENU_MAX_ITEMS ? MENU_MAX_ITEMS - 1 : app.ndocs;
+                    for (size_t i = 0; i < room; i++, n++) {
+                        char nm[44];
+                        fit_label(&app.fonts[FONT_UI], app.docs[i], 300, nm, sizeof(nm));
                         snprintf(app.menu_names[n], sizeof(app.menu_names[n]), "%s", app.docs[i]);
-                        snprintf(labels[n], sizeof(labels[n]), "%s %.40s", is_attached(&app, app.docs[i]) ? "\xE2\x9C\x93" : "  ",
-                                 app.docs[i]);
+                        snprintf(labels[n], sizeof(labels[n]), "%s %s", is_attached(&app, app.docs[i]) ? "\xE2\x9C\x93" : "  ", nm);
                         items[n] = labels[n];
+                    }
+                    if (room < app.ndocs) {
+                        app.menu_names[n][0] = '\0'; /* "other": a prompt */
+                        snprintf(labels[n], sizeof(labels[n]), "   Other document\xE2\x80\xA6");
+                        items[n] = labels[n];
+                        n++;
                     }
                     menu_open(&app.menu, MT_ATTACH, 0, (Vector2){ app.attach_add.x, app.attach_add.y - 8 - (float)n * 30 }, items, n);
                 }
@@ -2586,7 +2691,10 @@ int main(int argc, char **argv)
         {
             Rectangle screen = { 0, 0, (float)GetScreenWidth(), (float)GetScreenHeight() };
             int pick = menu_draw(&app.menu, &app.fonts[FONT_UI], screen);
-            if (pick >= 0 && app.menu.tag == MT_ATTACH && pick < MENU_MAX_ITEMS) {
+            if (pick >= 0 && app.menu.tag == MT_ATTACH && pick < MENU_MAX_ITEMS && !app.menu_names[pick][0]) {
+                snprintf(app.prompt_project, sizeof(app.prompt_project), "%s", app.project_dir);
+                prompt_open(app.prompt, PT_ATTACH_NAME, "Attach a document", "", "Attach");
+            } else if (pick >= 0 && app.menu.tag == MT_ATTACH && pick < MENU_MAX_ITEMS) {
                 const char *nm = app.menu_names[pick];
                 bool found = false;
                 for (size_t i = 0; i < app.nattached; i++)
@@ -2595,7 +2703,8 @@ int main(int argc, char **argv)
                         found = true;
                         break;
                     }
-                if (!found && name_taken(&app, nm)) attach(&app, nm);
+                if (!found) attach(&app, nm);
+                app.attach_touched = true;
             }
             if (pick >= 0 && app.menu.tag == MT_CHAT) {
                 const char *title = "";

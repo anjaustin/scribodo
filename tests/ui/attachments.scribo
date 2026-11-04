@@ -77,3 +77,72 @@ type "Lighthouse plans"
 key ENTER
 expect status "Chat renamed"
 expect explorer_has "Lighthouse plans"
+# --- red-team 007 ---
+# Reopening a chat restores exactly its newest message's attachments,
+# including "none".
+mkdir "$DIR/rt"
+write "$DIR/rt/a.md" "Alpha."
+write "$DIR/rt/b.md" "Beta."
+write "$DIR/rt/c.md" "Gamma."
+mkdir "$DIR/other"
+write "$DIR/other/secret.md" "OTHER PROJECT SECRET"
+dialog "$DIR/rt"
+key O cmd
+click_element DocItem0
+click_element ChatInput
+type "one"
+key ENTER
+wait_chat
+click_element AttachRemove0
+click_element ChatInput
+type "two"
+key ENTER
+wait_chat
+click_element NewChatButton
+click_element ChatItem0
+expect attached ""
+# Opening documents doesn't undo the author's choice.
+click_element AttachAdd
+click_element MenuItem1
+click_element AttachAdd
+click_element MenuItem2
+click_element NewChatButton
+click_element AttachRemove0
+click_element AttachAdd
+click_element MenuItem1
+click_element AttachAdd
+click_element MenuItem2
+expect attached "b.md,c.md"
+click_element DocItem2
+click_element DocItem0
+expect attached "b.md,c.md"
+# A tampered chat log can't attach paths outside the listed documents.
+write "$DIR/rt/.scribodo/chats/20260101-000000-abcd.jsonl" "{\"type\":\"meta\",\"version\":1,\"title\":\"Tampered\",\"created\":1}\n{\"type\":\"message\",\"role\":\"user\",\"content\":\"hi\",\"ts\":1,\"docs\":[\"../other/secret.md\",\".scribodo/chats/20260101-000000-abcd.jsonl\",\"b.md\"]}\n{\"type\":\"message\",\"role\":\"assistant\",\"content\":\"hello\",\"ts\":2}\n"
+wait 200
+expect explorer_has "Tampered"
+click_element ChatItem0
+expect chat_count 2
+expect attached "b.md"
+# An edit request records only the edited document (reopen shows it).
+click_element NewChatButton
+click_element AttachAdd
+click_element MenuItem1
+expect attached "a.md,b.md"
+click_index 2 2
+key K cmd
+type "loud"
+key ENTER
+wait_chat
+click_element NewChatButton
+click_element ChatItem0
+expect attached "a.md"
+# Many attachments: "+ Attach" never covers Send.
+click_element AttachAdd
+click_element MenuItem1
+click_element AttachAdd
+click_element MenuItem2
+click_element ChatInput
+type "send me"
+click_element SendButton
+wait_chat
+expect chat_last "You said: send me"

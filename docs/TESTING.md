@@ -160,6 +160,13 @@ UI scripts start with the observer **off**, so other scripts' file expectations 
 - **`make cstest`** runs `case_sensitive.scribo` on a temporary case-sensitive APFS image.
 - Red-teamed in [`REDTEAM-006-projects.md`](REDTEAM-006-projects.md): 13 findings, all fixed, 13 of 13 mutations caught.
 
+## Chat attachments
+
+- **Coverage:**
+  - `attachments.scribo` (28 checks) and `attach_many.scribo` (9 checks);
+  - `test_llm: multi_doc_request`: fair budget sharing, cut marking, neutralization, and protection against forged framing.
+- **Red-team:** [`REDTEAM-007-attachments.md`](REDTEAM-007-attachments.md): 12 findings, all fixed; 9 of 9 mutations caught.
+
 ## Findings from the chat work
 
 Each of these was caught by the suites and has a regression check:

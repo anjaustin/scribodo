@@ -27,6 +27,8 @@ int menu_draw(MenuView *m, const SFont *font, Rectangle screen)
     float x = m->at.x, y = m->at.y, h = ih * (float)m->n + 8;
     if (x + w > screen.x + screen.width) x = screen.x + screen.width - w;
     if (y + h > screen.y + screen.height) y = screen.y + screen.height - h;
+    if (y < screen.y) y = screen.y; /* never off the top (a menu opened upwards) */
+    if (x < screen.x) x = screen.x;
     Rectangle box = { x, y, w, h };
     DrawRectangleRounded(box, 0.08f, 6, (Color){ 0x2A, 0x2C, 0x30, 0xFF });
     DrawRectangleRoundedLinesEx(box, 0.08f, 6, 1.0f, (Color){ 0x45, 0x48, 0x4E, 0xFF });

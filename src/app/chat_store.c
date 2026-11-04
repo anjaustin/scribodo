@@ -98,7 +98,9 @@ bool chat_store_append(const char *project_dir, const char *id, const char *titl
     cJSON_AddNumberToObject(j, "ts", (double)time(NULL));
     if (m->error) cJSON_AddBoolToObject(j, "error", true);
     if (m->is_edit) cJSON_AddBoolToObject(j, "edit", true);
-    if (m->docs && m->docs[0]) { /* the documents this message was sent with */
+    /* The documents a user message was sent with; an empty list is recorded
+     * too, so "nothing attached" is never confused with "not recorded". */
+    if (m->role == CHAT_USER && m->docs) {
         cJSON *arr = cJSON_AddArrayToObject(j, "docs");
         char *copy = strdup(m->docs);
         for (char *save = NULL, *t = copy ? strtok_r(copy, "\n", &save) : NULL; t; t = strtok_r(NULL, "\n", &save))
@@ -186,9 +188,10 @@ size_t chat_store_list(const char *project_dir, ChatSummary **out)
         /* Title from the meta line, or the latest rename. */
         FILE *f = fopen(path, "rb");
         if (f) {
-            char line[4096];
+            char *line = NULL;
+            size_t cap_l = 0;
             bool first = true;
-            while (fgets(line, sizeof(line), f)) {
+            while (getline(&line, &cap_l, f) > 0) { /* lines of any length */
                 if (first || strstr(line, "\"type\":\"title\"")) {
                     cJSON *j = cJSON_Parse(line);
                     cJSON *t = j ? cJSON_GetObjectItem(j, "title") : NULL;
@@ -196,9 +199,8 @@ size_t chat_store_list(const char *project_dir, ChatSummary **out)
                     cJSON_Delete(j);
                 }
                 first = false;
-                /* long lines: skip the rest of this line */
-                while (!strchr(line, '\n') && fgets(line, sizeof(line), f)) {}
             }
+            free(line);
             fclose(f);
         }
         n++;
@@ -261,7 +263,10 @@ bool chat_store_load(const char *project_dir, const char *id, ChatMessage **msgs
                         strcat(joined, it->valuestring);
                     }
                 }
+                if (!joined && cJSON_IsArray(docs)) joined = strdup(""); /* recorded: none */
                 (*msgs)[*n].docs = joined;
+                (*msgs)[*n].ts = cJSON_GetNumberValue(cJSON_GetObjectItem(j, "ts"));
+                if ((*msgs)[*n].ts != (*msgs)[*n].ts) (*msgs)[*n].ts = 0; /* NaN when missing */
                 (*n)++;
             }
         }

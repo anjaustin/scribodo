@@ -1,0 +1,79 @@
+# Red-team 007: long names and many documents.
+wait 5
+mkdir "$DIR/p"
+write "$DIR/p/a-very-long-document-name-that-would-not-fit-in-the-row.md" "1"
+write "$DIR/p/d02.md" "02"
+write "$DIR/p/d03.md" "03"
+write "$DIR/p/d04.md" "04"
+write "$DIR/p/d05.md" "05"
+write "$DIR/p/d06.md" "06"
+write "$DIR/p/d07.md" "07"
+write "$DIR/p/d08.md" "08"
+write "$DIR/p/d09.md" "09"
+write "$DIR/p/d10.md" "10"
+write "$DIR/p/d11.md" "11"
+write "$DIR/p/d12.md" "12"
+write "$DIR/p/d13.md" "13"
+write "$DIR/p/d14.md" "14"
+write "$DIR/p/d15.md" "15"
+write "$DIR/p/d16.md" "16"
+write "$DIR/p/d17.md" "17"
+write "$DIR/p/d18.md" "18"
+dialog "$DIR/p"
+click_element WelcomeOpen
+click_element DocItem0
+# A single long name still shows as a chip that can be removed.
+expect element_w AttachChip0 40 2000
+expect element_w AttachRemove0 10 40
+# More documents than the menu holds: "Other document…" asks for a name.
+click_element AttachAdd
+expect element_w MenuItem15 10 2000
+expect element_w MenuItem16 0 0
+click_element MenuItem15
+type "d18.md"
+key ENTER
+expect attached "a-very-long-document-name-that-would-not-fit-in-the-row.md,d18.md"
+click_element AttachAdd
+click_element MenuItem15
+type "../secret.md"
+key ENTER
+expect element_w PromptField 100 2000
+key ESC
+# An overflowing row never puts "+ Attach" over Send.
+click_element AttachAdd
+click_element MenuItem1
+click_element AttachAdd
+click_element MenuItem2
+click_element AttachAdd
+click_element MenuItem3
+click_element AttachAdd
+click_element MenuItem4
+click_element ChatInput
+type "five attached"
+click_element SendButton
+wait_chat
+expect chat_last "You said: five attached"
+# A name reused after a rename: reopening attaches the new document, not the
+# renamed one.
+mkdir "$DIR/q"
+write "$DIR/q/a.md" "First a."
+dialog "$DIR/q"
+key O cmd
+right_click_element DocItem0
+click_element MenuItem0
+key A cmd
+type "old"
+key ENTER
+write "$DIR/q/a.md" "Second a."
+wait 200
+click_element NewChatButton
+click_element AttachAdd
+click_element MenuItem0
+expect attached "a.md"
+click_element ChatInput
+type "about the new a"
+key ENTER
+wait_chat
+click_element NewChatButton
+click_element ChatItem0
+expect attached "a.md"
