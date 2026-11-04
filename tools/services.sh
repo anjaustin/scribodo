@@ -32,8 +32,18 @@ case "${1:-status}" in
         compose up -d --wait --wait-timeout 180
         compose ps --format 'table {{.Service}}\t{{.Status}}\t{{.Ports}}'
         ;;
+    testdb) # testdb create|drop NAME: a throwaway database for tests
+        name="${3:?name}"
+        case "$name" in scribodo_test_*) ;; *) echo "test databases are named scribodo_test_*" >&2; exit 2 ;; esac
+        root="$(cat "$SCRIBODO_SECRETS/db_root_password")"
+        if [ "${2:-}" = create ]; then
+            compose exec -T mariadb mariadb -uroot -p"$root" -e "CREATE DATABASE IF NOT EXISTS \`$name\` CHARACTER SET utf8mb4; GRANT ALL ON \`$name\`.* TO 'scribodo'@'%';"
+        else
+            compose exec -T mariadb mariadb -uroot -p"$root" -e "DROP DATABASE IF EXISTS \`$name\`;"
+        fi
+        ;;
     down) compose down ;;
     status) compose ps --format 'table {{.Service}}\t{{.Status}}\t{{.Ports}}' ;;
     logs) compose logs --tail 50 ;;
-    *) echo "usage: $0 up|down|status|logs" >&2; exit 2 ;;
+    *) echo "usage: $0 up|down|status|logs|testdb create|drop NAME" >&2; exit 2 ;;
 esac

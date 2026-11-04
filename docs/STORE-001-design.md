@@ -1,6 +1,6 @@
 # Store 001: MariaDB as the structured authority
 
-**Status:** design, ahead of implementation (step 4 of the MVP plan).
+**Status:** implemented. Each module dispatches on `store_mode()`, and the importer runs on first open. Qdrant (step 4b) is next.
 **SOW:** §5 (data model), §6 (MariaDB, local-only), §7 (backups, offline), acceptance criteria 1, 6, 8 and 10.
 
 ## Why

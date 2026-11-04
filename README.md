@@ -107,6 +107,12 @@ make run    # launch with assets/sample/sample.md
 
 On first launch the app checks the model file against its pinned hash (once), then starts `llama-server` in the background. The toolbar shows the model's status, which turns green when it's ready. The server listens only on a private Unix socket, uses a fresh API key each launch, and stops when the app quits.
 
+**The project store:** chats, notes, canon, findings, History and the observer's progress live in a local MariaDB (SOW §5), run in Docker. `tools/services.sh up` starts it (MariaDB 11.4 and Qdrant, localhost only, with generated credentials). The app starts it too if Docker is running.
+- The first time a project is opened with the store up, its `.scribodo/` files are moved in. The old files are kept in `.scribodo/legacy-…`.
+- Documents stay plain files in the folder, and a rename keeps each document's id, so History and sources follow it.
+- If the store is down, documents stay editable; notes, canon, chats and History pause until it's back. A project not yet moved keeps using its files.
+- Set `SCRIBODO_STORE=off` to run without it.
+
 **Projects and documents:** a project is a folder of `.md` and `.txt` files.
 - On launch, Scribodo reopens the project and document you last had open. The first time, it shows a welcome screen: **Open folder…**, **New project…**, **Open the sample**, and your recent projects.
 - **⌘O** or **Open…** opens another folder. Dropping a folder onto the window works too.
@@ -149,6 +155,8 @@ On first launch the app checks the model file against its pinned hash (once), th
 ```sh
 make sanitize  # run the same tests under AddressSanitizer + UBSan
 make tsan      # the threaded code (chat, observer, supervisor) under ThreadSanitizer
+make dbtest    # the store against the local MariaDB (tools/services.sh up), in a throwaway database
+make uitest-db # the app on the store: move a project in, resume after a restart, database down
 make uitest    # scripted UI tests: the real app in a hidden window (needs an awake display)
 make llmtest   # end-to-end against the real model: supervisor, streaming, auth, crash recovery
 make uitest-real  # the real model through the real UI

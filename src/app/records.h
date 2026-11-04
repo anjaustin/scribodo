@@ -90,6 +90,8 @@ bool records_create_ex(const char *project_dir, RecordKind kind, const char *id,
 
 /* All records, most recently changed first. Caller frees with records_free. */
 size_t records_list(const char *project_dir, RecordKind kind, Record **out);
+/* The file store's records, whatever the project's mode (the importer). */
+size_t records_list_files(const char *project_dir, RecordKind kind, Record **out);
 void records_free(Record *r, size_t n);
 
 /* Deep copy of a list of sources (quote strings included). */

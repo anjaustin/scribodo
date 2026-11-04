@@ -1,0 +1,25 @@
+# Run 3: the database is unreachable. Documents stay editable; notes,
+# canon, chats and History pause, and nothing falls back to files.
+wait 5
+dialog "$DIR/book"
+click_element WelcomeOpen
+click_element DocItem0
+key DOWN cmd
+type " Offline edit."
+key S cmd
+expect file "$DIR/book/Chapter One.md" "Zoë Ångström climbed the stairs. Again. Offline edit."
+click_element ChatInput
+type "are you there"
+key ENTER
+expect status "Chat is paused while the project store is offline"
+expect chat_count 0
+right_click_element DocItem0
+click_element MenuItem0
+key A cmd
+type "Renamed offline"
+key ENTER
+expect element_w PromptField 100 2000
+key ESC
+expect files "$DIR/book" "Chapter One.md" 1
+expect files "$DIR/book/.scribodo" "notes.jsonl" 0
+expect files "$DIR/book/.scribodo" "chats" 0

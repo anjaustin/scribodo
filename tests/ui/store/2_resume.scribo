@@ -1,0 +1,33 @@
+# Run 2: the app is closed and reopened; everything comes back from the
+# store (SOW acceptance 1: resume the same chat).
+wait 5
+dialog "$DIR/book"
+click_element WelcomeOpen
+expect explorer_has "Chapter One.md"
+expect explorer_has "remember the lighthouse"
+expect explorer_has "Old chat"
+click_element ChatItem0
+expect chat_count 2
+expect chat_last "You said: remember the lighthouse"
+expect attached "Chapter One.md"
+click_element ChatInput
+type "and again"
+key ENTER
+wait_chat
+expect chat_count 4
+click_element DocItem0
+expect text "Zoë Ångström climbed the stairs. Again."
+expect element_w RevItem0 10 2000
+expect element_w NoteItem1 10 2000
+click_element CanonItem0
+expect record "Canon · v1 · committed"
+expect record "Ångström."
+click_element RecordClose
+# Findings and the observer's read state survived the restart: nothing is
+# read twice.
+click_element ObserverToggle
+expect findings_has "entity|new|Zoë is mentioned."
+expect findings_count 3
+observer on
+wait_observer
+expect findings_count 3

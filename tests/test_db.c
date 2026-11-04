@@ -9,6 +9,8 @@
 #include "../src/app/db.h"
 #include "../src/app/store.h"
 #include "../src/app/store_backends.h"
+#include <sys/stat.h>
+#include "../src/app/renames.h"
 #include "test_util.h"
 
 static char g_name[64];
@@ -230,6 +232,94 @@ static void test_backends(void)
     store_stop();
 }
 
+/* A project's files moved into the store keep everything: revisions,
+ * chats, notes, canon, findings with sources, renames, observer state. */
+static void test_import(void)
+{
+    char why[256];
+    CHECK(store_start(g_name, why, sizeof(why)));
+    char proj[512], doc[600];
+    snprintf(proj, sizeof(proj), "%s/scribodo-import-%d", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp", (int)getpid());
+    mkdir(proj, 0755);
+    snprintf(doc, sizeof(doc), "%s/ch1.md", proj);
+    FILE *f = fopen(doc, "wb");
+    fputs("Zoë kept the letter.\n", f);
+    fclose(f);
+    /* Not in the store yet: everything below goes to files. */
+    CHECK(store_mode(proj, NULL, 0, NULL) == STORE_FILES);
+    bool rec;
+    CHECK(revisions_record(proj, doc, "first draft", "save", NULL, &rec) && rec);
+    char snap[160];
+    CHECK(revisions_snapshot(proj, doc, "Zoë kept the letter.\n", snap, sizeof(snap)));
+    SourceRef src = { .kind = SRC_DOC, .start = 0, .len = 3, .quote = "Zoë" };
+    snprintf(src.doc, sizeof(src.doc), "ch1.md");
+    snprintf(src.revision, sizeof(src.revision), "%s", snap);
+    char nid[40], cid[40];
+    records_new_id(REC_NOTE, nid, sizeof(nid));
+    records_new_id(REC_CANON, cid, sizeof(cid));
+    CHECK(records_append(proj, REC_NOTE, nid, "active", "Check the date.", &src, 1, NULL));
+    CHECK(records_append(proj, REC_NOTE, nid, "active", "Check the date (1911?).", &src, 1, NULL));
+    CHECK(records_append(proj, REC_CANON, cid, "committed", "Zoë's eyes are green.", NULL, 0, NULL));
+    ChatMessage u = { .role = CHAT_USER, .content = "hello", .docs = "ch1.md" };
+    ChatMessage a = { .role = CHAT_ASSISTANT, .content = "hi" };
+    CHECK(chat_store_append(proj, "20261104-160000-abcd", "Greeting", &u) && chat_store_append(proj, "20261104-160000-abcd", "x", &a));
+    /* A rename made before the import. */
+    char doc2[600];
+    snprintf(doc2, sizeof(doc2), "%s/Chapter One.md", proj);
+    CHECK(rename(doc, doc2) == 0);
+    char rv_old[700], rv_new[700];
+    snprintf(rv_old, sizeof(rv_old), "%s/.scribodo/revisions/ch1.md", proj);
+    snprintf(rv_new, sizeof(rv_new), "%s/.scribodo/revisions/Chapter One.md", proj);
+    CHECK(rename(rv_old, rv_new) == 0);
+    CHECK(renames_record(proj, "ch1.md", "Chapter One.md"));
+
+    why[0] = '\0';
+    CHECK(store_import(proj, why, sizeof(why)));
+    if (why[0]) fprintf(stderr, "    %s\n", why);
+    CHECK(store_mode(proj, NULL, 0, NULL) == STORE_DB);
+    CHECK(store_import(proj, why, sizeof(why))); /* again: nothing to do */
+    /* The same APIs now read the store. */
+    Revision *revs = NULL;
+    size_t nr = revisions_list(proj, doc2, &revs);
+    CHECK(nr == 2);
+    char *t = nr ? revisions_load(proj, doc2, &revs[nr - 1]) : NULL;
+    CHECK(t && !strcmp(t, "first draft"));
+    free(t);
+    free(revs);
+    Record *notes = NULL;
+    size_t nn = records_list(proj, REC_NOTE, &notes);
+    CHECK(nn == 1 && notes[0].nversions == 2 && !strcmp(record_current(&notes[0])->content, "Check the date (1911?)."));
+    CHECK(nn == 1 && record_current(&notes[0])->nsources == 1 &&
+          !strcmp(record_current(&notes[0])->sources[0].doc, "Chapter One.md") && /* the rename, resolved to the id */
+          record_current(&notes[0])->sources[0].revision[0] == 'r');
+    records_free(notes, nn);
+    ChatMessage *msgs = NULL;
+    size_t nm = 0;
+    CHECK(chat_store_load(proj, "20261104-160000-abcd", &msgs, &nm) && nm == 2 && msgs[0].docs &&
+          !strcmp(msgs[0].docs, "Chapter One.md"));
+    chat_store_free_messages(msgs, nm);
+    /* New writes go to the store; the old files were set aside, not deleted. */
+    CHECK(records_append(proj, REC_NOTE, nid, "active", "v3", NULL, 0, NULL));
+    nn = records_list(proj, REC_NOTE, &notes);
+    CHECK(nn == 1 && notes[0].nversions == 3);
+    records_free(notes, nn);
+    char legacy_glob[700];
+    snprintf(legacy_glob, sizeof(legacy_glob), "ls -d '%s'/.scribodo/legacy-*/notes.jsonl >/dev/null 2>&1", proj);
+    CHECK(system(legacy_glob) == 0);
+    char notes_path[700];
+    snprintf(notes_path, sizeof(notes_path), "%s/.scribodo/notes.jsonl", proj);
+    struct stat st;
+    CHECK(stat(notes_path, &st) != 0);
+    /* With the database down, a moved project pauses instead of using files. */
+    store_stop();
+    CHECK(store_mode(proj, NULL, 0, NULL) == STORE_PAUSED);
+    CHECK(!records_append(proj, REC_NOTE, nid, "active", "while paused", NULL, 0, NULL));
+    CHECK(records_list(proj, REC_NOTE, &notes) == 0);
+    char cmd[700];
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", proj);
+    system(cmd);
+}
+
 int main(void)
 {
     snprintf(g_name, sizeof(g_name), "scribodo_test_%d", (int)getpid());
@@ -237,8 +327,8 @@ int main(void)
         fprintf(stderr, "dbtest: can't set up a test database (is tools/services.sh up?)\n");
         return 1;
     }
-    TestCase tests[] = { { "db", test_db }, { "store_ids", test_store_ids }, { "backends", test_backends } };
-    int rc = run_tests(tests, 3);
+    TestCase tests[] = { { "db", test_db }, { "store_ids", test_store_ids }, { "backends", test_backends }, { "import", test_import } };
+    int rc = run_tests(tests, 4);
     admin("DROP DATABASE %s");
     return rc;
 }

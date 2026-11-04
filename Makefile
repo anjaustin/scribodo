@@ -27,7 +27,8 @@ WARN       := -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter
 CFLAGS     := $(CSTD) $(OPT) $(ARCH_FLAGS) -g $(WARN)
 
 RAYLIB_DIR := third_party/raylib/src
-INCLUDES   := -Isrc -I$(RAYLIB_DIR) -Ithird_party/raygui/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON
+INCLUDES   := -Isrc -I$(RAYLIB_DIR) -Ithird_party/raygui/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON \
+              -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include
 
 # --- raylib (static, GLFW desktop backend, OpenGL 3.3) ----------------------
 RAYLIB_SRCS  := rcore rshapes rtextures rtext rmodels raudio rglfw
@@ -56,7 +57,8 @@ $(RAYLIB_LIB): $(RAYLIB_OBJS)
 
 # --- Scribodo ----------------------------------------------------------------
 CORE_SRCS := src/core/utf8.c src/core/text_buffer.c src/core/undo.c src/core/wrap.c src/core/doc_io.c src/core/diff.c
-LLM_SRCS  := src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/app/recent.c src/app/renames.c src/llm/observer.c
+STORE_SRCS := src/app/db.c src/app/store.c src/app/store_revisions.c src/app/store_records.c src/app/store_chats.c src/app/store_import.c
+LLM_SRCS  := src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/app/recent.c src/app/renames.c src/llm/observer.c $(STORE_SRCS)
 LLM_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(LLM_SRCS)) $(BUILD)/third_party/cJSON/cJSON.o
 APP_SRCS  := src/main.c src/app/script.c src/ui/font.c src/ui/clay_render.c src/ui/editor.c src/ui/input.c \
              src/ui/chat_view.c src/ui/review_view.c src/ui/record_view.c src/ui/findings_view.c src/ui/prompt_view.c src/ui/menu_view.c src/ui/vendor_impl.c
@@ -67,12 +69,13 @@ APP_OBJS  += $(BUILD)/src/platform/dialogs_mac.o
 APP   := $(BUILD)/scribodo
 TESTS := $(BUILD)/test_core $(BUILD)/test_doc_io $(BUILD)/test_editor $(BUILD)/test_llm
 
-.PHONY: all run test uitest uitest-real sanitize tsan cstest dbtest clean distclean llama model llmtest
+.PHONY: all run test uitest uitest-real sanitize tsan cstest dbtest uitest-db clean distclean llama model llmtest
 
 all: $(APP)
 
 $(APP): $(CORE_OBJS) $(LLM_OBJS) $(APP_OBJS) $(RAYLIB_LIB)
-	$(CC) $(CFLAGS) $^ -o $@ $(LDLIBS) -lm -lpthread
+	$(CC) $(CFLAGS) $^ -o $@ $(LDLIBS) $(MARIADB_LIBS) -lm -lpthread
+
 
 # cJSON is vendored; compile it without our warning flags.
 $(BUILD)/third_party/cJSON/cJSON.o: third_party/cJSON/cJSON.c
@@ -98,7 +101,7 @@ $(BUILD)/test_doc_io: $(CORE_OBJS) $(BUILD)/tests/test_doc_io.o
 	$(CC) $(CFLAGS) $^ -o $@
 
 $(BUILD)/test_llm: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_llm.o
-	$(CC) $(CFLAGS) $^ -o $@ -lpthread
+	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
 
 # The real editor, linked against headless raylib stubs.
 $(BUILD)/test_editor: $(CORE_OBJS) $(BUILD)/src/ui/editor.o $(BUILD)/src/ui/input.o $(BUILD)/src/ui/review_view.o $(BUILD)/tests/raylib_stubs.o $(BUILD)/tests/test_editor.o
@@ -132,40 +135,38 @@ uitest: $(APP)
 # Connector/C from the pinned submodule, static, against Homebrew's static
 # OpenSSL (the binary then needs only system libraries).
 OPENSSL_DIR ?= /opt/homebrew/opt/openssl@3
-MARIADB_LIB := $(BUILD)/mariadb-cc/libmariadb/libmariadbclient.a
-MARIADB_INC := -Ithird_party/mariadb-connector-c/include -I$(BUILD)/mariadb-cc/include
+# Built once under build/ (shared by the sanitizer builds).
+MARIADB_LIB := build/mariadb-cc/libmariadb/libmariadbclient.a
 MARIADB_LIBS := $(MARIADB_LIB) $(OPENSSL_DIR)/lib/libssl.a $(OPENSSL_DIR)/lib/libcrypto.a -lz -liconv
+# Everything that may include <mysql.h> needs the client built first.
+$(LLM_OBJS) $(APP_OBJS) $(BUILD)/tests/test_llm.o $(BUILD)/tests/test_db.o: | $(MARIADB_LIB)
 $(MARIADB_LIB):
-	$(CMAKE) -S third_party/mariadb-connector-c -B $(BUILD)/mariadb-cc -DCMAKE_BUILD_TYPE=Release \
+	$(CMAKE) -S third_party/mariadb-connector-c -B build/mariadb-cc -DCMAKE_BUILD_TYPE=Release \
 	  -DWITH_UNIT_TESTS=OFF -DWITH_SSL=OPENSSL -DOPENSSL_ROOT_DIR=$(OPENSSL_DIR) -DOPENSSL_USE_STATIC_LIBS=TRUE \
 	  -DCLIENT_PLUGIN_DIALOG=STATIC -DCLIENT_PLUGIN_AUTH_GSSAPI_CLIENT=OFF -DCLIENT_PLUGIN_REMOTE_IO=OFF \
-	  -DWITH_CURL=OFF -DWITH_EXTERNAL_ZLIB=ON > $(BUILD)/mariadb-cc.log
-	$(CMAKE) --build $(BUILD)/mariadb-cc --target mariadbclient -j8 >> $(BUILD)/mariadb-cc.log
+	  -DWITH_CURL=OFF -DWITH_EXTERNAL_ZLIB=ON > build/mariadb-cc.log
+	$(CMAKE) --build build/mariadb-cc --target mariadbclient -j8 >> build/mariadb-cc.log
 
-$(BUILD)/src/app/db.o: src/app/db.c $(MARIADB_LIB)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) $(INCLUDES) $(MARIADB_INC) -MMD -MP -c $< -o $@
-
-$(BUILD)/tests/test_db.o: tests/test_db.c $(MARIADB_LIB)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) $(INCLUDES) $(MARIADB_INC) -MMD -MP -c $< -o $@
-
-$(BUILD)/src/app/store.o: src/app/store.c $(MARIADB_LIB)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) $(INCLUDES) $(MARIADB_INC) -MMD -MP -c $< -o $@
-
-STORE_SRCS := src/app/db.c src/app/store.c src/app/store_revisions.c src/app/store_records.c src/app/store_chats.c
-STORE_OBJS := $(patsubst %.c,$(BUILD)/%.o,$(STORE_SRCS))
-$(BUILD)/src/app/store_%.o: src/app/store_%.c $(MARIADB_LIB)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) $(INCLUDES) $(MARIADB_INC) -MMD -MP -c $< -o $@
-
-$(BUILD)/test_db: $(STORE_OBJS) $(BUILD)/tests/test_db.o $(BUILD)/src/app/records.o $(BUILD)/src/app/chat_store.o $(BUILD)/third_party/cJSON/cJSON.o $(MARIADB_LIB)
-	$(CC) $(CFLAGS) $(STORE_OBJS) $(BUILD)/tests/test_db.o $(BUILD)/src/app/records.o $(BUILD)/src/app/chat_store.o $(BUILD)/third_party/cJSON/cJSON.o -o $@ $(MARIADB_LIBS)
+$(BUILD)/test_db: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_db.o
+	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
 
 # Against the running local services (tools/services.sh up).
 dbtest: $(BUILD)/test_db
 	$(WATCHDOG) 120 dbtest ./$(BUILD)/test_db
+
+# The app against the project store (needs tools/services.sh up): three runs
+# on one throwaway database and project folder: move and use, resume after
+# a restart, and the database unreachable.
+uitest-db: $(APP)
+	@db=scribodo_test_ui$$$$; work=$$PWD/build/ui/store/work; chmod -R u+w build/ui/store 2>/dev/null; rm -rf build/ui/store; \
+	  mkdir -p $$work; tools/services.sh testdb create $$db >/dev/null || exit 1; fail=0; \
+	  for s in tests/ui/store/1_move_and_use.scribo tests/ui/store/2_resume.scribo; do \
+	    SCRIBODO_STORE=db SCRIBODO_DB_NAME=$$db SCRIBODO_SCRIPT=$$s SCRIBODO_SCRIPT_DIR=$$work SCRIBODO_SHOT_DIR=$$PWD/build/ui/store \
+	      $(WATCHDOG) 180 ui-store ./$(APP) 2>>build/ui/store/stderr.log || fail=1; echo; \
+	  done; \
+	  SCRIBODO_STORE=db SCRIBODO_DB_PORT=1 SCRIBODO_SCRIPT=tests/ui/store/3_paused.scribo SCRIBODO_SCRIPT_DIR=$$work \
+	    SCRIBODO_SHOT_DIR=$$PWD/build/ui/store $(WATCHDOG) 180 ui-store ./$(APP) 2>>build/ui/store/stderr.log || fail=1; \
+	  tools/services.sh testdb drop $$db >/dev/null; exit $$fail
 
 # Rename safety on a case-sensitive volume (builds a temporary disk image).
 cstest: $(APP)
@@ -215,8 +216,8 @@ sanitize:
 # ThreadSanitizer over the threaded code (chat worker, observer, supervisor).
 tsan:
 	@mkdir -p build/tsan
-	$(CC) -std=c11 -O1 -g -fsanitize=thread -Isrc -Ithird_party/cJSON $(CORE_SRCS) $(LLM_SRCS) third_party/cJSON/cJSON.c \
-	  tests/test_llm.c -o build/tsan/test_llm -lpthread
+	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) $(CORE_SRCS) $(LLM_SRCS) third_party/cJSON/cJSON.c \
+	  tests/test_llm.c -o build/tsan/test_llm $(MARIADB_LIBS) -lpthread
 	TSAN_OPTIONS=halt_on_error=1 $(WATCHDOG) 300 tsan ./build/tsan/test_llm
 
 run: $(APP)

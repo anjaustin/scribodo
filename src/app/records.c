@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include "cJSON.h"
+#include "app/store_backends.h"
 
 static bool log_path(const char *project_dir, RecordKind kind, bool create, char *out, size_t outlen)
 {
@@ -156,6 +157,19 @@ static uint64_t id_hash(const char *s)
 
 size_t records_list(const char *project_dir, RecordKind kind, Record **out)
 {
+    char pid_[64];
+    Db *db_;
+    StoreMode mode_ = store_mode(project_dir, pid_, sizeof(pid_), &db_);
+    if (mode_ == STORE_DB) return sdb_record_list(db_, pid_, kind, out);
+    if (mode_ == STORE_PAUSED) {
+        *out = NULL;
+        return 0;
+    }
+    return records_list_files(project_dir, kind, out);
+}
+
+size_t records_list_files(const char *project_dir, RecordKind kind, Record **out)
+{
     /* Open-addressing index from id to slot (red-team 005: a linear search
      * made listing quadratic: 0.64 s for 20k findings on the UI thread). */
     size_t *index = NULL, index_cap = 0;
@@ -300,6 +314,12 @@ static bool append_impl(const char *project_dir, RecordKind kind, const char *id
                         const SourceRef *sources, size_t nsources, const FindingInfo *finding, int *ver_out, bool fresh)
 {
     if (!valid_id(id)) return false;
+    char pid_[64];
+    Db *db_;
+    StoreMode mode_ = store_mode(project_dir, pid_, sizeof(pid_), &db_);
+    if (mode_ == STORE_DB)
+        return sdb_record_append(db_, pid_, kind, id, status, content, sources, nsources, finding, fresh, ver_out);
+    if (mode_ == STORE_PAUSED) return false;
     char path[1200];
     if (!log_path(project_dir, kind, true, path, sizeof(path))) return false;
 
@@ -308,7 +328,7 @@ static bool append_impl(const char *project_dir, RecordKind kind, const char *id
     int ver = 1;
     if (!fresh) {
         Record *list = NULL;
-        size_t n = records_list(project_dir, kind, &list);
+        size_t n = records_list_files(project_dir, kind, &list);
         for (size_t i = 0; i < n; i++)
             if (!strcmp(list[i].id, id)) ver = record_current(&list[i])->ver + 1;
         records_free(list, n);

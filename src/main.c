@@ -9,6 +9,8 @@
  */
 #define _DARWIN_C_SOURCE
 #include <dirent.h>
+#include <stdatomic.h>
+#include <pthread.h>
 #include <pwd.h>
 #include <time.h>
 #include <strings.h>
@@ -32,6 +34,8 @@
 #include "app/recent.h"
 #include "app/records.h"
 #include "app/renames.h"
+#include "app/store.h"
+#include "app/store_backends.h"
 #include "app/revisions.h"
 #include "llm/llm_text.h"
 #include "app/script.h"
@@ -164,6 +168,14 @@ typedef struct {
     RecentProject recents[RECENT_MAX];
     size_t nrecents;
     Rectangle welcome_btn[3], recent_rect[RECENT_MAX], empty_btn[2];
+
+    /* The project store (MariaDB; docs/STORE-001-design.md) */
+    bool store_wanted;            /* use the store (off for UI scripts unless SCRIBODO_STORE=db) */
+    char store_why[256];          /* why it's offline */
+    pthread_t services_thread;
+    atomic_int services_state;    /* 0 idle, 1 starting services, 2 finished */
+    bool store_just_moved;        /* the project was just moved into the store (for the status) */
+    bool services_started;
     bool record_close_armed;     /* a discard of uncommitted canon text was asked for... */
     double record_close_armed_at; /* ...at this time (a second press within 5 s confirms) */
 
@@ -180,14 +192,28 @@ typedef struct {
     char doc_label[512];
     char status_left[256];
     char model_label[512];
+    char store_label[160];
+    Clay_Color store_color;
     char chat_header[200];
     Clay_Color model_color;
 } App;
+
+static void store_adopt_project(App *app);
 
 static void set_status(App *app, const char *msg)
 {
     snprintf(app->status, sizeof(app->status), "%s", msg);
     app->status_time = GetTime();
+}
+
+/* A storage failure, explained: while the project store is offline the
+ * file name in `fallback` would mislead. */
+static const char *store_says(App *app, const char *fallback)
+{
+    if (store_mode(app->project_dir, NULL, 0, NULL) == STORE_PAUSED)
+        return "The project store is offline: this wasn't saved. Your documents are unaffected; try again once it's back.";
+    if (store_mode(app->project_dir, NULL, 0, NULL) == STORE_DB) return "The project store couldn't save that (see its log)";
+    return fallback;
 }
 
 static const char *base_name(const char *path)
@@ -299,8 +325,52 @@ static void set_project(App *app, const char *real)
         /* A different project has different chats: start fresh (after the
          * current reply finishes, so it is saved with its own project). */
         if (app->chat) app->clear_chat_when_idle = true;
+        store_adopt_project(app);
     }
     app->lists_dirty = true;
+}
+
+/* Start the local services (Docker) in the background; the UI thread
+ * retries the connection when this finishes. */
+static void *services_main(void *arg)
+{
+    App *app = arg;
+    char cmd[PATH_MAX + 64];
+    snprintf(cmd, sizeof(cmd), "'%s../tools/services.sh' up >/dev/null 2>&1", GetApplicationDirectory());
+    int rc = system(cmd);
+    (void)rc;
+    atomic_store(&app->services_state, 2);
+    return NULL;
+}
+
+static void store_begin(App *app)
+{
+    app->store_why[0] = '\0';
+    if (store_start(getenv("SCRIBODO_DB_NAME"), app->store_why, sizeof(app->store_why))) return;
+    /* Not reachable: start the services once (not under a UI script). */
+    if (!app->services_started && !getenv("SCRIBODO_SCRIPT")) {
+        app->services_started = true;
+        atomic_store(&app->services_state, 1);
+        if (pthread_create(&app->services_thread, NULL, services_main, app) != 0) atomic_store(&app->services_state, 0);
+    }
+}
+
+/* A project opened while the store is up is moved into it once. */
+static void store_adopt_project(App *app)
+{
+    if (!app->project_dir[0] || !store_online() || store_mode(app->project_dir, NULL, 0, NULL) != STORE_FILES) return;
+    char why[256] = "";
+    if (store_import(app->project_dir, why, sizeof(why))) {
+        app->store_just_moved = true;
+        set_status(app, "This project is now kept in the project store (its old files are in .scribodo/legacy-\xE2\x80\xA6)");
+        app->lists_dirty = true;
+        app->findings_version = UINT64_MAX;
+        if (app->observer) observer_poke(app->observer);
+    } else {
+        char msg[400];
+        snprintf(msg, sizeof(msg), "%s", why);
+        set_status(app, msg);
+    }
 }
 
 static void set_project_from(App *app, const char *doc_path)
@@ -369,7 +439,7 @@ static bool record_revision(App *app, const char *origin, const char *note)
     char *text = editor_text_utf8(app->editor);
     bool ok = text && revisions_record(app->project_dir, editor_path(app->editor), text, origin, note, NULL);
     free(text);
-    if (!ok) set_status(app, "Could not record a revision in .scribodo/revisions");
+    if (!ok) set_status(app, store_says(app, "Could not record a revision in .scribodo/revisions"));
     app->lists_dirty = true;
     return ok;
 }
@@ -587,8 +657,10 @@ static void open_project(App *app, const char *dir)
     set_project(app, real);
     recent_touch(real, NULL);
     app->nrecents = recent_load(app->recents, RECENT_MAX);
-    char msg[PATH_MAX + 32];
-    snprintf(msg, sizeof(msg), "Opened %s", base_name(real));
+    char msg[PATH_MAX + 160];
+    snprintf(msg, sizeof(msg), "Opened %s%s", base_name(real),
+             app->store_just_moved ? " \xC2\xB7 it is now kept in the project store (old files are in .scribodo/legacy-\xE2\x80\xA6)" : "");
+    app->store_just_moved = false;
     set_status(app, msg);
     app->focus = FOCUS_NONE;
 }
@@ -674,6 +746,15 @@ static bool same_file(const char *a, const char *b)
  * aside so a new document of that name never inherits it (red-team 006). */
 static bool set_aside_history(App *app, const char *name)
 {
+    char spid[64];
+    if (store_mode(app->project_dir, spid, sizeof(spid), NULL) == STORE_DB) {
+        /* An earlier document's row with this name keeps its history under
+         * another name; the new document gets its own id. */
+        char did[40], aside[300];
+        if (!store_document_id(spid, name, false, did, sizeof(did))) return true;
+        snprintf(aside, sizeof(aside), "%s (earlier %ld)", name, (long)time(NULL));
+        return store_rename_document(spid, name, aside);
+    }
     char rev[PATH_MAX + 300];
     snprintf(rev, sizeof(rev), "%s/.scribodo/revisions/%s", app->project_dir, name);
     struct stat st;
@@ -765,9 +846,34 @@ static bool finish_prompt(App *app, const char *typed)
         prompt_set_error(app->prompt, "Save the document before renaming it");
         return false;
     }
+    char spid[64];
+    StoreMode smode = store_mode(app->project_dir, spid, sizeof(spid), NULL);
+    if (smode == STORE_PAUSED) {
+        /* The store keys history by document; a rename it doesn't see would
+         * disconnect the document from its History and sources. */
+        prompt_set_error(app->prompt, "Renaming waits for the project store (it's offline)");
+        return false;
+    }
     if (renamex_np(old_full, full, self ? 0 : RENAME_EXCL) != 0) {
         prompt_set_error(app->prompt, strerror(errno));
         return false;
+    }
+    if (smode == STORE_DB) {
+        /* One update: the document keeps its id, so its History, sources,
+         * attachments and observer state all follow. */
+        char problems[160] = "";
+        if (!store_rename_document(spid, app->rename_from, name))
+            snprintf(problems, sizeof(problems), "the project store couldn't record it");
+        for (size_t i = 0; i < app->nattached; i++)
+            if (!strcmp(app->attached[i], app->rename_from)) snprintf(app->attached[i], sizeof(app->attached[i]), "%s", name);
+        recent_rename_doc(app->project_dir, app->rename_from, name);
+        if (is_open) editor_set_path(app->editor, full);
+        char msg[600];
+        if (problems[0]) snprintf(msg, sizeof(msg), "Renamed to %s, but %s", name, problems);
+        else snprintf(msg, sizeof(msg), "Renamed to %s", name);
+        set_status(app, msg);
+        app->lists_dirty = true;
+        return true;
     }
     /* Then its History, the record of the rename (so sources made under the
      * old name still resolve), and observer state. Failures are reported. */
@@ -898,7 +1004,7 @@ static void on_message_done(ChatSession *s, size_t index, void *ctx)
     }
     if (!app->chat_project[0]) { free(copy.content); return; }
     if (!chat_store_append(app->chat_project, app->chat_id, app->chat_title, &copy))
-        set_status(app, "Could not save the chat to .scribodo/chats");
+        set_status(app, store_says(app, "Could not save the chat to .scribodo/chats"));
     else if (app->observer && copy.role == CHAT_ASSISTANT)
         observer_poke(app->observer); /* a finished exchange is stored */
     free(copy.content);
@@ -926,7 +1032,7 @@ static void adopt_chat(App *app)
         ok = copy[i].content && chat_store_append(app->chat_project, app->chat_id, app->chat_title, &copy[i]);
     for (size_t i = 0; copy && i < n; i++) free(copy[i].content);
     free(copy);
-    set_status(app, ok ? "Chat saved to this project" : "Could not save the chat to .scribodo/chats");
+    set_status(app, ok ? "Chat saved to this project" : store_says(app, "Could not save the chat to .scribodo/chats"));
     app->lists_dirty = true;
 }
 
@@ -1122,7 +1228,7 @@ static bool save_note(App *app)
         record_view_stored(v, id, ver, "active", text);
         set_status(app, "Note saved");
     } else {
-        set_status(app, "Could not save the note to .scribodo/notes.jsonl");
+        set_status(app, store_says(app, "Could not save the note to .scribodo/notes.jsonl"));
     }
     free(text);
     app->lists_dirty = true;
@@ -1218,7 +1324,7 @@ static void note_from_selection(App *app)
             record_view_stored(v, id, ver, "active", s.quote);
             set_status(app, "Saved as a note \xC2\xB7 edit it below");
         } else {
-            set_status(app, "Could not save the note to .scribodo/notes.jsonl");
+            set_status(app, store_says(app, "Could not save the note to .scribodo/notes.jsonl"));
         }
         app->lists_dirty = true;
     }
@@ -1266,7 +1372,7 @@ static void record_from_reply(App *app, long index, bool canon)
                 record_view_stored(app->record, id, ver, "active", text);
                 set_status(app, "Saved the reply as a note");
             } else {
-                set_status(app, "Could not save the note to .scribodo/notes.jsonl");
+                set_status(app, store_says(app, "Could not save the note to .scribodo/notes.jsonl"));
             }
             app->lists_dirty = true;
         }
@@ -1369,7 +1475,7 @@ static void store_canon(App *app, const char *status, bool use_editor_text)
                         : first                      ? "Committed to canon"
                                                      : "Canon revised \xC2\xB7 earlier versions are kept");
     } else {
-        set_status(app, "Could not save to .scribodo/canon.jsonl");
+        set_status(app, store_says(app, "Could not save to .scribodo/canon.jsonl"));
     }
     free(text);
     app->lists_dirty = true;
@@ -1482,7 +1588,7 @@ static void finding_action(App *app, FindingAction act, const char *id)
         records_new_id(REC_NOTE, nid, sizeof(nid));
         int ver = 0;
         if (!records_append(app->project_dir, REC_NOTE, nid, "active", v->content, v->sources, v->nsources, &ver)) {
-            set_status(app, "Could not save the note to .scribodo/notes.jsonl");
+            set_status(app, store_says(app, "Could not save the note to .scribodo/notes.jsonl"));
             break;
         }
         observer_set_finding_status(app->observer, app->project_dir, id, "saved");
@@ -1506,7 +1612,7 @@ static void finding_action(App *app, FindingAction act, const char *id)
     }
     case FA_DISMISS:
         if (!observer_set_finding_status(app->observer, app->project_dir, id, "dismissed"))
-            set_status(app, "Could not update .scribodo/findings.jsonl");
+            set_status(app, store_says(app, "Could not update .scribodo/findings.jsonl"));
         break;
     case FA_SOURCE:
         if (v->nsources) {
@@ -1693,6 +1799,11 @@ static int draw_attach_row(App *app, Rectangle r)
 
 static void send_chat(App *app, char *text)
 {
+    if (store_mode(app->project_dir, NULL, 0, NULL) == STORE_PAUSED) {
+        set_status(app, "Chat is paused while the project store is offline (nothing would be saved)");
+        free(text);
+        return;
+    }
     if (!app->chat_id[0]) {
         chat_store_new_id(app->chat_id, sizeof(app->chat_id));
         snprintf(app->chat_project, sizeof(app->chat_project), "%s", app->project_dir);
@@ -1856,6 +1967,20 @@ static void update_labels(App *app)
     LlmState ls = app->llm ? llm_server_state(app->llm, msg, sizeof(msg)) : LLM_READY;
     if (!app->llm) snprintf(msg, sizeof(msg), "Fake model (testing)");
     snprintf(app->model_label, sizeof(app->model_label), "\xE2\x97\x8F %s", msg);
+    StoreMode sm = store_mode(app->project_dir, NULL, 0, NULL);
+    if (!app->store_wanted) {
+        app->store_label[0] = '\0';
+    } else if (atomic_load(&app->services_state) == 1) {
+        snprintf(app->store_label, sizeof(app->store_label), "\xE2\x97\x8F Starting the project store\xE2\x80\xA6");
+        app->store_color = COL_WARN;
+    } else if (store_online()) {
+        snprintf(app->store_label, sizeof(app->store_label), "\xE2\x97\x8F Project store");
+        app->store_color = COL_OK;
+    } else {
+        snprintf(app->store_label, sizeof(app->store_label), "\xE2\x97\x8F Project store offline%s",
+                 sm == STORE_PAUSED ? " \xC2\xB7 notes, canon, chats and History paused" : "");
+        app->store_color = sm == STORE_PAUSED ? COL_ERR : COL_WARN;
+    }
     app->model_color = ls == LLM_READY ? COL_OK : ls == LLM_FAILED ? COL_ERR : COL_WARN;
 
     snprintf(app->chat_header, sizeof(app->chat_header), "%s", app->chat_title[0] ? app->chat_title : "New chat");
@@ -1882,6 +2007,7 @@ static Clay_RenderCommandArray build_layout(App *app)
             label(app->doc_label, FONT_UI, COL_MUTED);
             slot(CLAY_ID("SaveButton"), 64, 24);
             grow();
+            if (app->store_label[0]) label(app->store_label, FONT_UI, app->store_color);
             label(app->model_label, FONT_UI, app->model_color);
             slot(CLAY_ID("ObserverToggle"), 96, 24);
         }
@@ -1893,6 +2019,8 @@ static Clay_RenderCommandArray build_layout(App *app)
                                .padding = CLAY_PADDING_ALL(12), .childGap = 2,
                                .layoutDirection = CLAY_TOP_TO_BOTTOM },
                    .backgroundColor = COL_PANEL, .clip = { .horizontal = true, .vertical = true, .childOffset = Clay_GetScrollOffset() } }) {
+                if (store_mode(app->project_dir, NULL, 0, NULL) == STORE_PAUSED)
+                    coming_soon("Project store offline: notes, canon, chats and History are paused");
                 section_header("DOCUMENTS");
                 const char *cur = editor_path(app->editor) ? base_name(editor_path(app->editor)) : "";
                 if (!app->project_dir[0]) coming_soon("Open a folder (\xE2\x8C\x98O)");
@@ -2267,6 +2395,13 @@ int main(int argc, char **argv)
         app.nrecents = recent_load(app.recents, RECENT_MAX);
     }
     dialogs_script_mode(script_path != NULL);
+    /* The project store: on for the app (SCRIBODO_STORE=off disables it);
+     * UI scripts use files unless SCRIBODO_STORE=db. */
+    {
+        const char *sm = getenv("SCRIBODO_STORE");
+        app.store_wanted = script_path ? (sm && !strcmp(sm, "db")) : !(sm && !strcmp(sm, "off"));
+        if (app.store_wanted) store_begin(&app);
+    }
     if (!script_path) {
         struct stat pst;
         if (path && stat(path, &pst) == 0 && S_ISDIR(pst.st_mode)) {
@@ -2309,6 +2444,17 @@ int main(int argc, char **argv)
         if (script && !script_frame(script, &host)) break;
 
         if (app.llm) llm_server_tick(app.llm);
+        if (atomic_load(&app.services_state) == 2) { /* the services script finished: try again */
+            pthread_join(app.services_thread, NULL);
+            atomic_store(&app.services_state, 0);
+            store_begin(&app);
+            if (store_online()) {
+                store_adopt_project(&app);
+                app.lists_dirty = true;
+                app.findings_version = UINT64_MAX;
+                if (app.observer) observer_poke(app.observer);
+            }
+        }
         chat_poll(app.chat);
         /* The observer shares the model: it yields whenever chat is active. */
         observer_set_chat_active(app.observer, chat_busy(app.chat));
@@ -2760,6 +2906,8 @@ int main(int argc, char **argv)
     records_free(app.canon, app.ncanon);
     free(app.revs);
     observer_destroy(app.observer);  /* cancels its request before the server stops */
+    if (atomic_load(&app.services_state) == 1) pthread_detach(app.services_thread);
+    store_stop();
     findings_view_destroy(app.findings);
     records_free(app.flist, app.nflist);
     chat_destroy(app.chat);          /* cancels any reply in progress */

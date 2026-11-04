@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include "cJSON.h"
+#include "app/store_backends.h"
 
 bool chat_store_dir(const char *project_dir, char *out, size_t outlen)
 {
@@ -75,6 +76,11 @@ static bool ensure_trailing_newline(int fd)
 
 bool chat_store_append(const char *project_dir, const char *id, const char *title, const ChatMessage *m)
 {
+    char pid_[64];
+    Db *db_;
+    StoreMode mode_ = store_mode(project_dir, pid_, sizeof(pid_), &db_);
+    if (mode_ == STORE_DB) return sdb_chat_append(db_, pid_, id, title, m);
+    if (mode_ == STORE_PAUSED) return false;
     char path[1200];
     if (!path_for(project_dir, id, path, sizeof(path))) return false;
     struct stat st;
@@ -116,6 +122,11 @@ bool chat_store_append(const char *project_dir, const char *id, const char *titl
 
 bool chat_store_rename(const char *project_dir, const char *id, const char *title)
 {
+    char pid_[64];
+    Db *db_;
+    StoreMode mode_ = store_mode(project_dir, pid_, sizeof(pid_), &db_);
+    if (mode_ == STORE_DB) return sdb_chat_rename(db_, pid_, id, title);
+    if (mode_ == STORE_PAUSED) return false;
     char path[1200];
     if (!path_for(project_dir, id, path, sizeof(path)) || !title || !title[0]) return false;
     struct stat st;
@@ -158,6 +169,19 @@ static int by_updated_desc(const void *a, const void *b)
 }
 
 size_t chat_store_list(const char *project_dir, ChatSummary **out)
+{
+    char pid_[64];
+    Db *db_;
+    StoreMode mode_ = store_mode(project_dir, pid_, sizeof(pid_), &db_);
+    if (mode_ == STORE_DB) return sdb_chat_list(db_, pid_, out);
+    if (mode_ == STORE_PAUSED) {
+        *out = NULL;
+        return 0;
+    }
+    return chat_store_list_files(project_dir, out);
+}
+
+size_t chat_store_list_files(const char *project_dir, ChatSummary **out)
 {
     *out = NULL;
     char dir[1100];
@@ -212,6 +236,20 @@ size_t chat_store_list(const char *project_dir, ChatSummary **out)
 }
 
 bool chat_store_load(const char *project_dir, const char *id, ChatMessage **msgs, size_t *n)
+{
+    char pid_[64];
+    Db *db_;
+    StoreMode mode_ = store_mode(project_dir, pid_, sizeof(pid_), &db_);
+    if (mode_ == STORE_DB) return sdb_chat_load(db_, pid_, id, msgs, n);
+    if (mode_ == STORE_PAUSED) {
+        *msgs = NULL;
+        *n = 0;
+        return false;
+    }
+    return chat_store_load_files(project_dir, id, msgs, n);
+}
+
+bool chat_store_load_files(const char *project_dir, const char *id, ChatMessage **msgs, size_t *n)
 {
     *msgs = NULL;
     *n = 0;

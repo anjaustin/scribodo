@@ -167,6 +167,23 @@ UI scripts start with the observer **off**, so other scripts' file expectations 
   - `test_llm: multi_doc_request`: fair budget sharing, cut marking, neutralization, and protection against forged framing.
 - **Red-team:** [`REDTEAM-007-attachments.md`](REDTEAM-007-attachments.md): 12 findings, all fixed; 9 of 9 mutations caught.
 
+## Project store
+
+**`make dbtest`** (90 checks) runs against the local MariaDB in a throwaway database. It covers:
+- migrations;
+- prepared statements, with hostile text and a 3 MB value;
+- NULLs, foreign keys, rollback and cascades;
+- stable ids and byte-exact names;
+- the revision, record and chat backends;
+- the importer: revisions, notes, canon and chats, a rename made before the import, idempotence, legacy files kept, and paused mode.
+
+It's also clean under ASan/UBSan.
+
+**`make uitest-db`** runs the app three times on one database and one project folder:
+1. A project with existing files is moved into the store, then notes, canon, a chat, a rename and the observer are used.
+2. After a restart everything comes back, the chat resumes (SOW acceptance 1), and the observer reads nothing twice.
+3. With the database unreachable, documents stay editable and saveable; chat and rename pause, and nothing falls back to files.
+
 ## Findings from the chat work
 
 Each of these was caught by the suites and has a regression check:

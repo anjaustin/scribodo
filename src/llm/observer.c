@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 #include "app/chat_store.h"
+#include "app/store.h"
 #include "app/revisions.h"
 #include "cJSON.h"
 #include "llm/http.h"
@@ -629,7 +630,96 @@ static void state_path(const char *project, char *out, size_t outlen, bool creat
     snprintf(out, outlen, "%s/state.json", b);
 }
 
+static cJSON *state_load_files(const char *project);
+
+/* ---- read state in the project store ---------------------------------------- */
+
+/* The same JSON shape as state.json, built from observer_pieces and
+ * observer_chats (keyed by ids, presented by current names). */
+static cJSON *state_load_db(Db *db, const char *pid)
+{
+    cJSON *j = cJSON_CreateObject();
+    cJSON *docs = cJSON_AddObjectToObject(j, "docs"), *chats = cJSON_AddObjectToObject(j, "chats");
+    DbRows r;
+    if (db_query(db,
+                 "SELECT d.name, p.piece_hash FROM observer_pieces p JOIN documents d ON d.id = p.document_id"
+                 " WHERE d.project_id = ? ORDER BY d.name",
+                 (DbArg[1]){ DB_S(pid) }, 1, &r)) {
+        for (size_t i = 0; i < r.nrows; i++) {
+            cJSON *arr = cJSON_GetObjectItem(docs, db_cell(&r, i, 0));
+            if (!arr) arr = cJSON_AddArrayToObject(docs, db_cell(&r, i, 0));
+            cJSON_AddItemToArray(arr, cJSON_CreateString(db_cell(&r, i, 1)));
+        }
+        db_rows_free(&r);
+    }
+    if (db_query(db,
+                 "SELECT o.conversation_id, o.msg, o.off FROM observer_chats o JOIN conversations c ON c.id = o.conversation_id"
+                 " WHERE c.project_id = ?",
+                 (DbArg[1]){ DB_S(pid) }, 1, &r)) {
+        for (size_t i = 0; i < r.nrows; i++) {
+            cJSON *o = cJSON_AddObjectToObject(chats, db_cell(&r, i, 0));
+            cJSON_AddNumberToObject(o, "n", atof(db_cell(&r, i, 1)));
+            cJSON_AddNumberToObject(o, "off", atof(db_cell(&r, i, 2)));
+        }
+        db_rows_free(&r);
+    }
+    return j;
+}
+
+/* Replace the project's read state with `st`, in one transaction. */
+static bool state_save_db(Db *db, const char *pid, cJSON *st)
+{
+    if (!db_begin(db)) return false;
+    bool ok = db_run(db,
+                     "DELETE p FROM observer_pieces p JOIN documents d ON d.id = p.document_id WHERE d.project_id = ?",
+                     (DbArg[1]){ DB_S(pid) }, 1, NULL) &&
+              db_run(db,
+                     "DELETE o FROM observer_chats o JOIN conversations c ON c.id = o.conversation_id WHERE c.project_id = ?",
+                     (DbArg[1]){ DB_S(pid) }, 1, NULL);
+    cJSON *doc;
+    cJSON_ArrayForEach(doc, cJSON_GetObjectItem(st, "docs"))
+    {
+        if (!ok) break;
+        char did[40];
+        if (!store_document_id(pid, doc->string, true, did, sizeof(did))) continue;
+        cJSON *h;
+        cJSON_ArrayForEach(h, doc)
+        {
+            if (!cJSON_IsString(h)) continue;
+            ok = db_run(db, "INSERT IGNORE INTO observer_pieces (document_id, piece_hash) VALUES (?, ?)",
+                        (DbArg[2]){ DB_S(did), DB_S(h->valuestring) }, 2, NULL);
+            if (!ok) break;
+        }
+    }
+    cJSON *c;
+    cJSON_ArrayForEach(c, cJSON_GetObjectItem(st, "chats"))
+    {
+        if (!ok) break;
+        cJSON *n = cJSON_GetObjectItem(c, "n"), *off = cJSON_GetObjectItem(c, "off");
+        DbArg a[4] = { DB_S(c->string), DB_I(cJSON_IsNumber(n) ? (int64_t)n->valuedouble : 0),
+                       DB_I(cJSON_IsNumber(off) ? (int64_t)off->valuedouble : 0), DB_S(pid) };
+        /* Only this project's conversations (the row must exist). */
+        ok = db_run(db,
+                    "INSERT INTO observer_chats (conversation_id, msg, off)"
+                    " SELECT id, ?, ? FROM conversations WHERE id = ? AND project_id = ?",
+                    (DbArg[4]){ a[1], a[2], a[0], a[3] }, 4, NULL);
+    }
+    if (ok) ok = db_commit(db);
+    else db_rollback(db);
+    return ok;
+}
+
 static cJSON *state_load(const char *project)
+{
+    char pid[64];
+    Db *db;
+    StoreMode mode = store_mode(project, pid, sizeof(pid), &db);
+    if (mode == STORE_DB) return state_load_db(db, pid);
+    if (mode == STORE_PAUSED) return NULL; /* nothing to do until the store is back */
+    return state_load_files(project);
+}
+
+static cJSON *state_load_files(const char *project)
 {
     char path[PATH_MAX + 128];
     state_path(project, path, sizeof(path), false);
@@ -656,7 +746,19 @@ static cJSON *state_load(const char *project)
     return j;
 }
 
+static bool state_save_files(const char *project, cJSON *st);
+
 static bool state_save(const char *project, cJSON *st)
+{
+    char pid[64];
+    Db *db;
+    StoreMode mode = store_mode(project, pid, sizeof(pid), &db);
+    if (mode == STORE_DB) return state_save_db(db, pid, st);
+    if (mode == STORE_PAUSED) return false;
+    return state_save_files(project, st);
+}
+
+static bool state_save_files(const char *project, cJSON *st)
 {
     char path[PATH_MAX + 128], tmp[PATH_MAX + 160];
     state_path(project, path, sizeof(path), true);
@@ -1370,6 +1472,15 @@ static void *worker(void *arg)
         pthread_mutex_unlock(&o->mu);
 
         cJSON *st = state_load(project);
+        if (!st) { /* the project store is down: wait, and say so */
+            pthread_mutex_lock(&o->mu);
+            o->running = false;
+            o->poked = true;
+            o->retry_at = now_s() + 30.0;
+            snprintf(o->status, sizeof(o->status), "Paused: the project store is offline");
+            pthread_mutex_unlock(&o->mu);
+            continue;
+        }
         /* Renamed documents keep what was already read: apply this project's
          * renames, in order; other projects' wait until they're open
          * (red-team 006: they used to be applied to whatever was open). */
@@ -1432,6 +1543,7 @@ static void *worker(void *arg)
         }
         pthread_mutex_unlock(&o->mu);
     }
+    store_thread_done(); /* this thread's database connection, if any */
     return NULL;
 }
 
