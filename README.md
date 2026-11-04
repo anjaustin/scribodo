@@ -101,7 +101,7 @@ The local model must run with BF16 weights and BF16 compute. Quantized checkpoin
 4. **Semantic and observer pipeline.** Embeddings, Qdrant indexing and retrieval, async extraction, provenance, the findings panel, and note and canon actions.
 5. **Connections and verification.** Entity and link navigation, canon conflict checks, the optional remote adapter, and backup and recovery (all done); offline integration tests and acceptance tests.
 
-The full acceptance criteria are in [`docs/SOW.md` §8](docs/SOW.md#8-acceptance-criteria).
+The full acceptance criteria are in [`docs/SOW.md` §8](docs/SOW.md#8-acceptance-criteria). The MVP acceptance run on this Mac is in [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md).
 
 ## Out of scope for the MVP
 
