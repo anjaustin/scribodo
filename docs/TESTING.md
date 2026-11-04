@@ -104,7 +104,7 @@ The chat feature was red-teamed separately; see [`REDTEAM-003-chat.md`](REDTEAM-
   - the red-team 004 regressions: ⌘↩ typing nothing, the wrong-copy and mid-word cases, stopped replies, a failed "before" revision.
 - **`real-edit.scribo`:** a real LFM3 rewrite reviewed and accepted through the UI.
 - **Mutation check:** four safety guarantees, each broken in turn: applying without Accept, Reject applying anyway, applying over a stale passage, and skipping the "before" revision. All four were caught. The first run "missed" the most important one, because the mutated source didn't compile and the harness re-ran the old binary. Mutation harnesses must check the build and that the binary changed.
-- **Red-team:** see [`REDTEAM-004-edits.md`](REDTEAM-004-edits.md) (17 findings, 16 fixed and 1 documented; 15 of 16 mutations caught, the miss documented).
+- **Red-team:** see [`REDTEAM-004-edits.md`](REDTEAM-004-edits.md) (17 findings, all fixed; 18 of 20 mutations caught, both misses documented).
 - **ASan caught an out-of-bounds read** in the diff tokenizer: `memcmp` against the punctuation table near the end of the text. It's fixed by bounding the comparison.
 
 ## Findings from the chat work

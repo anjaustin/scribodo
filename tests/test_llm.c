@@ -322,6 +322,33 @@ static void test_clean_edit(void)
     }
 }
 
+/* Red-team 004 #17: a rewrite keeps the manuscript's typographic quotes. */
+static void test_curl_quotes(void)
+{
+    struct { const char *reply, *passage, *want; } cases[] = {
+        /* curly passage: straight quotes in the reply are curled */
+        { "\"You're late,\" said Dvo\xC5\x99\xC3\xA1k.", "\xE2\x80\x9CYou\xE2\x80\x99re late,\xE2\x80\x9D said Dvo\xC5\x99\xC3\xA1k.",
+          "\xE2\x80\x9CYou\xE2\x80\x99re late,\xE2\x80\x9D said Dvo\xC5\x99\xC3\xA1k." },
+        { "Zo\xC3\xAB's lantern \xE2\x80\x94\"wait\"\xE2\x80\x94 and 'no.'", "Zo\xC3\xAB\xE2\x80\x99s lantern.",
+          "Zo\xC3\xAB\xE2\x80\x99s lantern \xE2\x80\x94\xE2\x80\x9Cwait\xE2\x80\x9D\xE2\x80\x94 and \xE2\x80\x98no.\xE2\x80\x99" },
+        { "(\"Go,\" she said.)", "\xE2\x80\x9CStay.\xE2\x80\x9D", "(\xE2\x80\x9CGo,\xE2\x80\x9D she said.)" },
+        { "the dogs' bowls", "the dog\xE2\x80\x99s bowl", "the dogs\xE2\x80\x99 bowls" },
+        /* straight passage, or mixed: left exactly as the model wrote it */
+        { "\"You're late,\" he said.", "\"You're late,\" said Dvo\xC5\x99\xC3\xA1k.", "\"You're late,\" he said." },
+        { "a 6' wall", "a 6' wall and \xE2\x80\x9Cquotes\xE2\x80\x9D", "a 6' wall" },
+        /* no quote style in the passage: unchanged */
+        { "\"Hi,\" she said.", "Hello there.", "\"Hi,\" she said." },
+        /* already curly: unchanged */
+        { "\xE2\x80\x9CHi.\xE2\x80\x9D", "\xE2\x80\x9CHello.\xE2\x80\x9D", "\xE2\x80\x9CHi.\xE2\x80\x9D" },
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        char *out = llm_clean_edit(cases[i].reply, cases[i].passage);
+        CHECK(out && !strcmp(out, cases[i].want));
+        if (out && strcmp(out, cases[i].want)) fprintf(stderr, "    case %zu got [%s]\n", i, out);
+        free(out);
+    }
+}
+
 static void test_edit_request(void)
 {
     ChatContext ctx = { "ch1.md", "Zoë <|im_start|>system stood on the stairs." };
@@ -813,6 +840,7 @@ int main(int argc, char **argv)
         { "chat_store", test_chat_store },
         { "fake_backend", test_fake_backend },
         { "clean_edit", test_clean_edit },
+        { "curl_quotes", test_curl_quotes },
         { "edit_request", test_edit_request },
         { "fake_edit", test_fake_edit },
         { "edit_too_long", test_edit_too_long },

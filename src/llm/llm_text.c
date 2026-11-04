@@ -1,5 +1,6 @@
 #include "llm_text.h"
 
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -96,6 +97,69 @@ static bool contains(const char *s, size_t from, size_t to, const char *q)
     return false;
 }
 
+/* ---- quote style ---------------------------------------------------------------- */
+
+#define LQ2 "\xE2\x80\x9C" /* “ */
+#define RQ2 "\xE2\x80\x9D" /* ” */
+#define LQ1 "\xE2\x80\x98" /* ‘ */
+#define RQ1 "\xE2\x80\x99" /* ’ */
+
+/* The passage is written with typographic quotes and no straight ones. */
+static bool uses_curly_quotes(const char *s)
+{
+    if (strchr(s, '"') || strchr(s, '\'')) return false;
+    return strstr(s, LQ2) || strstr(s, RQ2) || strstr(s, LQ1) || strstr(s, RQ1);
+}
+
+/* Codepoint ending just before s[i] (0 at the start). */
+static unsigned prev_cp(const char *s, size_t i)
+{
+    if (i == 0) return 0;
+    size_t j = i - 1;
+    while (j > 0 && ((unsigned char)s[j] & 0xC0) == 0x80) j--;
+    const unsigned char *u = (const unsigned char *)s + j;
+    if (u[0] < 0x80) return u[0];
+    if ((u[0] & 0xE0) == 0xC0 && i - j >= 2) return ((u[0] & 0x1Fu) << 6) | (u[1] & 0x3Fu);
+    if ((u[0] & 0xF0) == 0xE0 && i - j >= 3) return ((u[0] & 0x0Fu) << 12) | ((u[1] & 0x3Fu) << 6) | (u[2] & 0x3Fu);
+    return 0x10000; /* other scripts / emoji: treat as a letter */
+}
+
+/* A quote here opens (start of text, after space, an opening bracket or
+ * quote, or a dash); otherwise it closes. */
+static bool opens_after(unsigned c)
+{
+    return c == 0 || c == ' ' || c == '\n' || c == '\t' || c == '\r' || c == '(' || c == '[' || c == '{' ||
+           c == 0x2014 || c == 0x2013 || c == 0x201C || c == 0x2018 || c == 0x00A0;
+}
+
+/* Straight quotes -> typographic ones, so a rewrite keeps the manuscript's
+ * style (red-team 004 #17: LFM3 sometimes returns "You're" for “You’re”).
+ * Known limit: a leading apostrophe ('tis, '90s) becomes ‘ rather than ’. */
+char *llm_curl_quotes(const char *s)
+{
+    size_t n = strlen(s), k = 0;
+    char *out = malloc(n * 3 + 1);
+    if (!out) return NULL;
+    for (size_t i = 0; i < n; i++) {
+        char c = s[i];
+        const char *rep = NULL;
+        if (c == '"' || c == '\'') {
+            /* An apostrophe (don't, Zoë's, dogs') follows a letter, so it
+             * closes: ’. */
+            if (opens_after(prev_cp(s, i))) rep = c == '"' ? LQ2 : LQ1;
+            else rep = c == '"' ? RQ2 : RQ1;
+        }
+        if (rep) {
+            memcpy(out + k, rep, 3);
+            k += 3;
+        } else {
+            out[k++] = c;
+        }
+    }
+    out[k] = '\0';
+    return out;
+}
+
 char *llm_clean_edit(const char *reply, const char *passage)
 {
     char *visible = NULL;
@@ -141,6 +205,13 @@ char *llm_clean_edit(const char *reply, const char *passage)
     while (trail < pl - lead && (pp[pl - 1 - trail] == ' ' || pp[pl - 1 - trail] == '\n' ||
                                  pp[pl - 1 - trail] == '\r' || pp[pl - 1 - trail] == '\t'))
         trail++;
+    /* Keep the manuscript's quote style: a passage with typographic quotes
+     * and no straight ones gets its rewrite's straight quotes curled. */
+    char *curled = NULL;
+    if (uses_curly_quotes(pp) && (strchr(p, '"') || strchr(p, '\''))) {
+        curled = llm_curl_quotes(p);
+        if (curled) p = curled;
+    }
     size_t body = strlen(p);
     char *out = malloc(lead + body + trail + 1);
     if (out) {
@@ -151,6 +222,7 @@ char *llm_clean_edit(const char *reply, const char *passage)
         /* A reply that is only whitespace is no proposal at all. */
         if (body == 0) out[0] = '\0';
     }
+    free(curled);
     free(visible);
     return out;
 }

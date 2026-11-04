@@ -38,4 +38,8 @@ void llm_split_thinking(const char *s, char **visible, char **reasoning);
  * whitespace. Returns malloc'd text; "" if the reply had no content. */
 char *llm_clean_edit(const char *reply, const char *passage);
 
+/* Straight quotes -> typographic (“ ” ‘ ’) by context. Malloc'd. Used by
+ * llm_clean_edit when the passage is written with curly quotes. */
+char *llm_curl_quotes(const char *s);
+
 #endif

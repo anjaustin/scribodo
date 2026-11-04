@@ -15,7 +15,7 @@
 
 Every fix has a regression test. A mutation check, run in a scratch copy, confirmed that breaking each fix fails its test.
 
-**Result:** 17 findings. Eight could change the author's text without approval or put an edit in the wrong place. All are fixed except one (#17), which is documented below.
+**Result:** 17 findings. Eight could change the author's text without approval or put an edit in the wrong place. All are fixed.
 
 ## The main fix: a tracked anchor
 
@@ -54,16 +54,16 @@ Severity: **H** = author text changed without approval, lost, or put in the wron
 | 14 | L | **History showed only the 16 newest revisions,** and the Explorer couldn't scroll. | reviewer | Up to 100 are listed, with a note that older ones are in `.scribodo/revisions`. The Explorer scrolls. | code review |
 | 15 | L | **Changed line breaks were invisible in the diff.** | author | A pilcrow (¶) marks inserted or deleted newlines. | screenshot |
 | 16 | L | **An insertion's target wasn't shown,** and "⚠" rendered as a missing-glyph box. | author | An amber insertion marker, "insert at line N" in the header, and the Miscellaneous Symbols and Dingbats blocks loaded. | screenshot |
-| 17 | L | **The model sometimes replaces curly quotes with straight ones.** | author (probed live) | Not fixed: the change shows in the diff, and the author decides. | — |
+| 17 | L | **The model sometimes replaces curly quotes with straight ones** (`“You’re late,”` → `"You're late,"`), cluttering the diff and mixing styles in the manuscript. | author (probed live) | If the passage uses typographic quotes and no straight ones, the rewrite's straight quotes are curled by context: “ or ‘ at the start of a word or after a dash or bracket, ” or ’ otherwise (so apostrophes become ’). Passages with straight or mixed quotes are left as the model wrote them. | `test_llm: curl_quotes` (8 cases) |
 
 The reviewer confirmed that the diff, the revision store and the document-switch handling are sound.
 
 ## Verification
 
-- **`make test`:** 4 suites, 9,905 checks, clean under ASan/UBSan (`make sanitize`). New: `test_editor: anchor`, `review_warnings`, and the new `clean_edit` cases.
+- **`make test`:** 4 suites, 9,913 checks, clean under ASan/UBSan (`make sanitize`). New: `test_editor: anchor`, `review_warnings`, and the new `clean_edit` cases.
 - **`make uitest`:** 13 scripts, fake model. `edits.scribo` grew from 29 to 53 checks and covers #1–#5, #7 and #11 exactly as the reviewer reproduced them.
 - **`make uitest-real`:** `real-chat` (13) and `real-edit` (10) pass with LFM3.
-- **Mutation check:** 16 mutations, each validated (the build succeeded and the binary changed).
+- **Mutation check:** 16 mutations, each validated (the build succeeded and the binary changed). The quote fix (#17, added after) had 4 more: 3 caught; the fourth showed a separate apostrophe rule was redundant (the closing rule already gives ’), so it was removed.
   - **Caught (15):**
     - ⌘↩ typing;
     - the anchor not shifting on inserts or deletes before it;
@@ -86,4 +86,5 @@ The reviewer confirmed that the diff, the revision store and the document-switch
 - **Touched means refused.** Any change inside the passage, even a fix that's undone later, cancels the proposal. The author has to select and ask again. Re-diffing against the changed passage would be friendlier, but harder to make safe.
 - **One anchor at a time.** There's one open proposal or pending edit per document. A queue of edits would need a list of anchors.
 - **The size warnings are heuristics** (50% and 250% of the passage's words, for passages of at least 12 and 4 words). A deliberate "cut this to one line" gets a warning it doesn't need. The warning is advisory only.
+- **Leading apostrophes** ('tis, '90s) in a curly-quoted passage become ‘ rather than ’. They're rare, and the change shows in the diff.
 - **Untested by automation:** #13 and #14 (verified by reading the code); #15 and #16 (by screenshot).
