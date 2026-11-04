@@ -62,6 +62,61 @@ static void append(char **buf, size_t *len, size_t *cap, const char *s, size_t n
     (*buf)[*len] = '\0';
 }
 
+static bool starts_ci(const char *s, const char *prefix)
+{
+    for (; *prefix; s++, prefix++)
+        if ((*s | 0x20) != (*prefix | 0x20)) return false;
+    return true;
+}
+
+char *llm_clean_edit(const char *reply, const char *passage)
+{
+    char *visible = NULL;
+    llm_split_thinking(reply ? reply : "", &visible, NULL);
+    if (!visible) return NULL;
+    char *p = visible;
+    /* A leading preamble line ending in ':' (e.g. "Here is the revised passage:"). */
+    char *nl = strchr(p, '\n');
+    if (nl && nl > p && nl[-1] == ':' && (starts_ci(p, "here") || starts_ci(p, "sure") || starts_ci(p, "revised") ||
+                                          starts_ci(p, "rewritten") || starts_ci(p, "certainly") || starts_ci(p, "okay"))) {
+        p = nl + 1;
+    }
+    while (*p == '\n' || *p == ' ' || *p == '\r' || *p == '\t') p++;
+    /* A wrapping code fence. */
+    if (!strncmp(p, "```", 3)) {
+        char *eol = strchr(p, '\n');
+        char *close = eol ? strstr(eol + 1, "```") : NULL;
+        if (eol && close) {
+            *close = '\0';
+            p = eol + 1;
+        }
+    }
+    size_t n = strlen(p);
+    while (n && (p[n - 1] == '\n' || p[n - 1] == ' ' || p[n - 1] == '\r' || p[n - 1] == '\t')) p[--n] = '\0';
+    /* Wrapping quotes the passage didn't have. */
+    static const char *const quotes[][2] = { { "\"", "\"" }, { "\xE2\x80\x9C", "\xE2\x80\x9D" } };
+    for (size_t q = 0; q < 2; q++) {
+        size_t lo = strlen(quotes[q][0]), lc = strlen(quotes[q][1]);
+        bool had = passage && !strncmp(passage, quotes[q][0], lo);
+        if (!had && n >= lo + lc && !strncmp(p, quotes[q][0], lo) && !strcmp(p + n - lc, quotes[q][1])) {
+            p[n - lc] = '\0';
+            p += lo;
+            n -= lo + lc;
+        }
+    }
+    /* Keep the passage's trailing newline, if it had one, so paragraph
+     * breaks around the selection survive the replacement. */
+    size_t pl = passage ? strlen(passage) : 0;
+    bool trailing_nl = pl && passage[pl - 1] == '\n';
+    char *out = malloc(strlen(p) + 2);
+    if (out) {
+        strcpy(out, p);
+        if (trailing_nl) strcat(out, "\n");
+    }
+    free(visible);
+    return out;
+}
+
 void llm_split_thinking(const char *s, char **visible, char **reasoning)
 {
     /* Rules (red-team 003):

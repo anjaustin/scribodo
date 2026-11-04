@@ -1,0 +1,22 @@
+# A reviewed edit with the real LFM3 model (make uitest-real).
+open "$DIR/chapter.md"
+wait_ready
+# Select the first paragraph's first sentence: "The fog came ... without asking."
+drag_index 0 109
+expect selection 0 109
+key K cmd
+type "Rewrite this sentence so it is shorter and more ominous. Keep it in English, past tense."
+key ENTER
+wait_chat 3600
+expect element_w ReviewPanel 100 3000
+expect chat_last_not "<think"
+expect chat_last_not "Here is"
+shot real-review
+click_element AcceptEdit
+expect status "Edit applied"
+expect element_w ReviewPanel 0 0
+expect files "$DIR/.scribodo/revisions/chapter.md" "ai-edit.md" 2
+# The rest of the document is untouched.
+expect length 150 300
+key Z cmd
+expect length 264 264

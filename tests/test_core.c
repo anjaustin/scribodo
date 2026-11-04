@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../src/core/diff.h"
 #include "../src/core/text_buffer.h"
 #include "../src/core/undo.h"
 #include "../src/core/utf8.h"
@@ -356,6 +357,61 @@ static void test_wrap(void)
     tb_free(&tb);
 }
 
+/* Rebuild old and new from a diff; both must match exactly. */
+static int diff_roundtrip(const char *a, const char *b, const Diff *d)
+{
+    char ra[8192] = "", rb[8192] = "";
+    size_t la = 0, lb = 0;
+    for (size_t i = 0; i < d->count; i++) {
+        const DiffOp *o = &d->ops[i];
+        if (o->kind != DIFF_INSERT) { memcpy(ra + la, a + o->pos, o->len); la += o->len; }
+        if (o->kind == DIFF_EQUAL)  { memcpy(rb + lb, a + o->pos, o->len); lb += o->len; }
+        if (o->kind == DIFF_INSERT) { memcpy(rb + lb, b + o->pos, o->len); lb += o->len; }
+    }
+    ra[la] = rb[lb] = 0;
+    return !strcmp(ra, a) && !strcmp(rb, b);
+}
+
+static void test_diff(void)
+{
+    Diff d;
+    const char *a = "The fog came in off the fjord, quietly and completely.";
+    const char *b = "The fog rolled in off the fjord — silently and completely.";
+    CHECK(diff_words(a, b, 0, &d));
+    CHECK(diff_roundtrip(a, b, &d));
+    /* Word-level: "came" -> "rolled" is one delete + one insert of whole words. */
+    int saw = 0;
+    for (size_t i = 0; i < d.count; i++)
+        if (d.ops[i].kind == DIFF_DELETE && d.ops[i].len == 4 && !strncmp(a + d.ops[i].pos, "came", 4) &&
+            i + 1 < d.count && d.ops[i + 1].kind == DIFF_INSERT && !strncmp(b + d.ops[i + 1].pos, "rolled", 6))
+            saw = 1;
+    CHECK(saw);
+    CHECK(d.deleted_bytes < strlen(a) / 2); /* not a whole replacement */
+    diff_free(&d);
+
+    CHECK(diff_words("", "new text", 0, &d) && d.count == 1 && d.ops[0].kind == DIFF_INSERT);
+    diff_free(&d);
+    CHECK(diff_words("same", "same", 0, &d) && d.count == 1 && d.ops[0].kind == DIFF_EQUAL);
+    diff_free(&d);
+    CHECK(diff_words("Zoë’s letter", "Zoë’s old letter", 0, &d) && diff_roundtrip("Zoë’s letter", "Zoë’s old letter", &d));
+    CHECK(d.deleted_bytes == 0);
+    diff_free(&d);
+
+    /* Property: random word edits always round-trip, and the edit limit
+     * falls back to a whole replacement rather than failing. */
+    static const char *words[] = { "fog", "the", "lighthouse", "Zoë", "—", " ", "  ", "\n", ",", "keeper", "Ångström" };
+    for (int it = 0; it < 300; it++) {
+        char x[2048] = "", y[2048] = "";
+        int nx = 5 + rnd() % 80, ny = 5 + rnd() % 80;
+        for (int i = 0; i < nx; i++) strcat(x, words[rnd() % 11]);
+        for (int i = 0; i < ny; i++) strcat(y, rnd() % 3 ? words[rnd() % 11] : "edited");
+        CHECK(diff_words(x, y, it % 10 == 0 ? 3 : 0, &d));
+        CHECK(diff_roundtrip(x, y, &d));
+        for (size_t i = 1; i < d.count; i++) CHECK(!(d.ops[i - 1].kind == DIFF_INSERT && d.ops[i].kind == DIFF_DELETE));
+        diff_free(&d);
+    }
+}
+
 int main(void)
 {
     TestCase tests[] = {
@@ -369,6 +425,7 @@ int main(void)
         { "undo_replace_selection_and_redo_discard", test_undo_replace_selection_and_redo_discard },
         { "undo_state_ids", test_undo_state_ids },
         { "wrap", test_wrap },
+        { "diff", test_diff },
     };
     return run_tests(tests, sizeof(tests) / sizeof(tests[0]));
 }

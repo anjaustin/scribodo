@@ -40,4 +40,8 @@ void chat_view_scroll_to_end(ChatView *v);
 /* For tests and notices: text the last "Copy" click put on the clipboard. */
 bool chat_view_take_copied(ChatView *v);
 
+/* Index of the reply whose "Apply" link was clicked (propose it as a
+ * document edit), or -1. */
+long chat_view_take_apply(ChatView *v);
+
 #endif

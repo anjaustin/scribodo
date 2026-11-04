@@ -97,6 +97,7 @@ bool chat_store_append(const char *project_dir, const char *id, const char *titl
     cJSON_AddStringToObject(j, "content", m->content ? m->content : "");
     cJSON_AddNumberToObject(j, "ts", (double)time(NULL));
     if (m->error) cJSON_AddBoolToObject(j, "error", true);
+    if (m->is_edit) cJSON_AddBoolToObject(j, "edit", true);
     ok = ok && write_line(fd, j);
     cJSON_Delete(j);
     ok = ok && fsync(fd) == 0;
@@ -213,7 +214,8 @@ bool chat_store_load(const char *project_dir, const char *id, ChatMessage **msgs
                 }
                 (*msgs)[*n] = (ChatMessage){ .role = strcmp(role->valuestring, "user") ? CHAT_ASSISTANT : CHAT_USER,
                                              .content = strdup(content->valuestring),
-                                             .error = cJSON_IsTrue(cJSON_GetObjectItem(j, "error")) };
+                                             .error = cJSON_IsTrue(cJSON_GetObjectItem(j, "error")),
+                                             .is_edit = cJSON_IsTrue(cJSON_GetObjectItem(j, "edit")) };
                 (*n)++;
             }
         }

@@ -90,6 +90,21 @@ Two lessons from building the harness:
 
 The chat feature was red-teamed separately; see [`REDTEAM-003-chat.md`](REDTEAM-003-chat.md) (19 findings, all fixed or documented, 8/8 fixes mutation-verified).
 
+## Reviewed AI edits
+
+- **Unit tests:** `test_core: diff` (word-level Myers diff, with a 300-case reconstruction property and fallback at the edit limit) and `test_llm` (edit-reply cleaning, the edit request, fake-model edits, revision store integrity). `test_editor: ranges` covers range read, replace and find.
+- **`edits.scribo`** (fake model; 27 checks) covers:
+  - select, ⌘K, review, Accept and the revisions it records;
+  - restoring from History, then undoing the restore;
+  - Reject;
+  - a stale passage refused, and a moved passage re-anchored;
+  - Esc out of edit mode;
+  - a revision recorded on save;
+  - read-only documents refusing edits.
+- **`real-edit.scribo`:** a real LFM3 rewrite reviewed and accepted through the UI.
+- **Mutation check:** four safety guarantees, each broken in turn: applying without Accept, Reject applying anyway, applying over a stale passage, and skipping the "before" revision. All four were caught. The first run "missed" the most important one, because the mutated source didn't compile and the harness re-ran the old binary. Mutation harnesses must check the build and that the binary changed.
+- **ASan caught an out-of-bounds read** in the diff tokenizer: `memcmp` against the punctuation table near the end of the text. It's fixed by bounding the comparison.
+
 ## Findings from the chat work
 
 Each of these was caught by the suites and has a regression check:

@@ -64,6 +64,7 @@ struct Editor {
     bool submit_on_enter;   /* Enter submits, Shift+Enter inserts a newline */
     bool submit_pending;
     char placeholder[128];
+    size_t hl_start, hl_len; /* highlighted range (proposal target) */
     uint64_t saved_id;      /* undo state id at last load/save */
     uint64_t version; /* bumps on every content change */
 
@@ -964,6 +965,12 @@ void editor_draw(Editor *e, Rectangle b, bool focused)
         float y = e->text_y + (float)r * lh - e->scroll_y;
         size_t end = row->start + row->len;
 
+        if (e->hl_len && e->hl_start < end + (row->len == 0) && e->hl_start + e->hl_len > row->start) {
+            size_t a = e->hl_start > row->start ? e->hl_start : row->start;
+            size_t z = e->hl_start + e->hl_len < end ? e->hl_start + e->hl_len : end;
+            float x0 = row_x(e, row, a), x1 = row_x(e, row, z);
+            DrawRectangleRec((Rectangle){ e->text_x + x0, y, x1 - x0, lh }, (Color){ 0x3A, 0x34, 0x1A, 0xFF });
+        }
         if (sel && (size_t)sel_lo < end + (row->len == 0) && (size_t)sel_hi > row->start) {
             size_t a = (size_t)sel_lo > row->start ? (size_t)sel_lo : row->start;
             size_t z = (size_t)sel_hi < end ? (size_t)sel_hi : end;
@@ -1233,4 +1240,77 @@ float editor_content_height(Editor *e)
 {
     ensure_layout(e);
     return (float)e->layout.count * e->font->line_height + e->top_pad;
+}
+
+/* ---- ranges ---------------------------------------------------------------------- */
+
+static uint32_t *decode_dup(const char *utf8, size_t *n)
+{
+    size_t len = strlen(utf8);
+    uint32_t *cps = malloc((len + 1) * sizeof(uint32_t));
+    if (cps) *n = utf8_decode((const uint8_t *)utf8, len, cps, NULL);
+    return cps;
+}
+
+char *editor_range_utf8(const Editor *e, size_t start, size_t len)
+{
+    size_t total = tb_len(&e->buf);
+    if (start > total || len > total - start) return NULL;
+    uint32_t *cps = malloc((len ? len : 1) * sizeof(uint32_t));
+    if (!cps) return NULL;
+    tb_copy(&e->buf, start, len, cps);
+    size_t bytes = utf8_encoded_len(cps, len);
+    char *s = malloc(bytes + 1);
+    if (s) {
+        utf8_encode(cps, len, (uint8_t *)s);
+        s[bytes] = '\0';
+    }
+    free(cps);
+    return s;
+}
+
+bool editor_replace_range_utf8(Editor *e, size_t start, size_t len, const char *utf8)
+{
+    size_t n = 0;
+    uint32_t *cps = decode_dup(utf8, &n);
+    if (!cps) return false;
+    n = sanitize_text(cps, n);
+    bool ok = editor_replace_range(e, start, len, cps, n);
+    free(cps);
+    if (ok) e->hl_len = 0;
+    return ok;
+}
+
+size_t editor_find_utf8(const Editor *e, const char *utf8, size_t *first)
+{
+    size_t n = 0, count = 0, total = tb_len(&e->buf);
+    uint32_t *needle = decode_dup(utf8, &n);
+    if (!needle || n == 0 || n > total) {
+        free(needle);
+        return 0;
+    }
+    for (size_t i = 0; i + n <= total; i++) {
+        size_t k = 0;
+        while (k < n && tb_get(&e->buf, i + k) == needle[k]) k++;
+        if (k == n) {
+            if (count == 0 && first) *first = i;
+            count++;
+        }
+    }
+    free(needle);
+    return count;
+}
+
+void editor_set_highlight(Editor *e, size_t start, size_t len)
+{
+    e->hl_start = start;
+    e->hl_len = len;
+}
+
+void editor_reveal(Editor *e, size_t index)
+{
+    size_t n = tb_len(&e->buf);
+    e->st.cursor = (int)(index < n ? index : n);
+    e->st.select_start = e->st.select_end = e->st.cursor;
+    e->want_cursor_visible = true;
 }

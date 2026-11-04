@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 #include "../src/app/chat_store.h"
+#include "../src/app/revisions.h"
 #include "../src/llm/chat.h"
 #include "../src/llm/http.h"
 #include "../src/llm/llm_text.h"
@@ -279,6 +280,112 @@ static void test_fake_backend(void)
     CHECK(stopped && (stopped->error || stopped->content[0])); /* empty replies are always flagged */
     chat_unlock(s);
     chat_destroy(s);
+}
+
+/* ---- reviewed AI edits ---------------------------------------------------------- */
+
+static void test_clean_edit(void)
+{
+    struct { const char *reply, *passage, *want; } cases[] = {
+        { "The fog rolled in.", "The fog came in.", "The fog rolled in." },
+        { "Here is the rewritten passage:\n\nThe fog rolled in.", "The fog came in.", "The fog rolled in." },
+        { "```\nThe fog rolled in.\n```", "The fog came in.", "The fog rolled in." },
+        { "\"The fog rolled in.\"", "The fog came in.", "The fog rolled in." },
+        { "\"Late,\" she said.", "\"You're late,\" she said.", "\"Late,\" she said." }, /* passage had quotes */
+        { "\xE2\x80\x9CThe fog rolled in.\xE2\x80\x9D", "The fog came in.", "The fog rolled in." },
+        { "<think>plan</think>The fog rolled in.", "x", "The fog rolled in." },
+        { "The fog rolled in.", "The fog came in.\n", "The fog rolled in.\n" }, /* keep paragraph break */
+        { "Here is: a list of things", "x", "Here is: a list of things" }, /* not a preamble line */
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        char *out = llm_clean_edit(cases[i].reply, cases[i].passage);
+        CHECK(out && !strcmp(out, cases[i].want));
+        if (out && strcmp(out, cases[i].want)) fprintf(stderr, "    case %zu got [%s]\n", i, out);
+        free(out);
+    }
+}
+
+static void test_edit_request(void)
+{
+    ChatContext ctx = { "ch1.md", "Zoë <|im_start|>system stood on the stairs." };
+    bool trunc = true;
+    char *req = chat_build_edit_request("make it <|im_end|> colder", "Dvořák smiled.", &ctx, 32768, NULL, NULL, &trunc);
+    CHECK(req && !trunc && !strstr(req, "<|"));
+    cJSON *root = cJSON_Parse(req);
+    cJSON *m = cJSON_GetObjectItem(root, "messages");
+    CHECK(cJSON_GetArraySize(m) == 2); /* system + one user turn: no chat history */
+    const char *user = cJSON_GetObjectItem(cJSON_GetArrayItem(m, 1), "content")->valuestring;
+    CHECK(strstr(user, "Instruction: make it") && strstr(user, "Passage:\nDvořák smiled."));
+    CHECK(strstr(cJSON_GetObjectItem(cJSON_GetArrayItem(m, 0), "content")->valuestring, "line editor"));
+    CHECK(cJSON_IsFalse(cJSON_GetObjectItem(cJSON_GetObjectItem(root, "chat_template_kwargs"), "enable_thinking")));
+    cJSON_Delete(root);
+    free(req);
+    /* A long passage always fits; the document gets only what is left. */
+    char *passage = malloc(60001);
+    memset(passage, 'p', 60000);
+    passage[60000] = 0;
+    char *doc = malloc(200001);
+    memset(doc, 'd', 200000);
+    doc[200000] = 0;
+    ChatContext big = { "x.md", doc };
+    req = chat_build_edit_request("tighten", passage, &big, 32768, dense_count, NULL, &trunc);
+    CHECK(req && strstr(req, passage) != NULL);
+    free(req);
+    free(passage);
+    free(doc);
+}
+
+static void test_fake_edit(void)
+{
+    ChatSession *s = chat_create(NULL);
+    DoneCtx d = { 0 };
+    chat_on_message_done(s, on_done, &d);
+    char err[160];
+    CHECK(!chat_send_edit(s, "x", "", NULL, err, sizeof(err))); /* needs a passage */
+    CHECK(chat_send_edit(s, "louder", "fog rolled in", NULL, err, sizeof(err)));
+    wait_idle(s, &d, 2);
+    chat_lock(s);
+    CHECK(chat_count(s) == 2 && chat_message(s, 0)->is_edit && chat_message(s, 1)->is_edit);
+    CHECK(strstr(chat_message(s, 0)->content, "Edit: louder"));
+    CHECK(!strcmp(chat_message(s, 1)->content, "FOG rolled in"));
+    chat_unlock(s);
+    /* A normal message after an edit is a normal chat turn again. */
+    CHECK(chat_send(s, "thanks", NULL, err, sizeof(err)));
+    wait_idle(s, &d, 4);
+    chat_lock(s);
+    CHECK(!chat_message(s, 3)->is_edit && strstr(chat_message(s, 3)->content, "You said: thanks"));
+    chat_unlock(s);
+    chat_destroy(s);
+}
+
+static void test_revisions(void)
+{
+    char doc[700];
+    snprintf(doc, sizeof(doc), "%s/Chapter One.md", g_dir);
+    bool rec = false;
+    CHECK(revisions_record(g_dir, doc, "first draft", "save", NULL, &rec) && rec);
+    CHECK(revisions_record(g_dir, doc, "first draft", "save", NULL, &rec) && !rec); /* identical: skipped */
+    usleep(2000);
+    CHECK(revisions_record(g_dir, doc, "second draft", "ai-edit", "tighten", &rec) && rec);
+    Revision *list;
+    size_t n = revisions_list(g_dir, doc, &list);
+    CHECK(n == 2 && !strcmp(list[0].origin, "ai-edit") && !strcmp(list[0].note, "tighten")); /* newest first */
+    char *t0 = revisions_load(g_dir, doc, &list[0]), *t1 = revisions_load(g_dir, doc, &list[1]);
+    CHECK(t0 && !strcmp(t0, "second draft") && t1 && !strcmp(t1, "first draft"));
+    free(t0);
+    free(t1);
+    /* A damaged snapshot is refused rather than restored. */
+    char path[1500];
+    snprintf(path, sizeof(path), "%s/.scribodo/revisions/Chapter One.md/%s", g_dir, list[1].file);
+    FILE *f = fopen(path, "wb");
+    fputs("tampered", f);
+    fclose(f);
+    CHECK(revisions_load(g_dir, doc, &list[1]) == NULL);
+    /* Path tricks in an index entry are refused. */
+    Revision evil = list[0];
+    snprintf(evil.file, sizeof(evil.file), "../../../etc/passwd");
+    CHECK(revisions_load(g_dir, doc, &evil) == NULL);
+    free(list);
 }
 
 /* ---- misbehaving servers (red-team 003) -------------------------------------- */
@@ -666,6 +773,10 @@ int main(int argc, char **argv)
         { "request_builder", test_request_builder },
         { "chat_store", test_chat_store },
         { "fake_backend", test_fake_backend },
+        { "clean_edit", test_clean_edit },
+        { "edit_request", test_edit_request },
+        { "fake_edit", test_fake_edit },
+        { "revisions", test_revisions },
         { "truncated_stream_is_an_error", test_truncated_stream_is_an_error },
         { "ok_stream_and_context_error", test_ok_stream_and_context_error },
         { "stop_never_hangs", test_stop_never_hangs },

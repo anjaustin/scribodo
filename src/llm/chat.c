@@ -23,6 +23,12 @@ static const char *k_persona =
     "and tone. Be concise in conversation and generous when drafting. You cannot change the "
     "author's documents: when you suggest text, present it so the author can choose to use it.";
 
+static const char *k_editor =
+    "You are an expert line editor for fiction. Rewrite the passage the author selected, following "
+    "their instruction. Keep the author's voice, tense, point of view, names and formatting unless "
+    "the instruction says otherwise. Return ONLY the rewritten passage: no preamble, no quotation "
+    "marks around it, no notes or explanations.";
+
 struct ChatSession {
     LlmServer *server;
     pthread_mutex_t mu;
@@ -36,6 +42,7 @@ struct ChatSession {
     /* Request in flight (owned by the worker). */
     char *request;
     char *ctx_title, *ctx_text; /* copies of the ChatContext for the worker */
+    char *edit_instruction, *edit_passage; /* set while an edit request is in flight */
     bool has_doc;
     char notice[256];
     char notice_out[256];
@@ -105,6 +112,8 @@ void chat_destroy(ChatSession *s)
     free(s->request);
     free(s->ctx_title);
     free(s->ctx_text);
+    free(s->edit_instruction);
+    free(s->edit_passage);
     pthread_mutex_destroy(&s->mu);
     free(s);
 }
@@ -117,7 +126,10 @@ bool chat_load_messages(ChatSession *s, const ChatMessage *msgs, size_t n)
     bool ok = true;
     for (size_t i = 0; i < n && ok; i++) {
         ok = push_message(s, msgs[i].role, msgs[i].content);
-        if (ok) s->msgs[s->count - 1].error = msgs[i].error;
+        if (ok) {
+            s->msgs[s->count - 1].error = msgs[i].error;
+            s->msgs[s->count - 1].is_edit = msgs[i].is_edit;
+        }
     }
     pthread_mutex_unlock(&s->mu);
     return ok;
@@ -249,6 +261,83 @@ char *chat_build_request(const ChatMessage *msgs, size_t n, const ChatContext *c
     char *out = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     return out;
+}
+
+char *chat_build_edit_request(const char *instruction, const char *passage, const ChatContext *ctx, int ctx_tokens,
+                              ChatTokenCount count, void *cctx, bool *doc_truncated)
+{
+    if (doc_truncated) *doc_truncated = false;
+    long budget = (long)(ctx_tokens > 0 ? ctx_tokens : SLOT_CTX_TOKENS) - MAX_REPLY_TOKENS - 256;
+    char *pass = llm_neutralize(passage ? passage : "");
+    char *instr = llm_neutralize(instruction ? instruction : "");
+    char *doc = NULL;
+    bool truncated = false;
+    if (!pass || !instr) goto fail;
+    if (ctx && ctx->doc_text) {
+        doc = llm_neutralize(ctx->doc_text);
+        if (!doc) goto fail;
+        /* The passage itself must always fit; the document gets what's left. */
+        long room = budget - count_tokens(count, cctx, pass) - count_tokens(count, cctx, instr) - 200;
+        long doc_max = (long)((double)budget * 0.5);
+        if (room < doc_max) doc_max = room;
+        if (doc_max < 64) {
+            free(doc);
+            doc = NULL;
+        } else {
+            truncated = fit_document(doc, doc_max, count, cctx);
+        }
+    }
+    if (doc_truncated) *doc_truncated = truncated;
+    size_t cap = strlen(k_editor) + (doc ? strlen(doc) : 0) + 512;
+    char *sys = malloc(cap);
+    size_t ucap = strlen(pass) + strlen(instr) + 128;
+    char *user = malloc(ucap);
+    if (!sys || !user) {
+        free(sys);
+        free(user);
+        goto fail;
+    }
+    if (doc)
+        snprintf(sys, cap,
+                 "%s\n\nFor context only, the document the passage comes from:\n--- BEGIN DOCUMENT ---\n%s\n--- END DOCUMENT ---",
+                 k_editor, doc);
+    else
+        snprintf(sys, cap, "%s", k_editor);
+    snprintf(user, ucap, "Instruction: %s\n\nPassage:\n%s", instr, pass);
+    cJSON *root = cJSON_CreateObject();
+    cJSON *arr = cJSON_AddArrayToObject(root, "messages");
+    cJSON *m = cJSON_CreateObject();
+    cJSON_AddStringToObject(m, "role", "system");
+    cJSON_AddStringToObject(m, "content", sys);
+    cJSON_AddItemToArray(arr, m);
+    m = cJSON_CreateObject();
+    cJSON_AddStringToObject(m, "role", "user");
+    cJSON_AddStringToObject(m, "content", user);
+    cJSON_AddItemToArray(arr, m);
+    cJSON_AddBoolToObject(root, "stream", true);
+    /* A rewrite is about the passage's size; leave room for it to grow. */
+    long out_tokens = count_tokens(count, cctx, pass) * 2 + 64;
+    cJSON_AddNumberToObject(root, "max_tokens", out_tokens > MAX_REPLY_TOKENS ? out_tokens : MAX_REPLY_TOKENS);
+    cJSON_AddNumberToObject(root, "temperature", 0.4);
+    cJSON_AddNumberToObject(root, "top_p", 0.95);
+    cJSON_AddNumberToObject(root, "repeat_penalty", 1.05);
+    cJSON_AddNumberToObject(root, "id_slot", CHAT_SLOT);
+    cJSON_AddBoolToObject(root, "cache_prompt", true);
+    cJSON *kw = cJSON_AddObjectToObject(root, "chat_template_kwargs");
+    cJSON_AddBoolToObject(kw, "enable_thinking", false);
+    char *out = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    free(sys);
+    free(user);
+    free(pass);
+    free(instr);
+    free(doc);
+    return out;
+fail:
+    free(pass);
+    free(instr);
+    free(doc);
+    return NULL;
 }
 
 /* ---- streaming ---------------------------------------------------------------- */
@@ -404,9 +493,13 @@ static bool build_in_worker(ChatSession *s)
     /* Budget from the server's real per-slot context, not an assumption
      * (red-team 003: a mismatch overflowed the context despite trimming). */
     int slot_ctx = s->server ? llm_server_slot_ctx(s->server) : SLOT_CTX_TOKENS;
-    char *req = ok ? chat_build_request(copy, n, s->has_doc ? &ctx : NULL, slot_ctx,
-                                        s->server ? server_count : NULL, s, &truncated)
-                   : NULL;
+    char *req = NULL;
+    if (ok && s->edit_passage)
+        req = chat_build_edit_request(s->edit_instruction, s->edit_passage, s->has_doc ? &ctx : NULL, slot_ctx,
+                                      s->server ? server_count : NULL, s, &truncated);
+    else if (ok)
+        req = chat_build_request(copy, n, s->has_doc ? &ctx : NULL, slot_ctx, s->server ? server_count : NULL, s,
+                                 &truncated);
     for (size_t i = 0; copy && i < n; i++) free(copy[i].content);
     free(copy);
     pthread_mutex_lock(&s->mu);
@@ -429,8 +522,15 @@ static void *fake_worker(void *arg)
     char reply[4096];
     pthread_mutex_lock(&s->mu);
     const char *last = s->target > 0 ? s->msgs[s->target - 1].content : "";
-    snprintf(reply, sizeof(reply), "(fake model%s) You said: %s",
-             strstr(s->request, "BEGIN DOCUMENT") ? ", with document" : "", last);
+    if (s->edit_passage) /* fake edit: upper-case the passage's first word */
+    {
+        snprintf(reply, sizeof(reply), "%s", s->edit_passage);
+        for (char *c = reply; *c && *c != ' '; c++)
+            if (*c >= 'a' && *c <= 'z') *c = (char)(*c - 32);
+    } else {
+        snprintf(reply, sizeof(reply), "(fake model%s) You said: %s",
+                 strstr(s->request, "BEGIN DOCUMENT") ? ", with document" : "", last);
+    }
     pthread_mutex_unlock(&s->mu);
     char *raw = NULL;
     size_t len = 0;
@@ -495,7 +595,29 @@ static void *server_worker(void *arg)
     return NULL;
 }
 
+static bool send_common(ChatSession *s, const char *text, const ChatContext *ctx, const char *instruction,
+                        const char *passage, char *err, size_t errlen);
+
 bool chat_send(ChatSession *s, const char *text, const ChatContext *ctx, char *err, size_t errlen)
+{
+    return send_common(s, text, ctx, NULL, NULL, err, errlen);
+}
+
+bool chat_send_edit(ChatSession *s, const char *instruction, const char *passage, const ChatContext *ctx,
+                    char *err, size_t errlen)
+{
+    if (!passage || !passage[0]) {
+        snprintf(err, errlen, "Select the passage you want edited first");
+        return false;
+    }
+    char label[600];
+    snprintf(label, sizeof(label), "\xE2\x9C\x8E Edit: %s", instruction && instruction[0] ? instruction : "improve this passage");
+    return send_common(s, label, ctx, instruction && instruction[0] ? instruction : "Improve this passage.", passage,
+                       err, errlen);
+}
+
+static bool send_common(ChatSession *s, const char *text, const ChatContext *ctx, const char *instruction,
+                        const char *passage, char *err, size_t errlen)
 {
     if (atomic_load(&s->busy)) {
         snprintf(err, errlen, "A reply is still being written");
@@ -516,6 +638,11 @@ bool chat_send(ChatSession *s, const char *text, const ChatContext *ctx, char *e
     size_t user_index = s->count - 1;
     free(s->ctx_title);
     free(s->ctx_text);
+    free(s->edit_instruction);
+    free(s->edit_passage);
+    s->edit_instruction = instruction ? strdup(instruction) : NULL;
+    s->edit_passage = passage ? strdup(passage) : NULL;
+    if (passage && (!s->edit_passage || !s->edit_instruction)) ok = false;
     s->has_doc = ctx && ctx->doc_text;
     s->ctx_title = s->has_doc && ctx->doc_title ? strdup(ctx->doc_title) : NULL;
     s->ctx_text = s->has_doc ? strdup(ctx->doc_text) : NULL;
@@ -524,6 +651,8 @@ bool chat_send(ChatSession *s, const char *text, const ChatContext *ctx, char *e
     if (ok) {
         s->target = s->count - 1;
         s->msgs[s->target].streaming = true;
+        s->msgs[s->target].is_edit = passage != NULL;
+        s->msgs[user_index].is_edit = passage != NULL;
         s->user_index = user_index;
         s->user_done_pending = true;
         s->last_truncated = false;

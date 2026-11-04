@@ -1,0 +1,88 @@
+# Reviewed AI edits end to end (fake model: it upper-cases the passage's first word).
+open "$DIR/chapter.md"
+# Select "fog", press Cmd+K, describe the change.
+click_index 5 2
+expect selection 4 7
+key K cmd
+type "Make it loud"
+key ENTER
+wait_chat
+expect chat_last "FOG"
+# Nothing changes until the author accepts.
+expect element_w ReviewPanel 100 3000
+expect text "The fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+expect dirty no
+shot review
+click_element AcceptEdit
+expect element_w ReviewPanel 0 0
+expect text "The FOG came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+expect status "Edit applied"
+expect dirty yes
+expect files "$DIR/.scribodo/revisions/chapter.md" "ai-edit.md" 2
+# Restore the revision from before the edit, then undo the restore.
+wait 5
+click_element RevItem1
+expect text "The fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+expect status "Revision restored"
+key Z cmd
+expect text "The FOG came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+# Reject leaves the document unchanged.
+wait 30
+click_index 9 2
+expect selection 8 12
+key K cmd
+type "shout"
+key ENTER
+wait_chat
+expect element_w ReviewPanel 100 3000
+click_element RejectEdit
+expect element_w ReviewPanel 0 0
+expect text "The FOG came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+expect status "rejected"
+# A proposal for a passage that changed afterwards is refused, never applied.
+wait 30
+click_index 9 2
+key K cmd
+type "shout again"
+key ENTER
+wait_chat
+wait 30
+click_index 9
+type "Z"
+click_element AcceptEdit
+expect status "changed since"
+expect text "The FOG cZame in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+expect element_w ReviewPanel 0 0
+# If text moves but the passage is intact, the edit re-anchors and applies.
+wait 30
+click_index 26 2
+expect selection 25 30
+key K cmd
+type "caps"
+key ENTER
+wait_chat
+click_index 0
+type "~"
+click_element AcceptEdit
+expect text "~The FOG cZame in off the FJORD the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+# Esc cancels edit mode: the next message is ordinary chat.
+wait 30
+click_index 2 2
+key K cmd
+key ESC
+click_element ChatInput
+type "just chatting"
+key ENTER
+wait_chat
+expect chat_last "You said: just chatting"
+expect element_w ReviewPanel 0 0
+# Saving records a revision too (identical text is not duplicated, so change it first).
+click_index 0
+type "!"
+key S cmd
+expect files "$DIR/.scribodo/revisions/chapter.md" "-save.md" 1
+# Read-only documents can't receive edits.
+drop "$DIR/invalid.md"
+click_index 1 2
+key K cmd
+expect status "editable document"

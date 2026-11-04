@@ -21,6 +21,8 @@
 #include "rlgl.h"
 
 #include "app/chat_store.h"
+#include "app/revisions.h"
+#include "llm/llm_text.h"
 #include "app/script.h"
 #include "llm/chat.h"
 #include "llm/server.h"
@@ -29,6 +31,7 @@
 #include "ui/editor.h"
 #include "ui/font.h"
 #include "ui/input.h"
+#include "ui/review_view.h"
 
 /* raylib re-reads GLFW's close flag every frame, so clearing it cancels a
  * close request. GLFWwindow is opaque; raylib hands us the pointer. */
@@ -80,6 +83,29 @@ typedef struct {
     bool clear_chat_when_idle;
     char chat_id[40];
     char chat_title[160];
+
+    /* Reviewed AI edits */
+    ReviewView *review;
+    bool edit_mode;              /* next chat message is an edit instruction */
+    size_t edit_start, edit_len; /* the selected passage (codepoints) */
+    char *edit_text;
+    char edit_banner[240];
+    struct {
+        bool active;             /* an edit request is streaming */
+        size_t index;            /* its assistant message */
+        size_t start, len;
+        char *original, *instruction;
+    } pending;
+    struct {
+        bool active;
+        size_t start, len;
+        char *original, *replacement, *note;
+        char doc[PATH_MAX];
+    } proposal;
+    Rectangle review_rect;
+    Revision *revs;
+    size_t nrevs;
+    char rev_labels[16][64];
 
     /* Project (the folder holding the open document) */
     char project_dir[PATH_MAX];
@@ -136,6 +162,23 @@ static void refresh_lists(App *app)
         qsort(app->docs, app->ndocs, sizeof(char *), cmp_str);
     }
     app->nchats = chat_store_list(app->project_dir, &app->chats);
+    free(app->revs);
+    app->revs = NULL;
+    app->nrevs = editor_path(app->editor) ? revisions_list(app->project_dir, editor_path(app->editor), &app->revs) : 0;
+    static const struct { const char *origin, *label; } names[] = {
+        { "save", "Saved" }, { "ai-edit", "AI edit" }, { "before-ai-edit", "Before AI edit" },
+        { "restore", "Restored" }, { "before-restore", "Before restore" },
+    };
+    for (size_t i = 0; i < app->nrevs && i < 16; i++) {
+        const char *lbl = app->revs[i].origin;
+        for (size_t k = 0; k < sizeof(names) / sizeof(names[0]); k++)
+            if (!strcmp(names[k].origin, app->revs[i].origin)) lbl = names[k].label;
+        struct tm tmv;
+        localtime_r(&app->revs[i].ts, &tmv);
+        char when[32];
+        strftime(when, sizeof(when), "%b %d %H:%M", &tmv);
+        snprintf(app->rev_labels[i], sizeof(app->rev_labels[i]), "%s \xC2\xB7 %s", when, lbl);
+    }
 }
 
 static void set_project_from(App *app, const char *doc_path)
@@ -156,12 +199,187 @@ static void set_project_from(App *app, const char *doc_path)
     app->lists_dirty = true;
 }
 
+/* ---- reviewed AI edits ------------------------------------------------------------- */
+
+static void clear_proposal(App *app)
+{
+    free(app->proposal.original);
+    free(app->proposal.replacement);
+    free(app->proposal.note);
+    memset(&app->proposal, 0, sizeof(app->proposal));
+    review_clear(app->review);
+    editor_set_highlight(app->editor, 0, 0);
+}
+
+static void clear_pending(App *app)
+{
+    free(app->pending.original);
+    free(app->pending.instruction);
+    memset(&app->pending, 0, sizeof(app->pending));
+}
+
+static void leave_edit_mode(App *app)
+{
+    app->edit_mode = false;
+    free(app->edit_text);
+    app->edit_text = NULL;
+}
+
+/* Show a proposal for review. Takes ownership of nothing; copies. */
+static void propose(App *app, size_t start, size_t len, const char *original, const char *replacement, const char *note)
+{
+    clear_proposal(app);
+    if (!editor_path(app->editor)) return;
+    app->proposal.active = true;
+    app->proposal.start = start;
+    app->proposal.len = len;
+    app->proposal.original = strdup(original);
+    app->proposal.replacement = strdup(replacement);
+    app->proposal.note = strdup(note ? note : "");
+    snprintf(app->proposal.doc, sizeof(app->proposal.doc), "%s", editor_path(app->editor));
+    if (!app->proposal.original || !app->proposal.replacement || !review_set(app->review, original, replacement, note)) {
+        clear_proposal(app);
+        set_status(app, "Could not show the proposed edit");
+        return;
+    }
+    editor_set_highlight(app->editor, start, len);
+    editor_reveal(app->editor, start);
+}
+
+static void record_revision(App *app, const char *origin, const char *note)
+{
+    if (!app->project_dir[0] || !editor_path(app->editor)) return;
+    char *text = editor_text_utf8(app->editor);
+    if (!text) return;
+    if (!revisions_record(app->project_dir, editor_path(app->editor), text, origin, note, NULL))
+        set_status(app, "Could not record a revision in .scribodo/revisions");
+    free(text);
+    app->lists_dirty = true;
+}
+
+static void accept_proposal(App *app)
+{
+    if (!app->proposal.active) return;
+    if (!editor_path(app->editor) || strcmp(app->proposal.doc, editor_path(app->editor)) != 0) {
+        clear_proposal(app);
+        set_status(app, "That edit was for another document");
+        return;
+    }
+    if (editor_is_read_only(app->editor)) {
+        set_status(app, "This document is read-only; the edit can't be applied");
+        return;
+    }
+    /* Never apply over text that changed since the proposal was made: the
+     * passage must still be there, exactly (re-anchored if text moved). */
+    size_t start = app->proposal.start, len = app->proposal.len;
+    char *now = editor_range_utf8(app->editor, start, len);
+    bool same = now && !strcmp(now, app->proposal.original);
+    free(now);
+    if (!same && len > 0) {
+        size_t first = 0;
+        size_t hits = editor_find_utf8(app->editor, app->proposal.original, &first);
+        if (hits == 1) {
+            start = first;
+            same = true;
+        }
+    }
+    if (!same) {
+        clear_proposal(app);
+        set_status(app, "The passage changed since this edit was proposed. Select it again and request a new edit.");
+        return;
+    }
+    record_revision(app, "before-ai-edit", app->proposal.note);
+    if (!editor_replace_range_utf8(app->editor, start, len, app->proposal.replacement)) {
+        set_status(app, "Could not apply the edit");
+        return;
+    }
+    record_revision(app, "ai-edit", app->proposal.note);
+    clear_proposal(app);
+    set_status(app, "Edit applied \xC2\xB7 \xE2\x8C\x98Z undoes it \xC2\xB7 the file isn't saved until you press \xE2\x8C\x98S");
+    app->focus = FOCUS_DOC;
+}
+
+static void reject_proposal(App *app)
+{
+    clear_proposal(app);
+    set_status(app, "Edit rejected \xE2\x80\x94 the document is unchanged");
+}
+
+/* ⌘K: the next chat message becomes an edit request for the selection. */
+static void begin_edit(App *app)
+{
+    size_t a, c;
+    editor_get_selection(app->editor, &a, &c);
+    size_t lo = a < c ? a : c, hi = a < c ? c : a;
+    if (!editor_path(app->editor) || editor_is_read_only(app->editor)) {
+        set_status(app, "Open an editable document to request edits");
+        return;
+    }
+    if (hi == lo) {
+        set_status(app, "Select the passage you want edited, then press \xE2\x8C\x98K");
+        return;
+    }
+    leave_edit_mode(app);
+    app->edit_text = editor_range_utf8(app->editor, lo, hi - lo);
+    if (!app->edit_text) return;
+    app->edit_mode = true;
+    app->edit_start = lo;
+    app->edit_len = hi - lo;
+    /* Banner: the first words of the passage. */
+    char first[80];
+    snprintf(first, sizeof(first), "%.60s", app->edit_text);
+    for (char *p = first; *p; p++)
+        if (*p == '\n' || *p == '\t') *p = ' ';
+    /* don't cut a UTF-8 sequence in half */
+    size_t fl = strlen(first);
+    while (fl > 0 && ((unsigned char)first[fl - 1] & 0xC0) == 0x80) fl--;
+    if (fl > 0 && ((unsigned char)first[fl - 1] & 0xC0) == 0xC0) fl--;
+    first[fl] = '\0';
+    snprintf(app->edit_banner, sizeof(app->edit_banner), "\xE2\x9C\x8E Editing \xE2\x80\x9C%s%s\xE2\x80\x9D \xE2\x80\x94 describe the change",
+             first, strlen(app->edit_text) > fl ? "\xE2\x80\xA6" : "");
+    editor_set_highlight(app->editor, lo, hi - lo);
+    app->focus = FOCUS_CHAT;
+}
+
+static void restore_revision(App *app, const Revision *r)
+{
+    if (!editor_path(app->editor)) return;
+    if (editor_is_read_only(app->editor)) {
+        set_status(app, "This document is read-only");
+        return;
+    }
+    char *text = revisions_load(app->project_dir, editor_path(app->editor), r);
+    if (!text) {
+        set_status(app, "That revision could not be read (missing or damaged)");
+        return;
+    }
+    char *now = editor_text_utf8(app->editor);
+    if (now && !strcmp(now, text)) {
+        set_status(app, "That revision is already the current text");
+    } else {
+        record_revision(app, "before-restore", r->file);
+        clear_proposal(app);
+        if (editor_replace_range_utf8(app->editor, 0, editor_length(app->editor), text)) {
+            record_revision(app, "restore", r->file);
+            set_status(app, "Revision restored \xC2\xB7 \xE2\x8C\x98Z undoes it \xC2\xB7 not saved to the file yet");
+        } else {
+            set_status(app, "Could not restore that revision");
+        }
+    }
+    free(now);
+    free(text);
+}
+
 /* ---- documents ------------------------------------------------------------------ */
 
 static void open_path(App *app, const char *path)
 {
     char msg[512];
     if (editor_load_file(app->editor, path, msg, sizeof(msg))) {
+        /* Edits and proposals belong to the document they were made for. */
+        clear_proposal(app);
+        clear_pending(app);
+        leave_edit_mode(app);
         set_status(app, msg[0] ? msg : "Opened");
         set_project_from(app, path);
     } else {
@@ -179,8 +397,9 @@ static void drop_path(App *app, const char *path)
 static void save(App *app)
 {
     char msg[512];
-    editor_save(app->editor, msg, sizeof(msg));
+    bool ok = editor_save(app->editor, msg, sizeof(msg));
     set_status(app, msg);
+    if (ok) record_revision(app, "save", NULL);
     app->lists_dirty = true;
 }
 
@@ -189,7 +408,6 @@ static void save(App *app)
 static void on_message_done(ChatSession *s, size_t index, void *ctx)
 {
     App *app = ctx;
-    if (!app->chat_project[0]) return; /* no project: conversation stays in memory */
     chat_lock(s);
     const ChatMessage *m = chat_message(s, index);
     ChatMessage copy = { 0 };
@@ -199,6 +417,18 @@ static void on_message_done(ChatSession *s, size_t index, void *ctx)
     }
     chat_unlock(s);
     if (!m || !copy.content) return;
+    if (app->pending.active && index == app->pending.index) {
+        if (!copy.error && copy.content[0]) {
+            char *clean = llm_clean_edit(copy.content, app->pending.original);
+            if (clean) propose(app, app->pending.start, app->pending.len, app->pending.original, clean,
+                               app->pending.instruction);
+            free(clean);
+        } else {
+            editor_set_highlight(app->editor, 0, 0);
+        }
+        clear_pending(app);
+    }
+    if (!app->chat_project[0]) { free(copy.content); return; }
     if (!chat_store_append(app->chat_project, app->chat_id, app->chat_title, &copy))
         set_status(app, "Could not save the chat to .scribodo/chats");
     free(copy.content);
@@ -280,9 +510,29 @@ static void send_chat(App *app, char *text)
         ctx.doc_text = doc;
     }
     char err[256] = "";
-    if (chat_send(app->chat, text, &ctx, err, sizeof(err))) {
+    bool sent;
+    if (app->edit_mode && app->edit_text) {
+        sent = chat_send_edit(app->chat, text, app->edit_text, &ctx, err, sizeof(err));
+        if (sent) {
+            clear_proposal(app);
+            clear_pending(app);
+            app->pending.active = true;
+            chat_lock(app->chat);
+            app->pending.index = chat_count(app->chat) - 1;
+            chat_unlock(app->chat);
+            app->pending.start = app->edit_start;
+            app->pending.len = app->edit_len;
+            app->pending.original = strdup(app->edit_text);
+            app->pending.instruction = strdup(text);
+            editor_set_highlight(app->editor, app->edit_start, app->edit_len);
+            leave_edit_mode(app);
+        }
+    } else {
+        sent = chat_send(app->chat, text, &ctx, err, sizeof(err));
+    }
+    if (sent) {
         chat_view_clear_input(app->chat_view);
-        if (err[0]) set_status(app, err); /* e.g. document truncated */
+        if (err[0]) set_status(app, err);
     } else {
         set_status(app, err);
     }
@@ -425,6 +675,10 @@ static Clay_RenderCommandArray build_layout(App *app)
                 for (size_t i = 0; i < app->nchats; i++)
                     list_item(CLAY_IDI("ChatItem", (uint32_t)i), app->chats[i].title, !strcmp(app->chat_id, app->chats[i].id));
                 if (!app->project_dir[0]) coming_soon("Open a document to save chats");
+                section_header("HISTORY");
+                if (app->nrevs == 0) coming_soon(editor_path(app->editor) ? "No revisions yet" : "Open a document");
+                for (size_t i = 0; i < app->nrevs && i < 16; i++)
+                    list_item(CLAY_IDI("RevItem", (uint32_t)i), app->rev_labels[i], false);
                 section_header("NOTES");
                 coming_soon("Coming soon");
                 section_header("CANON");
@@ -460,9 +714,18 @@ static Clay_RenderCommandArray build_layout(App *app)
                        .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(30) },
                                    .padding = { 12, 10, 0, 0 }, .childGap = 8,
                                    .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } } }) {
-                    slot(CLAY_ID("IncludeDoc"), 16, 16);
-                    label("Include document", FONT_UI, COL_MUTED);
-                    grow();
+                    if (app->edit_mode) {
+                        CLAY({ .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
+                                           .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
+                               .clip = { .horizontal = true } }) {
+                            label(app->edit_banner, FONT_UI, COL_WARN);
+                        }
+                        slot(CLAY_ID("CancelEdit"), 64, 24);
+                    } else {
+                        slot(CLAY_ID("IncludeDoc"), 16, 16);
+                        label("Include document", FONT_UI, COL_MUTED);
+                        grow();
+                    }
                     slot(CLAY_ID("SendButton"), 72, 24);
                 }
                 CLAY({ .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(input_h) },
@@ -515,7 +778,10 @@ static Rectangle element_rect_str(Clay_String s, uint32_t index, bool indexed)
 /* "Chat0" -> element "Chat" index 0; "ChatInput" -> "ChatInput". */
 static Rectangle host_element(void *ctx, const char *name)
 {
-    (void)ctx;
+    App *app = ctx;
+    if (!strcmp(name, "ReviewPanel")) return review_active(app->review) ? app->review_rect : (Rectangle){ 0 };
+    if (!strcmp(name, "AcceptEdit")) return review_active(app->review) ? review_accept_rect(app->review_rect) : (Rectangle){ 0 };
+    if (!strcmp(name, "RejectEdit")) return review_active(app->review) ? review_reject_rect(app->review_rect) : (Rectangle){ 0 };
     size_t n = strlen(name), k = n;
     while (k > 0 && name[k - 1] >= '0' && name[k - 1] <= '9') k--;
     Clay_String s = { .isStaticallyAllocated = false, .length = (int32_t)k, .chars = name };
@@ -653,7 +919,8 @@ int main(int argc, char **argv)
     app.chat = chat_create(app.llm);
     app.editor = editor_create(&app.fonts[FONT_PROSE]);
     app.chat_view = app.chat ? chat_view_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI], app.chat) : NULL;
-    if (!app.chat || !app.editor || !app.chat_view) {
+    app.review = review_create(&app.fonts[FONT_PROSE], &app.fonts[FONT_UI]);
+    if (!app.chat || !app.editor || !app.chat_view || !app.review) {
         fprintf(stderr, "scribodo: out of memory\n");
         CloseWindow();
         return 1;
@@ -764,6 +1031,13 @@ int main(int argc, char **argv)
                         app.focus = FOCUS_CHAT;
                         break;
                     }
+                for (size_t i = 0; i < app.nrevs && i < 16; i++)
+                    if (Clay_PointerOver(CLAY_IDI("RevItem", (uint32_t)i))) {
+                        Revision r = app.revs[i];
+                        restore_revision(&app, &r);
+                        app.focus = FOCUS_DOC;
+                        break;
+                    }
             }
             /* Toolbar, chat header/footer and message list keep the focus. */
         }
@@ -792,7 +1066,16 @@ int main(int argc, char **argv)
         bool primary = IsKeyDown(KEY_LEFT_SUPER) || IsKeyDown(KEY_RIGHT_SUPER);
         if (primary && shortcut_pressed('s')) save(&app);
         if (primary && shortcut_pressed('l')) app.focus = FOCUS_CHAT;
-        if (app.focus == FOCUS_CHAT && IsKeyPressed(KEY_ESCAPE)) app.focus = FOCUS_DOC;
+        if (primary && shortcut_pressed('k')) begin_edit(&app);
+        if (primary && review_active(app.review) && (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER)))
+            accept_proposal(&app);
+        if (app.focus == FOCUS_CHAT && IsKeyPressed(KEY_ESCAPE)) {
+            if (app.edit_mode) {
+                leave_edit_mode(&app);
+                if (!app.pending.active) editor_set_highlight(app.editor, 0, 0);
+            }
+            app.focus = FOCUS_DOC;
+        }
 
         const char *notice = editor_take_notice(app.editor);
         if (notice) set_status(&app, notice);
@@ -805,6 +1088,13 @@ int main(int argc, char **argv)
         }
         Clay_RenderCommandArray cmds = build_layout(&app);
         app.editor_rect = ELEMENT_RECT("Editor");
+        if (review_active(app.review)) {
+            /* Dock the review panel at the bottom of the document pane. */
+            Rectangle er = app.editor_rect;
+            float h = review_height(app.review, er.width - 24, er.height * 0.5f);
+            app.review_rect = (Rectangle){ er.x + 12, er.y + er.height - h - 12, er.width - 24, h };
+            app.editor_rect.height = app.review_rect.y - er.y - 8;
+        }
         app.chat_list_rect = ELEMENT_RECT("ChatMessages");
         app.chat_input_rect = ELEMENT_RECT("ChatInput");
         Rectangle save_rect = ELEMENT_RECT("SaveButton");
@@ -817,7 +1107,31 @@ int main(int argc, char **argv)
         bool idle = app.dragging == DRAG_NONE;
         editor_update(app.editor, app.editor_rect, idle && app.focus == FOCUS_DOC);
         chat_view_update(app.chat_view, app.chat_list_rect, app.chat_input_rect, idle && app.focus == FOCUS_CHAT);
+        if (review_active(app.review)) review_update(app.review, app.review_rect);
         input_discard_chars(); /* after both views: nothing typed now may appear later */
+        long apply = chat_view_take_apply(app.chat_view);
+        if (apply >= 0) {
+            /* "Apply to document": propose a reply for the selection (or an
+             * insertion at the cursor); an edit reply re-opens its review. */
+            chat_lock(app.chat);
+            const ChatMessage *m = chat_message(app.chat, (size_t)apply);
+            char *reply = m ? strdup(m->content) : NULL;
+            chat_unlock(app.chat);
+            size_t a, c;
+            editor_get_selection(app.editor, &a, &c);
+            size_t lo = a < c ? a : c, hi = a < c ? c : a;
+            if (!reply) {
+            } else if (!editor_path(app.editor) || editor_is_read_only(app.editor)) {
+                set_status(&app, "Open an editable document to apply a reply");
+            } else {
+                char *orig = editor_range_utf8(app.editor, lo, hi - lo);
+                char *clean = llm_clean_edit(reply, orig ? orig : "");
+                if (orig && clean) propose(&app, lo, hi - lo, orig, clean, hi > lo ? "replace selection" : "insert at cursor");
+                free(orig);
+                free(clean);
+            }
+            free(reply);
+        }
         char *submitted = chat_view_take_submit(app.chat_view);
         if (submitted) send_chat(&app, submitted);
         if (chat_view_take_copied(app.chat_view)) set_status(&app, "Reply copied to the clipboard");
@@ -839,6 +1153,11 @@ int main(int argc, char **argv)
         ClearBackground((Color){ 0x1F, 0x1F, 0x1F, 0xFF });
         clay_render(cmds, app.font_ptrs);
         editor_draw(app.editor, app.editor_rect, app.focus == FOCUS_DOC);
+        if (review_active(app.review)) {
+            review_draw(app.review, app.review_rect);
+            if (GuiButton(review_accept_rect(app.review_rect), "Accept")) accept_proposal(&app);
+            if (GuiButton(review_reject_rect(app.review_rect), "Reject")) reject_proposal(&app);
+        }
         chat_view_draw(app.chat_view, app.chat_list_rect, app.chat_input_rect, app.focus == FOCUS_CHAT);
 
         bool can_save = (editor_is_dirty(app.editor) || editor_overwrite_armed(app.editor)) &&
@@ -852,7 +1171,14 @@ int main(int argc, char **argv)
         if (chat_busy(app.chat)) GuiDisable();
         if (GuiButton(new_rect, "New chat")) new_chat(&app);
         GuiEnable();
-        GuiCheckBox(inc_rect, NULL, &app.include_doc);
+        if (app.edit_mode) {
+            if (GuiButton(ELEMENT_RECT("CancelEdit"), "Cancel")) {
+                leave_edit_mode(&app);
+                editor_set_highlight(app.editor, 0, 0);
+            }
+        } else {
+            GuiCheckBox(inc_rect, NULL, &app.include_doc);
+        }
         if (chat_busy(app.chat)) {
             if (GuiButton(send_rect, "Stop")) chat_cancel(app.chat);
         } else {
@@ -889,6 +1215,11 @@ int main(int argc, char **argv)
     int rc = script ? script_finish(script, &host, closed_by_window) : 0;
     script_free(script);
     chat_view_destroy(app.chat_view);
+    clear_proposal(&app);
+    clear_pending(&app);
+    leave_edit_mode(&app);
+    review_destroy(app.review);
+    free(app.revs);
     chat_destroy(app.chat);          /* cancels any reply in progress */
     llm_server_destroy(app.llm);     /* stops llama-server and removes its socket */
     editor_destroy(app.editor);

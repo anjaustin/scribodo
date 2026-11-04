@@ -399,6 +399,26 @@ static void test_size_limit_keeps_selection(void)
     editor_destroy(e);
 }
 
+/* Ranges used by reviewed AI edits. */
+static void test_ranges(void)
+{
+    Editor *e = new_editor("Zoë stood on the stairs. Zoë waited.");
+    char *r = editor_range_utf8(e, 4, 5);
+    CHECK(r && !strcmp(r, "stood"));
+    free(r);
+    CHECK(editor_range_utf8(e, 30, 100) == NULL);
+    size_t first = 99;
+    CHECK(editor_find_utf8(e, "Zoë", &first) == 2 && first == 0);
+    CHECK(editor_find_utf8(e, "waited", &first) == 1 && first == 29);
+    CHECK(editor_find_utf8(e, "absent", &first) == 0);
+    CHECK(editor_replace_range_utf8(e, 4, 5, "paused\r\nthen"));
+    CHECK(text_is(e, "Zoë paused\nthen on the stairs. Zoë waited."));
+    editor_undo(e); /* one undo step */
+    CHECK(text_is(e, "Zoë stood on the stairs. Zoë waited."));
+    CHECK(!editor_replace_range_utf8(e, 999, 1, "x"));
+    editor_destroy(e);
+}
+
 /* ---- fuzz ------------------------------------------------------------------ */
 
 /* Maps content id -> text seen with that id. Equal ids must mean equal text,
@@ -562,6 +582,7 @@ int main(void)
         { "no_document_is_read_only", test_no_document_is_read_only },
         { "visual_line_motion", test_visual_line_motion },
         { "size_limit_keeps_selection", test_size_limit_keeps_selection },
+        { "ranges", test_ranges },
         { "fuzz_editor", test_fuzz_editor },
     };
     int rc = run_tests(tests, sizeof(tests) / sizeof(tests[0]));

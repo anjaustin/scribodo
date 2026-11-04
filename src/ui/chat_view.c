@@ -34,6 +34,7 @@ struct ChatView {
     bool stick_to_end;
     uint64_t seen_version;
     bool copied;
+    long apply_index;
     char *submitted;
 };
 
@@ -47,6 +48,7 @@ ChatView *chat_view_create(SFont *text_font, SFont *label_font, ChatSession *cha
     v->label = label_font;
     v->chat = chat;
     v->stick_to_end = true;
+    v->apply_index = -1;
     v->input = editor_create(text_font);
     if (!v->input) {
         free(v);
@@ -160,10 +162,13 @@ void chat_view_update(ChatView *v, Rectangle list, Rectangle input, bool input_f
                 y += LABEL_H + v->cache[i].height + 2 * BUBBLE_PAD;
                 bool copyable = msg->role == CHAT_ASSISTANT && !msg->streaming && !msg->error && msg->content[0];
                 if (copyable) {
-                    Rectangle link = { list.x + PAD, y + 2, 60, LABEL_H };
-                    if (CheckCollisionPointRec(m, link)) {
+                    Rectangle copy = { list.x + PAD, y + 2, 40, LABEL_H };
+                    Rectangle apply = { list.x + PAD + 52, y + 2, 120, LABEL_H };
+                    if (CheckCollisionPointRec(m, copy)) {
                         input_set_clipboard(msg->content);
                         v->copied = true;
+                    } else if (CheckCollisionPointRec(m, apply)) {
+                        v->apply_index = (long)i;
                     }
                     y += LABEL_H;
                 }
@@ -218,6 +223,13 @@ void chat_view_clear_input(ChatView *v)
 {
     editor_clear(v->input);
     v->stick_to_end = true;
+}
+
+long chat_view_take_apply(ChatView *v)
+{
+    long i = v->apply_index;
+    v->apply_index = -1;
+    return i;
 }
 
 bool chat_view_take_copied(ChatView *v)
@@ -286,9 +298,11 @@ void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_foc
         y += bh;
         if (m->role == CHAT_ASSISTANT && !m->streaming && !m->error && m->content[0]) {
             sfont_draw_utf8(v->label, "Copy", 4, list.x + PAD, y + 2, COL_LINK);
+            const char *apply = "Apply to document";
+            sfont_draw_utf8(v->label, apply, (int)strlen(apply), list.x + PAD + 52, y + 2, COL_LINK);
             if (m->truncated) {
                 const char *note = "Reply stopped at the length limit";
-                sfont_draw_utf8(v->label, note, (int)strlen(note), list.x + PAD + 56, y + 2, COL_LABEL);
+                sfont_draw_utf8(v->label, note, (int)strlen(note), list.x + PAD + 190, y + 2, COL_LABEL);
             }
             y += LABEL_H;
         }

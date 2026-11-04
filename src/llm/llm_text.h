@@ -31,4 +31,10 @@ bool llm_needs_neutralize(const char *s);
  * is left visible. Either output may be NULL; both are malloc'd. */
 void llm_split_thinking(const char *s, char **visible, char **reasoning);
 
+/* Clean a model reply meant to be a drop-in replacement for `passage`:
+ * strip surrounding whitespace, a wrapping ``` fence, a one-line preamble
+ * ("Here is the rewritten passage:") and wrapping quotes the passage itself
+ * did not have. Returns malloc'd text. */
+char *llm_clean_edit(const char *reply, const char *passage);
+
 #endif

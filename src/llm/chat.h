@@ -29,6 +29,7 @@ typedef struct {
     bool error;      /* assistant message that failed */
     bool streaming;  /* still being generated */
     bool truncated;  /* reply stopped at the length limit */
+    bool is_edit;    /* user: an edit request; assistant: a proposed replacement */
 } ChatMessage;
 
 typedef struct {
@@ -50,6 +51,11 @@ void chat_destroy(ChatSession *s);
  * exact token budgeting via the server's tokenizer) is built on the worker
  * thread; `ctx` is copied. */
 bool chat_send(ChatSession *s, const char *text, const ChatContext *ctx, char *err, size_t errlen);
+/* Request a rewrite of `passage` (text the author selected) following
+ * `instruction`. The reply is a proposed replacement, flagged is_edit; it is
+ * never applied by the chat itself (see the app's review flow). */
+bool chat_send_edit(ChatSession *s, const char *instruction, const char *passage, const ChatContext *ctx,
+                    char *err, size_t errlen);
 void chat_cancel(ChatSession *s);
 bool chat_busy(ChatSession *s);
 
@@ -84,6 +90,12 @@ typedef long (*ChatTokenCount)(const char *text, void *ctx);
  * to use the estimate only. */
 char *chat_build_request(const ChatMessage *msgs, size_t n, const ChatContext *ctx, int ctx_tokens,
                          ChatTokenCount count, void *count_ctx, bool *doc_truncated);
+
+/* The request for an edit: an editor persona, the document as context, and
+ * the instruction plus passage. No chat history (keeps a small model on
+ * task). */
+char *chat_build_edit_request(const char *instruction, const char *passage, const ChatContext *ctx, int ctx_tokens,
+                              ChatTokenCount count, void *count_ctx, bool *doc_truncated);
 
 /* Conservative token estimate (bytes / 1.5: denser than any text measured,
  * including code, numbers, emoji and CJK; see docs/REDTEAM-003). */

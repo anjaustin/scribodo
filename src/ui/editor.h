@@ -93,6 +93,20 @@ size_t editor_hit_test(Editor *e, float x, float y);
 bool editor_index_screen_pos(Editor *e, size_t idx, float *x, float *y);
 bool editor_index_visible(Editor *e, size_t idx);
 float editor_scroll_y(const Editor *e);
+/* ---- ranges (for reviewed AI edits) --------------------------------------
+ * Positions are codepoint indices, as returned by editor_get_selection. */
+
+/* Text of [start, start+len) as UTF-8 (malloc'd), or NULL if out of range. */
+char *editor_range_utf8(const Editor *e, size_t start, size_t len);
+/* Replace [start, start+len) with UTF-8 text as one undoable action. */
+bool editor_replace_range_utf8(Editor *e, size_t start, size_t len, const char *utf8);
+/* Number of occurrences of `utf8` in the document; *first gets the first. */
+size_t editor_find_utf8(const Editor *e, const char *utf8, size_t *first);
+/* Highlight a range (e.g. the passage a proposal targets); len 0 clears. */
+void editor_set_highlight(Editor *e, size_t start, size_t len);
+/* Scroll so that `index` is visible. */
+void editor_reveal(Editor *e, size_t index);
+
 /* Scratch mode: an editable buffer with no file (e.g. the chat input).
  * Clears the buffer. `placeholder` is shown while it is empty. */
 void editor_set_scratch(Editor *e, const char *placeholder);

@@ -113,6 +113,14 @@ On first launch the app checks the model file against its pinned hash (once), th
 - **Copy:** under any reply, puts its text on the clipboard for pasting into the document.
 - **Saving chats:** each message is saved to the project folder's `.scribodo/chats/`, and past chats reopen from the Explorer.
 
+**Reviewed AI edits** (the assistant never changes your document by itself):
+- **Ask for an edit:** select a passage and press ⌘K, then describe the change in the chat ("tighten this", "make Dvořák colder") and press Enter. Esc cancels.
+- **Review:** the proposal opens as a word-level diff at the bottom of the document, with deletions struck through in red and insertions in green, and the target passage is highlighted. Nothing changes until you choose.
+- **Accept** (or ⌘↩) applies it as one undoable step and records revisions from before and after. **Reject** discards it. Saving the file is still ⌘S.
+- **Stale proposals:** if the passage changed after the proposal was made, Accept refuses rather than overwrite your newer text. If only the text around it moved, the edit is re-anchored to the passage.
+- **Apply to document**, under any chat reply, proposes that reply for the current selection (or inserts it at the cursor), through the same review.
+- **History** in the Explorer lists the document's revisions (each save, AI edit and restore) from `.scribodo/revisions/`. Clicking one restores it, undoably, after first recording the current text.
+
 ```sh
 make sanitize  # run the same tests under AddressSanitizer + UBSan
 make uitest    # scripted UI tests: the real app in a hidden window (needs an awake display)
