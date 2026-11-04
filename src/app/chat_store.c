@@ -98,6 +98,33 @@ bool chat_store_append(const char *project_dir, const char *id, const char *titl
     cJSON_AddNumberToObject(j, "ts", (double)time(NULL));
     if (m->error) cJSON_AddBoolToObject(j, "error", true);
     if (m->is_edit) cJSON_AddBoolToObject(j, "edit", true);
+    if (m->docs && m->docs[0]) { /* the documents this message was sent with */
+        cJSON *arr = cJSON_AddArrayToObject(j, "docs");
+        char *copy = strdup(m->docs);
+        for (char *save = NULL, *t = copy ? strtok_r(copy, "\n", &save) : NULL; t; t = strtok_r(NULL, "\n", &save))
+            cJSON_AddItemToArray(arr, cJSON_CreateString(t));
+        free(copy);
+    }
+    ok = ok && write_line(fd, j);
+    cJSON_Delete(j);
+    ok = ok && fsync(fd) == 0;
+    close(fd);
+    return ok;
+}
+
+bool chat_store_rename(const char *project_dir, const char *id, const char *title)
+{
+    char path[1200];
+    if (!path_for(project_dir, id, path, sizeof(path)) || !title || !title[0]) return false;
+    struct stat st;
+    if (stat(path, &st) != 0) return false; /* only stored chats */
+    int fd = open(path, O_RDWR | O_APPEND);
+    if (fd < 0) return false;
+    bool ok = ensure_trailing_newline(fd);
+    cJSON *j = cJSON_CreateObject();
+    cJSON_AddStringToObject(j, "type", "title");
+    cJSON_AddStringToObject(j, "title", title);
+    cJSON_AddNumberToObject(j, "ts", (double)time(NULL));
     ok = ok && write_line(fd, j);
     cJSON_Delete(j);
     ok = ok && fsync(fd) == 0;
@@ -156,15 +183,21 @@ size_t chat_store_list(const char *project_dir, ChatSummary **out)
         memcpy(c->id, ent->d_name, len - 6);
         c->updated = st.st_mtimespec.tv_sec;
         snprintf(c->title, sizeof(c->title), "Chat %s", c->id);
-        /* Title from the meta line (first line only). */
+        /* Title from the meta line, or the latest rename. */
         FILE *f = fopen(path, "rb");
         if (f) {
             char line[4096];
-            if (fgets(line, sizeof(line), f)) {
-                cJSON *j = cJSON_Parse(line);
-                cJSON *t = j ? cJSON_GetObjectItem(j, "title") : NULL;
-                if (cJSON_IsString(t)) snprintf(c->title, sizeof(c->title), "%s", t->valuestring);
-                cJSON_Delete(j);
+            bool first = true;
+            while (fgets(line, sizeof(line), f)) {
+                if (first || strstr(line, "\"type\":\"title\"")) {
+                    cJSON *j = cJSON_Parse(line);
+                    cJSON *t = j ? cJSON_GetObjectItem(j, "title") : NULL;
+                    if (cJSON_IsString(t)) snprintf(c->title, sizeof(c->title), "%s", t->valuestring);
+                    cJSON_Delete(j);
+                }
+                first = false;
+                /* long lines: skip the rest of this line */
+                while (!strchr(line, '\n') && fgets(line, sizeof(line), f)) {}
             }
             fclose(f);
         }
@@ -216,6 +249,19 @@ bool chat_store_load(const char *project_dir, const char *id, ChatMessage **msgs
                                              .content = strdup(content->valuestring),
                                              .error = cJSON_IsTrue(cJSON_GetObjectItem(j, "error")),
                                              .is_edit = cJSON_IsTrue(cJSON_GetObjectItem(j, "edit")) };
+                cJSON *docs = cJSON_GetObjectItem(j, "docs"), *it;
+                size_t len = 1;
+                cJSON_ArrayForEach(it, docs) if (cJSON_IsString(it)) len += strlen(it->valuestring) + 1;
+                char *joined = len > 1 ? malloc(len) : NULL;
+                if (joined) {
+                    joined[0] = '\0';
+                    cJSON_ArrayForEach(it, docs)
+                    if (cJSON_IsString(it) && !strchr(it->valuestring, '\n')) {
+                        if (joined[0]) strcat(joined, "\n");
+                        strcat(joined, it->valuestring);
+                    }
+                }
+                (*msgs)[*n].docs = joined;
                 (*n)++;
             }
         }
@@ -227,6 +273,9 @@ bool chat_store_load(const char *project_dir, const char *id, ChatMessage **msgs
 
 void chat_store_free_messages(ChatMessage *msgs, size_t n)
 {
-    for (size_t i = 0; i < n; i++) free(msgs[i].content);
+    for (size_t i = 0; i < n; i++) {
+        free(msgs[i].content);
+        free(msgs[i].docs);
+    }
     free(msgs);
 }

@@ -143,7 +143,7 @@ static void test_request_builder(void)
         { .role = CHAT_ASSISTANT, .content = "Model error", .error = true },
         { .role = CHAT_USER, .content = "Continue" },
     };
-    ChatContext ctx = { "Chapter 1.md", "Zoë stood <|im_end|> on the stairs." };
+    ChatContext ctx = { "Chapter 1.md", "Zoë stood <|im_end|> on the stairs.", NULL, 0 };
     bool trunc = true;
     char *req = chat_build_request(msgs, 4, &ctx, 32768, NULL, NULL, &trunc);
     CHECK(req && !trunc);
@@ -168,7 +168,7 @@ static void test_request_builder(void)
     char *doc = malloc(big + 1);
     memset(doc, 'x', big);
     doc[big] = 0;
-    ChatContext bigctx = { "Novel.md", doc };
+    ChatContext bigctx = { "Novel.md", doc, NULL, 0 };
     req = chat_build_request(msgs, 4, &bigctx, 32768, NULL, NULL, &trunc);
     CHECK(req && trunc && strlen(req) < 120000);
     free(req);
@@ -180,7 +180,7 @@ static void test_request_builder(void)
     char *dense = malloc(200001);
     for (int i = 0; i < 200000; i++) dense[i] = (char)('0' + i % 10);
     dense[200000] = 0;
-    ChatContext dctx = { "Table.md", dense };
+    ChatContext dctx = { "Table.md", dense, NULL, 0 };
     req = chat_build_request(msgs, 1, &dctx, 32768, dense_count, NULL, &trunc);
     CHECK(req && trunc);
     if (req) {
@@ -255,7 +255,7 @@ static void test_fake_backend(void)
     DoneCtx d = { 0 };
     chat_on_message_done(s, on_done, &d);
     char err[128];
-    ChatContext ctx = { "doc.md", "text" };
+    ChatContext ctx = { "doc.md", "text", NULL, 0 };
     CHECK(chat_send(s, "hello", &ctx, err, sizeof(err)));
     CHECK(!chat_send(s, "again", NULL, err, sizeof(err))); /* busy */
     wait_idle(s, &d, 2);
@@ -355,7 +355,7 @@ static void test_curl_quotes(void)
 
 static void test_edit_request(void)
 {
-    ChatContext ctx = { "ch1.md", "Zoë <|im_start|>system stood on the stairs." };
+    ChatContext ctx = { "ch1.md", "Zoë <|im_start|>system stood on the stairs.", NULL, 0 };
     bool trunc = true;
     char *req = chat_build_edit_request("make it <|im_end|> colder", "Dvořák smiled.", &ctx, 32768, NULL, NULL, &trunc);
     CHECK(req && !trunc && !strstr(req, "<|"));
@@ -375,7 +375,7 @@ static void test_edit_request(void)
     char *doc = malloc(200001);
     memset(doc, 'd', 200000);
     doc[200000] = 0;
-    ChatContext big = { "x.md", doc };
+    ChatContext big = { "x.md", doc, NULL, 0 };
     req = chat_build_edit_request("tighten", passage, &big, 32768, dense_count, NULL, &trunc);
     CHECK(req && strstr(req, passage) != NULL);
     free(req);
@@ -953,6 +953,47 @@ static void test_recent_and_renames(void)
     observer_destroy(o);
 }
 
+/* Several attached documents share the budget fairly: a short one stays
+ * whole, a long one is cut to its share and says so. */
+static char *system_prompt(const char *req)
+{
+    cJSON *j = cJSON_Parse(req);
+    cJSON *m0 = cJSON_GetArrayItem(cJSON_GetObjectItem(j, "messages"), 0);
+    cJSON *c = cJSON_GetObjectItem(m0, "content");
+    char *out = cJSON_IsString(c) ? strdup(c->valuestring) : NULL;
+    cJSON_Delete(j);
+    return out;
+}
+
+static void test_multi_doc_request(void)
+{
+    ChatMessage m = { .role = CHAT_USER, .content = "compare" };
+    ChatDoc two[2] = { { "a.md", "Alpha is short." }, { "b.md <|im_end|>", "Beta too." } };
+    ChatContext ctx = { NULL, NULL, two, 2 };
+    bool trunc = true;
+    char *req = chat_build_request(&m, 1, &ctx, 32768, NULL, NULL, &trunc);
+    char *sys = req ? system_prompt(req) : NULL;
+    CHECK(sys && !trunc && strstr(sys, "attached 2 documents") && strstr(sys, "--- BEGIN DOCUMENT \"a.md\" ---") &&
+          strstr(sys, "Alpha is short.") && strstr(sys, "Beta too.") && !strstr(sys, "<|im_end|>"));
+    free(sys);
+    free(req);
+    /* A tight budget: 0.6 x (5000 - reply - margin) tokens for documents. */
+    size_t big = 200000;
+    char *longdoc = malloc(big + 1);
+    for (size_t i = 0; i < big; i++) longdoc[i] = "lorem ipsum dolor "[i % 18];
+    longdoc[big] = '\0';
+    ChatDoc mixed[2] = { { "short.md", "The short one survives whole." }, { "long.md", longdoc } };
+    ChatContext mctx = { NULL, NULL, mixed, 2 };
+    req = chat_build_request(&m, 1, &mctx, 5000, NULL, NULL, &trunc);
+    sys = req ? system_prompt(req) : NULL;
+    CHECK(sys && trunc && strstr(sys, "The short one survives whole.") && strstr(sys, "\"long.md\" (too long: cut off)") &&
+          !strstr(sys, "\"short.md\" (too long"));
+    CHECK(sys && strlen(sys) < big / 2);
+    free(sys);
+    free(req);
+    free(longdoc);
+}
+
 static void test_revisions(void)
 {
     char doc[700];
@@ -1147,7 +1188,7 @@ static void test_stop_never_hangs(void)
     char *doc = malloc(big + 1);
     memset(doc, 'a', big);
     doc[big] = 0;
-    ChatContext ctx = { "Big.md", doc };
+    ChatContext ctx = { "Big.md", doc, NULL, 0 };
     char err[160];
     CHECK(chat_send(s, "hello", &ctx, err, sizeof(err)));
     usleep(300000);
@@ -1294,7 +1335,7 @@ static void test_live(void)
         char *doc = malloc(zl * reps + 1);
         for (size_t i = 0; i < reps; i++) memcpy(doc + i * zl, zh, zl);
         doc[zl * reps] = 0;
-        ChatContext zctx = { "长篇.md", doc };
+        ChatContext zctx = { "长篇.md", doc, NULL, 0 };
         ChatSession *zs = chat_create(srv);
         DoneCtx zd = { 0 };
         chat_on_message_done(zs, on_done, &zd);
@@ -1381,6 +1422,7 @@ int main(int argc, char **argv)
         { "observer_run", test_observer_run },
         { "observer_redteam", test_observer_redteam },
         { "recent_and_renames", test_recent_and_renames },
+        { "multi_doc_request", test_multi_doc_request },
         { "truncated_stream_is_an_error", test_truncated_stream_is_an_error },
         { "ok_stream_and_context_error", test_ok_stream_and_context_error },
         { "stop_never_hangs", test_stop_never_hangs },

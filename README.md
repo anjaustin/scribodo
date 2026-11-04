@@ -115,7 +115,8 @@ On first launch the app checks the model file against its pinned hash (once), th
 
 **Using it:**
 - **Chat:** click the chat box (or press ⌘L), type, and press Enter. Shift+Enter adds a new line, and Esc returns to the document.
-- **Include document:** when ticked, the assistant sees the open document as reference.
+- **Attached documents:** the chips under the chat show which project documents the assistant sees. A new chat starts with the open document attached; **+ Attach** adds others, and × removes one. Documents are read when you send (the open one including unsaved edits), never copied. Each message remembers what it was sent with, and reopening a chat restores its attachments.
+- **Rename a chat:** right-click it in the Explorer.
 - **Copy:** under any reply, puts its text on the clipboard for pasting into the document.
 - **Saving chats:** each message is saved to the project folder's `.scribodo/chats/`, and past chats reopen from the Explorer.
 

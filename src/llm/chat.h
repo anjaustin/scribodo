@@ -31,11 +31,22 @@ typedef struct {
     bool truncated;  /* reply stopped at the length limit */
     bool stopped;    /* reply stopped by the author part-way (incomplete) */
     bool is_edit;    /* user: an edit request; assistant: a proposed replacement */
+    char *docs;      /* user: names of the documents attached, '\n'-separated, or NULL */
 } ChatMessage;
 
 typedef struct {
+    const char *title;
+    const char *text;
+} ChatDoc;
+
+/* Reference material for a request. `docs` (several attached documents)
+ * takes precedence; doc_title/doc_text is a single document (edit requests:
+ * the document being edited). Each is treated as material, not instructions. */
+typedef struct {
     const char *doc_title; /* NULL = no document attached */
     const char *doc_text;
+    const ChatDoc *docs;
+    size_t ndocs;
 } ChatContext;
 
 typedef struct ChatSession ChatSession;

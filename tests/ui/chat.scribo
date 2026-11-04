@@ -19,7 +19,7 @@ wait_chat
 expect chat_count 4
 expect chat_last "line one\nline two"
 # Without the document attached, the request carries no document.
-click_element IncludeDoc
+click_element AttachRemove0
 type "no doc please"
 key ENTER
 wait_chat

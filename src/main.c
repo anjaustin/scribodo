@@ -56,8 +56,9 @@ void glfwSetWindowShouldClose(void *window, int value);
 enum { FONT_UI = 0, FONT_PROSE = 1, FONT_CHAT = 2, FONT_COUNT };
 enum { FOCUS_NONE, FOCUS_DOC, FOCUS_CHAT, FOCUS_RECORD };
 enum { DRAG_NONE, DRAG_EXPLORER, DRAG_OBSERVER, DRAG_CHAT };
-enum { PT_NEW_DOC = 1, PT_RENAME_DOC };  /* what the name prompt is for */
-enum { MT_DOC = 1 };                     /* what a context menu is for */
+enum { PT_NEW_DOC = 1, PT_RENAME_DOC, PT_RENAME_CHAT };  /* what the name prompt is for */
+enum { MT_DOC = 1, MT_CHAT, MT_ATTACH };  /* what a context menu is for */
+#define MAX_ATTACH 8
 
 #define RGB(r, g, b) ((Clay_Color){ r, g, b, 255 })
 static const Clay_Color COL_BG      = RGB(0x1F, 0x1F, 0x1F);
@@ -152,6 +153,13 @@ typedef struct {
     char rename_from[256];        /* document being renamed */
     char prompt_project[PATH_MAX]; /* the project the prompt was opened in */
     char menu_doc[256];           /* the document a context menu is for (by name) */
+    char menu_chat[40];           /* the chat a context menu is for */
+    char menu_names[MENU_MAX_ITEMS][256]; /* the attach menu's documents, by item */
+
+    /* Documents attached to the current chat (SOW §4.1: by reference, not copied) */
+    char attached[MAX_ATTACH][256];
+    size_t nattached;
+    Rectangle attach_chip[MAX_ATTACH], attach_x[MAX_ATTACH], attach_add;
     RecentProject recents[RECENT_MAX];
     size_t nrecents;
     Rectangle welcome_btn[3], recent_rect[RECENT_MAX], empty_btn[2];
@@ -487,6 +495,7 @@ static void restore_revision(App *app, const Revision *r)
 /* ---- documents ------------------------------------------------------------------ */
 
 static bool close_record(App *app, bool explicit_close);
+static void attach_reset(App *app);
 static void open_project(App *app, const char *dir);
 
 /* The project folder a document belongs to (its directory, resolved). */
@@ -519,6 +528,11 @@ static void open_path(App *app, const char *path)
         set_status(app, msg[0] ? msg : "Opened");
         set_project_from(app, path);
         recent_touch(app->project_dir, base_name(path));
+        /* A conversation that hasn't started yet follows the open document. */
+        chat_lock(app->chat);
+        size_t nmsg = chat_count(app->chat);
+        chat_unlock(app->chat);
+        if (nmsg == 0 && !app->clear_chat_when_idle) attach_reset(app);
     } else {
         set_status(app, msg);
     }
@@ -666,6 +680,21 @@ static bool set_aside_history(App *app, const char *name)
 /* Returns true when the prompt can close. */
 static bool finish_prompt(App *app, const char *typed)
 {
+    if (prompt_tag(app->prompt) == PT_RENAME_CHAT) {
+        if (!typed[0]) {
+            prompt_set_error(app->prompt, "Type a title");
+            return false;
+        }
+        if (strcmp(app->prompt_project, app->project_dir) != 0) return true; /* project changed: nothing done */
+        if (!chat_store_rename(app->project_dir, app->menu_chat, typed)) {
+            prompt_set_error(app->prompt, "Couldn't rename that chat");
+            return false;
+        }
+        if (!strcmp(app->chat_id, app->menu_chat)) snprintf(app->chat_title, sizeof(app->chat_title), "%s", typed);
+        set_status(app, "Chat renamed");
+        app->lists_dirty = true;
+        return true;
+    }
     char name[260], err[160];
     if (!doc_name(typed, name, sizeof(name), err, sizeof(err))) {
         prompt_set_error(app->prompt, err);
@@ -734,6 +763,8 @@ static bool finish_prompt(App *app, const char *typed)
         snprintf(problems + strlen(problems), sizeof(problems) - strlen(problems), "%sthe rename couldn't be recorded",
                  problems[0] ? "; " : "");
     observer_rename_doc(app->observer, app->project_dir, app->rename_from, name);
+    for (size_t i = 0; i < app->nattached; i++)
+        if (!strcmp(app->attached[i], app->rename_from)) snprintf(app->attached[i], sizeof(app->attached[i]), "%s", name);
     recent_rename_doc(app->project_dir, app->rename_from, name);
     if (is_open) editor_set_path(app->editor, full);
     char msg[700];
@@ -876,6 +907,70 @@ static void adopt_chat(App *app)
     app->lists_dirty = true;
 }
 
+/* ---- attachments ---------------------------------------------------------------- */
+
+static bool is_attached(App *app, const char *name)
+{
+    for (size_t i = 0; i < app->nattached; i++)
+        if (!strcmp(app->attached[i], name)) return true;
+    return false;
+}
+
+static bool attach(App *app, const char *name)
+{
+    if (is_attached(app, name)) return true;
+    if (app->nattached == MAX_ATTACH) {
+        set_status(app, "A chat can have up to 8 documents attached");
+        return false;
+    }
+    snprintf(app->attached[app->nattached++], sizeof(app->attached[0]), "%s", name);
+    return true;
+}
+
+static void detach(App *app, size_t i)
+{
+    if (i >= app->nattached) return;
+    memmove(&app->attached[i], &app->attached[i + 1], (app->nattached - i - 1) * sizeof(app->attached[0]));
+    app->nattached--;
+}
+
+/* A new conversation starts with the open document attached. */
+static void attach_reset(App *app)
+{
+    app->nattached = 0;
+    if (editor_path(app->editor)) attach(app, base_name(editor_path(app->editor)));
+}
+
+/* Read an attached document as the editor shows it: the open one from the
+ * buffer (unsaved text included), others from disk with BOM and CRLF
+ * normalised. NULL if it can't be read. */
+static char *attached_text(App *app, const char *name)
+{
+    if (editor_path(app->editor) && !strcmp(base_name(editor_path(app->editor)), name)) return editor_text_utf8(app->editor);
+    char full[PATH_MAX + 260];
+    snprintf(full, sizeof(full), "%s/%s", app->project_dir, name);
+    struct stat st;
+    if (stat(full, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size > (16 << 20)) return NULL;
+    FILE *f = fopen(full, "rb");
+    if (!f) return NULL;
+    char *buf = malloc((size_t)st.st_size + 1);
+    size_t got = buf ? fread(buf, 1, (size_t)st.st_size, f) : 0;
+    fclose(f);
+    if (!buf) return NULL;
+    size_t r = 0, w = 0;
+    if (got >= 3 && (unsigned char)buf[0] == 0xEF && (unsigned char)buf[1] == 0xBB && (unsigned char)buf[2] == 0xBF) r = 3;
+    for (; r < got; r++) {
+        if (buf[r] == '\r') {
+            if (r + 1 < got && buf[r + 1] == '\n') r++;
+            buf[w++] = '\n';
+        } else if (buf[r] != '\0') {
+            buf[w++] = buf[r];
+        }
+    }
+    buf[w] = '\0';
+    return buf;
+}
+
 static void new_chat(App *app)
 {
     if (chat_busy(app->chat)) {
@@ -886,6 +981,7 @@ static void new_chat(App *app)
     app->chat_id[0] = '\0';
     app->chat_title[0] = '\0';
     app->chat_project[0] = '\0';
+    attach_reset(app);
     app->focus = FOCUS_CHAT;
 }
 
@@ -900,6 +996,19 @@ static void open_chat(App *app, const ChatSummary *c)
     if (!chat_store_load(app->project_dir, c->id, &msgs, &n) || !chat_load_messages(app->chat, msgs, n)) {
         set_status(app, "Could not open that chat");
         return;
+    }
+    /* Its attachments are those of its last message (renames followed). */
+    app->nattached = 0;
+    for (size_t i = n; i-- > 0;) {
+        if (msgs[i].role != CHAT_USER || !msgs[i].docs) continue;
+        char *copy = strdup(msgs[i].docs);
+        for (char *save = NULL, *t = copy ? strtok_r(copy, "\n", &save) : NULL; t; t = strtok_r(NULL, "\n", &save)) {
+            char cur[256];
+            renames_resolve(app->project_dir, t, cur, sizeof(cur));
+            if (name_taken(app, cur)) attach(app, cur);
+        }
+        free(copy);
+        break;
     }
     chat_store_free_messages(msgs, n);
     snprintf(app->chat_id, sizeof(app->chat_id), "%s", c->id);
@@ -1439,6 +1548,54 @@ static void empty_action(App *app, int act, const char *sample)
     else if (act == 21) import_documents(app);
 }
 
+/* The chat footer's attachments: "Attached:" then a chip per document
+ * (with ×), then "+ Attach". Returns -2 for Attach, i >= 0 to remove chip i,
+ * -1 for nothing. */
+static int draw_attach_row(App *app, Rectangle r)
+{
+    const SFont *ui = &app->fonts[FONT_UI];
+    Color muted = { 0x8B, 0x8B, 0x8B, 0xFF }, chip_bg = { 0x2C, 0x30, 0x36, 0xFF }, text = { 0xD0, 0xD0, 0xD0, 0xFF };
+    Color link = { 0x6C, 0xA8, 0xE0, 0xFF };
+    float x = r.x, y = r.y + (r.height - ui->line_height) / 2;
+    Vector2 m = GetMousePosition();
+    bool click = !input_mouse_blocked() && IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+    int act = -1;
+    for (size_t i = 0; i < MAX_ATTACH; i++) app->attach_chip[i] = app->attach_x[i] = (Rectangle){ 0 };
+    const char *lbl = app->nattached ? "Attached:" : "No documents attached";
+    sfont_draw_utf8(ui, lbl, (int)strlen(lbl), x, y, muted);
+    x += sfont_measure_utf8(ui, lbl, (int)strlen(lbl)) + 8;
+    BeginScissorMode((int)r.x, (int)r.y, (int)r.width, (int)r.height);
+    for (size_t i = 0; i < app->nattached; i++) {
+        char name[64];
+        snprintf(name, sizeof(name), "%.40s%s", app->attached[i], strlen(app->attached[i]) > 40 ? "\xE2\x80\xA6" : "");
+        float w = sfont_measure_utf8(ui, name, (int)strlen(name)) + 30;
+        if (x + w > r.x + r.width - 70) {
+            char more[32];
+            snprintf(more, sizeof(more), "+%zu more", app->nattached - i);
+            sfont_draw_utf8(ui, more, (int)strlen(more), x, y, muted);
+            x += sfont_measure_utf8(ui, more, (int)strlen(more)) + 8;
+            break;
+        }
+        Rectangle chip = { x, r.y + 3, w, r.height - 6 };
+        DrawRectangleRounded(chip, 0.5f, 6, chip_bg);
+        sfont_draw_utf8(ui, name, (int)strlen(name), x + 8, y, text);
+        Rectangle xr = { x + w - 20, r.y + 3, 18, r.height - 6 };
+        bool hot = CheckCollisionPointRec(m, xr);
+        sfont_draw_utf8(ui, "\xC3\x97", 2, xr.x + 4, y, hot ? (Color){ 0xF2, 0x8B, 0x82, 0xFF } : muted);
+        app->attach_chip[i] = chip;
+        app->attach_x[i] = xr;
+        if (click && hot) act = (int)i;
+        x += w + 6;
+    }
+    const char *add = "+ Attach";
+    float aw = sfont_measure_utf8(ui, add, (int)strlen(add));
+    app->attach_add = (Rectangle){ x, r.y + 3, aw + 8, r.height - 6 };
+    sfont_draw_utf8(ui, add, (int)strlen(add), x + 4, y, link);
+    if (click && CheckCollisionPointRec(m, app->attach_add)) act = -2;
+    EndScissorMode();
+    return act;
+}
+
 static void send_chat(App *app, char *text)
 {
     if (!app->chat_id[0]) {
@@ -1449,12 +1606,34 @@ static void send_chat(App *app, char *text)
         if (n > 48) n = 48;
         snprintf(app->chat_title, sizeof(app->chat_title), "%.*s%s", (int)n, text, strlen(text) > n ? "\xE2\x80\xA6" : "");
     }
+    /* The attached documents, read now (by reference: nothing is copied
+     * into the project). An edit request uses the edited document alone. */
     ChatContext ctx = { 0 };
     char *doc = NULL;
-    if (app->include_doc && editor_path(app->editor)) {
+    ChatDoc cdocs[MAX_ATTACH];
+    char *texts[MAX_ATTACH] = { 0 };
+    size_t ncd = 0;
+    char missing[300] = "";
+    for (size_t i = 0; i < app->nattached; i++) {
+        texts[ncd] = attached_text(app, app->attached[i]);
+        if (!texts[ncd]) {
+            snprintf(missing + strlen(missing), sizeof(missing) - strlen(missing), "%s%s", missing[0] ? ", " : "", app->attached[i]);
+            continue;
+        }
+        cdocs[ncd] = (ChatDoc){ app->attached[i], texts[ncd] };
+        ncd++;
+    }
+    ctx.docs = cdocs;
+    ctx.ndocs = ncd;
+    if (app->edit_mode && editor_path(app->editor) && is_attached(app, base_name(editor_path(app->editor)))) {
         doc = editor_text_utf8(app->editor);
         ctx.doc_title = base_name(editor_path(app->editor));
         ctx.doc_text = doc;
+    }
+    if (missing[0]) {
+        char msg[400];
+        snprintf(msg, sizeof(msg), "Not attached (can't be read): %s", missing);
+        set_status(app, msg);
     }
     char err[256] = "";
     bool sent;
@@ -1489,6 +1668,7 @@ static void send_chat(App *app, char *text)
         set_status(app, err);
     }
     free(doc);
+    for (size_t i = 0; i < ncd; i++) free(texts[i]);
     free(text);
 }
 
@@ -1687,9 +1867,8 @@ static Clay_RenderCommandArray build_layout(App *app)
                         }
                         slot(CLAY_ID("CancelEdit"), 64, 24);
                     } else {
-                        slot(CLAY_ID("IncludeDoc"), 16, 16);
-                        label("Include document", FONT_UI, COL_MUTED);
-                        grow();
+                        CLAY({ .id = CLAY_ID("AttachRow"),
+                               .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } } }) {}
                     }
                     slot(CLAY_ID("SendButton"), 72, 24);
                 }
@@ -1751,6 +1930,12 @@ static Rectangle host_element(void *ctx, const char *name)
     if (!strcmp(name, "CanonLast")) return chat_view_last_note_rect(app->chat_view, true);
     if (!strncmp(name, "Record", 6)) return record_view_element(app->record, name);
     if (!strncmp(name, "Prompt", 6)) return prompt_element(app->prompt, name);
+    if (!strcmp(name, "AttachAdd")) return app->attach_add;
+    if (!strncmp(name, "AttachChip", 10) || !strncmp(name, "AttachRemove", 12)) {
+        bool rm = name[6] == 'R';
+        int i = atoi(name + (rm ? 12 : 10));
+        return i >= 0 && i < MAX_ATTACH ? (rm ? app->attach_x[i] : app->attach_chip[i]) : (Rectangle){ 0 };
+    }
     if (!strncmp(name, "MenuItem", 8)) return menu_element(&app->menu, name);
     static const char *const welcome[] = { "WelcomeOpen", "WelcomeNew", "WelcomeSample" };
     for (int i = 0; i < 3; i++)
@@ -1792,6 +1977,35 @@ static char *host_record_text(void *ctx)
 static void host_observer_enable(void *ctx, bool on) { observer_set_enabled(((App *)ctx)->observer, on); }
 static bool host_observer_idle(void *ctx) { return observer_idle(((App *)ctx)->observer); }
 static char *host_findings_text(void *ctx) { return findings_view_text(((App *)ctx)->findings); }
+
+static char *host_attached_text(void *ctx)
+{
+    App *app = ctx;
+    size_t cap = 2;
+    for (size_t i = 0; i < app->nattached; i++) cap += strlen(app->attached[i]) + 1;
+    char *s = malloc(cap);
+    if (!s) return NULL;
+    s[0] = '\0';
+    for (size_t i = 0; i < app->nattached; i++) {
+        if (i) strcat(s, ",");
+        strcat(s, app->attached[i]);
+    }
+    return s;
+}
+
+static char *host_explorer_text(void *ctx)
+{
+    App *app = ctx;
+    size_t cap = 2;
+    for (size_t i = 0; i < app->ndocs; i++) cap += strlen(app->docs[i]) + 1;
+    for (size_t i = 0; i < app->nchats; i++) cap += strlen(app->chats[i].title) + 1;
+    char *s = malloc(cap);
+    if (!s) return NULL;
+    s[0] = '\0';
+    for (size_t i = 0; i < app->ndocs; i++) strcat(strcat(s, app->docs[i]), "\n");
+    for (size_t i = 0; i < app->nchats; i++) strcat(strcat(s, app->chats[i].title), "\n");
+    return s;
+}
 
 static bool host_model_ready(void *ctx)
 {
@@ -1973,7 +2187,8 @@ int main(int argc, char **argv)
     Script *script = NULL;
     ScriptHost host = { app.editor, &app.explorer_w, &app.observer_w, &app.editor_rect,
                         host_status, host_open, host_drop, &app, app.chat, host_element, host_model_ready,
-                        host_record_text, host_observer_enable, host_observer_idle, host_findings_text };
+                        host_record_text, host_observer_enable, host_observer_idle, host_findings_text,
+                        host_attached_text, host_explorer_text };
     if (script_path) {
         char err[256];
         script = script_load(script_path, getenv("SCRIBODO_SCRIPT_DIR"), getenv("SCRIBODO_SHOT_DIR"), err, sizeof(err));
@@ -2023,6 +2238,7 @@ int main(int argc, char **argv)
             } else if (strcmp(app.chat_project, app.project_dir) != 0) {
                 chat_clear(app.chat);
                 app.chat_id[0] = app.chat_title[0] = app.chat_project[0] = '\0';
+                attach_reset(&app); /* the old project's documents aren't this one's */
             }
         }
         if (GetTime() - app.lists_refreshed > 3.0) app.lists_dirty = true;
@@ -2119,6 +2335,13 @@ int main(int argc, char **argv)
             /* Toolbar, chat header/footer and message list keep the focus. */
         }
         if (!modal && IsMouseButtonPressed(MOUSE_BUTTON_RIGHT) && Clay_PointerOver(CLAY_ID("Explorer"))) {
+            for (size_t i = 0; i < app.nchats; i++)
+                if (Clay_PointerOver(CLAY_IDI("ChatItem", (uint32_t)i))) {
+                    static const char *const items[] = { "Rename\xE2\x80\xA6" };
+                    snprintf(app.menu_chat, sizeof(app.menu_chat), "%s", app.chats[i].id);
+                    menu_open(&app.menu, MT_CHAT, (int)i, mouse, items, 1);
+                    break;
+                }
             for (size_t i = 0; i < app.ndocs; i++)
                 if (Clay_PointerOver(CLAY_IDI("DocItem", (uint32_t)i))) {
                     static const char *const items[] = { "Rename\xE2\x80\xA6", "Reveal in Finder" };
@@ -2212,7 +2435,7 @@ int main(int argc, char **argv)
         Rectangle obs_rect = ELEMENT_RECT("ObserverToggle");
         Rectangle new_rect = ELEMENT_RECT("NewChatButton");
         Rectangle send_rect = ELEMENT_RECT("SendButton");
-        Rectangle inc_rect = ELEMENT_RECT("IncludeDoc");
+        Rectangle attach_rect = ELEMENT_RECT("AttachRow");
 
         /* Always update both so queued keystrokes are consumed or discarded. */
         if (prompt_active(app.prompt)) {
@@ -2322,8 +2545,27 @@ int main(int argc, char **argv)
                 leave_edit_mode(&app);
                 editor_anchor_clear(app.editor);
             }
-        } else {
-            GuiCheckBox(inc_rect, NULL, &app.include_doc);
+        } else if (attach_rect.width > 0) {
+            int aa = draw_attach_row(&app, attach_rect);
+            if (aa >= 0) {
+                detach(&app, (size_t)aa);
+            } else if (aa == -2) {
+                if (!app.project_dir[0] || app.ndocs == 0) {
+                    set_status(&app, "Open a project with documents to attach them");
+                } else {
+                    /* The project's documents; a check mark shows what's attached. */
+                    const char *items[MENU_MAX_ITEMS];
+                    char labels[MENU_MAX_ITEMS][48];
+                    int n = 0;
+                    for (size_t i = 0; i < app.ndocs && n < MENU_MAX_ITEMS; i++, n++) {
+                        snprintf(app.menu_names[n], sizeof(app.menu_names[n]), "%s", app.docs[i]);
+                        snprintf(labels[n], sizeof(labels[n]), "%s %.40s", is_attached(&app, app.docs[i]) ? "\xE2\x9C\x93" : "  ",
+                                 app.docs[i]);
+                        items[n] = labels[n];
+                    }
+                    menu_open(&app.menu, MT_ATTACH, 0, (Vector2){ app.attach_add.x, app.attach_add.y - 8 - (float)n * 30 }, items, n);
+                }
+            }
         }
         if (chat_busy(app.chat)) {
             if (GuiButton(send_rect, "Stop")) chat_cancel(app.chat);
@@ -2344,6 +2586,24 @@ int main(int argc, char **argv)
         {
             Rectangle screen = { 0, 0, (float)GetScreenWidth(), (float)GetScreenHeight() };
             int pick = menu_draw(&app.menu, &app.fonts[FONT_UI], screen);
+            if (pick >= 0 && app.menu.tag == MT_ATTACH && pick < MENU_MAX_ITEMS) {
+                const char *nm = app.menu_names[pick];
+                bool found = false;
+                for (size_t i = 0; i < app.nattached; i++)
+                    if (!strcmp(app.attached[i], nm)) {
+                        detach(&app, i);
+                        found = true;
+                        break;
+                    }
+                if (!found && name_taken(&app, nm)) attach(&app, nm);
+            }
+            if (pick >= 0 && app.menu.tag == MT_CHAT) {
+                const char *title = "";
+                for (size_t i = 0; i < app.nchats; i++)
+                    if (!strcmp(app.chats[i].id, app.menu_chat)) title = app.chats[i].title;
+                snprintf(app.prompt_project, sizeof(app.prompt_project), "%s", app.project_dir);
+                prompt_open(app.prompt, PT_RENAME_CHAT, "Rename chat", title, "Rename");
+            }
             if (pick >= 0 && app.menu.tag == MT_DOC) {
                 if (!name_taken(&app, app.menu_doc)) set_status(&app, "That document is no longer in this project");
                 else if (pick == 0) begin_rename(&app, app.menu_doc); /* a dirty open document is refused on OK */

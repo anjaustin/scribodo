@@ -1,0 +1,79 @@
+# Chats reference project documents by attachment (SOW §4.1-4.2): which are
+# attached is shown, sent, remembered, and follows renames; chats rename.
+wait 5
+mkdir "$DIR/proj"
+write "$DIR/proj/a.md" "Alpha."
+write "$DIR/proj/b.md" "Beta."
+write "$DIR/proj/c.md" "Gamma."
+dialog "$DIR/proj"
+click_element WelcomeOpen
+click_element DocItem0
+# A new conversation starts with the open document attached.
+expect attached "a.md"
+click_element AttachAdd
+expect element_w MenuItem2 50 800
+click_element MenuItem1
+expect attached "a.md,b.md"
+click_element ChatInput
+type "compare them"
+key ENTER
+wait_chat
+expect chat_last "(fake model, with 2 documents) You said: compare them"
+# Removing an attachment: only what's attached is sent.
+click_element AttachRemove1
+expect attached "a.md"
+click_element ChatInput
+type "just one"
+key ENTER
+wait_chat
+expect chat_last "(fake model, with document) You said: just one"
+click_element AttachRemove0
+click_element ChatInput
+type "none"
+key ENTER
+wait_chat
+expect chat_last "(fake model) You said: none"
+# Toggling in the menu detaches.
+click_element AttachAdd
+click_element MenuItem2
+expect attached "c.md"
+click_element AttachAdd
+click_element MenuItem2
+expect attached ""
+# Reopening a chat restores the attachments its last message was sent with.
+click_element AttachAdd
+click_element MenuItem1
+click_element AttachAdd
+click_element MenuItem2
+expect attached "b.md,c.md"
+click_element ChatInput
+type "remember these"
+key ENTER
+wait_chat
+click_element NewChatButton
+expect attached "a.md"
+expect chat_count 0
+click_element ChatItem0
+expect chat_count 8
+expect attached "b.md,c.md"
+# A renamed document stays attached under its new name.
+right_click_element DocItem1
+click_element MenuItem0
+key A cmd
+type "beta"
+key ENTER
+expect status "Renamed to beta.md"
+expect attached "beta.md,c.md"
+click_element ChatInput
+type "still there?"
+key ENTER
+wait_chat
+expect chat_last "(fake model, with 2 documents) You said: still there?"
+# Chats rename from the Explorer.
+right_click_element ChatItem0
+click_element MenuItem0
+key A cmd
+type "Lighthouse plans"
+key ENTER
+expect status "Chat renamed"
+expect explorer_has "Lighthouse plans"

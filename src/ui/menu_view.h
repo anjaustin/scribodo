@@ -8,7 +8,7 @@
 #include "raylib.h"
 #include "ui/font.h"
 
-#define MENU_MAX_ITEMS 8
+#define MENU_MAX_ITEMS 16
 
 typedef struct {
     bool active;

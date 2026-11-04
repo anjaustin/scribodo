@@ -34,6 +34,9 @@ void chat_store_new_id(char *out, size_t outlen);
  * `title` is used only for a new file. */
 bool chat_store_append(const char *project_dir, const char *id, const char *title, const ChatMessage *m);
 
+/* Rename a stored conversation (a title line is appended). */
+bool chat_store_rename(const char *project_dir, const char *id, const char *title);
+
 /* List conversations, newest first. Caller frees *out. */
 size_t chat_store_list(const char *project_dir, ChatSummary **out);
 

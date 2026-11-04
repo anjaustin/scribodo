@@ -427,6 +427,18 @@ static void run_expect(Script *s, ScriptHost *h, Tokens *t)
         ok = !strcmp(what, "findings_has") ? has : (c && !has);
         show(detail, sizeof(detail), "findings", c);
         free(c);
+    } else if (!strcmp(what, "attached") && t->n == 3 && h->attached_text) {
+        char *c = h->attached_text(h->ctx);
+        ok = c && !strcmp(c, t->tok[2]);
+        show(detail, sizeof(detail), "attached", c);
+        free(c);
+    } else if (!strcmp(what, "explorer_has") && t->n == 3 && h->explorer_text) {
+        char *c = h->explorer_text(h->ctx);
+        ok = false;
+        for (char *save = NULL, *l = c ? strtok_r(c, "\n", &save) : NULL; l && !ok; l = strtok_r(NULL, "\n", &save))
+            ok = !strcmp(l, t->tok[2]);
+        snprintf(detail, sizeof(detail), "not listed");
+        free(c);
     } else if (!strcmp(what, "findings_count") && t->n == 3 && h->findings_text) {
         char *c = h->findings_text(h->ctx);
         int count = 0;
