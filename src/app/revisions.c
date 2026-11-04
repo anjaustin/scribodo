@@ -13,6 +13,11 @@
 
 #include "cJSON.h"
 
+#include <pthread.h>
+
+/* The UI thread and the observer both record revisions (red-team 005). */
+static pthread_mutex_t g_rev_mu = PTHREAD_MUTEX_INITIALIZER;
+
 static void hash_text(const char *s, char out[17])
 {
     uint64_t h = 1469598103934665603ull;
@@ -143,6 +148,13 @@ static bool record_impl(const char *project_dir, const char *doc_path, const cha
     size_t n = revisions_list(project_dir, doc_path, &list);
     bool same = n > 0 && !strcmp(list[0].hash, hash);
     if (same && file_out) snprintf(file_out, file_len, "%s", list[0].file);
+    /* A snapshot for a source may reuse any revision with exactly this text:
+     * an older text must never become the newest History entry. */
+    for (size_t i = 1; !same && file_out && i < n; i++)
+        if (!strcmp(list[i].hash, hash)) {
+            snprintf(file_out, file_len, "%s", list[i].file);
+            same = true;
+        }
     free(list);
     if (same) return true; /* identical to the newest revision */
 
@@ -190,13 +202,19 @@ static bool record_impl(const char *project_dir, const char *doc_path, const cha
 bool revisions_record(const char *project_dir, const char *doc_path, const char *text, const char *origin,
                       const char *note, bool *recorded)
 {
-    return record_impl(project_dir, doc_path, text, origin, note, recorded, NULL, 0);
+    pthread_mutex_lock(&g_rev_mu);
+    bool ok = record_impl(project_dir, doc_path, text, origin, note, recorded, NULL, 0);
+    pthread_mutex_unlock(&g_rev_mu);
+    return ok;
 }
 
 bool revisions_snapshot(const char *project_dir, const char *doc_path, const char *text, char *file_out, size_t file_len)
 {
     if (file_len) file_out[0] = '\0';
-    return record_impl(project_dir, doc_path, text, "source", NULL, NULL, file_out, file_len) && file_out[0];
+    pthread_mutex_lock(&g_rev_mu);
+    bool ok = record_impl(project_dir, doc_path, text, "source", NULL, NULL, file_out, file_len) && file_out[0];
+    pthread_mutex_unlock(&g_rev_mu);
+    return ok;
 }
 
 char *revisions_load(const char *project_dir, const char *doc_path, const Revision *r)

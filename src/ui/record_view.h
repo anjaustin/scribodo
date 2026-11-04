@@ -52,7 +52,8 @@ char *record_view_text(const RecordView *v);
 /* Edited since it was opened or last stored. */
 bool record_view_dirty(const RecordView *v);
 /* After the app stored a version: becomes the record's saved state. */
-void record_view_stored(RecordView *v, const char *id, int ver, const char *status, const char *content);
+/* Refused (false) if `id` isn't this panel's entry (wrong kind or id). */
+bool record_view_stored(RecordView *v, const char *id, int ver, const char *status, const char *content);
 
 float record_view_height(RecordView *v, float width, float max_h);
 /* Mouse and keyboard; `focused` routes typing to the content editor. */

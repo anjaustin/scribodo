@@ -145,6 +145,8 @@ See [`OBSERVER-001-design.md`](OBSERVER-001-design.md):
 - ASan/UBSan and the new `make tsan`, all clean;
 - 10 of 10 mutations caught.
 
+Red-teamed in [`REDTEAM-005-observer.md`](REDTEAM-005-observer.md): 16 findings, all fixed, 20 of 20 mutations caught.
+
 UI scripts start with the observer **off**, so other scripts' file expectations stay deterministic. A script turns it on with `observer on` and waits with `wait_observer`.
 
 ## Findings from the chat work

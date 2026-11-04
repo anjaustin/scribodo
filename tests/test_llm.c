@@ -439,10 +439,20 @@ static void test_records(void)
     char snap[160], snap2[160];
     CHECK(revisions_snapshot(proj, doc, "Zoë kept the letter.", snap, sizeof(snap)) && strstr(snap, "-source.md"));
     CHECK(revisions_snapshot(proj, doc, "Zoë kept the letter.", snap2, sizeof(snap2)) && !strcmp(snap, snap2)); /* reused */
+    /* An older text is reused from History, not re-added on top of it. */
+    bool rec2 = false;
+    usleep(2000);
+    CHECK(revisions_record(proj, doc, "Zoë burned the letter.", "save", NULL, &rec2) && rec2);
+    char snap3[160];
+    CHECK(revisions_snapshot(proj, doc, "Zoë kept the letter.", snap3, sizeof(snap3)) && !strcmp(snap3, snap));
+    Revision *rv = NULL;
+    size_t nrv = revisions_list(proj, doc, &rv);
+    CHECK(nrv == 2 && !strcmp(rv[0].origin, "save"));
+    free(rv);
     Revision *revs;
     size_t nr = revisions_list(proj, doc, &revs);
-    CHECK(nr == 1);
-    char *txt = nr ? revisions_load(proj, doc, &revs[0]) : NULL;
+    CHECK(nr == 2);
+    char *txt = nr ? revisions_load(proj, doc, &revs[1]) : NULL;
     CHECK(txt && !strcmp(txt, "Zoë kept the letter."));
     free(txt);
     free(revs);
@@ -524,7 +534,7 @@ static void test_records(void)
     fputs("{\"file\":\"x.md\",\"origin\":\"save\"}\n", f);
     fclose(f);
     nr = revisions_list(proj, doc, &revs);
-    CHECK(nr == 2 && revs[0].ts == 0 && revs[0].bytes == 0);
+    CHECK(nr == 3 && revs[0].ts == 0 && revs[0].bytes == 0);
     free(revs);
     /* No project history yet: an empty list, not an error. */
     char empty[800];
@@ -562,6 +572,12 @@ static void test_observer_locate(void)
     CHECK(locate_is(t, "", NULL));
     /* case differences are tolerated */
     CHECK(locate_is(t, "WITHOUT turning around", "without turning around"));
+    /* Red-team 005: matches are word-bounded, and a prefix must cover most
+     * of the quote (a made-up claim can't borrow a sentence's first words). */
+    CHECK(locate_is("Zo\xC3\xAB climbed the stairs.", "ed", NULL));
+    CHECK(locate_is("Zo\xC3\xAB climbed the stairs.", "imbed the", NULL));
+    CHECK(locate_is("Mara left the lighthouse at dawn.", "Mara left the lighthouse and then burned it to the ground with Zo\xC3\xAB inside", NULL));
+    CHECK(locate_is("Mara left the lighthouse at dawn.", "Mara left the lighthouse at dusk", "Mara left the lighthouse at"));
 }
 
 static void test_observer_text(void)
@@ -693,7 +709,7 @@ static void test_observer_run(void)
 
     /* Evidence that isn't in the text is never recorded. */
     f = fopen(doc, "ab");
-    fputs("\nA quiet morning. [[invent]]\n", f);
+    fputs("\nA quiet morning in the town. [[invent]] [[weak]]\n", f);
     fclose(f);
     done = observer_jobs_done(o);
     observer_poke(o);
@@ -701,7 +717,8 @@ static void test_observer_run(void)
     Record *l3 = NULL;
     size_t n3 = records_list(proj, REC_FINDING, &l3);
     bool invented = false;
-    for (size_t i = 0; i < n3; i++) invented = invented || strstr(record_current(&l3[i])->content, "sails away");
+    for (size_t i = 0; i < n3; i++)
+        invented = invented || strstr(record_current(&l3[i])->content, "sails away") || strstr(record_current(&l3[i])->content, "murderer");
     CHECK(!invented);
     records_free(l3, n3);
 
@@ -715,6 +732,147 @@ static void test_observer_run(void)
     observer_poke(o);
     usleep(400000);
     CHECK(observer_jobs_done(o) == done);
+    observer_destroy(o);
+}
+
+/* Red-team 005: nothing stored is skipped, offsets match the editor's text,
+ * and duplicates are still checked against canon. */
+static bool has_finding(const char *proj, const char *needle, Record *out_copy_src)
+{
+    Record *list = NULL;
+    size_t n = records_list(proj, REC_FINDING, &list);
+    bool found = false;
+    for (size_t i = 0; i < n && !found; i++) {
+        const RecordVersion *v = record_current(&list[i]);
+        if (strstr(v->content, needle)) {
+            found = true;
+            if (out_copy_src && v->nsources) {
+                out_copy_src->created_seq = v->sources[0].start; /* reuse fields to return the range */
+                out_copy_src->nversions = v->sources[0].len;
+            }
+        }
+    }
+    records_free(list, n);
+    return found;
+}
+
+static void test_observer_redteam(void)
+{
+    char proj[700], path[800];
+    snprintf(proj, sizeof(proj), "%s/obs-rt", g_dir);
+    mkdir(proj, 0755);
+    Observer *o = observer_create(NULL);
+    if (!o) return;
+
+    /* A 7 KB paragraph: names near its end are read, piece by piece. */
+    snprintf(path, sizeof(path), "%s/long.md", proj);
+    FILE *f = fopen(path, "wb");
+    for (int i = 0; i < 140; i++) fputs("the fog rolled in over the quiet fjord and ", f);
+    fputs("then Zelda arrived. ", f);
+    for (int i = 0; i < 20; i++) fputs("the sea was grey and the wind was cold ", f);
+    fputs("and Quentin waved.\n", f);
+    fclose(f);
+    observer_set_project(o, proj);
+    CHECK(wait_jobs(o, 1, 20));
+    CHECK(has_finding(proj, "Zelda is mentioned", NULL) && has_finding(proj, "Quentin is mentioned", NULL));
+    unlink(path);
+
+    /* More than 4,096 paragraphs: the last one is read too. */
+    snprintf(path, sizeof(path), "%s/many.md", proj);
+    f = fopen(path, "wb");
+    for (int i = 0; i < 4200; i++) fputs("x.\n\n", f);
+    fputs("At last Yorick came.\n", f);
+    fclose(f);
+    unsigned done = observer_jobs_done(o);
+    observer_poke(o);
+    CHECK(wait_jobs(o, done + 1, 60));
+    CHECK(has_finding(proj, "Yorick is mentioned", NULL));
+    unlink(path);
+
+    /* CRLF and a BOM: ranges are in the editor's text (LF, no BOM). */
+    snprintf(path, sizeof(path), "%s/crlf.md", proj);
+    f = fopen(path, "wb");
+    fputs("\xEF\xBB\xBFThe sea.\r\n\r\nThen Mara came.\r\n", f);
+    fclose(f);
+    done = observer_jobs_done(o);
+    observer_poke(o);
+    CHECK(wait_jobs(o, done + 1, 20));
+    Record range = { 0 };
+    CHECK(has_finding(proj, "Mara is mentioned", &range) && range.created_seq == 15 && range.nversions == 4);
+
+    /* A statement that duplicates an existing finding is still checked
+     * against canon: "Mara's coat is blue." is known from before the canon
+     * entry existed; repeated later, it must be flagged. */
+    f = fopen(path, "ab");
+    fputs("\r\nMara's coat is blue.\r\n", f);
+    fclose(f);
+    done = observer_jobs_done(o);
+    observer_poke(o);
+    CHECK(wait_jobs(o, done + 1, 20));
+    CHECK(!has_finding(proj, "Canon says", NULL));
+    char cid[40];
+    records_new_id(REC_CANON, cid, sizeof(cid));
+    CHECK(records_append(proj, REC_CANON, cid, "committed", "Mara's coat is red.", NULL, 0, NULL));
+    f = fopen(path, "ab");
+    fputs("\r\nMara's coat is blue. The rain fell.\r\n", f);
+    fclose(f);
+    done = observer_jobs_done(o);
+    observer_poke(o);
+    CHECK(wait_jobs(o, done + 1, 20));
+    CHECK(has_finding(proj, "Canon says Mara's coat: red", NULL));
+
+    /* AI rewrites in the chat log are not story text; long messages are read
+     * to the end. */
+    ChatMessage u = { .role = CHAT_USER, .content = "Tighten this." , .is_edit = true };
+    ChatMessage a = { .role = CHAT_ASSISTANT, .content = "Then Rasmus came.", .is_edit = true };
+    CHECK(chat_store_append(proj, "20261104-130000-aaaa", "t", &u) && chat_store_append(proj, "20261104-130000-aaaa", "t", &a));
+    char *longmsg = malloc(9000);
+    size_t k = 0;
+    while (k < 8000) k += (size_t)snprintf(longmsg + k, 9000 - k, "the wind was cold and grey. ");
+    snprintf(longmsg + k, 9000 - k, "Later Ulrika sang.");
+    ChatMessage b = { .role = CHAT_ASSISTANT, .content = longmsg };
+    CHECK(chat_store_append(proj, "20261104-130000-aaaa", "t", &b));
+    free(longmsg);
+    done = observer_jobs_done(o);
+    observer_poke(o);
+    CHECK(wait_jobs(o, done + 1, 30));
+    CHECK(!has_finding(proj, "Rasmus is mentioned", NULL) && has_finding(proj, "Ulrika is mentioned", NULL));
+
+    /* Deleted documents and chats are pruned from state. */
+    char st_path[900];
+    snprintf(st_path, sizeof(st_path), "%s/.scribodo/observer/state.json", proj);
+    f = fopen(st_path, "rb");
+    char buf[8192] = "";
+    if (f) {
+        buf[fread(buf, 1, sizeof(buf) - 1, f)] = '\0';
+        fclose(f);
+    }
+    CHECK(!strstr(buf, "long.md") && !strstr(buf, "many.md") && strstr(buf, "crlf.md"));
+    struct stat sst;
+    CHECK(stat(st_path, &sst) == 0 && (sst.st_mode & 0777) == 0644);
+
+    /* An unwritable state file backs off instead of re-asking every poke. */
+    char od[900];
+    snprintf(od, sizeof(od), "%s/.scribodo/observer", proj);
+    chmod(od, 0555);
+    f = fopen(path, "ab");
+    fputs("\r\nThen Wilhelm came.\r\n", f);
+    fclose(f);
+    observer_poke(o);
+    char stat_s[200] = "";
+    for (int i = 0; i < 250 && !strstr(stat_s, "Can't write"); i++) {
+        usleep(20000);
+        observer_status(o, stat_s, sizeof(stat_s));
+    }
+    CHECK(strstr(stat_s, "Can't write") != NULL);
+    unsigned tries = observer_attempts(o);
+    for (int i = 0; i < 5; i++) { /* saves don't cut the back-off short */
+        observer_poke(o);
+        usleep(100000);
+    }
+    observer_status(o, stat_s, sizeof(stat_s));
+    CHECK(strstr(stat_s, "Can't write") && observer_attempts(o) == tries);
+    chmod(od, 0755);
     observer_destroy(o);
 }
 
@@ -1144,6 +1302,7 @@ int main(int argc, char **argv)
         { "observer_locate", test_observer_locate },
         { "observer_text", test_observer_text },
         { "observer_run", test_observer_run },
+        { "observer_redteam", test_observer_redteam },
         { "truncated_stream_is_an_error", test_truncated_stream_is_an_error },
         { "ok_stream_and_context_error", test_ok_stream_and_context_error },
         { "stop_never_hangs", test_stop_never_hangs },

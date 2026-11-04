@@ -1,0 +1,58 @@
+# Red-team 005: the observer sidebar acts only on clear intent, and never
+# overwrites what the author is typing.
+observer on
+mkdir "$DIR/obs"
+write "$DIR/obs/chapter.md" "The fog came in off the fjord in late October.\n\nZoë Ångström climbed the stairs. Then Dvořák laughed."
+open "$DIR/obs/chapter.md"
+wait 30
+click_element ObserverToggle
+wait_observer
+# Discuss adds to an unsent message instead of replacing it; ⌘Z removes it.
+click_element ChatInput
+type "My long unsent paragraph about the ending"
+click_element Finding0
+click_element FindingDiscuss
+key Z cmd
+key ENTER
+wait_chat
+expect chat_last "You said: My long unsent paragraph about the ending"
+expect chat_last_not "observer finding"
+wait_observer
+# Selecting a card never fires a button that moves under the cursor
+# (window coordinates: the second card, below the first one's buttons).
+click_element Finding0
+wait 3
+click 1360 300
+wait 3
+expect files "$DIR/obs/.scribodo" "notes.jsonl" 0
+expect findings_not "|saved|"
+# "Commit to canon" while the author's own draft is open links nothing.
+click_index 4 2
+key C cmd shift
+click_element RecordEditor
+key A cmd
+type "The fog is permanent."
+click_element Finding0
+click_element FindingCanon
+expect status "Commit or discard"
+click_element RecordCommit
+expect record "Canon · v1 · committed"
+expect findings_not "|committed|"
+click_element RecordClose
+# Buttons of a card scrolled out of view don't act from outside the list.
+mkdir "$DIR/many"
+write "$DIR/many/a.md" "Then Alda met Brin, Cato, Dora, Egon, Fritz, Gala and Hugo."
+write "$DIR/many/b.md" "Then Ines met Jorn, Kari, Lena, Milo, Nils, Olga and Pia."
+write "$DIR/many/c.md" "Then Quin met Rosa, Sven, Tove, Ulla, Vera, Wim and Xena."
+open "$DIR/many/a.md"
+wait 30
+wait_observer
+expect findings_count 24
+click_element Finding0
+wait 3
+move 1300 400
+wheel -5
+wait 3
+click 1250 106
+wait 3
+expect element_w RecordPanel 0 0

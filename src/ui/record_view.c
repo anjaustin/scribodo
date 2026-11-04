@@ -197,8 +197,12 @@ bool record_view_dirty(const RecordView *v)
     return d;
 }
 
-void record_view_stored(RecordView *v, const char *id, int ver, const char *status, const char *content)
+bool record_view_stored(RecordView *v, const char *id, int ver, const char *status, const char *content)
 {
+    /* Ids carry their kind ("n-", "c-"); never let a note's id become the
+     * panel's canon entry or the reverse (red-team 005). */
+    char want = v->kind == REC_NOTE ? 'n' : v->kind == REC_CANON ? 'c' : 'f';
+    if (!v->active || id[0] != want || (v->id[0] && strcmp(v->id, id) != 0)) return false;
     /* The version that was current becomes history (canon only lists it). */
     if (v->id[0] && v->ver > 0) {
         HistItem *h = realloc(v->hist, (v->nhist + 1) * sizeof(HistItem));
@@ -221,6 +225,7 @@ void record_view_stored(RecordView *v, const char *id, int ver, const char *stat
     }
     v->saved_cid = editor_content_id(v->ed);
     refresh_text(v);
+    return true;
 }
 
 static void layout(RecordView *v, Rectangle r)

@@ -1,5 +1,10 @@
 # Observer 001: design and validation
 
+> Red-teamed in [`REDTEAM-005-observer.md`](REDTEAM-005-observer.md). Since then:
+> - evidence must be whole words and substantial;
+> - text is read in pieces, normalized like the editor;
+> - every statement, duplicates included, is checked against canon.
+
 **Date:** 2026-11-04
 **Scope:** the parallel observer (SOW §4.3):
 - the worker, extraction, evidence matching, deduplication and canon checks (`src/llm/observer.c`)

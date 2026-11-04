@@ -21,7 +21,9 @@ FindingsView *findings_view_create(SFont *text_font, SFont *label_font);
 void findings_view_destroy(FindingsView *v);
 
 /* Replace the list (copied). Keeps the selection if it is still listed. */
-void findings_view_set(FindingsView *v, const Record *findings, size_t n);
+/* `canon` lets conflicts whose canon entry has since changed or been
+ * retracted be shown as outdated (and not listed first). */
+void findings_view_set(FindingsView *v, const Record *findings, size_t n, const Record *canon, size_t ncanon);
 size_t findings_view_count(const FindingsView *v);
 
 void findings_view_update(FindingsView *v, Rectangle r);

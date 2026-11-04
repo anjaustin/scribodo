@@ -19,6 +19,7 @@ typedef struct {
     char *quote;
     char source[300];
     char *related;      /* "Canon: …" / "Related note: …", or NULL */
+    bool stale;         /* conflict whose canon entry changed or was retracted */
     float height;       /* as last laid out */
     float layout_w;
 } Item;
@@ -28,6 +29,9 @@ struct FindingsView {
     Item *items;
     size_t n;
     char selected[40];
+    char press_sel[40];  /* the card that was selected when the mouse went down */
+    Vector2 press_pos;
+    bool pressed;        /* a press began inside the list */
     float scroll;
     Rectangle r;
     /* Cards and buttons as last drawn. */
@@ -74,7 +78,19 @@ static char *prefixed(const char *prefix, const char *s)
     return o;
 }
 
-void findings_view_set(FindingsView *v, const Record *f, size_t n)
+/* A conflict is current while its canon entry is still committed with the
+ * same text it was judged against. */
+static bool conflict_current(const RecordVersion *cur, const Record *canon, size_t ncanon)
+{
+    for (size_t c = 0; c < ncanon; c++) {
+        if (strcmp(canon[c].id, cur->finding.related)) continue;
+        const RecordVersion *cv = record_current(&canon[c]);
+        return !strcmp(cv->status, "committed") && cur->finding.related_text && !strcmp(cv->content, cur->finding.related_text);
+    }
+    return false;
+}
+
+void findings_view_set(FindingsView *v, const Record *f, size_t n, const Record *canon, size_t ncanon)
 {
     clear_items(v);
     v->items = calloc(n ? n : 1, sizeof(Item));
@@ -96,10 +112,12 @@ void findings_view_set(FindingsView *v, const Record *f, size_t n)
             size_t i = order[oi];
             const RecordVersion *cur = record_current(&f[i]);
             if (!strcmp(cur->status, "dismissed")) continue;
-            bool first = !strcmp(cur->finding.type, "conflict") && !strcmp(cur->status, "new");
+            bool stale = !strcmp(cur->finding.type, "conflict") && !conflict_current(cur, canon, ncanon);
+            bool first = !strcmp(cur->finding.type, "conflict") && !strcmp(cur->status, "new") && !stale;
             if ((pass == 0) != first) continue;
             Item *it = &v->items[v->n];
             snprintf(it->id, sizeof(it->id), "%s", f[i].id);
+            it->stale = stale;
             snprintf(it->type, sizeof(it->type), "%s", cur->finding.type[0] ? cur->finding.type : "finding");
             snprintf(it->status, sizeof(it->status), "%s", cur->status);
             it->desc = strdup(cur->content);
@@ -182,8 +200,16 @@ void findings_view_update(FindingsView *v, Rectangle r)
     if (v->scroll > max) v->scroll = max;
     if (v->scroll < 0) v->scroll = 0;
     /* Select a card on click (buttons inside the selected card are raygui's). */
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) v->pressed = false;
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(GetMousePosition(), r)) {
         Vector2 m = GetMousePosition();
+        /* Buttons only act for a press that began on them, on a card that
+         * was already selected: selecting a card re-lays out the list, and
+         * the release must not land on a button that moved under the
+         * cursor (red-team 005). */
+        snprintf(v->press_sel, sizeof(v->press_sel), "%s", v->selected);
+        v->press_pos = m;
+        v->pressed = true;
         bool on_button = false;
         for (int b = 0; b < 5; b++) on_button = on_button || (v->btn[b].width > 0 && CheckCollisionPointRec(m, v->btn[b]));
         for (size_t i = 0; i < v->n && !on_button; i++)
@@ -237,8 +263,8 @@ FindingAction findings_view_draw(FindingsView *v, Rectangle r, char *id_out, siz
             if (sel) DrawRectangleRec((Rectangle){ card.x, card.y + 4, 3, h - 8 }, EDGE);
             float x = card.x + PAD, cy = card.y + PAD, inner = card.width - 2 * PAD;
             char badge[64];
-            snprintf(badge, sizeof(badge), "%s%s%s", it->type, strcmp(it->status, "new") ? " \xC2\xB7 " : "",
-                     strcmp(it->status, "new") ? it->status : "");
+            snprintf(badge, sizeof(badge), "%s%s%s%s", it->type, strcmp(it->status, "new") ? " \xC2\xB7 " : "",
+                     strcmp(it->status, "new") ? it->status : "", it->stale ? " \xC2\xB7 outdated (canon changed)" : "");
             for (char *p = badge; *p && *p != ' '; p++)
                 if (*p >= 'a' && *p <= 'z') *p = (char)(*p - 32);
             sfont_draw_utf8(v->label, badge, (int)strlen(badge), x, cy, type_color(it->type));
@@ -276,8 +302,18 @@ FindingAction findings_view_draw(FindingsView *v, Rectangle r, char *id_out, siz
                     v->btn_act[b] = acts[b];
                     /* Saved/committed findings keep Discuss and Source. */
                     bool off = done && (acts[b] == FA_NOTE || acts[b] == FA_CANON);
+                    /* Only a fully visible button, clicked inside the list,
+                     * whose press began on it (see findings_view_update). */
+                    bool inside = rects[b].y >= r.y && rects[b].y + rects[b].height <= r.y + r.height;
+                    bool armed = v->pressed && !strcmp(v->press_sel, it->id) &&
+                                 CheckCollisionPointRec(v->press_pos, rects[b]) &&
+                                 CheckCollisionPointRec(GetMousePosition(), r);
+                    if (!inside) {
+                        v->btn[b] = (Rectangle){ 0 };
+                        continue;
+                    }
                     if (off) GuiDisable();
-                    if (GuiButton(rects[b], labels[b]) && !off) {
+                    if (GuiButton(rects[b], labels[b]) && !off && armed) {
                         act = acts[b];
                         snprintf(id_out, id_len, "%s", it->id);
                     }
@@ -318,6 +354,7 @@ char *findings_view_text(const FindingsView *v)
     size_t k = 0;
     s[0] = '\0';
     for (size_t i = 0; i < v->n; i++)
-        k += (size_t)snprintf(s + k, cap - k, "%s|%s|%s\n", v->items[i].type, v->items[i].status, v->items[i].desc);
+        k += (size_t)snprintf(s + k, cap - k, "%s|%s%s|%s\n", v->items[i].type, v->items[i].status,
+                              v->items[i].stale ? ",outdated" : "", v->items[i].desc);
     return s;
 }

@@ -83,6 +83,11 @@ bool records_append(const char *project_dir, RecordKind kind, const char *id, co
 bool records_append_ex(const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
                        const SourceRef *sources, size_t nsources, const FindingInfo *finding, int *ver_out);
 
+/* A new record (version 1) under an id just made by records_new_id(),
+ * without reading the log. */
+bool records_create_ex(const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
+                       const SourceRef *sources, size_t nsources, const FindingInfo *finding);
+
 /* All records, most recently changed first. Caller frees with records_free. */
 size_t records_list(const char *project_dir, RecordKind kind, Record **out);
 void records_free(Record *r, size_t n);

@@ -52,6 +52,8 @@ void observer_status(Observer *o, char *out, size_t outlen);
 uint64_t observer_version(Observer *o);
 /* Nothing running or waiting to run (tests). */
 bool observer_idle(Observer *o);
+/* Jobs started, including failed ones (tests). */
+unsigned observer_attempts(Observer *o);
 /* Jobs finished since creation (tests). */
 unsigned observer_jobs_done(Observer *o);
 

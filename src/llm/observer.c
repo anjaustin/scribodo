@@ -21,11 +21,11 @@
 #include "llm/llm_text.h"
 
 #define CHUNK_MAX 3000        /* bytes of new text per extraction request */
-#define MAX_SEGS 64
+#define PIECE_MAX 2000        /* longest piece of one paragraph or message */
 #define IDLE_DELAY 1.5        /* seconds of chat idleness before observer work */
 #define RETRY_DELAY 5.0       /* after a failed request */
-#define MAX_JUDGE_PAIRS 6     /* canon checks per job (each is two votes) */
-#define MAX_DOC_BYTES (4u << 20)
+#define MAX_JUDGE_PAIRS 16    /* canon checks per job: 8 findings x 2 entries, so none are skipped */
+#define MAX_DOC_BYTES (16u << 20) /* the editor's own limit is lower */
 
 /* All finding writes (observer worker and UI status changes) take this. */
 static pthread_mutex_t g_findings_mu = PTHREAD_MUTEX_INITIALIZER;
@@ -37,6 +37,7 @@ struct Observer {
     pthread_mutex_t mu;
     pthread_cond_t cv;
     bool stop, poked, enabled, running;
+    bool io_error;           /* can't write the observer's files: back off */
     char project[PATH_MAX];
     uint64_t gen;            /* bumps on project change: stale results are discarded */
     double idle_since;       /* last time chat was active */
@@ -46,6 +47,7 @@ struct Observer {
     char status[200];
     uint64_t version;
     unsigned jobs_done;
+    unsigned attempts;      /* jobs started, including failed ones (tests) */
 };
 
 static double now_s(void)
@@ -175,6 +177,8 @@ static size_t normalize(const char *s, size_t n, char *out, size_t *map, size_t 
     return k;
 }
 
+static bool word_byte(unsigned char c);
+
 static const char *memfind(const char *h, size_t hn, const char *n, size_t nn)
 {
     if (nn == 0 || nn > hn) return NULL;
@@ -202,10 +206,35 @@ bool obs_locate(const char *text, size_t n, const char *evidence, size_t *start,
     return locate_once(text, n, evidence, en, start, len);
 }
 
+/* A match must not start or end inside a word ("ed" is not evidence
+ * found in "climbed"). */
+static bool word_bounded(const char *h, size_t hn, size_t at, size_t len)
+{
+    bool starts_word = word_byte((unsigned char)h[at]), ends_word = word_byte((unsigned char)h[at + len - 1]);
+    if (starts_word && at > 0 && word_byte((unsigned char)h[at - 1]) && ((unsigned char)h[at] & 0xC0) != 0x80) return false;
+    if (starts_word && at > 0 && ((unsigned char)h[at] & 0xC0) == 0x80) return false; /* mid-character */
+    if (ends_word && at + len < hn && word_byte((unsigned char)h[at + len]) && ((unsigned char)h[at + len] & 0xC0) != 0x80)
+        return false;
+    if (ends_word && at + len < hn && ((unsigned char)h[at + len] & 0xC0) == 0x80) return false;
+    return true;
+}
+
+static const char *memfind_word(const char *h, size_t hn, const char *n, size_t nn)
+{
+    for (size_t from = 0; from + nn <= hn;) {
+        const char *hit = memfind(h + from, hn - from, n, nn);
+        if (!hit) return NULL;
+        size_t at = (size_t)(hit - h);
+        if (word_bounded(h, hn, at, nn)) return hit;
+        from = at + 1;
+    }
+    return NULL;
+}
+
 static bool locate_once(const char *text, size_t n, const char *evidence, size_t en, size_t *start, size_t *len)
 {
     if (en < 2) return false;
-    const char *hit = memfind(text, n, evidence, en);
+    const char *hit = memfind_word(text, n, evidence, en);
     if (hit) {
         *start = (size_t)(hit - text);
         *len = en;
@@ -224,8 +253,10 @@ static bool locate_once(const char *text, size_t n, const char *evidence, size_t
         int words = 1;
         for (size_t i = 0; i < evn; i++) words += ne[i] == ' ';
         while (try_len >= 2 && !ok) {
-            const char *h = memfind(nt, tn, ne, try_len);
-            if (h && (try_len == evn || try_len >= 20)) {
+            const char *h = memfind_word(nt, tn, ne, try_len);
+            /* A prefix must cover most of the quote: a made-up claim can't
+             * borrow a sentence's first words as its "evidence". */
+            if (h && (try_len == evn || (try_len >= 20 && try_len * 100 >= evn * 60))) {
                 size_t a = (size_t)(h - nt), z = a + try_len - 1;
                 *start = map[a];
                 *len = map_end[z] - map[a];
@@ -391,6 +422,8 @@ char *obs_fake_extract(const char *chunk)
     /* Test hook: a finding whose evidence is not in the text (as a model
      * might invent), which must never be recorded. */
     if (strstr(chunk, "[[invent]]")) add_finding(arr, "event", "Ingrid sails away.", "Ingrid sailed away at dawn.", "Ingrid");
+    /* ...and one citing a trivial word that is in the text (prompt injection). */
+    if (strstr(chunk, "[[weak]]")) add_finding(arr, "event", "Ingrid is the murderer.", "the", "Ingrid");
     /* Names: capitalised words that aren't sentence starts or ALL CAPS. */
     char seen[16][48];
     size_t nseen = 0;
@@ -630,7 +663,7 @@ static bool state_save(const char *project, cJSON *st)
     bool ok = fd >= 0;
     size_t n = strlen(s);
     if (ok) {
-        ok = write(fd, s, n) == (ssize_t)n && fsync(fd) == 0;
+        ok = fchmod(fd, 0644) == 0 && write(fd, s, n) == (ssize_t)n && fsync(fd) == 0;
         ok = close(fd) == 0 && ok;
         ok = ok && rename(tmp, path) == 0;
         if (!ok) unlink(tmp);
@@ -660,16 +693,16 @@ typedef struct {
     bool is_doc;
     char name[256];       /* document file name, or chat id */
     char path[PATH_MAX + 300];
-    char *src;            /* document text (doc jobs) */
+    char *src;            /* document text, normalised as the editor loads it */
     char **msgs;          /* message texts (chat jobs), by index */
     size_t nmsgs;
-    size_t msg_to;        /* chat: messages read after this job */
+    size_t msg_to, off_to; /* chat: read up to message msg_to, byte off_to */
     char *chunk;
     size_t chunk_len;
-    Seg segs[MAX_SEGS];
-    size_t nsegs;
-    uint64_t hashes[MAX_SEGS * 4];
-    size_t nhashes;
+    Seg *segs;
+    size_t nsegs, cap_segs;
+    uint64_t *hashes;     /* document pieces read by this job */
+    size_t nhashes, cap_hashes;
 } Job;
 
 static void job_free(Job *j)
@@ -678,18 +711,23 @@ static void job_free(Job *j)
     for (size_t i = 0; i < j->nmsgs; i++) free(j->msgs[i]);
     free(j->msgs);
     free(j->chunk);
+    free(j->segs);
+    free(j->hashes);
     memset(j, 0, sizeof(*j));
 }
 
+/* Add a piece (at most PIECE_MAX bytes) to the chunk; false if it doesn't fit. */
 static bool chunk_add(Job *j, const char *label, const char *text, size_t src_off, size_t len, long message)
 {
-    if (j->nsegs == MAX_SEGS) return false;
-    if (j->chunk_len && j->chunk_len + len > CHUNK_MAX) return false;
-    if (len > CHUNK_MAX) { /* an overlong paragraph: read its start */
-        len = CHUNK_MAX;
-        while (len > 0 && ((unsigned char)text[src_off + len] & 0xC0) == 0x80) len--;
-    }
     size_t ll = label ? strlen(label) : 0;
+    if (j->chunk_len && j->chunk_len + 2 + ll + len > CHUNK_MAX) return false;
+    if (j->nsegs == j->cap_segs) {
+        size_t cap = j->cap_segs ? j->cap_segs * 2 : 16;
+        Seg *sg = realloc(j->segs, cap * sizeof(Seg));
+        if (!sg) return false;
+        j->segs = sg;
+        j->cap_segs = cap;
+    }
     char *c = realloc(j->chunk, j->chunk_len + ll + len + 3);
     if (!c) return false;
     j->chunk = c;
@@ -697,7 +735,7 @@ static bool chunk_add(Job *j, const char *label, const char *text, size_t src_of
         memcpy(j->chunk + j->chunk_len, "\n\n", 2);
         j->chunk_len += 2;
     }
-    memcpy(j->chunk + j->chunk_len, label, ll);
+    if (ll) memcpy(j->chunk + j->chunk_len, label, ll);
     j->chunk_len += ll;
     j->segs[j->nsegs++] = (Seg){ j->chunk_len, src_off, len, message };
     memcpy(j->chunk + j->chunk_len, text + src_off, len);
@@ -706,7 +744,42 @@ static bool chunk_add(Job *j, const char *label, const char *text, size_t src_of
     return true;
 }
 
-static char *read_file(const char *path, size_t *n)
+static bool add_hash(Job *j, uint64_t h)
+{
+    if (j->nhashes == j->cap_hashes) {
+        size_t cap = j->cap_hashes ? j->cap_hashes * 2 : 32;
+        uint64_t *hs = realloc(j->hashes, cap * sizeof(uint64_t));
+        if (!hs) return false;
+        j->hashes = hs;
+        j->cap_hashes = cap;
+    }
+    j->hashes[j->nhashes++] = h;
+    return true;
+}
+
+/* Length of the next piece of s[0, n): at most PIECE_MAX bytes, ending at a
+ * sentence end or a space when possible, never inside a UTF-8 sequence. Long
+ * paragraphs and messages are read piece by piece, each tracked on its own
+ * (red-team 005: everything past 3,000 bytes used to be marked read unread). */
+static size_t piece_len(const char *s, size_t n)
+{
+    if (n <= PIECE_MAX) return n;
+    size_t cut = 0;
+    for (size_t i = PIECE_MAX; i > PIECE_MAX / 2 && !cut; i--)
+        if ((s[i - 1] == '.' || s[i - 1] == '?' || s[i - 1] == '!' || s[i - 1] == '\n') && s[i] == ' ') cut = i;
+    for (size_t i = PIECE_MAX; i > PIECE_MAX / 2 && !cut; i--)
+        if (s[i] == ' ') cut = i;
+    if (!cut) {
+        cut = PIECE_MAX;
+        while (cut > 0 && ((unsigned char)s[cut] & 0xC0) == 0x80) cut--;
+    }
+    return cut;
+}
+
+/* Read a document as the editor does (doc_io): drop a UTF-8 BOM, turn CRLF
+ * and lone CR into LF, so offsets match what the author sees and what a
+ * save writes (red-team 005: CRLF files had every offset shifted). */
+static char *read_doc(const char *path, size_t *n)
 {
     struct stat st;
     if (stat(path, &st) != 0 || !S_ISREG(st.st_mode) || (size_t)st.st_size > MAX_DOC_BYTES) return NULL;
@@ -715,52 +788,120 @@ static char *read_file(const char *path, size_t *n)
     char *buf = malloc((size_t)st.st_size + 1);
     size_t got = buf ? fread(buf, 1, (size_t)st.st_size, f) : 0;
     fclose(f);
-    if (buf) buf[got] = '\0';
-    *n = got;
+    if (!buf) return NULL;
+    size_t r = 0, w = 0;
+    if (got >= 3 && (unsigned char)buf[0] == 0xEF && (unsigned char)buf[1] == 0xBB && (unsigned char)buf[2] == 0xBF) r = 3;
+    for (; r < got; r++) {
+        if (buf[r] == '\r') {
+            if (r + 1 < got && buf[r + 1] == '\n') r++;
+            buf[w++] = '\n';
+        } else {
+            buf[w++] = buf[r];
+        }
+    }
+    buf[w] = '\0';
+    *n = w;
     return buf;
 }
 
 static int cmp_names(const void *a, const void *b) { return strcmp(*(char *const *)a, *(char *const *)b); }
 
-/* The next piece of unread stored text, or false if all is read. Marks
- * blank paragraphs read in `st` as it goes. */
+static void set_chat_progress(cJSON *chats, const char *id, size_t n, size_t off)
+{
+    cJSON_DeleteItemFromObject(chats, id);
+    cJSON *o = cJSON_AddObjectToObject(chats, id);
+    cJSON_AddNumberToObject(o, "n", (double)n);
+    cJSON_AddNumberToObject(o, "off", (double)off);
+}
+
+static bool in_list(char **names, size_t n, const char *s)
+{
+    for (size_t i = 0; i < n; i++)
+        if (names[i] && !strcmp(names[i], s)) return true;
+    return false;
+}
+
+/* The next unread piece of stored text, or false if all is read. Also
+ * prunes state for paragraphs, documents and chats that no longer exist. */
 static bool find_job(const char *project, cJSON *st, Job *j)
 {
     memset(j, 0, sizeof(*j));
     cJSON *docs = cJSON_GetObjectItem(st, "docs"), *chats = cJSON_GetObjectItem(st, "chats");
-    /* Documents, by name. */
+    /* Documents, by name (no cap). */
     DIR *d = opendir(project);
-    char *names[256];
-    size_t nn = 0;
+    char **names = NULL;
+    size_t nn = 0, cap = 0;
     struct dirent *ent;
-    while (d && (ent = readdir(d)) != NULL && nn < 256) {
+    while (d && (ent = readdir(d)) != NULL) {
         size_t n = strlen(ent->d_name);
         if (ent->d_name[0] == '.') continue;
-        if ((n > 3 && !strcasecmp(ent->d_name + n - 3, ".md")) || (n > 4 && !strcasecmp(ent->d_name + n - 4, ".txt")))
-            names[nn++] = strdup(ent->d_name);
+        if (!((n > 3 && !strcasecmp(ent->d_name + n - 3, ".md")) || (n > 4 && !strcasecmp(ent->d_name + n - 4, ".txt"))))
+            continue;
+        if (nn == cap) {
+            cap = cap ? cap * 2 : 64;
+            char **nm = realloc(names, cap * sizeof(char *));
+            if (!nm) break;
+            names = nm;
+        }
+        names[nn++] = strdup(ent->d_name);
     }
     if (d) closedir(d);
-    qsort(names, nn, sizeof(char *), cmp_names);
+    if (nn) qsort(names, nn, sizeof(char *), cmp_names);
+    /* Forget documents that are gone. */
+    for (cJSON *it = docs ? docs->child : NULL, *next; it; it = next) {
+        next = it->next;
+        if (!in_list(names, nn, it->string)) cJSON_DeleteItemFromObject(docs, it->string);
+    }
     bool found = false;
     for (size_t i = 0; i < nn && !found; i++) {
         if (!names[i]) continue;
         char path[PATH_MAX + 300];
         snprintf(path, sizeof(path), "%s/%s", project, names[i]);
         size_t len = 0;
-        char *text = read_file(path, &len);
+        char *text = read_doc(path, &len);
         if (!text || strlen(text) != len || !valid_utf8(text, len)) { /* not a readable UTF-8 text file */
             free(text);
             continue;
         }
         cJSON *seen = cJSON_GetObjectItem(docs, names[i]);
-        static size_t ps[4096], pl[4096];
-        size_t np = obs_paragraphs(text, ps, pl, 4096);
-        for (size_t p = 0; p < np; p++) {
-            uint64_t h = fnv(text + ps[p], pl[p]);
-            if (seen && hash_seen(seen, h)) continue;
-            if (!chunk_add(j, NULL, text, ps[p], pl[p], -1)) break;
-            if (j->nhashes < sizeof(j->hashes) / sizeof(j->hashes[0])) j->hashes[j->nhashes++] = h;
+        cJSON *kept = cJSON_CreateArray(); /* seen hashes still present (pruned) */
+        size_t np = 0, pcap = 256;
+        size_t *ps = malloc(pcap * sizeof(size_t)), *pl = malloc(pcap * sizeof(size_t));
+        while (ps && pl) { /* all paragraphs, however many */
+            np = obs_paragraphs(text, ps, pl, pcap);
+            if (np < pcap) break;
+            pcap *= 2;
+            size_t *a = realloc(ps, pcap * sizeof(size_t)), *b = realloc(pl, pcap * sizeof(size_t));
+            if (!a || !b) {
+                free(a ? a : ps);
+                free(b ? b : pl);
+                ps = pl = NULL;
+                break;
+            }
+            ps = a;
+            pl = b;
         }
+        bool full = false;
+        for (size_t p = 0; ps && pl && p < np; p++) {
+            for (size_t off = 0; off < pl[p];) {
+                size_t plen = piece_len(text + ps[p] + off, pl[p] - off);
+                while (off + plen < pl[p] && text[ps[p] + off + plen] == ' ') plen++; /* keep spaces with the piece */
+                uint64_t h = fnv(text + ps[p] + off, plen);
+                if (seen && hash_seen(seen, h)) {
+                    char hex[17];
+                    snprintf(hex, sizeof(hex), "%016llx", (unsigned long long)h);
+                    if (!hash_seen(kept, h)) cJSON_AddItemToArray(kept, cJSON_CreateString(hex));
+                } else if (!full) {
+                    if (chunk_add(j, NULL, text, ps[p] + off, plen, -1)) add_hash(j, h);
+                    else full = true;
+                }
+                off += plen;
+            }
+        }
+        free(ps);
+        free(pl);
+        cJSON_DeleteItemFromObject(docs, names[i]);
+        cJSON_AddItemToObject(docs, names[i], kept);
         if (j->nsegs) {
             j->is_doc = true;
             snprintf(j->name, sizeof(j->name), "%s", names[i]);
@@ -772,36 +913,62 @@ static bool find_job(const char *project, cJSON *st, Job *j)
         }
     }
     for (size_t i = 0; i < nn; i++) free(names[i]);
+    free(names);
     if (found) return true;
 
-    /* Chats: messages beyond the count already read. */
+    /* Chats: what follows the position already read. */
     ChatSummary *list = NULL;
     size_t nc = chat_store_list(project, &list);
+    for (cJSON *it = chats ? chats->child : NULL, *next; it; it = next) { /* forget deleted chats */
+        next = it->next;
+        bool present = false;
+        for (size_t i = 0; i < nc && !present; i++) present = !strcmp(list[i].id, it->string);
+        if (!present) cJSON_DeleteItemFromObject(chats, it->string);
+    }
     for (size_t i = 0; i < nc && !found; i++) {
         ChatMessage *msgs = NULL;
         size_t n = 0;
         if (!chat_store_load(project, list[i].id, &msgs, &n)) continue;
-        cJSON *cnt = cJSON_GetObjectItem(chats, list[i].id);
-        size_t from = cJSON_IsNumber(cnt) && cnt->valuedouble >= 0 ? (size_t)cnt->valuedouble : 0;
+        cJSON *pos = cJSON_GetObjectItem(chats, list[i].id);
+        size_t from = 0, from_off = 0;
+        if (cJSON_IsNumber(pos) && pos->valuedouble >= 0) from = (size_t)pos->valuedouble; /* older state */
+        if (cJSON_IsObject(pos)) {
+            cJSON *a = cJSON_GetObjectItem(pos, "n"), *b = cJSON_GetObjectItem(pos, "off");
+            if (cJSON_IsNumber(a) && a->valuedouble >= 0) from = (size_t)a->valuedouble;
+            if (cJSON_IsNumber(b) && b->valuedouble >= 0) from_off = (size_t)b->valuedouble;
+        }
         if (from < n) {
             j->msgs = calloc(n, sizeof(char *));
             j->nmsgs = j->msgs ? n : 0;
             for (size_t k = 0; k < j->nmsgs; k++) j->msgs[k] = strdup(msgs[k].content ? msgs[k].content : "");
-            size_t k = from;
-            for (; k < n; k++) {
-                if (msgs[k].error || !msgs[k].content || !msgs[k].content[0] || !j->msgs[k]) continue;
+            size_t k = from, off = from_off;
+            bool full = false;
+            for (; k < j->nmsgs && !full; k++, off = 0) {
+                /* Failed replies, and AI rewrites (which may have been
+                 * rejected), are not story text. */
+                bool skip = msgs[k].error || !j->msgs[k] || !j->msgs[k][0] || (msgs[k].role == CHAT_ASSISTANT && msgs[k].is_edit);
+                if (skip) continue;
                 const char *label = msgs[k].role == CHAT_USER ? "AUTHOR: " : "ASSISTANT: ";
-                if (!chunk_add(j, label, j->msgs[k], 0, strlen(j->msgs[k]), (long)k)) break;
+                size_t mlen = strlen(j->msgs[k]);
+                if (off > mlen) off = mlen;
+                while (off < mlen) {
+                    size_t plen = piece_len(j->msgs[k] + off, mlen - off);
+                    if (!chunk_add(j, off == 0 ? label : NULL, j->msgs[k], off, plen, (long)k)) {
+                        full = true;
+                        break;
+                    }
+                    off += plen;
+                }
+                if (full) break;
             }
             j->msg_to = k;
+            j->off_to = full ? off : 0;
             snprintf(j->name, sizeof(j->name), "%s", list[i].id);
             found = true;
-            if (!j->nsegs) { /* only failed/empty messages: just mark them read */
-                cJSON_DeleteItemFromObject(chats, list[i].id);
-                cJSON_AddNumberToObject(chats, list[i].id, (double)j->msg_to);
+            if (!j->nsegs) { /* only failed/empty/rewrite messages: just mark them read */
+                set_chat_progress(chats, list[i].id, j->msg_to, j->off_to);
                 job_free(j);
                 found = false;
-                memset(j, 0, sizeof(*j));
             }
         }
         chat_store_free_messages(msgs, n);
@@ -851,6 +1018,24 @@ static void finding_key(const char *type, const char *subject, const char *rel, 
         norm_key(desc, a, sizeof(a));
         snprintf(out, outlen, "%s|%s", type, a);
     }
+}
+
+/* Enough source text to support a finding: an entity's own name, or a
+ * phrase of at least 3 words and 12 bytes. Measured red-team 005: a prompt
+ * planted in a document made the model cite "the" as evidence for "Ingrid
+ * is the murderer". */
+static bool strong_evidence(const char *type, const char *subject, const char *quote)
+{
+    size_t n = strlen(quote);
+    int words = 0;
+    bool in = false;
+    for (const unsigned char *p = (const unsigned char *)quote; *p; p++) {
+        bool w = word_byte(*p);
+        if (w && !in) words++;
+        in = w;
+    }
+    if (n >= 12 && words >= 3) return true;
+    return !strcmp(type, "entity") && strlen(subject) >= 3 && strcasestr(quote, subject) != NULL;
 }
 
 /* Turn the model's JSON into located candidates. */
@@ -920,7 +1105,7 @@ static size_t parse_candidates(const Job *j, const char *json, const char *revis
         c->src.start = cp_count(base, byte_start);
         c->src.len = cp_count(base + byte_start, len);
         c->src.quote = dupn(base + byte_start, len);
-        c->keep = c->desc && c->src.quote;
+        c->keep = c->desc && c->src.quote && strong_evidence(t, c->info.subject, c->src.quote);
         if (c->keep) k++;
         else {
             free(c->desc);
@@ -967,8 +1152,9 @@ static void plain_check(const char *check, char *out, size_t outlen)
 }
 
 /* Returns true if the job completed (its text is now read). */
-static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSON *st)
+static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSON *st, bool *io_out)
 {
+    bool io_failed = false;
     char *json = backend_extract(o, j->chunk);
     if (!json) return false;
     Cand cands[16];
@@ -1010,7 +1196,10 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSO
     size_t nconf = 0, pairs = 0;
     bool cancelled = false;
     for (size_t i = 0; i < nc && !cancelled; i++) {
-        if (!cands[i].keep || !strcmp(cands[i].type, "question")) continue; /* a question asserts nothing */
+        /* Every statement is checked, including ones that duplicate an
+         * existing finding ("Zoë" is known, but "Zoë's brown eyes" may still
+         * contradict canon). A question asserts nothing. */
+        if (!strcmp(cands[i].type, "question")) continue;
         char stmt[600];
         snprintf(stmt, sizeof(stmt), "%s (\xE2\x80\x9C%.300s\xE2\x80\x9D)", cands[i].desc, cands[i].src.quote);
         /* best two canon entries by overlap */
@@ -1045,7 +1234,10 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSO
                     conflict = false;
             for (size_t e = 0; conflict && e < ne; e++) { /* already flagged earlier */
                 const RecordVersion *ev = record_current(&existing[e]);
+                /* Same canon entry *with the same text* (a revised entry is
+                 * checked afresh), same passage. */
                 conflict = !(!strcmp(ev->finding.type, "conflict") && !strcmp(ev->finding.related, canon[best[b]].id) &&
+                             ev->finding.related_text && !strcmp(ev->finding.related_text, v->content) &&
                              ev->nsources && ev->sources[0].quote && !strcmp(ev->sources[0].quote, cands[i].src.quote));
             }
             if (conflict && nconf < MAX_JUDGE_PAIRS) {
@@ -1088,7 +1280,7 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSO
             if (!cands[i].keep) continue;
             char id[40];
             records_new_id(REC_FINDING, id, sizeof(id));
-            records_append_ex(project, REC_FINDING, id, "new", cands[i].desc, &cands[i].src, 1, &cands[i].info, NULL);
+            records_create_ex(project, REC_FINDING, id, "new", cands[i].desc, &cands[i].src, 1, &cands[i].info);
         }
         for (size_t c = 0; c < nconf; c++) {
             Cand *cd = &cands[conflicts[c].cand];
@@ -1099,7 +1291,7 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSO
             fi.related_text = conflicts[c].canon_text;
             char id[40];
             records_new_id(REC_FINDING, id, sizeof(id));
-            records_append_ex(project, REC_FINDING, id, "new", conflicts[c].check, &cd->src, 1, &fi, NULL);
+            records_create_ex(project, REC_FINDING, id, "new", conflicts[c].check, &cd->src, 1, &fi);
         }
         pthread_mutex_unlock(&g_findings_mu);
         /* Mark the text read. */
@@ -1116,11 +1308,10 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSO
                 cJSON_AddItemToArray(arr, cJSON_CreateString(hex));
             }
         } else {
-            cJSON *chats = cJSON_GetObjectItem(st, "chats");
-            cJSON_DeleteItemFromObject(chats, j->name);
-            cJSON_AddNumberToObject(chats, j->name, (double)j->msg_to);
+            set_chat_progress(cJSON_GetObjectItem(st, "chats"), j->name, j->msg_to, j->off_to);
         }
-        ok = state_save(project, st);
+        if (!state_save(project, st)) io_failed = true;
+        ok = !io_failed;
     }
     for (size_t i = 0; i < nc; i++) {
         free(cands[i].desc);
@@ -1131,6 +1322,7 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSO
     records_free(existing, ne);
     records_free(canon, ncanon);
     records_free(notes, nnotes);
+    if (io_out) *io_out = io_failed;
     return ok;
 }
 
@@ -1175,10 +1367,10 @@ static void *worker(void *arg)
         cJSON *st = state_load(project);
         Job j;
         if (!find_job(project, st, &j)) {
-            state_save(project, st); /* blank chats/paragraphs marked read */
+            bool saved = state_save(project, st); /* pruned state; blank text marked read */
             cJSON_Delete(st);
             pthread_mutex_lock(&o->mu);
-            if (gen == o->gen) snprintf(o->status, sizeof(o->status), "Up to date");
+            if (gen == o->gen) snprintf(o->status, sizeof(o->status), "%s", saved ? "Up to date" : "Can't write .scribodo/observer/state.json");
             o->running = false;
             pthread_mutex_unlock(&o->mu);
             continue;
@@ -1186,7 +1378,11 @@ static void *worker(void *arg)
         char msg[300];
         snprintf(msg, sizeof(msg), "Reading %s\xE2\x80\xA6", j.is_doc ? j.name : "the chat");
         set_status(o, msg);
-        bool done = run_job(o, project, gen, &j, st);
+        bool io = false;
+        pthread_mutex_lock(&o->mu);
+        o->attempts++;
+        pthread_mutex_unlock(&o->mu);
+        bool done = run_job(o, project, gen, &j, st, &io);
         job_free(&j);
         cJSON_Delete(st);
         pthread_mutex_lock(&o->mu);
@@ -1195,6 +1391,15 @@ static void *worker(void *arg)
         if (done) {
             o->version++;
             o->jobs_done++;
+            o->io_error = false;
+        } else if (io && gen == o->gen) {
+            /* Findings were written but progress couldn't be: back off a
+             * minute (saves don't cut it short) rather than re-asking the
+             * model every few seconds (red-team 005). */
+            o->version++;
+            o->io_error = true;
+            o->retry_at = now_s() + 60.0;
+            snprintf(o->status, sizeof(o->status), "Can't write .scribodo/observer/state.json \xE2\x80\x94 retrying in a minute");
         } else if (!atomic_load(&o->cancel) && gen == o->gen) {
             o->retry_at = now_s() + RETRY_DELAY;
             snprintf(o->status, sizeof(o->status), "%s",
@@ -1250,6 +1455,7 @@ void observer_set_project(Observer *o, const char *project_dir)
         o->gen++;
         atomic_store(&o->cancel, true);
         o->retry_at = 0;
+        o->io_error = false;
         snprintf(o->status, sizeof(o->status), "%s", o->project[0] ? "Starting\xE2\x80\xA6" : "Open a document to start");
     }
     o->poked = true;
@@ -1261,7 +1467,7 @@ void observer_poke(Observer *o)
 {
     pthread_mutex_lock(&o->mu);
     o->poked = true;
-    o->retry_at = 0;
+    if (!o->io_error) o->retry_at = 0;
     pthread_cond_signal(&o->cv);
     pthread_mutex_unlock(&o->mu);
 }
@@ -1303,6 +1509,14 @@ uint64_t observer_version(Observer *o)
 {
     pthread_mutex_lock(&o->mu);
     uint64_t v = o->version;
+    pthread_mutex_unlock(&o->mu);
+    return v;
+}
+
+unsigned observer_attempts(Observer *o)
+{
+    pthread_mutex_lock(&o->mu);
+    unsigned v = o->attempts;
     pthread_mutex_unlock(&o->mu);
     return v;
 }

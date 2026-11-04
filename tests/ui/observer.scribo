@@ -79,6 +79,11 @@ click_element Finding0
 click_element FindingSource
 expect selection 110 131
 expect status "Source passage selected"
+# Once that canon entry is retracted, the conflict is shown as outdated.
+click_element CanonItem0
+click_element RecordRetract
+click_element RecordClose
+expect findings_has "conflict|new,outdated|"
 # Nothing new to read: no duplicates.
 key S cmd
 wait_observer

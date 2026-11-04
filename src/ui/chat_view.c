@@ -1,6 +1,7 @@
 #include "chat_view.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -36,6 +37,9 @@ struct ChatView {
     bool copied;
     long apply_index;
     long record_index;   /* reply whose Note/Canon link was clicked */
+    long reveal_index;   /* scroll to this message on the next update */
+    long flash_index;    /* briefly outline this message (a source being shown) */
+    double flash_t;
     int record_kind;     /* 0 note, 1 canon */
     Rectangle last_apply; /* the newest reply's links, as last drawn */
     Rectangle last_note, last_canon;
@@ -54,6 +58,8 @@ ChatView *chat_view_create(SFont *text_font, SFont *label_font, ChatSession *cha
     v->stick_to_end = true;
     v->apply_index = -1;
     v->record_index = -1;
+    v->reveal_index = -1;
+    v->flash_index = -1;
     v->input = editor_create(text_font);
     if (!v->input) {
         free(v);
@@ -188,6 +194,18 @@ void chat_view_update(ChatView *v, Rectangle list, Rectangle input, bool input_f
     }
     float max_scroll = total - list.height;
     if (max_scroll < 0) max_scroll = 0;
+    if (v->reveal_index >= 0 && (size_t)v->reveal_index < n) {
+        float y = PAD;
+        for (size_t i = 0; i < (size_t)v->reveal_index; i++) {
+            const ChatMessage *msg = chat_message(v->chat, i);
+            y += LABEL_H + v->cache[i].height + 2 * BUBBLE_PAD + GAP;
+            if (msg->role == CHAT_ASSISTANT && !msg->streaming && !msg->error && msg->content[0]) y += LABEL_H;
+        }
+        v->scroll = y - PAD;
+        v->stick_to_end = false;
+        v->seen_version = ver;
+        v->reveal_index = -1;
+    }
     if (ver != v->seen_version && v->stick_to_end) v->scroll = max_scroll;
     v->seen_version = ver;
     if (v->scroll >= max_scroll - 2) v->stick_to_end = true;
@@ -229,11 +247,21 @@ void chat_view_submit_now(ChatView *v)
     if (blank) free(text);
 }
 
-void chat_view_set_input(ChatView *v, const char *text)
+void chat_view_append_input(ChatView *v, const char *text)
 {
-    editor_set_text_utf8(v->input, text);
     size_t n = editor_length(v->input);
     editor_set_selection(v->input, n, n);
+    if (n > 0) {
+        size_t len = strlen(text) + 3;
+        char *t = malloc(len);
+        if (!t) return;
+        snprintf(t, len, "\n\n%s", text);
+        editor_paste_utf8(v->input, t); /* undoable */
+        free(t);
+    } else {
+        editor_paste_utf8(v->input, text);
+    }
+    v->stick_to_end = true;
 }
 
 void chat_view_clear_input(ChatView *v)
@@ -243,6 +271,13 @@ void chat_view_clear_input(ChatView *v)
 }
 
 Rectangle chat_view_last_apply_rect(const ChatView *v) { return v->last_apply; }
+
+void chat_view_reveal(ChatView *v, long index)
+{
+    v->reveal_index = index;
+    v->flash_index = index;
+    v->flash_t = GetTime();
+}
 Rectangle chat_view_last_note_rect(const ChatView *v, bool canon) { return canon ? v->last_canon : v->last_note; }
 
 long chat_view_take_record(ChatView *v, bool *canon)
@@ -313,6 +348,9 @@ void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_foc
         sfont_draw_utf8(v->label, who, (int)strlen(who), list.x + PAD, y, COL_LABEL);
         y += LABEL_H;
         float bh = c->height + 2 * BUBBLE_PAD;
+        if ((long)i == v->flash_index && GetTime() - v->flash_t < 2.5)
+            DrawRectangleLinesEx((Rectangle){ list.x + PAD - 3, y - 3, list.width - 2 * PAD + 6, bh + 6 }, 2.0f,
+                                 (Color){ 0xE6, 0xB4, 0x50, 0xFF });
         if (m->role == CHAT_USER)
             DrawRectangleRounded((Rectangle){ list.x + PAD, y, list.width - 2 * PAD, bh }, 0.12f, 6, COL_USER_BG);
         draw_rows(v, c, list.x + PAD + BUBBLE_PAD, y + BUBBLE_PAD, m->error ? COL_ERROR : COL_TEXT, list);

@@ -103,3 +103,27 @@ expect lines "$DIR/.scribodo/notes.jsonl" "\"ver\":1" 2
 click_index 0
 key C cmd shift
 expect status "Select the passage"
+# --- red-team 005 ---
+# ⌘⇧N or a reply's "Note" while an uncommitted canon draft is open must not
+# turn the draft into a stored entry: the draft stays, nothing is written.
+click_index 111 2
+key C cmd shift
+click_element RecordEditor
+key A cmd
+type "Zoë's surname is Ångström."
+click_index 20 2
+key N cmd shift
+expect record "Canon draft"
+expect status "Commit or discard"
+click_element NoteLast
+expect record "Canon draft"
+expect element_w RecordRetract 0 0
+expect lines "$DIR/.scribodo/notes.jsonl" "\"kind\":\"chat\"" 2
+expect lines "$DIR/.scribodo/canon.jsonl" "\"id\":\"n-" 0
+# ⌘S in a canon panel explains itself.
+click_element RecordEditor
+key S cmd
+expect status "Commit or Revise"
+click_element RecordClose
+click_element RecordClose
+expect element_w RecordPanel 0 0

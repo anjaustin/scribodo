@@ -45,10 +45,13 @@ bool chat_view_take_copied(ChatView *v);
 long chat_view_take_apply(ChatView *v);
 /* Where the newest reply's Apply link was drawn (for UI scripts). */
 Rectangle chat_view_last_apply_rect(const ChatView *v);
+/* Scroll to a message and outline it briefly (a finding's source). */
+void chat_view_reveal(ChatView *v, long index);
 /* A reply's "Note" or "Canon" link was clicked: its index (and which), or -1. */
 long chat_view_take_record(ChatView *v, bool *canon);
-/* Put text in the message box (not sent): the author sees and sends it. */
-void chat_view_set_input(ChatView *v, const char *text);
+/* Add text to the end of the message box (not sent), keeping what the
+ * author typed; one undoable step. The author sees, edits and sends it. */
+void chat_view_append_input(ChatView *v, const char *text);
 Rectangle chat_view_last_note_rect(const ChatView *v, bool canon);
 
 #endif

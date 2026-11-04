@@ -147,8 +147,18 @@ static int by_recent(const void *a, const void *b)
     return x->last_line < y->last_line ? 1 : x->last_line > y->last_line ? -1 : 0;
 }
 
+static uint64_t id_hash(const char *s)
+{
+    uint64_t h = 1469598103934665603ull;
+    for (; *s; s++) h = (h ^ (unsigned char)*s) * 1099511628211ull;
+    return h;
+}
+
 size_t records_list(const char *project_dir, RecordKind kind, Record **out)
 {
+    /* Open-addressing index from id to slot (red-team 005: a linear search
+     * made listing quadratic: 0.64 s for 20k findings on the UI thread). */
+    size_t *index = NULL, index_cap = 0;
     *out = NULL;
     char path[1200];
     if (!log_path(project_dir, kind, false, path, sizeof(path))) return 0;
@@ -167,8 +177,31 @@ size_t records_list(const char *project_dir, RecordKind kind, Record **out)
             cJSON_Delete(j);
             continue;
         }
-        size_t k = 0;
-        while (k < n && strcmp(slots[k].r.id, id->valuestring)) k++;
+        if ((n + 1) * 2 > index_cap) { /* grow and rehash */
+            size_t ncap = index_cap ? index_cap * 2 : 64;
+            size_t *ni = malloc(ncap * sizeof(size_t));
+            if (!ni) {
+                cJSON_Delete(j);
+                break;
+            }
+            for (size_t q = 0; q < ncap; q++) ni[q] = SIZE_MAX;
+            for (size_t q = 0; q < n; q++) {
+                size_t b = (size_t)(id_hash(slots[q].r.id) & (ncap - 1));
+                while (ni[b] != SIZE_MAX) b = (b + 1) & (ncap - 1);
+                ni[b] = q;
+            }
+            free(index);
+            index = ni;
+            index_cap = ncap;
+        }
+        size_t bucket = (size_t)(id_hash(id->valuestring) & (index_cap - 1)), k = n;
+        while (index[bucket] != SIZE_MAX) {
+            if (!strcmp(slots[index[bucket]].r.id, id->valuestring)) {
+                k = index[bucket];
+                break;
+            }
+            bucket = (bucket + 1) & (index_cap - 1);
+        }
         if (k == n) {
             if (n == cap) {
                 cap = cap ? cap * 2 : 16;
@@ -182,6 +215,7 @@ size_t records_list(const char *project_dir, RecordKind kind, Record **out)
             memset(&slots[n], 0, sizeof(Slot));
             snprintf(slots[n].r.id, sizeof(slots[n].r.id), "%s", id->valuestring);
             slots[n].r.created_seq = line_no;
+            index[bucket] = n;
             n++;
         }
         Record *r = &slots[k].r;
@@ -228,6 +262,7 @@ size_t records_list(const char *project_dir, RecordKind kind, Record **out)
         cJSON_Delete(j);
     }
     free(text);
+    free(index);
     qsort(slots, n, sizeof(Slot), by_recent);
     Record *list = n ? malloc(n * sizeof(Record)) : NULL;
     size_t m = 0;
@@ -246,20 +281,38 @@ bool records_append(const char *project_dir, RecordKind kind, const char *id, co
     return records_append_ex(project_dir, kind, id, status, content, sources, nsources, NULL, ver_out);
 }
 
+static bool append_impl(const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
+                        const SourceRef *sources, size_t nsources, const FindingInfo *finding, int *ver_out, bool fresh);
+
 bool records_append_ex(const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
                        const SourceRef *sources, size_t nsources, const FindingInfo *finding, int *ver_out)
+{
+    return append_impl(project_dir, kind, id, status, content, sources, nsources, finding, ver_out, false);
+}
+
+bool records_create_ex(const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
+                       const SourceRef *sources, size_t nsources, const FindingInfo *finding)
+{
+    return append_impl(project_dir, kind, id, status, content, sources, nsources, finding, NULL, true);
+}
+
+static bool append_impl(const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
+                        const SourceRef *sources, size_t nsources, const FindingInfo *finding, int *ver_out, bool fresh)
 {
     if (!valid_id(id)) return false;
     char path[1200];
     if (!log_path(project_dir, kind, true, path, sizeof(path))) return false;
 
-    /* Next version number: one past the newest stored. */
+    /* Next version number: one past the newest stored (a fresh id is 1, with
+     * no need to read the whole log). */
     int ver = 1;
-    Record *list = NULL;
-    size_t n = records_list(project_dir, kind, &list);
-    for (size_t i = 0; i < n; i++)
-        if (!strcmp(list[i].id, id)) ver = record_current(&list[i])->ver + 1;
-    records_free(list, n);
+    if (!fresh) {
+        Record *list = NULL;
+        size_t n = records_list(project_dir, kind, &list);
+        for (size_t i = 0; i < n; i++)
+            if (!strcmp(list[i].id, id)) ver = record_current(&list[i])->ver + 1;
+        records_free(list, n);
+    }
 
     cJSON *j = cJSON_CreateObject();
     cJSON_AddStringToObject(j, "id", id);

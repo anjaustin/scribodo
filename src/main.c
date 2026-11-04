@@ -168,6 +168,7 @@ static const char *base_name(const char *path)
 static int cmp_str(const void *a, const void *b) { return strcasecmp(*(char *const *)a, *(char *const *)b); }
 
 static void refresh_records(App *app);
+static void refresh_findings(App *app);
 
 static void refresh_lists(App *app)
 {
@@ -210,6 +211,7 @@ static void refresh_lists(App *app)
         snprintf(app->rev_labels[i], sizeof(app->rev_labels[i]), "%s \xC2\xB7 %s", when, lbl);
     }
     refresh_records(app);
+    refresh_findings(app); /* conflicts are shown against the current canon */
 }
 
 /* First line of a record, shortened, as an Explorer label. */
@@ -678,16 +680,20 @@ static bool close_record(App *app, bool explicit_close)
     return true;
 }
 
-static void show_record(App *app, RecordKind kind, const Record *rec, const char *content, const SourceRef *src, size_t ns)
+/* Open an entry in the panel. Returns false if the panel is still showing
+ * something else (unsaved canon text that must be settled first): callers
+ * must then stop, or they would act on the wrong entry (red-team 005). */
+static bool show_record(App *app, RecordKind kind, const Record *rec, const char *content, const SourceRef *src, size_t ns)
 {
-    if (!close_record(app, false)) return;
+    if (!close_record(app, false)) return false;
     if (!record_view_open(app->record, kind, rec, content, src, ns)) {
         set_status(app, "Could not open that entry");
-        return;
+        return false;
     }
     app->record_close_armed = false;
     app->canon_finding[0] = '\0';
     app->focus = FOCUS_RECORD;
+    return true;
 }
 
 /* A source for the current document selection: an immutable revision
@@ -724,8 +730,8 @@ static void note_from_selection(App *app)
     }
     SourceRef s;
     bool have = selection_source(app, &s);
-    show_record(app, REC_NOTE, NULL, have ? s.quote : "", have ? &s : NULL, have ? 1 : 0);
-    if (have && record_view_active(app->record)) {
+    bool shown = show_record(app, REC_NOTE, NULL, have ? s.quote : "", have ? &s : NULL, have ? 1 : 0);
+    if (have && shown) {
         /* Saved right away: "Save as note" is the author's action. */
         RecordView *v = app->record;
         char id[40];
@@ -775,8 +781,7 @@ static void record_from_reply(App *app, long index, bool canon)
     if (canon) {
         show_record(app, REC_CANON, NULL, text, &s, 1);
     } else {
-        show_record(app, REC_NOTE, NULL, text, &s, 1);
-        if (record_view_active(app->record)) {
+        if (show_record(app, REC_NOTE, NULL, text, &s, 1)) {
             char id[40];
             records_new_id(REC_NOTE, id, sizeof(id));
             int ver = 0;
@@ -801,8 +806,11 @@ static void open_source(App *app, const SourceRef *s)
             if (!strcmp(app->chats[i].id, s->chat)) {
                 if (strcmp(app->chat_id, s->chat) != 0) open_chat(app, &app->chats[i]);
                 char msg[120];
-                snprintf(msg, sizeof(msg), "Source: reply %ld of this chat", s->message + 1);
-                if (!strcmp(app->chat_id, s->chat)) set_status(app, msg);
+                snprintf(msg, sizeof(msg), "Source: message %ld of this chat", s->message + 1);
+                if (!strcmp(app->chat_id, s->chat)) {
+                    chat_view_reveal(app->chat_view, s->message);
+                    set_status(app, msg);
+                }
                 return;
             }
         set_status(app, "The source chat is no longer in this project");
@@ -931,7 +939,7 @@ static void refresh_findings(App *app)
     records_free(app->flist, app->nflist);
     app->flist = NULL;
     app->nflist = app->project_dir[0] ? records_list(app->project_dir, REC_FINDING, &app->flist) : 0;
-    findings_view_set(app->findings, app->flist, app->nflist);
+    findings_view_set(app->findings, app->flist, app->nflist, app->canon, app->ncanon);
     size_t fresh = 0;
     for (size_t i = 0; i < app->nflist; i++) fresh += !strcmp(record_current(&app->flist[i])->status, "new");
     if (fresh) snprintf(app->observer_button, sizeof(app->observer_button), "Observer (%zu)", fresh);
@@ -967,13 +975,15 @@ static void finding_action(App *app, FindingAction act, const char *id)
         if (v->finding.related_text && !strcmp(v->finding.type, "conflict"))
             snprintf(text + k, sizeof(text) - (size_t)k, "\nCanon says: %.600s", v->finding.related_text);
         leave_edit_mode(app);
-        chat_view_set_input(app->chat_view, text);
+        /* Added to what the author is typing, as an undoable edit (red-team
+         * 005: it used to replace an unsent message). */
+        chat_view_append_input(app->chat_view, text);
         app->focus = FOCUS_CHAT;
-        set_status(app, "The finding is in the message box \xC2\xB7 edit it and press Enter to discuss");
+        set_status(app, "The finding is in the message box \xC2\xB7 edit it and press Enter to discuss (\xE2\x8C\x98Z removes it)");
         break;
     }
     case FA_NOTE: {
-        if (!close_record(app, false)) break;
+        if (!close_record(app, false)) break; /* nothing is written unless the panel is free */
         char nid[40];
         records_new_id(REC_NOTE, nid, sizeof(nid));
         int ver = 0;
@@ -993,9 +1003,8 @@ static void finding_action(App *app, FindingAction act, const char *id)
     }
     case FA_CANON: {
         char fid[40];
-        snprintf(fid, sizeof(fid), "%s", id); /* show_record may refresh nothing, but keep a copy */
-        show_record(app, REC_CANON, NULL, v->content, v->sources, v->nsources);
-        if (record_view_active(app->record) && record_view_kind(app->record) == REC_CANON && !record_view_id(app->record)[0]) {
+        snprintf(fid, sizeof(fid), "%s", id);
+        if (show_record(app, REC_CANON, NULL, v->content, v->sources, v->nsources)) {
             snprintf(app->canon_finding, sizeof(app->canon_finding), "%s", fid);
             set_status(app, "A canon draft from the finding \xC2\xB7 state the fact, then Commit");
         }
@@ -1096,8 +1105,9 @@ static void list_item(Clay_ElementId id, const char *s, bool active)
                        .padding = { 8, 8, 0, 0 },
                        .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
            .backgroundColor = active ? COL_ACTIVE : hover ? COL_HOVER : (Clay_Color){ 0 },
-           .cornerRadius = CLAY_CORNER_RADIUS(4),
-           .clip = { .horizontal = true } }) {
+           .cornerRadius = CLAY_CORNER_RADIUS(4) }) {
+        /* Clipped by the Explorer itself: a clip on every row made each a
+         * Clay scroll container and overflowed Clay's limit (red-team 005). */
         label(s, FONT_UI, active ? COL_TEXT : COL_MUTED);
     }
 }
@@ -1187,7 +1197,7 @@ static Clay_RenderCommandArray build_layout(App *app)
                    .layout = { .sizing = { CLAY_SIZING_FIXED(app->explorer_w), CLAY_SIZING_GROW(0) },
                                .padding = CLAY_PADDING_ALL(12), .childGap = 2,
                                .layoutDirection = CLAY_TOP_TO_BOTTOM },
-                   .backgroundColor = COL_PANEL, .clip = { .vertical = true, .childOffset = Clay_GetScrollOffset() } }) {
+                   .backgroundColor = COL_PANEL, .clip = { .horizontal = true, .vertical = true, .childOffset = Clay_GetScrollOffset() } }) {
                 section_header("DOCUMENTS");
                 const char *cur = editor_path(app->editor) ? base_name(editor_path(app->editor)) : "";
                 if (app->ndocs == 0) coming_soon("No .md or .txt files here");
@@ -1667,9 +1677,12 @@ int main(int argc, char **argv)
         bool shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
         if (primary && shortcut_pressed('s')) {
             if (app.focus == FOCUS_RECORD && record_view_kind(app.record) == REC_NOTE) save_note(&app);
-            else if (app.focus != FOCUS_RECORD) save(&app);
+            else if (app.focus == FOCUS_RECORD)
+                set_status(&app, "Canon is kept with Commit or Revise \xC2\xB7 \xE2\x8C\x98S saves notes and documents");
+            else save(&app);
         }
-        if (primary && shift && shortcut_pressed('n')) note_from_selection(&app);
+        /* From the document only: the chat box has no selection to quote. */
+        if (primary && shift && shortcut_pressed('n') && app.focus == FOCUS_DOC) note_from_selection(&app);
         if (primary && shift && shortcut_pressed('c') && app.focus == FOCUS_DOC) canon_from_selection(&app);
         if (app.focus == FOCUS_RECORD && IsKeyPressed(KEY_ESCAPE)) app.focus = FOCUS_DOC;
         if (primary && shortcut_pressed('l')) app.focus = FOCUS_CHAT;
