@@ -1,0 +1,3 @@
+build/
+*.scribodo-tmp
+.DS_Store

@@ -1,0 +1,333 @@
+#define _POSIX_C_SOURCE 200809L
+#define _DARWIN_C_SOURCE /* st_mtimespec, realpath on macOS */
+#define _DEFAULT_SOURCE
+
+#include "doc_io.h"
+
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include "utf8.h"
+
+static DocFileId id_from_stat(const struct stat *st)
+{
+    DocFileId id = { 0 };
+    id.exists = true;
+    id.dev = (uint64_t)st->st_dev;
+    id.ino = (uint64_t)st->st_ino;
+    id.size = (uint64_t)st->st_size;
+#ifdef __APPLE__
+    id.mtime_sec = (int64_t)st->st_mtimespec.tv_sec;
+    id.mtime_nsec = (int64_t)st->st_mtimespec.tv_nsec;
+#else
+    id.mtime_sec = (int64_t)st->st_mtim.tv_sec;
+    id.mtime_nsec = (int64_t)st->st_mtim.tv_nsec;
+#endif
+    return id;
+}
+
+DocFileId doc_file_id(const char *path)
+{
+    struct stat st;
+    if (stat(path, &st) != 0) return (DocFileId){ 0 };
+    return id_from_stat(&st);
+}
+
+bool doc_file_id_equal(DocFileId a, DocFileId b)
+{
+    if (!a.exists || !b.exists) return a.exists == b.exists;
+    return a.dev == b.dev && a.ino == b.ino && a.size == b.size &&
+           a.mtime_sec == b.mtime_sec && a.mtime_nsec == b.mtime_nsec;
+}
+
+/* Can a new file be created next to `path`? */
+static bool dir_writable(const char *path)
+{
+    char *dir = strdup(path);
+    if (!dir) return false;
+    char *slash = strrchr(dir, '/');
+    const char *d = ".";
+    if (slash == dir) d = "/";
+    else if (slash) {
+        *slash = '\0';
+        d = dir;
+    }
+    bool ok = access(d, W_OK | X_OK) == 0;
+    free(dir);
+    return ok;
+}
+
+void doc_load_free(DocLoad *d)
+{
+    free(d->cps);
+    memset(d, 0, sizeof(*d));
+}
+
+DocStatus doc_load(const char *path, DocLoad *out, char *err, size_t errlen)
+{
+    memset(out, 0, sizeof(*out));
+    err[0] = '\0';
+
+    /* O_NONBLOCK so that opening a FIFO or device cannot hang us before
+     * the regular-file check below; cleared again once we know it's a file. */
+    int fd = open(path, O_RDONLY | O_NONBLOCK);
+    if (fd < 0) {
+        if (errno == ENOENT) {
+            out->created = true;
+            out->writable = dir_writable(path);
+            out->cps = malloc(sizeof(uint32_t));
+            if (!out->cps) return DOC_ERR_NOMEM;
+            return DOC_OK;
+        }
+        snprintf(err, errlen, "Could not open %s: %s", path, strerror(errno));
+        return DOC_ERR_IO;
+    }
+
+    struct stat st;
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+        snprintf(err, errlen, "%s is not a regular file", path);
+        close(fd);
+        return DOC_ERR_IO;
+    }
+    int fl = fcntl(fd, F_GETFL);
+    if (fl >= 0) fcntl(fd, F_SETFL, fl & ~O_NONBLOCK);
+    out->writable = access(path, W_OK) == 0;
+    if ((uint64_t)st.st_size > DOC_MAX_FILE_BYTES) {
+        snprintf(err, errlen, "%s is too large to open (%lld MB; limit %u MB)", path,
+                 (long long)(st.st_size >> 20), DOC_MAX_FILE_BYTES >> 20);
+        close(fd);
+        return DOC_ERR_TOO_LARGE;
+    }
+
+    size_t cap = (size_t)st.st_size + 1, len = 0;
+    uint8_t *data = malloc(cap);
+    if (!data) {
+        close(fd);
+        return DOC_ERR_NOMEM;
+    }
+    for (;;) {
+        if (len == cap) {
+            /* File grew while reading; still honour the size limit. */
+            if (cap >= DOC_MAX_FILE_BYTES) {
+                free(data);
+                close(fd);
+                snprintf(err, errlen, "%s is too large to open", path);
+                return DOC_ERR_TOO_LARGE;
+            }
+            size_t ncap = cap * 2 > DOC_MAX_FILE_BYTES ? DOC_MAX_FILE_BYTES : cap * 2;
+            uint8_t *bigger = realloc(data, ncap);
+            if (!bigger) {
+                free(data);
+                close(fd);
+                return DOC_ERR_NOMEM;
+            }
+            data = bigger;
+            cap = ncap;
+        }
+        ssize_t got = read(fd, data + len, cap - len);
+        if (got < 0) {
+            if (errno == EINTR) continue;
+            snprintf(err, errlen, "Could not read %s: %s", path, strerror(errno));
+            free(data);
+            close(fd);
+            return DOC_ERR_IO;
+        }
+        if (got == 0) break;
+        len += (size_t)got;
+    }
+    out->id = id_from_stat(&st);
+    close(fd);
+
+    size_t off = 0;
+    if (len >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF) {
+        out->bom = true;
+        off = 3;
+    }
+
+    uint32_t *cps = malloc((len - off + 1) * sizeof(uint32_t));
+    if (!cps) {
+        free(data);
+        return DOC_ERR_NOMEM;
+    }
+    size_t n = utf8_decode(data + off, len - off, cps, &out->invalid_utf8);
+    free(data);
+
+    size_t crlf = 0, lf = 0, w = 0;
+    for (size_t r = 0; r < n; r++) {
+        uint32_t c = cps[r];
+        if (c == '\r') {
+            if (r + 1 < n && cps[r + 1] == '\n') {
+                crlf++;
+                r++;
+            } else {
+                out->lone_cr = true;
+            }
+            cps[w++] = '\n';
+            continue;
+        }
+        if (c == '\n') lf++;
+        cps[w++] = c;
+    }
+    out->cps = cps;
+    out->len = w;
+    out->crlf = crlf > lf;
+    out->mixed_newlines = crlf > 0 && lf > 0;
+    return DOC_OK;
+}
+
+/* Write all bytes, retrying on short writes and EINTR. */
+static bool write_all(int fd, const uint8_t *p, size_t n)
+{
+    while (n > 0) {
+        ssize_t w = write(fd, p, n);
+        if (w < 0) {
+            if (errno == EINTR) continue;
+            return false;
+        }
+        p += w;
+        n -= (size_t)w;
+    }
+    return true;
+}
+
+static uint8_t *encode(const uint32_t *cps, size_t n, bool bom, bool crlf, size_t *out_len)
+{
+    size_t newlines = 0;
+    if (crlf)
+        for (size_t i = 0; i < n; i++) newlines += cps[i] == '\n';
+    size_t cap = utf8_encoded_len(cps, n) + newlines + 3;
+    uint8_t *out = malloc(cap ? cap : 1);
+    if (!out) return NULL;
+
+    size_t o = 0;
+    if (bom) {
+        out[o++] = 0xEF; out[o++] = 0xBB; out[o++] = 0xBF;
+    }
+    if (!crlf) {
+        o += utf8_encode(cps, n, out + o);
+    } else {
+        size_t start = 0;
+        for (size_t i = 0; i <= n; i++) {
+            if (i == n || cps[i] == '\n') {
+                o += utf8_encode(cps + start, i - start, out + o);
+                if (i < n) {
+                    out[o++] = '\r';
+                    out[o++] = '\n';
+                }
+                start = i + 1;
+            }
+        }
+    }
+    *out_len = o;
+    return out;
+}
+
+/* Resolve the real file to write: follow symlinks if the target exists, so
+ * saving through a link updates the linked file instead of replacing the
+ * link with a regular file. */
+static char *resolve_target(const char *path)
+{
+    char *real = realpath(path, NULL);
+    if (real) return real;
+    return strdup(path); /* new file */
+}
+
+static void fsync_parent_dir(const char *file)
+{
+    char *dir = strdup(file);
+    if (!dir) return;
+    char *slash = strrchr(dir, '/');
+    const char *d = ".";
+    if (slash == dir) d = "/";
+    else if (slash) {
+        *slash = '\0';
+        d = dir;
+    }
+    int fd = open(d, O_RDONLY);
+    if (fd >= 0) {
+        fsync(fd);
+        close(fd);
+    }
+    free(dir);
+}
+
+DocStatus doc_save(const char *path, const uint32_t *cps, size_t n, bool bom, bool crlf,
+                   const DocFileId *expected, DocFileId *new_id, char *err, size_t errlen)
+{
+    err[0] = '\0';
+    char *target = resolve_target(path);
+    if (!target) return DOC_ERR_NOMEM;
+
+    struct stat st;
+    bool existed = stat(target, &st) == 0;
+    if (existed && !S_ISREG(st.st_mode)) {
+        snprintf(err, errlen, "%s is not a regular file", path);
+        free(target);
+        return DOC_ERR_IO;
+    }
+    if (existed && access(target, W_OK) != 0) {
+        snprintf(err, errlen, "%s is write-protected", path);
+        free(target);
+        return DOC_ERR_READ_ONLY;
+    }
+    if (expected) {
+        DocFileId now = existed ? id_from_stat(&st) : (DocFileId){ 0 };
+        if (!doc_file_id_equal(now, *expected)) {
+            snprintf(err, errlen, "%s changed on disk since it was opened", path);
+            free(target);
+            return DOC_ERR_CHANGED_ON_DISK;
+        }
+    }
+
+    size_t bytes = 0;
+    uint8_t *data = encode(cps, n, bom, crlf, &bytes);
+    if (!data) {
+        free(target);
+        return DOC_ERR_NOMEM;
+    }
+
+    size_t tlen = strlen(target) + 32;
+    char *tmp = malloc(tlen);
+    if (!tmp) {
+        free(data);
+        free(target);
+        return DOC_ERR_NOMEM;
+    }
+    /* mkstemp creates the file with O_EXCL and mode 0600, so a pre-placed
+     * symlink at the temp name cannot redirect our write. */
+    snprintf(tmp, tlen, "%s.scribodo-XXXXXX", target);
+    int fd = mkstemp(tmp);
+    bool ok = fd >= 0;
+    int saved_errno = ok ? 0 : errno;
+
+    if (ok && existed) ok = fchmod(fd, st.st_mode & 07777) == 0;
+    if (ok) ok = write_all(fd, data, bytes);
+    if (ok) ok = fsync(fd) == 0;
+    if (!ok && !saved_errno) saved_errno = errno;
+    if (fd >= 0 && close(fd) != 0 && ok) {
+        ok = false;
+        saved_errno = errno;
+    }
+    if (ok && rename(tmp, target) != 0) {
+        ok = false;
+        saved_errno = errno;
+    }
+
+    if (!ok) {
+        if (fd >= 0) unlink(tmp);
+        snprintf(err, errlen, "Save failed: %s", strerror(saved_errno ? saved_errno : EIO));
+    } else {
+        fsync_parent_dir(target);
+        if (new_id) *new_id = doc_file_id(target);
+    }
+    free(tmp);
+    free(data);
+    free(target);
+    return ok ? DOC_OK : DOC_ERR_IO;
+}

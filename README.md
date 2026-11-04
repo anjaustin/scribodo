@@ -94,4 +94,36 @@ The full acceptance criteria are in [`docs/SOW.md` §8](docs/SOW.md#8-acceptance
 
 ## Building
 
-*Coming soon. Build instructions will be added once the feasibility gate is complete.*
+Requirements: a C11 compiler (Apple clang on macOS) and `make`. Every dependency is vendored as a pinned git submodule, and raylib is compiled from source.
+
+```sh
+git clone --recursive https://github.com/anjaustin/scribodo.git
+cd scribodo
+make test   # core unit tests (UTF-8, gap buffer, undo, wrap)
+make run    # launch with assets/sample/sample.md
+./build/scribodo path/to/chapter.md
+```
+
+```sh
+make sanitize  # run the same tests under AddressSanitizer + UBSan
+```
+
+You can also drop a `.md` or `.txt` file onto the window to open it. Press ⌘S to save.
+
+**How saving protects your text:**
+- Saves are atomic, follow symlinks to the real file, and keep the file's permissions, BOM and line endings.
+- If another program changed the file since you opened it, Scribodo leaves that version in place and writes yours to a sibling `… (Scribodo conflict <date> <time>).md`. Saving again within 30 seconds, without further edits, overwrites the disk version.
+- Files that are write-protected or contain invalid UTF-8 open read-only.
+
+See [`docs/REDTEAM-001-editor-spike.md`](docs/REDTEAM-001-editor-spike.md) for the review behind these behaviors.
+
+By default the build targets the host CPU (`-mcpu=native`, which includes NEON on Apple Silicon). For a portable binary, run `make ARCH_FLAGS=`.
+
+### Dependencies
+
+| Library | Version | License | Used for |
+|---|---|---|---|
+| [raylib](https://github.com/raysan5/raylib) | 6.2 | zlib | Window, input, rendering |
+| [raygui](https://github.com/raysan5/raygui) | 5.0 | zlib | Immediate-mode controls |
+| [Clay](https://github.com/nicbarker/clay) | 0.14 | zlib | Layout |
+| [stb_textedit](https://github.com/nothings/stb) | 1.14 | Public domain / MIT | Cursor, selection, and navigation logic |
