@@ -38,6 +38,8 @@ struct Observer {
     pthread_cond_t cv;
     bool stop, poked, enabled, running;
     bool io_error;           /* can't write the observer's files: back off */
+    char renames[16][2][256]; /* document renames to apply to state (from, to) */
+    int nrenames;
     char project[PATH_MAX];
     uint64_t gen;            /* bumps on project change: stale results are discarded */
     double idle_since;       /* last time chat was active */
@@ -1365,6 +1367,18 @@ static void *worker(void *arg)
         pthread_mutex_unlock(&o->mu);
 
         cJSON *st = state_load(project);
+        /* Renamed documents keep what was already read. */
+        pthread_mutex_lock(&o->mu);
+        cJSON *sdocs = cJSON_GetObjectItem(st, "docs");
+        for (int r = 0; r < o->nrenames; r++) {
+            cJSON *seen = cJSON_DetachItemFromObject(sdocs, o->renames[r][0]);
+            if (seen) {
+                cJSON_DeleteItemFromObject(sdocs, o->renames[r][1]);
+                cJSON_AddItemToObject(sdocs, o->renames[r][1], seen);
+            }
+        }
+        o->nrenames = 0;
+        pthread_mutex_unlock(&o->mu);
         Job j;
         if (!find_job(project, st, &j)) {
             bool saved = state_save(project, st); /* pruned state; blank text marked read */
@@ -1457,6 +1471,19 @@ void observer_set_project(Observer *o, const char *project_dir)
         o->retry_at = 0;
         o->io_error = false;
         snprintf(o->status, sizeof(o->status), "%s", o->project[0] ? "Starting\xE2\x80\xA6" : "Open a document to start");
+    }
+    o->poked = true;
+    pthread_cond_signal(&o->cv);
+    pthread_mutex_unlock(&o->mu);
+}
+
+void observer_rename_doc(Observer *o, const char *from, const char *to)
+{
+    pthread_mutex_lock(&o->mu);
+    if (o->nrenames < 16) {
+        snprintf(o->renames[o->nrenames][0], sizeof(o->renames[0][0]), "%s", from);
+        snprintf(o->renames[o->nrenames][1], sizeof(o->renames[0][1]), "%s", to);
+        o->nrenames++;
     }
     o->poked = true;
     pthread_cond_signal(&o->cv);

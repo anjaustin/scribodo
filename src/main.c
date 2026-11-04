@@ -9,6 +9,12 @@
  */
 #define _DARWIN_C_SOURCE
 #include <dirent.h>
+#include <time.h>
+#include <strings.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <errno.h>
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
@@ -21,7 +27,9 @@
 #include "rlgl.h"
 
 #include "app/chat_store.h"
+#include "app/recent.h"
 #include "app/records.h"
+#include "app/renames.h"
 #include "app/revisions.h"
 #include "llm/llm_text.h"
 #include "app/script.h"
@@ -34,6 +42,9 @@
 #include "ui/findings_view.h"
 #include "ui/font.h"
 #include "ui/input.h"
+#include "platform/dialogs.h"
+#include "ui/menu_view.h"
+#include "ui/prompt_view.h"
 #include "ui/record_view.h"
 #include "ui/review_view.h"
 
@@ -44,6 +55,8 @@ void glfwSetWindowShouldClose(void *window, int value);
 enum { FONT_UI = 0, FONT_PROSE = 1, FONT_CHAT = 2, FONT_COUNT };
 enum { FOCUS_NONE, FOCUS_DOC, FOCUS_CHAT, FOCUS_RECORD };
 enum { DRAG_NONE, DRAG_EXPLORER, DRAG_OBSERVER, DRAG_CHAT };
+enum { PT_NEW_DOC = 1, PT_RENAME_DOC };  /* what the name prompt is for */
+enum { MT_DOC = 1 };                     /* what a context menu is for */
 
 #define RGB(r, g, b) ((Clay_Color){ r, g, b, 255 })
 static const Clay_Color COL_BG      = RGB(0x1F, 0x1F, 0x1F);
@@ -131,6 +144,14 @@ typedef struct {
     Rectangle findings_rect;
     char observer_label[220];
     char observer_button[40];
+
+    /* Projects and documents (SOW §4.1) */
+    PromptView *prompt;
+    MenuView menu;
+    char rename_from[256];        /* document being renamed */
+    RecentProject recents[RECENT_MAX];
+    size_t nrecents;
+    Rectangle welcome_btn[3], recent_rect[RECENT_MAX], empty_btn[2];
     bool record_close_armed;     /* a discard of uncommitted canon text was asked for... */
     double record_close_armed_at; /* ...at this time (a second press within 5 s confirms) */
 
@@ -250,10 +271,8 @@ static void refresh_records(App *app)
 
 static void project_of(const char *doc_path, char *out, size_t outlen);
 
-static void set_project_from(App *app, const char *doc_path)
+static void set_project(App *app, const char *real)
 {
-    char real[PATH_MAX];
-    project_of(doc_path, real, sizeof(real));
     if (strcmp(real, app->project_dir) != 0) {
         snprintf(app->project_dir, sizeof(app->project_dir), "%s", real);
         if (app->observer) observer_set_project(app->observer, real);
@@ -263,6 +282,13 @@ static void set_project_from(App *app, const char *doc_path)
         if (app->chat) app->clear_chat_when_idle = true;
     }
     app->lists_dirty = true;
+}
+
+static void set_project_from(App *app, const char *doc_path)
+{
+    char real[PATH_MAX];
+    project_of(doc_path, real, sizeof(real));
+    set_project(app, real);
 }
 
 /* ---- reviewed AI edits ------------------------------------------------------------- */
@@ -454,6 +480,7 @@ static void restore_revision(App *app, const Revision *r)
 /* ---- documents ------------------------------------------------------------------ */
 
 static bool close_record(App *app, bool explicit_close);
+static void open_project(App *app, const char *dir);
 
 /* The project folder a document belongs to (its directory, resolved). */
 static void project_of(const char *doc_path, char *out, size_t outlen)
@@ -484,6 +511,7 @@ static void open_path(App *app, const char *path)
         leave_edit_mode(app);
         set_status(app, msg[0] ? msg : "Opened");
         set_project_from(app, path);
+        recent_touch(app->project_dir, base_name(path));
     } else {
         set_status(app, msg);
     }
@@ -492,8 +520,236 @@ static void open_path(App *app, const char *path)
 /* File-drop handler (also used by the Explorer and UI scripts). */
 static void drop_path(App *app, const char *path)
 {
+    struct stat st;
+    if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) { /* a dropped folder opens as a project */
+        open_project(app, path);
+        return;
+    }
     if (editor_is_dirty(app->editor)) set_status(app, "Save the current document before opening another");
     else open_path(app, path);
+}
+
+/* ---- projects and documents (SOW §4.1) --------------------------------------- */
+
+/* Leave the current document and project state cleanly; false (with a
+ * status) if something unsaved is in the way. */
+static bool can_switch(App *app)
+{
+    if (editor_is_dirty(app->editor)) {
+        set_status(app, "Save the current document first");
+        return false;
+    }
+    return close_record(app, false);
+}
+
+/* Open a folder as the project, with no document open (or `doc` if given
+ * and present). */
+static void open_project(App *app, const char *dir)
+{
+    char real[PATH_MAX];
+    struct stat st;
+    if (!realpath(dir, real) || stat(real, &st) != 0 || !S_ISDIR(st.st_mode)) {
+        set_status(app, "That folder can't be opened");
+        return;
+    }
+    if (!can_switch(app)) return;
+    clear_proposal(app);
+    clear_pending(app);
+    leave_edit_mode(app);
+    editor_close(app->editor);
+    set_project(app, real);
+    recent_touch(real, NULL);
+    app->nrecents = recent_load(app->recents, RECENT_MAX);
+    char msg[PATH_MAX + 32];
+    snprintf(msg, sizeof(msg), "Opened %s", base_name(real));
+    set_status(app, msg);
+    app->focus = FOCUS_NONE;
+}
+
+static void choose_project(App *app, bool create)
+{
+    if (!can_switch(app)) return;
+    char dir[PATH_MAX];
+    if (dialogs_choose_folder(create ? "Choose or create a folder for the new project" : "Open a folder of documents",
+                              create ? "Create" : "Open", create, dir, sizeof(dir)))
+        open_project(app, dir);
+}
+
+/* A document name the author typed: trimmed, ".md" added unless it already
+ * ends in .md/.markdown/.txt, and safe as a file name in the project. */
+static bool doc_name(const char *typed, char *out, size_t outlen, char *err, size_t errlen)
+{
+    size_t n = strlen(typed);
+    if (n == 0) {
+        snprintf(err, errlen, "Type a name");
+        return false;
+    }
+    for (const unsigned char *p = (const unsigned char *)typed; *p; p++)
+        if (*p < 0x20 || *p == '/' || *p == ':' || *p == '\\') {
+            snprintf(err, errlen, "A name can't contain / : \\ or control characters");
+            return false;
+        }
+    if (typed[0] == '.') {
+        snprintf(err, errlen, "A name can't start with a dot");
+        return false;
+    }
+    bool ext = (n > 3 && !strcasecmp(typed + n - 3, ".md")) || (n > 4 && !strcasecmp(typed + n - 4, ".txt")) ||
+               (n > 9 && !strcasecmp(typed + n - 9, ".markdown"));
+    if (n + (ext ? 0 : 3) > 200) {
+        snprintf(err, errlen, "That name is too long");
+        return false;
+    }
+    snprintf(out, outlen, "%s%s", typed, ext ? "" : ".md");
+    return true;
+}
+
+static bool name_taken(App *app, const char *name)
+{
+    char full[PATH_MAX + 260];
+    snprintf(full, sizeof(full), "%s/%s", app->project_dir, name);
+    struct stat st;
+    return lstat(full, &st) == 0;
+}
+
+static void begin_new_document(App *app)
+{
+    if (!app->project_dir[0]) {
+        set_status(app, "Open a project folder first (\xE2\x8C\x98O)");
+        return;
+    }
+    if (editor_is_dirty(app->editor)) {
+        set_status(app, "Save the current document first");
+        return;
+    }
+    char name[64] = "Untitled.md";
+    for (int i = 2; name_taken(app, name) && i < 1000; i++) snprintf(name, sizeof(name), "Untitled %d.md", i);
+    prompt_open(app->prompt, PT_NEW_DOC, "New document", name, "Create");
+}
+
+static void begin_rename(App *app, const char *name)
+{
+    snprintf(app->rename_from, sizeof(app->rename_from), "%s", name);
+    char title[320];
+    snprintf(title, sizeof(title), "Rename \xE2\x80\x9C%s\xE2\x80\x9D", name);
+    prompt_open(app->prompt, PT_RENAME_DOC, title, name, "Rename");
+}
+
+/* Returns true when the prompt can close. */
+static bool finish_prompt(App *app, const char *typed)
+{
+    char name[260], err[160];
+    if (!doc_name(typed, name, sizeof(name), err, sizeof(err))) {
+        prompt_set_error(app->prompt, err);
+        return false;
+    }
+    int tag = prompt_tag(app->prompt);
+    if (tag == PT_RENAME_DOC && !strcmp(name, app->rename_from)) return true; /* unchanged */
+    if (name_taken(app, name) && !(tag == PT_RENAME_DOC && !strcasecmp(name, app->rename_from))) {
+        prompt_set_error(app->prompt, "A file with that name already exists");
+        return false;
+    }
+    char full[PATH_MAX + 260];
+    snprintf(full, sizeof(full), "%s/%s", app->project_dir, name);
+    if (tag == PT_NEW_DOC) {
+        int fd = open(full, O_WRONLY | O_CREAT | O_EXCL, 0644);
+        if (fd < 0) {
+            prompt_set_error(app->prompt, strerror(errno));
+            return false;
+        }
+        close(fd);
+        open_path(app, full);
+        char msg[320];
+        snprintf(msg, sizeof(msg), "Created %s", name);
+        set_status(app, msg);
+        app->focus = FOCUS_DOC;
+        app->lists_dirty = true;
+        return true;
+    }
+    /* Rename: the file, then its History, then the record of the rename (so
+     * sources under the old name still resolve), then observer state. */
+    char old_full[PATH_MAX + 260];
+    snprintf(old_full, sizeof(old_full), "%s/%s", app->project_dir, app->rename_from);
+    if (renamex_np(old_full, full, strcasecmp(name, app->rename_from) ? RENAME_EXCL : 0) != 0) {
+        prompt_set_error(app->prompt, strerror(errno));
+        return false;
+    }
+    char rev_old[PATH_MAX + 300], rev_new[PATH_MAX + 300];
+    snprintf(rev_old, sizeof(rev_old), "%s/.scribodo/revisions/%s", app->project_dir, app->rename_from);
+    snprintf(rev_new, sizeof(rev_new), "%s/.scribodo/revisions/%s", app->project_dir, name);
+    struct stat st;
+    if (stat(rev_old, &st) == 0) {
+        if (stat(rev_new, &st) == 0) { /* history left by an earlier file of this name: keep it, aside */
+            char aside[PATH_MAX + 340];
+            snprintf(aside, sizeof(aside), "%s.earlier-%ld", rev_new, (long)time(NULL));
+            rename(rev_new, aside);
+        }
+        if (rename(rev_old, rev_new) != 0) set_status(app, "Renamed, but its History couldn't be moved");
+    }
+    if (!renames_record(app->project_dir, app->rename_from, name))
+        set_status(app, "Renamed, but the rename couldn't be recorded in .scribodo/renames.jsonl");
+    observer_rename_doc(app->observer, app->rename_from, name);
+    if (editor_path(app->editor) && !strcmp(base_name(editor_path(app->editor)), app->rename_from)) {
+        editor_set_path(app->editor, full);
+        recent_touch(app->project_dir, name);
+    }
+    char msg[600];
+    snprintf(msg, sizeof(msg), "Renamed to %s", name);
+    set_status(app, msg);
+    app->lists_dirty = true;
+    return true;
+}
+
+/* Copy chosen .md/.txt files into the project (never overwriting). */
+static void import_documents(App *app)
+{
+    if (!app->project_dir[0]) {
+        set_status(app, "Open a project folder first (\xE2\x8C\x98O)");
+        return;
+    }
+    char **paths = NULL;
+    size_t n = dialogs_choose_files("Import documents into this project (they are copied)", &paths);
+    size_t done = 0;
+    char first[PATH_MAX + 260] = "";
+    for (size_t i = 0; i < n; i++) {
+        const char *base = base_name(paths[i]);
+        char name[260];
+        snprintf(name, sizeof(name), "%s", base);
+        const char *dot = strrchr(base, '.');
+        size_t stem = dot && dot != base ? (size_t)(dot - base) : strlen(base);
+        for (int k = 2; name_taken(app, name) && k < 1000; k++)
+            snprintf(name, sizeof(name), "%.*s %d%s", (int)stem, base, k, dot && dot != base ? dot : "");
+        char dst[PATH_MAX + 260];
+        snprintf(dst, sizeof(dst), "%s/%s", app->project_dir, name);
+        FILE *in = fopen(paths[i], "rb");
+        int fd = in ? open(dst, O_WRONLY | O_CREAT | O_EXCL, 0644) : -1;
+        bool ok = in && fd >= 0;
+        char buf[65536];
+        size_t r;
+        while (ok && (r = fread(buf, 1, sizeof(buf), in)) > 0) ok = write(fd, buf, r) == (ssize_t)r;
+        ok = ok && fsync(fd) == 0;
+        if (fd >= 0) ok = close(fd) == 0 && ok;
+        if (in) fclose(in);
+        if (!ok && fd >= 0) unlink(dst);
+        if (ok) {
+            done++;
+            if (!first[0]) snprintf(first, sizeof(first), "%s", dst);
+        }
+    }
+    dialogs_free_paths(paths, n);
+    if (n == 0) return;
+    app->lists_dirty = true;
+    if (first[0] && !editor_is_dirty(app->editor)) open_path(app, first);
+    char msg[200];
+    snprintf(msg, sizeof(msg), "Imported %zu of %zu document%s", done, n, n == 1 ? "" : "s");
+    set_status(app, msg);
+    if (done) observer_poke(app->observer);
+}
+
+static void reveal_document(App *app, const char *name)
+{
+    char full[PATH_MAX + 260];
+    snprintf(full, sizeof(full), "%s/%s", app->project_dir, name);
+    dialogs_reveal(full);
 }
 
 static void save(App *app)
@@ -816,15 +1072,22 @@ static void open_source(App *app, const SourceRef *s)
         set_status(app, "The source chat is no longer in this project");
         return;
     }
+    char doc[256];
+    renames_resolve(app->project_dir, s->doc, doc, sizeof(doc)); /* the document may have been renamed since */
     char full[PATH_MAX + 300];
-    snprintf(full, sizeof(full), "%s/%s", app->project_dir, s->doc);
-    if (!editor_path(app->editor) || strcmp(base_name(editor_path(app->editor)), s->doc) != 0) {
+    snprintf(full, sizeof(full), "%s/%s", app->project_dir, doc);
+    if (!editor_path(app->editor) || strcmp(base_name(editor_path(app->editor)), doc) != 0) {
         if (editor_is_dirty(app->editor)) {
             set_status(app, "Save the current document before opening the source");
             return;
         }
+        struct stat dst;
+        if (stat(full, &dst) != 0) {
+            set_status(app, "The source document is no longer in this project");
+            return;
+        }
         open_path(app, full);
-        if (!editor_path(app->editor) || strcmp(base_name(editor_path(app->editor)), s->doc) != 0) return;
+        if (!editor_path(app->editor) || strcmp(base_name(editor_path(app->editor)), doc) != 0) return;
     }
     char *at = editor_range_utf8(app->editor, s->start, s->len);
     bool same = at && !strcmp(at, s->quote);
@@ -1024,6 +1287,102 @@ static void finding_action(App *app, FindingAction act, const char *id)
     }
 }
 
+/* The document area when nothing is open: a welcome screen (no project)
+ * or a prompt to pick or create a document. Returns the button pressed:
+ * 1 open folder, 2 new project, 3 sample, 10+i recent project i,
+ * 20 new document, 21 import; 0 for none. */
+static int draw_empty(App *app, Rectangle r)
+{
+    const SFont *big = &app->fonts[FONT_PROSE], *ui = &app->fonts[FONT_UI];
+    Color text = { 0xDD, 0xDD, 0xDD, 0xFF }, muted = { 0x8B, 0x8B, 0x8B, 0xFF };
+    float x = r.x + (r.width > 520 ? (r.width - 440) / 2 : 40), y = r.y + r.height * 0.18f;
+    int act = 0;
+    for (int i = 0; i < 3; i++) app->welcome_btn[i] = (Rectangle){ 0 };
+    for (int i = 0; i < 2; i++) app->empty_btn[i] = (Rectangle){ 0 };
+    for (size_t i = 0; i < RECENT_MAX; i++) app->recent_rect[i] = (Rectangle){ 0 };
+    if (!app->project_dir[0]) {
+        const char *t = "Welcome to Scribodo";
+        sfont_draw_utf8(big, t, (int)strlen(t), x, y, text);
+        const char *sub = "A project is a folder of Markdown or text documents.";
+        sfont_draw_utf8(ui, sub, (int)strlen(sub), x, y + big->line_height + 6, muted);
+        y += big->line_height + 40;
+        const char *labels[3] = { "Open folder...", "New project...", "Open the sample" };
+        for (int i = 0; i < 3; i++) {
+            app->welcome_btn[i] = (Rectangle){ x + (float)i * 148, y, 140, 30 };
+            if (GuiButton(app->welcome_btn[i], labels[i])) act = 1 + i;
+        }
+        y += 56;
+        if (app->nrecents) {
+            sfont_draw_utf8(ui, "RECENT", 6, x, y, muted);
+            y += ui->line_height + 6;
+            for (size_t i = 0; i < app->nrecents && i < RECENT_MAX; i++) {
+                const char *name = base_name(app->recents[i].path);
+                float row_w = r.x + r.width - 24 - (x - 6);
+                Rectangle rr = { x - 6, y - 3, row_w < 440 ? row_w : 440, ui->line_height + 6 };
+                app->recent_rect[i] = rr;
+                bool hot = CheckCollisionPointRec(GetMousePosition(), rr) && !prompt_active(app->prompt) && !app->menu.active;
+                if (hot) DrawRectangleRounded(rr, 0.2f, 4, (Color){ 0x2A, 0x2D, 0x2E, 0xFF });
+                sfont_draw_utf8(ui, name, (int)strlen(name), x, y, (Color){ 0x6C, 0xA8, 0xE0, 0xFF });
+                float nw = sfont_measure_utf8(ui, name, (int)strlen(name));
+                /* The folder it lives in, with ~ for home, cut to fit. */
+                char dir[PATH_MAX];
+                const char *home = getenv("HOME");
+                const char *p = app->recents[i].path;
+                if (home && !strncmp(p, home, strlen(home))) snprintf(dir, sizeof(dir), "~%s", p + strlen(home));
+                else snprintf(dir, sizeof(dir), "%s", p);
+                char *slash = strrchr(dir, '/');
+                if (slash && slash != dir) *slash = '\0';
+                float avail = rr.x + rr.width - (x + nw + 12) - 6;
+                int dl = (int)strlen(dir);
+                if (sfont_measure_utf8(ui, dir, dl) > avail) {
+                    float ell = sfont_measure_utf8(ui, "\xE2\x80\xA6", 3);
+                    const char *tail = dir;
+                    while (*tail && sfont_measure_utf8(ui, tail, (int)strlen(tail)) + ell > avail) {
+                        tail++;
+                        while (((unsigned char)*tail & 0xC0) == 0x80) tail++;
+                    }
+                    char cut[PATH_MAX + 4];
+                    snprintf(cut, sizeof(cut), "\xE2\x80\xA6%s", tail);
+                    snprintf(dir, sizeof(dir), "%s", cut);
+                    dl = (int)strlen(dir);
+                }
+                if (avail > 20) sfont_draw_utf8(ui, dir, dl, x + nw + 12, y, muted);
+                if (hot && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) act = 10 + (int)i;
+                y += ui->line_height + 8;
+            }
+        }
+    } else {
+        const char *t = "No document open";
+        sfont_draw_utf8(big, t, (int)strlen(t), x, y, text);
+        const char *sub = app->ndocs ? "Choose one in the Explorer, or start a new one." : "This folder has no documents yet.";
+        sfont_draw_utf8(ui, sub, (int)strlen(sub), x, y + big->line_height + 6, muted);
+        y += big->line_height + 40;
+        app->empty_btn[0] = (Rectangle){ x, y, 150, 30 };
+        app->empty_btn[1] = (Rectangle){ x + 158, y, 150, 30 };
+        if (GuiButton(app->empty_btn[0], "New document")) act = 20;
+        if (GuiButton(app->empty_btn[1], "Import...")) act = 21;
+    }
+    return act;
+}
+
+static void empty_action(App *app, int act, const char *sample)
+{
+    if (act == 1) choose_project(app, false);
+    else if (act == 2) choose_project(app, true);
+    else if (act == 3) open_path(app, sample);
+    else if (act >= 10 && act < 10 + RECENT_MAX && (size_t)(act - 10) < app->nrecents) {
+        RecentProject rp = app->recents[act - 10];
+        open_project(app, rp.path);
+        if (rp.doc[0] && !strcmp(app->project_dir, rp.path)) {
+            char full[PATH_MAX + 260];
+            snprintf(full, sizeof(full), "%s/%s", rp.path, rp.doc);
+            struct stat st;
+            if (stat(full, &st) == 0) open_path(app, full);
+        }
+    } else if (act == 20) begin_new_document(app);
+    else if (act == 21) import_documents(app);
+}
+
 static void send_chat(App *app, char *text)
 {
     if (!app->chat_id[0]) {
@@ -1144,10 +1503,13 @@ static void update_labels(App *app)
 {
     Editor *ed = app->editor;
     const char *path = editor_path(ed);
-    if (!path)
-        snprintf(app->doc_label, sizeof(app->doc_label), "No document \xE2\x80\x94 drop a .md or .txt file here");
+    const char *proj = app->project_dir[0] ? base_name(app->project_dir) : "";
+    if (!path && !proj[0])
+        snprintf(app->doc_label, sizeof(app->doc_label), "No project open");
+    else if (!path)
+        snprintf(app->doc_label, sizeof(app->doc_label), "%s", proj);
     else
-        snprintf(app->doc_label, sizeof(app->doc_label), "%s%s%s", base_name(path),
+        snprintf(app->doc_label, sizeof(app->doc_label), "%s \xE2\x80\xBA %s%s%s", proj, base_name(path),
                  editor_is_dirty(ed) ? "  \xE2\x97\x8F" : "", editor_is_read_only(ed) ? "  (read-only)" : "");
 
     EditorStats st = editor_stats(ed);
@@ -1184,6 +1546,7 @@ static Clay_RenderCommandArray build_layout(App *app)
                .backgroundColor = COL_PANEL,
                .border = { .color = COL_BORDER, .width = { .bottom = 1 } } }) {
             label("Scribodo", FONT_UI, COL_TEXT);
+            slot(CLAY_ID("OpenButton"), 64, 24);
             label(app->doc_label, FONT_UI, COL_MUTED);
             slot(CLAY_ID("SaveButton"), 64, 24);
             grow();
@@ -1200,14 +1563,19 @@ static Clay_RenderCommandArray build_layout(App *app)
                    .backgroundColor = COL_PANEL, .clip = { .horizontal = true, .vertical = true, .childOffset = Clay_GetScrollOffset() } }) {
                 section_header("DOCUMENTS");
                 const char *cur = editor_path(app->editor) ? base_name(editor_path(app->editor)) : "";
-                if (app->ndocs == 0) coming_soon("No .md or .txt files here");
+                if (!app->project_dir[0]) coming_soon("Open a folder (\xE2\x8C\x98O)");
+                else if (app->ndocs == 0) coming_soon("No .md or .txt files yet");
                 for (size_t i = 0; i < app->ndocs; i++)
                     list_item(CLAY_IDI("DocItem", (uint32_t)i), app->docs[i], !strcmp(cur, app->docs[i]));
+                if (app->project_dir[0]) {
+                    list_item(CLAY_ID("NewDocItem"), "+ New document", false);
+                    list_item(CLAY_ID("ImportItem"), "Import\xE2\x80\xA6", false);
+                }
                 section_header("CHATS");
                 list_item(CLAY_ID("NewChatItem"), "+ New chat", false);
                 for (size_t i = 0; i < app->nchats; i++)
                     list_item(CLAY_IDI("ChatItem", (uint32_t)i), app->chats[i].title, !strcmp(app->chat_id, app->chats[i].id));
-                if (!app->project_dir[0]) coming_soon("Open a document to save chats");
+                if (!app->project_dir[0]) coming_soon("Open a project to save chats");
                 section_header("HISTORY");
                 if (app->nrevs == 0) coming_soon(editor_path(app->editor) ? "No revisions yet" : "Open a document");
                 for (size_t i = 0; i < app->nrevs && i < REV_SHOW; i++)
@@ -1216,7 +1584,7 @@ static Clay_RenderCommandArray build_layout(App *app)
                 section_header("NOTES");
                 const char *open_id = record_view_active(app->record) ? record_view_id(app->record) : "";
                 if (app->project_dir[0]) list_item(CLAY_ID("NewNoteItem"), "+ New note", false);
-                else coming_soon("Open a document to keep notes");
+                else coming_soon("Open a project to keep notes");
                 for (size_t i = 0; i < app->nnotes && i < REC_SHOW; i++)
                     if (app->note_labels[i][0])
                         list_item(CLAY_IDI("NoteItem", (uint32_t)i), app->note_labels[i], !strcmp(open_id, app->notes[i].id));
@@ -1301,7 +1669,7 @@ static Clay_RenderCommandArray build_layout(App *app)
             label(app->status_left, FONT_UI, COL_MUTED);
             grow();
             if (app->status[0] && GetTime() - app->status_time < 6.0)
-                label(app->status, FONT_UI, editor_is_read_only(app->editor) ? COL_WARN : COL_TEXT);
+                label(app->status, FONT_UI, editor_path(app->editor) && editor_is_read_only(app->editor) ? COL_WARN : COL_TEXT);
         }
     }
     return Clay_EndLayout();
@@ -1326,6 +1694,17 @@ static Rectangle host_element(void *ctx, const char *name)
     if (!strcmp(name, "NoteLast")) return chat_view_last_note_rect(app->chat_view, false);
     if (!strcmp(name, "CanonLast")) return chat_view_last_note_rect(app->chat_view, true);
     if (!strncmp(name, "Record", 6)) return record_view_element(app->record, name);
+    if (!strncmp(name, "Prompt", 6)) return prompt_element(app->prompt, name);
+    if (!strncmp(name, "MenuItem", 8)) return menu_element(&app->menu, name);
+    static const char *const welcome[] = { "WelcomeOpen", "WelcomeNew", "WelcomeSample" };
+    for (int i = 0; i < 3; i++)
+        if (!strcmp(name, welcome[i])) return editor_path(app->editor) ? (Rectangle){ 0 } : app->welcome_btn[i];
+    if (!strcmp(name, "EmptyNewDoc")) return editor_path(app->editor) ? (Rectangle){ 0 } : app->empty_btn[0];
+    if (!strcmp(name, "EmptyImport")) return editor_path(app->editor) ? (Rectangle){ 0 } : app->empty_btn[1];
+    if (!strncmp(name, "Recent", 6) && name[6] >= '0' && name[6] <= '9') {
+        int i = atoi(name + 6);
+        return i >= 0 && i < RECENT_MAX && !editor_path(app->editor) ? app->recent_rect[i] : (Rectangle){ 0 };
+    }
     if (!strncmp(name, "Finding", 7) && strcmp(name, "Findings") != 0)
         return app->observer_open ? findings_view_element(app->findings, name) : (Rectangle){ 0 };
     if (!strcmp(name, "RejectEdit")) return review_active(app->review) ? review_reject_rect(app->review_rect) : (Rectangle){ 0 };
@@ -1485,13 +1864,14 @@ int main(int argc, char **argv)
     app.chat_view = app.chat ? chat_view_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI], app.chat) : NULL;
     app.review = review_create(&app.fonts[FONT_PROSE], &app.fonts[FONT_UI]);
     app.record = record_view_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI]);
+    app.prompt = prompt_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI]);
     app.observer = observer_create(app.llm);
     app.findings = findings_view_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI]);
     app.findings_version = UINT64_MAX;
     /* UI scripts start with the observer off (deterministic files); a
      * script turns it on with "observer on". */
     if (app.observer && script_path) observer_set_enabled(app.observer, false);
-    if (!app.chat || !app.editor || !app.chat_view || !app.review || !app.record || !app.observer || !app.findings) {
+    if (!app.chat || !app.editor || !app.chat_view || !app.review || !app.record || !app.observer || !app.findings || !app.prompt) {
         fprintf(stderr, "scribodo: out of memory\n");
         CloseWindow();
         return 1;
@@ -1502,11 +1882,29 @@ int main(int argc, char **argv)
      * (build/scribodo) rather than the working directory, which is "/" when
      * launched from Finder. */
     char sample[2048];
-    if (!path) {
-        snprintf(sample, sizeof(sample), "%s../assets/sample/sample.md", GetApplicationDirectory());
-        path = sample;
+    snprintf(sample, sizeof(sample), "%s../assets/sample/sample.md", GetApplicationDirectory());
+    /* Recent projects live in the app's support folder; a script keeps its
+     * own list in its fixture folder. */
+    {
+        char state[PATH_MAX];
+        const char *home = getenv("HOME");
+        if (script_path) snprintf(state, sizeof(state), "%s/.scribodo-state", getenv("SCRIBODO_SCRIPT_DIR") ? getenv("SCRIBODO_SCRIPT_DIR") : ".");
+        else snprintf(state, sizeof(state), "%s/Library/Application Support/Scribodo", home ? home : ".");
+        recent_set_dir(state);
+        app.nrecents = recent_load(app.recents, RECENT_MAX);
     }
-    if (!script_path) open_path(&app, path);
+    dialogs_script_mode(script_path != NULL);
+    if (!script_path) {
+        struct stat pst;
+        if (path && stat(path, &pst) == 0 && S_ISDIR(pst.st_mode)) {
+            open_project(&app, path);
+        } else if (path) {
+            open_path(&app, path);
+        } else if (app.nrecents) { /* where the author left off */
+            empty_action(&app, 10, sample);
+        }
+        /* otherwise: the welcome screen */
+    }
 
     Script *script = NULL;
     ScriptHost host = { app.editor, &app.explorer_w, &app.observer_w, &app.editor_rect,
@@ -1596,8 +1994,10 @@ int main(int argc, char **argv)
         Clay_UpdateScrollContainers(false, (Clay_Vector2){ wheel.x * 30.0f, wheel.y * 30.0f }, GetFrameTime());
         Clay_SetLayoutDimensions((Clay_Dimensions){ (float)GetScreenWidth(), (float)GetScreenHeight() });
 
+        /* A prompt or menu takes all input until it closes. */
+        bool modal = prompt_active(app.prompt) || app.menu.active;
         /* Clicks (pointer state reflects last frame's layout). */
-        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        if (!modal && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             if (trace) fprintf(stderr, "trace: click (%.0f, %.0f) focus=%d\n", mouse.x, mouse.y, app.focus);
             if (Clay_PointerOver(CLAY_ID("SplitLeft"))) app.dragging = DRAG_EXPLORER;
             else if (Clay_PointerOver(CLAY_ID("SplitChat"))) app.dragging = DRAG_CHAT;
@@ -1609,6 +2009,8 @@ int main(int argc, char **argv)
             } else if (Clay_PointerOver(CLAY_ID("Editor"))) app.focus = FOCUS_DOC;
             else if (Clay_PointerOver(CLAY_ID("ChatInput"))) app.focus = FOCUS_CHAT;
             else if (Clay_PointerOver(CLAY_ID("NewChatItem"))) new_chat(&app);
+            else if (Clay_PointerOver(CLAY_ID("NewDocItem"))) begin_new_document(&app);
+            else if (Clay_PointerOver(CLAY_ID("ImportItem"))) import_documents(&app);
             else if (Clay_PointerOver(CLAY_ID("NewNoteItem"))) {
                 if (close_record(&app, false) && record_view_open(app.record, REC_NOTE, NULL, "", NULL, 0))
                     app.focus = FOCUS_RECORD;
@@ -1651,6 +2053,14 @@ int main(int argc, char **argv)
             }
             /* Toolbar, chat header/footer and message list keep the focus. */
         }
+        if (!modal && IsMouseButtonPressed(MOUSE_BUTTON_RIGHT) && Clay_PointerOver(CLAY_ID("Explorer"))) {
+            for (size_t i = 0; i < app.ndocs; i++)
+                if (Clay_PointerOver(CLAY_IDI("DocItem", (uint32_t)i))) {
+                    static const char *const items[] = { "Rename\xE2\x80\xA6", "Reveal in Finder" };
+                    menu_open(&app.menu, MT_DOC, (int)i, mouse, items, 2);
+                    break;
+                }
+        }
         if (!mouse_down) app.dragging = DRAG_NONE;
         float sw = (float)GetScreenWidth();
         float right = sw - (app.observer_open ? app.observer_w + SPLITTER_W : 0);
@@ -1673,7 +2083,7 @@ int main(int argc, char **argv)
             else if (pass == 3) app.observer_open = false;
         }
 
-        bool primary = IsKeyDown(KEY_LEFT_SUPER) || IsKeyDown(KEY_RIGHT_SUPER);
+        bool primary = !modal && (IsKeyDown(KEY_LEFT_SUPER) || IsKeyDown(KEY_RIGHT_SUPER));
         bool shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
         if (primary && shortcut_pressed('s')) {
             if (app.focus == FOCUS_RECORD && record_view_kind(app.record) == REC_NOTE) save_note(&app);
@@ -1692,7 +2102,9 @@ int main(int argc, char **argv)
         if (primary && review_active(app.review) && app.focus != FOCUS_CHAT &&
             (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER)))
             accept_proposal(&app);
-        if (app.focus == FOCUS_CHAT && IsKeyPressed(KEY_ESCAPE)) {
+        if (primary && shortcut_pressed('o')) choose_project(&app, false);
+        if (primary && !shift && shortcut_pressed('n')) begin_new_document(&app);
+        if (!modal && app.focus == FOCUS_CHAT && IsKeyPressed(KEY_ESCAPE)) {
             if (app.edit_mode) {
                 leave_edit_mode(&app);
                 if (!app.pending.active) editor_anchor_clear(app.editor);
@@ -1730,18 +2142,28 @@ int main(int argc, char **argv)
         app.findings_rect = app.observer_open ? ELEMENT_RECT("Findings") : (Rectangle){ 0 };
         app.chat_input_rect = ELEMENT_RECT("ChatInput");
         Rectangle save_rect = ELEMENT_RECT("SaveButton");
+        Rectangle open_rect = ELEMENT_RECT("OpenButton");
         Rectangle obs_rect = ELEMENT_RECT("ObserverToggle");
         Rectangle new_rect = ELEMENT_RECT("NewChatButton");
         Rectangle send_rect = ELEMENT_RECT("SendButton");
         Rectangle inc_rect = ELEMENT_RECT("IncludeDoc");
 
         /* Always update both so queued keystrokes are consumed or discarded. */
-        bool idle = app.dragging == DRAG_NONE;
+        if (prompt_active(app.prompt)) {
+            PromptResult pr = prompt_update(app.prompt, (Rectangle){ 0, 0, (float)GetScreenWidth(), (float)GetScreenHeight() });
+            if (pr == PR_CANCEL) prompt_close(app.prompt);
+            if (pr == PR_OK) {
+                char *t = prompt_text(app.prompt);
+                if (t && finish_prompt(&app, t)) prompt_close(app.prompt);
+                free(t);
+            }
+        }
+        bool idle = app.dragging == DRAG_NONE && !modal;
         editor_update(app.editor, app.editor_rect, idle && app.focus == FOCUS_DOC);
         chat_view_update(app.chat_view, app.chat_list_rect, app.chat_input_rect, idle && app.focus == FOCUS_CHAT);
-        if (review_active(app.review)) review_update(app.review, app.review_rect);
+        if (review_active(app.review) && !modal) review_update(app.review, app.review_rect);
         if (record_view_active(app.record)) record_view_update(app.record, app.record_rect, idle && app.focus == FOCUS_RECORD);
-        if (app.observer_open) findings_view_update(app.findings, app.findings_rect);
+        if (app.observer_open && !modal) findings_view_update(app.findings, app.findings_rect);
         input_discard_chars(); /* after both views: nothing typed now may appear later */
         long apply = chat_view_take_apply(app.chat_view);
         if (apply >= 0) {
@@ -1800,7 +2222,10 @@ int main(int argc, char **argv)
         BeginDrawing();
         ClearBackground((Color){ 0x1F, 0x1F, 0x1F, 0xFF });
         clay_render(cmds, app.font_ptrs);
-        editor_draw(app.editor, app.editor_rect, app.focus == FOCUS_DOC);
+        if (modal) GuiLock(); /* nothing behind a prompt or menu reacts */
+        if (GuiButton(open_rect, "Open...")) choose_project(&app, false);
+        if (editor_path(app.editor)) editor_draw(app.editor, app.editor_rect, app.focus == FOCUS_DOC);
+        int empty_act = editor_path(app.editor) ? 0 : draw_empty(&app, app.editor_rect);
         if (review_active(app.review)) {
             review_draw(app.review, app.review_rect);
             if (GuiButton(review_accept_rect(app.review_rect), "Accept")) accept_proposal(&app);
@@ -1848,6 +2273,32 @@ int main(int argc, char **argv)
             GuiEnable();
         }
 
+        GuiUnlock();
+        if (!modal && empty_act) empty_action(&app, empty_act, sample);
+        {
+            Rectangle screen = { 0, 0, (float)GetScreenWidth(), (float)GetScreenHeight() };
+            int pick = menu_draw(&app.menu, &app.fonts[FONT_UI], screen);
+            if (pick >= 0 && app.menu.tag == MT_DOC && (size_t)app.menu.target < app.ndocs) {
+                if (pick == 0) {
+                    if (editor_path(app.editor) && editor_is_dirty(app.editor) &&
+                        !strcmp(base_name(editor_path(app.editor)), app.docs[app.menu.target]))
+                        set_status(&app, "Save the document before renaming it");
+                    else
+                        begin_rename(&app, app.docs[app.menu.target]);
+                } else {
+                    reveal_document(&app, app.docs[app.menu.target]);
+                }
+            }
+            if (prompt_active(app.prompt)) {
+                PromptResult pr = prompt_draw(app.prompt, screen);
+                if (pr == PR_CANCEL) prompt_close(app.prompt);
+                if (pr == PR_OK) {
+                    char *t = prompt_text(app.prompt);
+                    if (t && finish_prompt(&app, t)) prompt_close(app.prompt);
+                    free(t);
+                }
+            }
+        }
         const char *shot_path = script ? script_take_shot(script) : NULL;
         if (shot_path) {
             /* raylib batches draws until EndDrawing; flush so the capture
@@ -1875,6 +2326,7 @@ int main(int argc, char **argv)
     leave_edit_mode(&app);
     review_destroy(app.review);
     record_view_destroy(app.record);
+    prompt_destroy(app.prompt);
     records_free(app.notes, app.nnotes);
     records_free(app.canon, app.ncanon);
     free(app.revs);

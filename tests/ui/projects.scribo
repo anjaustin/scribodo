@@ -1,0 +1,103 @@
+# Projects and documents (SOW §4.1): open a folder, create, import and
+# rename documents in the app; renames keep History and sources attached.
+# Native dialogs are answered by "dialog" (scripts never open a panel).
+wait 5
+expect element_w WelcomeOpen 100 400
+# Open a folder from the welcome screen.
+mkdir "$DIR/book"
+write "$DIR/book/one.md" "Zoë Ångström climbed the stairs."
+dialog "$DIR/book"
+click_element WelcomeOpen
+expect status "Opened book"
+expect element_w EmptyNewDoc 100 400
+expect element_w DocItem0 50 2000
+# Cancelling a dialog changes nothing.
+dialog ""
+click_element OpenButton
+expect element_w EmptyNewDoc 100 400
+# New document: a name prompt; ".md" is added; taken names are refused.
+click_element NewDocItem
+expect element_w PromptField 100 2000
+key A cmd
+type "one"
+key ENTER
+expect element_w PromptOK 50 400
+click_element PromptCancel
+expect element_w PromptField 0 0
+click_element EmptyNewDoc
+key A cmd
+type "Chapter Two"
+click_element PromptOK
+expect element_w PromptField 0 0
+expect status "Created Chapter Two.md"
+expect file "$DIR/book/Chapter Two.md" ""
+type "Dvořák waited."
+key S cmd
+expect file "$DIR/book/Chapter Two.md" "Dvořák waited."
+# A bad name is explained, not used.
+key N cmd
+type "a/b"
+key ENTER
+expect element_w PromptField 100 2000
+key ESC
+expect element_w PromptField 0 0
+# Rename via the context menu: the open file keeps its buffer and History.
+type " Again."
+key S cmd
+expect files "$DIR/book/.scribodo/revisions/Chapter Two.md" "-save.md" 2
+right_click_element DocItem0
+expect element_w MenuItem0 50 600
+click_element MenuItem0
+key A cmd
+type "Chapter 2"
+key ENTER
+expect status "Renamed to Chapter 2.md"
+expect file "$DIR/book/Chapter 2.md" "Dvořák waited. Again."
+expect files "$DIR/book" "Chapter Two.md" 0
+expect files "$DIR/book/.scribodo/revisions/Chapter 2.md" "-save.md" 2
+expect lines "$DIR/book/.scribodo/renames.jsonl" "\"from\":\"Chapter Two.md\",\"to\":\"Chapter 2.md\"" 1
+type " Third."
+key S cmd
+expect file "$DIR/book/Chapter 2.md" "Dvořák waited. Again. Third."
+# A note made before a rename still opens its source afterwards.
+click_index 0
+key RIGHT shift
+key RIGHT shift
+key RIGHT shift
+key N cmd shift
+expect record "Dvo"
+click_element RecordClose
+right_click_element DocItem0
+click_element MenuItem0
+key A cmd
+type "Second"
+key ENTER
+expect status "Renamed to Second.md"
+click_element NoteItem0
+click_element RecordSource
+expect selection 0 3
+expect status "Source passage selected"
+# Import copies files in, never overwriting.
+mkdir "$DIR/elsewhere"
+write "$DIR/elsewhere/one.md" "An imported draft."
+write "$DIR/elsewhere/notes.txt" "Plain notes."
+dialog "$DIR/elsewhere/one.md|$DIR/elsewhere/notes.txt"
+click_element ImportItem
+expect status "Imported 2 of 2 documents"
+expect file "$DIR/book/one 2.md" "An imported draft."
+expect file "$DIR/book/notes.txt" "Plain notes."
+expect file "$DIR/book/one.md" "Zoë Ångström climbed the stairs."
+expect file "$DIR/elsewhere/one.md" "An imported draft."
+# Switching projects with unsaved text is refused.
+type "unsaved"
+mkdir "$DIR/other"
+dialog "$DIR/other"
+key O cmd
+expect status "Save the current document first"
+key Z cmd
+dialog "$DIR/other"
+key O cmd
+expect status "Opened other"
+expect element_w DocItem0 0 0
+# Recent projects remember where the author left off.
+expect lines "$DIR/.scribodo-state/recent.json" "book" 1

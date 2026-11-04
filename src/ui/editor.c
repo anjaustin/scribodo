@@ -63,6 +63,7 @@ struct Editor {
     bool scratch;           /* editable buffer with no file (chat input) */
     bool submit_on_enter;   /* Enter submits, Shift+Enter inserts a newline */
     bool submit_pending;
+    bool single_line;       /* a one-line field: no overscroll or scrollbar */
     char placeholder[128];
     /* Tracked anchor: the passage an edit request/proposal targets. Its
      * position follows every insert/delete (including undo/redo); any change
@@ -661,6 +662,36 @@ bool editor_load_file(Editor *e, const char *path, char *err, size_t errlen)
     return true;
 }
 
+void editor_close(Editor *e)
+{
+    tb_set(&e->buf, NULL, 0);
+    reset_undo(e);
+    stb_textedit_initialize_state(&e->st, 0);
+    free(e->path);
+    e->path = NULL;
+    e->overwrite_armed = false;
+    e->read_only = true;
+    snprintf(e->read_only_reason, sizeof(e->read_only_reason), "No document is open");
+    e->saved_id = undo_state_id(&e->undo);
+    e->scroll_y = 0;
+    e->mouse_selecting = false;
+    mark_changed(e);
+}
+
+bool editor_set_path(Editor *e, const char *path)
+{
+    /* The file was renamed on disk: same file (inode, contents), new name.
+     * The buffer, undo history and external-change tracking carry over. */
+    char *p = strdup(path);
+    if (!p || !e->path) {
+        free(p);
+        return false;
+    }
+    free(e->path);
+    e->path = p;
+    return true;
+}
+
 static bool overwrite_valid(const Editor *e)
 {
     return e->overwrite_armed && e->armed_version == e->version &&
@@ -762,7 +793,7 @@ static float row_x(const Editor *e, const WrapRow *row, size_t idx)
 static float max_scroll(const Editor *e)
 {
     float content = (float)e->layout.count * e->font->line_height;
-    float m = content - e->view_h * 0.5f;
+    float m = e->single_line ? content - e->view_h : content - e->view_h * 0.5f;
     return m > 0 ? m : 0;
 }
 
@@ -1042,7 +1073,7 @@ void editor_draw(Editor *e, Rectangle b, bool focused)
 
     /* Scrollbar */
     float content = (float)e->layout.count * lh + e->view_h * 0.5f;
-    if (content > b.height) {
+    if (content > b.height && !e->single_line) {
         float track = b.height;
         float thumb = track * (b.height / content);
         if (thumb < 24) thumb = 24;
@@ -1289,6 +1320,7 @@ void editor_set_layout(Editor *e, float side_pad, float top_pad, float max_col)
 }
 
 void editor_set_submit_on_enter(Editor *e, bool on) { e->submit_on_enter = on; }
+void editor_set_single_line(Editor *e, bool on) { e->single_line = on; }
 
 bool editor_take_submit(Editor *e)
 {

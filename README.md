@@ -107,6 +107,12 @@ make run    # launch with assets/sample/sample.md
 
 On first launch the app checks the model file against its pinned hash (once), then starts `llama-server` in the background. The toolbar shows the model's status, which turns green when it's ready. The server listens only on a private Unix socket, uses a fresh API key each launch, and stops when the app quits.
 
+**Projects and documents:** a project is a folder of `.md` and `.txt` files.
+- On launch, Scribodo reopens the project and document you last had open. The first time, it shows a welcome screen: **Open folder…**, **New project…**, **Open the sample**, and your recent projects.
+- **⌘O** or **Open…** opens another folder. Dropping a folder onto the window works too.
+- **+ New document** (⌘N) and **Import…** (copies files in, never overwriting) are in the Explorer.
+- Right-click a document to **Rename** it or **Reveal it in Finder**. A rename keeps its History, and notes, canon and findings that quote it still open their source.
+
 **Using it:**
 - **Chat:** click the chat box (or press ⌘L), type, and press Enter. Shift+Enter adds a new line, and Esc returns to the document.
 - **Include document:** when ticked, the assistant sees the open document as reference.

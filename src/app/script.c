@@ -4,6 +4,8 @@
 
 #include "script.h"
 
+#include "platform/dialogs.h"
+
 #include <dirent.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -251,18 +253,23 @@ static int mod_code(const char *name)
     return -1;
 }
 
-static void queue_click(Script *s, int x, int y, int count, bool shift)
+static void queue_click_button(Script *s, int x, int y, int count, bool shift, int button)
 {
     for (int c = 0; c < count; c++) {
         Batch *down = new_batch(s);
         add_ev(down, EV_MOUSE_POSITION, x, y);
         if (shift) add_ev(down, EV_KEY_DOWN, KEY_LEFT_SHIFT, 0);
-        add_ev(down, EV_MOUSE_BUTTON_DOWN, MOUSE_BUTTON_LEFT, 0);
+        add_ev(down, EV_MOUSE_BUTTON_DOWN, button, 0);
         Batch *up = new_batch(s);
-        add_ev(up, EV_MOUSE_BUTTON_UP, MOUSE_BUTTON_LEFT, 0);
+        add_ev(up, EV_MOUSE_BUTTON_UP, button, 0);
         if (shift) add_ev(up, EV_KEY_UP, KEY_LEFT_SHIFT, 0);
     }
     new_batch(s); /* settle frame */
+}
+
+static void queue_click(Script *s, int x, int y, int count, bool shift)
+{
+    queue_click_button(s, x, y, count, shift, MOUSE_BUTTON_LEFT);
 }
 
 static void queue_drag(Script *s, int x1, int y1, int x2, int y2, int hold)
@@ -571,6 +578,19 @@ static bool run_line(Script *s, ScriptHost *h)
     if (!strcmp(cmd, "wait_chat") && h->chat) {
         s->wait_chat = t.n >= 2 ? atoi(t.tok[1]) : 1200;
         return true;
+    }
+    if (!strcmp(cmd, "right_click_element") && t.n == 2 && h->element) {
+        Rectangle r = h->element(h->ctx, t.tok[1]);
+        if (r.width <= 0) {
+            report(s, false, "no such element");
+            return false;
+        }
+        queue_click_button(s, (int)(r.x + r.width / 2), (int)(r.y + r.height / 2), 1, false, MOUSE_BUTTON_RIGHT);
+        return true;
+    }
+    if (!strcmp(cmd, "dialog") && t.n == 2) {
+        dialogs_script_answer(t.tok[1]); /* the next native dialog's answer ("" = Cancel) */
+        return false;
     }
     if (!strcmp(cmd, "click_element") && t.n >= 2 && h->element) {
         Rectangle r = h->element(h->ctx, t.tok[1]);

@@ -120,6 +120,10 @@ void editor_reveal(Editor *e, size_t index);
  * Clears the buffer. `placeholder` is shown while it is empty. */
 void editor_set_scratch(Editor *e, const char *placeholder);
 void editor_clear(Editor *e);
+/* Close the document: empty, read-only, no path. */
+void editor_close(Editor *e);
+/* The open file was renamed on disk: keep the buffer and undo, new path. */
+bool editor_set_path(Editor *e, const char *path);
 void editor_set_placeholder(Editor *e, const char *placeholder);
 /* Replace the whole text (scratch editors): no undo step, not dirty. */
 bool editor_set_text_utf8(Editor *e, const char *utf8);
@@ -127,6 +131,8 @@ bool editor_set_text_utf8(Editor *e, const char *utf8);
 void editor_set_layout(Editor *e, float side_pad, float top_pad, float max_col);
 /* Enter submits (see editor_take_submit) and Shift+Enter inserts a newline. */
 void editor_set_submit_on_enter(Editor *e, bool on);
+/* A one-line field (prompts): no overscroll, no scrollbar. */
+void editor_set_single_line(Editor *e, bool on);
 bool editor_take_submit(Editor *e);
 /* Height of the laid-out text, for auto-sizing an input box. */
 float editor_content_height(Editor *e);

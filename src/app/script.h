@@ -41,6 +41,9 @@
  *   expect lines "path" "substring" COUNT  (lines of a file containing it)
  *   expect record "substring"    (the open note/canon panel: header + text)
  *   observer on|off              (scripts start with the observer off)
+ *   dialog "answer"              the next native dialog's answer ("" = Cancel;
+ *                                several files separated by '|')
+ *   right_click_element NAME     right-click a named element (context menus)
  *   wait_observer [MAX_FRAMES]   wait until the observer has nothing to do
  *   expect findings_count N      expect findings_has "type|status|text substring"
  *   expect findings_not "substring"

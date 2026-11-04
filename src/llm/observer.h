@@ -38,6 +38,8 @@ void observer_destroy(Observer *o);
 /* Switch project ("" for none): cancels the current job and starts over
  * from that project's stored state. */
 void observer_set_project(Observer *o, const char *project_dir);
+/* A document was renamed: what was read of it stays read. */
+void observer_rename_doc(Observer *o, const char *from, const char *to);
 /* Something was stored (a save, a finished reply): look for new work. */
 void observer_poke(Observer *o);
 /* Call every frame. While true, observer requests are cancelled and none

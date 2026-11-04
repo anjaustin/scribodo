@@ -56,12 +56,14 @@ $(RAYLIB_LIB): $(RAYLIB_OBJS)
 
 # --- Scribodo ----------------------------------------------------------------
 CORE_SRCS := src/core/utf8.c src/core/text_buffer.c src/core/undo.c src/core/wrap.c src/core/doc_io.c src/core/diff.c
-LLM_SRCS  := src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/llm/observer.c
+LLM_SRCS  := src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/app/recent.c src/app/renames.c src/llm/observer.c
 LLM_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(LLM_SRCS)) $(BUILD)/third_party/cJSON/cJSON.o
 APP_SRCS  := src/main.c src/app/script.c src/ui/font.c src/ui/clay_render.c src/ui/editor.c src/ui/input.c \
-             src/ui/chat_view.c src/ui/review_view.c src/ui/record_view.c src/ui/findings_view.c src/ui/vendor_impl.c
+             src/ui/chat_view.c src/ui/review_view.c src/ui/record_view.c src/ui/findings_view.c src/ui/prompt_view.c src/ui/menu_view.c src/ui/vendor_impl.c
 CORE_OBJS := $(patsubst %.c,$(BUILD)/%.o,$(CORE_SRCS))
 APP_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(APP_SRCS))
+# Native dialogs (Objective-C on macOS).
+APP_OBJS  += $(BUILD)/src/platform/dialogs_mac.o
 APP   := $(BUILD)/scribodo
 TESTS := $(BUILD)/test_core $(BUILD)/test_doc_io $(BUILD)/test_editor $(BUILD)/test_llm
 
@@ -84,6 +86,10 @@ $(BUILD)/src/ui/vendor_impl.o: src/ui/vendor_impl.c | $(BUILD)/src/ui
 $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(INCLUDES) -MMD -MP -c $< -o $@
+
+$(BUILD)/%.o: %.m
+	@mkdir -p $(dir $@)
+	$(CC) $(OPT) $(ARCH_FLAGS) -g -fobjc-arc -Wall -Wextra -Isrc -MMD -MP -c $< -o $@
 
 $(BUILD)/test_core: $(CORE_OBJS) $(BUILD)/tests/test_core.o
 	$(CC) $(CFLAGS) $^ -o $@
