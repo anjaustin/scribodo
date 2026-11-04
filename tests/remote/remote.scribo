@@ -1,0 +1,25 @@
+# The optional remote model (SOW acceptance 8), against a stand-in
+# provider on this machine. Selected only by the author; while selected,
+# the toolbar and chat say where content goes; switching back sends nothing
+# more to it.
+wait 5
+mkdir "$DIR/rem"
+write "$DIR/rem/ch1.md" "The ferry runs on Tuesdays."
+open "$DIR/rem/ch1.md"
+expect status "Opened"
+click_element ModelPicker
+click_element MenuItem1
+expect status "Using Frontier: chat messages, attached documents and edit passages now go to 127.0.0.1"
+click_element ChatInput
+type "hello remote"
+key ENTER
+wait_chat
+expect chat_last "(remote) You said: hello remote"
+click_element ModelPicker
+click_element MenuItem0
+expect status "Using the local model: nothing leaves this Mac"
+click_element ChatInput
+type "now local"
+key ENTER
+wait_chat
+expect chat_last "(fake model, with document) You said: now local"

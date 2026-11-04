@@ -1,5 +1,6 @@
 #define _DARWIN_C_SOURCE
 #include "chat.h"
+#include "remote.h"
 
 #include <pthread.h>
 #include <stdatomic.h>
@@ -31,6 +32,11 @@ static const char *k_editor =
 
 struct ChatSession {
     LlmServer *server;
+    /* The remote model, when the author selected one (never chosen
+     * automatically). `via_remote` is fixed per request at send time. */
+    RemoteConfig remote;
+    bool remote_selected;
+    bool via_remote;
     pthread_mutex_t mu;
     ChatMessage *msgs;
     size_t count, cap;
@@ -567,12 +573,14 @@ static bool build_in_worker(ChatSession *s)
     bool truncated = false;
     /* Budget from the server's real per-slot context, not an assumption
      * (red-team 003: a mismatch overflowed the context despite trimming). */
-    int slot_ctx = s->server ? llm_server_slot_ctx(s->server) : SLOT_CTX_TOKENS;
+    int slot_ctx = s->via_remote ? s->remote.context_tokens : s->server ? llm_server_slot_ctx(s->server) : SLOT_CTX_TOKENS;
+    /* The local tokenizer counts only for the local model; remote budgets are estimated. */
+    ChatTokenCount counter = !s->via_remote && s->server ? server_count : NULL;
     char *req = NULL;
     s->build_error[0] = '\0';
     if (ok && s->edit_passage) {
         /* The passage and its rewrite must both fit in one request. */
-        long pt = count_tokens(s->server ? server_count : NULL, s, s->edit_passage);
+        long pt = count_tokens(counter, s, s->edit_passage);
         if (pt * 3 > slot_ctx - 512) {
             snprintf(s->build_error, sizeof(s->build_error),
                      "The selection is too long to edit in one go (about %ld tokens). Select a shorter passage.", pt);
@@ -581,10 +589,14 @@ static bool build_in_worker(ChatSession *s)
     }
     if (ok && s->edit_passage)
         req = chat_build_edit_request(s->edit_instruction, s->edit_passage, s->has_doc ? &ctx : NULL, slot_ctx,
-                                      s->server ? server_count : NULL, s, &truncated);
+                                      counter, s, &truncated);
     else if (ok)
-        req = chat_build_request(copy, n, s->has_doc ? &ctx : NULL, slot_ctx, s->server ? server_count : NULL, s,
-                                 &truncated);
+        req = chat_build_request(copy, n, s->has_doc ? &ctx : NULL, slot_ctx, counter, s, &truncated);
+    if (req && s->via_remote) {
+        char *adapted = remote_adapt_request(&s->remote, req);
+        free(req);
+        req = adapted;
+    }
     for (size_t i = 0; copy && i < n; i++) free(copy[i].content);
     free(copy);
     pthread_mutex_lock(&s->mu);
@@ -648,8 +660,9 @@ static void *server_worker(void *arg)
     }
     StreamCtx c = { .s = s, .rc = 1 };
     HttpResult r;
-    bool ok = http_request(llm_server_socket(s->server), "POST", "/v1/chat/completions",
-                           llm_server_key(s->server), s->request, on_line, &c, &s->cancel, 120000, &r);
+    bool ok = s->via_remote ? remote_request(&s->remote, "/chat/completions", s->request, on_line, &c, &s->cancel, 120000, &r)
+                            : http_request(llm_server_socket(s->server), "POST", "/v1/chat/completions",
+                                           llm_server_key(s->server), s->request, on_line, &c, &s->cancel, 120000, &r);
     bool cancelled = atomic_load(&s->cancel);
     char msg[320] = "";
     bool error = false;
@@ -660,7 +673,8 @@ static void *server_worker(void *arg)
         snprintf(msg, sizeof(msg), "Stopped");
     } else if (!ok) {
         error = true;
-        snprintf(msg, sizeof(msg), "Could not reach the model: %s", r.error);
+        if (s->via_remote) snprintf(msg, sizeof(msg), "Could not reach %s: %s", s->remote.name, r.error);
+        else snprintf(msg, sizeof(msg), "Could not reach the model: %s", r.error);
     } else if (r.status != 200 || c.rc == -1) {
         error = true;
         if (strstr(c.err, "exceeds the available context"))
@@ -669,6 +683,8 @@ static void *server_worker(void *arg)
         else
             snprintf(msg, sizeof(msg), "Model error%s%s", c.err[0] ? ": " : "", c.err[0] ? c.err : "");
         if (!c.err[0]) snprintf(msg, sizeof(msg), "Model error (HTTP %d)", r.status);
+        if (s->via_remote && (r.status == 401 || r.status == 403))
+            snprintf(msg, sizeof(msg), "%s refused the API key (HTTP %d)", s->remote.name, r.status);
     } else if (c.rc == 1) {
         /* The stream ended without finish_reason or [DONE]: the server died or
          * the connection dropped mid-reply. Keep the partial text visible but
@@ -718,11 +734,13 @@ static bool send_common(ChatSession *s, const char *text, const ChatContext *ctx
         snprintf(err, errlen, "Nothing to send");
         return false;
     }
-    if (s->server && llm_server_state(s->server, NULL, 0) != LLM_READY) {
+    /* The selected model only: no fallback either way. */
+    if (!s->remote_selected && s->server && llm_server_state(s->server, NULL, 0) != LLM_READY) {
         snprintf(err, errlen, "The model isn't ready yet");
         return false;
     }
     join_worker(s);
+    s->via_remote = s->remote_selected;
 
     pthread_mutex_lock(&s->mu);
     bool ok = push_message(s, CHAT_USER, text);
@@ -785,7 +803,7 @@ static bool send_common(ChatSession *s, const char *text, const ChatContext *ctx
 
     atomic_store(&s->cancel, false);
     atomic_store(&s->busy, true);
-    if (pthread_create(&s->worker, NULL, s->server ? server_worker : fake_worker, s) != 0) {
+    if (pthread_create(&s->worker, NULL, s->server || s->via_remote ? server_worker : fake_worker, s) != 0) {
         atomic_store(&s->busy, false);
         finish(s, true, "Could not start the reply");
         return false;
@@ -826,3 +844,15 @@ bool chat_poll(ChatSession *s)
     }
     return changed;
 }
+
+bool chat_select_remote(ChatSession *s, const RemoteConfig *remote)
+{
+    if (atomic_load(&s->busy)) return false;
+    join_worker(s);
+    if (remote) s->remote = *remote;
+    else memset(&s->remote, 0, sizeof(s->remote));
+    s->remote_selected = remote != NULL;
+    return true;
+}
+
+bool chat_remote_selected(ChatSession *s) { return s->remote_selected; }

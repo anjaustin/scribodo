@@ -67,6 +67,24 @@ Scribodo lets an author brainstorm in chat, develop prose in documents, and revi
 
 The local model must run with BF16 weights and BF16 compute. Quantized checkpoints (GGUF, FP8, NVFP4, 4-bit MLX, and so on) and lower-precision conversions are prohibited. BF16 weights alone take about 3.46 GB, before activations and KV cache, so context length and observer concurrency are sized from measured memory. Scribodo never falls back from local to remote automatically.
 
+**An optional remote model.** You can add one OpenAI-compatible chat-completions provider. It's off unless configured and selected:
+
+1. Put the API key in a private file: `chmod 600 ~/.config/scribodo-key`.
+2. Write `~/Library/Application Support/Scribodo/remote.json`:
+   ```json
+   { "name": "Frontier", "base_url": "https://api.example.com/v1",
+     "model": "model-name", "api_key_file": "/Users/you/.config/scribodo-key",
+     "context_tokens": 32000 }
+   ```
+3. Click the model in the toolbar and choose it.
+
+**How a remote model is kept in check:**
+- **Selection:** every launch starts local, and only your choice in the toolbar switches.
+- **Indicator:** while the remote model is selected, the toolbar (in amber) and the chat header say where chat messages, attached documents and edit passages go.
+- **No fallback:** if the remote fails, you get its error. Scribodo never switches between local and remote on its own.
+- **The observer** always runs locally.
+- **Transport:** HTTPS is required, and redirects aren't followed. The key is only read from a private file and is sent only to the configured host.
+
 ### Data and provenance
 
 - Manuscripts stay as human-readable `.md` and `.txt` files in your project directory.
@@ -81,7 +99,7 @@ The local model must run with BF16 weights and BF16 compute. Quantized checkpoin
 2. **Foundation.** Workbench layout, projects, Markdown documents, MariaDB schema and migrations, revision history.
 3. **Creative workflow.** Persistent chat, the BF16 inference adapter, document context, reviewed AI edits.
 4. **Semantic and observer pipeline.** Embeddings, Qdrant indexing and retrieval, async extraction, provenance, the findings panel, and note and canon actions.
-5. **Connections and verification.** Entity and link navigation (done), canon conflict checks (done), the optional remote adapter, offline integration tests, backup and recovery, acceptance tests.
+5. **Connections and verification.** Entity and link navigation, canon conflict checks, the optional remote adapter, and backup and recovery (all done); offline integration tests and acceptance tests.
 
 The full acceptance criteria are in [`docs/SOW.md` §8](docs/SOW.md#8-acceptance-criteria).
 
@@ -158,6 +176,7 @@ make tsan      # the threaded code (chat, observer, supervisor) under ThreadSani
 make dbtest    # the store against the local MariaDB (tools/services.sh up), in a throwaway database
 make uitest-db # the app on the store: move a project in, resume after a restart, entities, a copied folder, database down
 make backuptest # back up, lose the folder, database and index, restore, resume
+make remotetest # the optional remote model, against a stand-in provider on 127.0.0.1
 make uitest    # scripted UI tests: the real app in a hidden window (needs an awake display)
 make llmtest   # end-to-end against the real model: supervisor, streaming, auth, crash recovery
 make uitest-real  # the real model through the real UI

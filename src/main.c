@@ -66,7 +66,7 @@ enum { FONT_UI = 0, FONT_PROSE = 1, FONT_CHAT = 2, FONT_COUNT };
 enum { FOCUS_NONE, FOCUS_DOC, FOCUS_CHAT, FOCUS_RECORD };
 enum { DRAG_NONE, DRAG_EXPLORER, DRAG_OBSERVER, DRAG_CHAT };
 enum { PT_NEW_DOC = 1, PT_RENAME_DOC, PT_RENAME_CHAT, PT_ATTACH_NAME };  /* what the name prompt is for */
-enum { MT_DOC = 1, MT_CHAT, MT_ATTACH };  /* what a context menu is for */
+enum { MT_DOC = 1, MT_CHAT, MT_ATTACH, MT_MODEL };  /* what a context menu is for */
 #define MAX_ATTACH 8
 
 #define RGB(r, g, b) ((Clay_Color){ r, g, b, 255 })
@@ -210,6 +210,12 @@ typedef struct {
     char status_left[256];
     char model_label[512];
     char store_label[160];
+    /* The optional remote model: configured or not; selected only by the
+     * author, each session starting local (SOW: no automatic fallback). */
+    RemoteConfig remote;
+    bool remote_ok;
+    char remote_why[200];
+    char remote_badge[200];
     int store_problem;          /* STORE_PROBLEM_COPY / _MISSING, or 0 */
     char store_original[PATH_MAX];
     Clay_Color store_color;
@@ -2126,6 +2132,12 @@ static void update_labels(App *app)
     LlmState ls = app->llm ? llm_server_state(app->llm, msg, sizeof(msg)) : LLM_READY;
     if (!app->llm) snprintf(msg, sizeof(msg), "Fake model (testing)");
     snprintf(app->model_label, sizeof(app->model_label), "\xE2\x97\x8F %s", msg);
+    bool remote_on = app->chat && chat_remote_selected(app->chat);
+    if (remote_on)
+        snprintf(app->model_label, sizeof(app->model_label), "\xE2\x97\x8F Remote: %s \xC2\xB7 chat and attached documents go to %s",
+                 app->remote.name, app->remote.host);
+    if (remote_on) snprintf(app->remote_badge, sizeof(app->remote_badge), "\xE2\x86\x97 sent to %s", app->remote.host);
+    else app->remote_badge[0] = '\0';
     StoreMode sm = store_mode(app->project_dir, NULL, 0, NULL);
     app->store_problem = sm == STORE_PAUSED && store_online() && app->project_dir[0]
                              ? store_problem(app->project_dir, app->store_original, sizeof(app->store_original))
@@ -2148,6 +2160,7 @@ static void update_labels(App *app)
         app->store_color = sm == STORE_PAUSED ? COL_ERR : COL_WARN;
     }
     app->model_color = ls == LLM_READY ? COL_OK : ls == LLM_FAILED ? COL_ERR : COL_WARN;
+    if (remote_on) app->model_color = COL_WARN; /* project content leaves this Mac */
 
     snprintf(app->chat_header, sizeof(app->chat_header), "%s", app->chat_title[0] ? app->chat_title : "New chat");
 }
@@ -2174,7 +2187,14 @@ static Clay_RenderCommandArray build_layout(App *app)
             slot(CLAY_ID("SaveButton"), 64, 24);
             grow();
             if (app->store_label[0]) label(app->store_label, FONT_UI, app->store_color);
-            label(app->model_label, FONT_UI, app->model_color);
+            /* The model in use; click to choose (when a remote is configured). */
+            CLAY({ .id = CLAY_ID("ModelPicker"),
+                   .layout = { .sizing = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(26) }, .padding = { 8, 8, 0, 0 },
+                               .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
+                   .backgroundColor = Clay_PointerOver(CLAY_ID("ModelPicker")) ? COL_HOVER : (Clay_Color){ 0 },
+                   .cornerRadius = CLAY_CORNER_RADIUS(4) }) {
+                label(app->model_label, FONT_UI, app->model_color);
+            }
             slot(CLAY_ID("ObserverToggle"), 96, 24);
         }
 
@@ -2277,6 +2297,7 @@ static Clay_RenderCommandArray build_layout(App *app)
                        .clip = { .horizontal = true } }) {
                     label("CHAT", FONT_UI, COL_MUTED);
                     label(app->chat_header, FONT_UI, COL_TEXT);
+                    if (app->remote_badge[0]) label(app->remote_badge, FONT_UI, COL_WARN);
                     grow();
                     slot(CLAY_ID("NewChatButton"), 80, 24);
                 }
@@ -2580,6 +2601,13 @@ int main(int argc, char **argv)
         semantic_set_embedder(app.embed);
     }
     app.chat = chat_create(app.llm);
+    /* A remote model only if the author configured one; never selected here. */
+    app.remote_ok = remote_load(&app.remote, app.remote_why, sizeof(app.remote_why));
+    if (!app.remote_ok && app.remote_why[0]) {
+        char msg[300];
+        snprintf(msg, sizeof(msg), "The remote model isn't available: %s", app.remote_why);
+        set_status(&app, msg);
+    }
     app.editor = editor_create(&app.fonts[FONT_PROSE]);
     app.chat_view = app.chat ? chat_view_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI], app.chat) : NULL;
     app.review = review_create(&app.fonts[FONT_PROSE], &app.fonts[FONT_UI]);
@@ -2838,6 +2866,21 @@ int main(int argc, char **argv)
             }
             /* Toolbar, chat header/footer and message list keep the focus. */
         }
+        if (!modal && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && Clay_PointerOver(CLAY_ID("ModelPicker"))) {
+            if (!app.remote_ok) {
+                set_status(&app, app.remote_why[0] ? app.remote_why
+                                                   : "Only the local model is configured (a remote one can be set up in remote.json; see README)");
+            } else {
+                static char items[2][240];
+                snprintf(items[0], sizeof(items[0]), "%s Local \xC2\xB7 LFM3-1.7B BF16 (nothing leaves this Mac)",
+                         chat_remote_selected(app.chat) ? "  " : "\xE2\x9C\x93");
+                snprintf(items[1], sizeof(items[1]), "%s Remote \xC2\xB7 %s (sends chat and attached documents to %s)",
+                         chat_remote_selected(app.chat) ? "\xE2\x9C\x93" : "  ", app.remote.name, app.remote.host);
+                const char *list[2] = { items[0], items[1] };
+                Rectangle pr = ELEMENT_RECT("ModelPicker");
+                menu_open(&app.menu, MT_MODEL, 0, (Vector2){ pr.x, pr.y + pr.height + 4 }, list, 2);
+            }
+        }
         if (!modal && IsMouseButtonPressed(MOUSE_BUTTON_RIGHT) && Clay_PointerOver(CLAY_ID("Explorer"))) {
             for (size_t i = 0; i < app.nchats; i++)
                 if (Clay_PointerOver(CLAY_IDI("ChatItem", (uint32_t)i))) {
@@ -3084,7 +3127,7 @@ int main(int argc, char **argv)
         if (chat_busy(app.chat)) {
             if (GuiButton(send_rect, "Stop")) chat_cancel(app.chat);
         } else {
-            bool ready = !app.llm || llm_server_state(app.llm, NULL, 0) == LLM_READY;
+            bool ready = !app.llm || chat_remote_selected(app.chat) || llm_server_state(app.llm, NULL, 0) == LLM_READY;
             if (!ready) GuiDisable();
             if (GuiButton(send_rect, "Send")) {
                 chat_view_submit_now(app.chat_view);
@@ -3114,6 +3157,20 @@ int main(int argc, char **argv)
                     }
                 if (!found) attach(&app, nm);
                 app.attach_touched = true;
+            }
+            if (pick >= 0 && app.menu.tag == MT_MODEL) {
+                bool remote = pick == 1;
+                if (remote == chat_remote_selected(app.chat)) {
+                } else if (!chat_select_remote(app.chat, remote ? &app.remote : NULL)) {
+                    set_status(&app, "Wait for the reply to finish before switching models");
+                } else {
+                    char msg[400];
+                    if (remote)
+                        snprintf(msg, sizeof(msg), "Using %s: chat messages, attached documents and edit passages now go to %s. "
+                                                   "The observer stays local.", app.remote.name, app.remote.host);
+                    else snprintf(msg, sizeof(msg), "Using the local model: nothing leaves this Mac");
+                    set_status(&app, msg);
+                }
             }
             if (pick >= 0 && app.menu.tag == MT_CHAT) {
                 const char *title = "";

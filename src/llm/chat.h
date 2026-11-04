@@ -20,6 +20,7 @@
 #include <stdint.h>
 
 #include "llm/server.h"
+#include "llm/remote.h"
 
 typedef enum { CHAT_USER = 0, CHAT_ASSISTANT = 1 } ChatRole;
 
@@ -118,5 +119,11 @@ long chat_estimate_tokens(const char *text);
  * 1 = more to come, 0 = finished, 2 = finished at the length limit,
  * -1 = error (message in err). */
 int chat_parse_sse_line(const char *line, char **acc, size_t *acc_len, char *err, size_t errlen);
+
+/* Use the configured remote model for the next requests (NULL: the local
+ * one). Only the author's explicit choice calls this; nothing falls back.
+ * False while a reply is being written. */
+bool chat_select_remote(ChatSession *s, const RemoteConfig *remote);
+bool chat_remote_selected(ChatSession *s);
 
 #endif
