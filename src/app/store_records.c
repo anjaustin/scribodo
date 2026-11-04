@@ -17,10 +17,12 @@ static double now_s(void)
     return (double)tv.tv_sec + (double)tv.tv_usec / 1e6;
 }
 
-static bool exists(Db *db, const char *sql, const char *id)
+/* Does the row exist *in this project* (sql takes the id, then the scope)?
+ * Live sources only point within their own project (red-team 008). */
+static bool exists(Db *db, const char *sql, const char *id, const char *scope)
 {
     DbRows r;
-    if (!id || !id[0] || !db_query(db, sql, (DbArg[1]){ DB_S(id) }, 1, &r)) return false;
+    if (!id || !id[0] || !scope || !scope[0] || !db_query(db, sql, (DbArg[2]){ DB_S(id), DB_S(scope) }, 2, &r)) return false;
     bool e = r.nrows > 0;
     db_rows_free(&r);
     return e;
@@ -55,9 +57,12 @@ bool sdb_record_append(Db *db, const char *project_id, RecordKind kind, const ch
         }
     }
     const FindingInfo *f = finding;
+    const char *related = f && exists(db, "SELECT id FROM records WHERE id = ? AND project_id = ?", f->related, project_id)
+                              ? f->related
+                              : NULL;
     DbArg v[11] = { DB_S(id), DB_I(ver), DB_S(status), DB_S(content ? content : ""),
                     DB_S(f ? nz(f->type) : NULL), DB_S(f ? nz(f->subject) : NULL), DB_S(f ? nz(f->relation) : NULL),
-                    DB_S(f ? nz(f->object) : NULL), DB_S(f ? nz(f->related) : NULL), DB_S(f ? f->related_text : NULL),
+                    DB_S(f ? nz(f->object) : NULL), DB_S(related), DB_S(f ? f->related_text : NULL),
                     DB_D(t) };
     ok = ok && db_run(db,
                       "INSERT INTO record_versions (record_id, ver, status, content, finding_type, subject, relation, object,"
@@ -69,8 +74,9 @@ bool sdb_record_append(Db *db, const char *project_id, RecordKind kind, const ch
         const char *rev = NULL, *conv = NULL;
         if (s->kind == SRC_DOC) {
             if (!strchr(s->doc, '/') && s->doc[0]) store_document_id(project_id, s->doc, true, doc, sizeof(doc));
-            if (exists(db, "SELECT id FROM revisions WHERE id = ?", s->revision)) rev = s->revision;
-        } else if (exists(db, "SELECT id FROM conversations WHERE id = ?", s->chat)) {
+            /* the snapshot must be of this very document */
+            if (exists(db, "SELECT id FROM revisions WHERE id = ? AND document_id = ?", s->revision, doc)) rev = s->revision;
+        } else if (exists(db, "SELECT id FROM conversations WHERE id = ? AND project_id = ?", s->chat, project_id)) {
             conv = s->chat;
         }
         DbArg a[10] = { DB_S(id), DB_I(ver), DB_S(s->kind == SRC_DOC ? "doc" : "chat"), DB_S(nz(doc)), DB_S(rev),

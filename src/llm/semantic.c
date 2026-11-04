@@ -421,6 +421,16 @@ void semantic_hits_free(SemHit *h, size_t n)
     free(h);
 }
 
+/* A payload number, 0 if missing or out of range (a cast of NaN or of a
+ * huge value is undefined). */
+static double payload_num(const cJSON *pl, const char *name)
+{
+    const cJSON *x = cJSON_GetObjectItem(pl, name);
+    if (!cJSON_IsNumber(x)) return 0;
+    double v = x->valuedouble;
+    return v >= 0 && v <= 9007199254740992.0 ? v : 0;
+}
+
 static size_t search_filtered(const char *pid, const char *query, cJSON *filter, size_t limit, SemHit **out)
 {
     *out = NULL;
@@ -468,10 +478,9 @@ static size_t search_filtered(const char *pid, const char *query, cJSON *filter,
 #undef S
         cJSON *t = cJSON_GetObjectItem(pl, "text");
         h->text = strdup(cJSON_IsString(t) ? t->valuestring : "");
-        h->seq = (long)cJSON_GetNumberValue(cJSON_GetObjectItem(pl, "seq"));
-        double st = cJSON_GetNumberValue(cJSON_GetObjectItem(pl, "start")), ln = cJSON_GetNumberValue(cJSON_GetObjectItem(pl, "len"));
-        h->start = st > 0 ? (size_t)st : 0;
-        h->len = ln > 0 ? (size_t)ln : 0;
+        h->seq = (long)payload_num(pl, "seq");
+        h->start = (size_t)payload_num(pl, "start");
+        h->len = (size_t)payload_num(pl, "len");
         /* Payloads come from our own writes, but check the project anyway. */
         cJSON *pp = cJSON_GetObjectItem(pl, "project_id");
         if (h->text && cJSON_IsString(pp) && !strcmp(pp->valuestring, pid)) k++;

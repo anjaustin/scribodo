@@ -9,6 +9,8 @@
  */
 #define _DARWIN_C_SOURCE
 #include <dirent.h>
+#include <sys/wait.h>
+#include <spawn.h>
 #include <stdatomic.h>
 #include <pthread.h>
 #include <pwd.h>
@@ -175,7 +177,9 @@ typedef struct {
     bool store_wanted;            /* use the store (off for UI scripts unless SCRIBODO_STORE=db) */
     char store_why[256];          /* why it's offline */
     pthread_t services_thread;
-    atomic_int services_state;    /* 0 idle, 1 starting services, 2 finished */
+    atomic_int services_state;    /* 0 idle, 1 working (services up / probing), 2 finished */
+    atomic_bool store_reachable;  /* the last probe reached the database */
+    double store_next_probe;      /* while offline: when to probe again */
     bool store_just_moved;        /* the project was just moved into the store (for the status) */
     bool services_started;
     bool record_close_armed;     /* a discard of uncommitted canon text was asked for... */
@@ -195,6 +199,8 @@ typedef struct {
     char status_left[256];
     char model_label[512];
     char store_label[160];
+    int store_problem;          /* STORE_PROBLEM_COPY / _MISSING, or 0 */
+    char store_original[PATH_MAX];
     Clay_Color store_color;
     char chat_header[200];
     Clay_Color model_color;
@@ -212,8 +218,15 @@ static void set_status(App *app, const char *msg)
  * file name in `fallback` would mislead. */
 static const char *store_says(App *app, const char *fallback)
 {
-    if (store_mode(app->project_dir, NULL, 0, NULL) == STORE_PAUSED)
+    if (store_mode(app->project_dir, NULL, 0, NULL) == STORE_PAUSED) {
+        int problem = store_online() ? store_problem(app->project_dir, NULL, 0) : 0;
+        if (problem == STORE_PROBLEM_COPY)
+            return "This folder is a copy of another project: this wasn't saved. Make it its own project first (Explorer).";
+        if (problem == STORE_PROBLEM_MISSING)
+            return "This project is missing from the project store: this wasn't saved. Restore it first (Explorer).";
+        if (store_online()) return "The project is being moved into the project store: this wasn't saved. Try again in a moment.";
         return "The project store is offline: this wasn't saved. Your documents are unaffected; try again once it's back.";
+    }
     if (store_mode(app->project_dir, NULL, 0, NULL) == STORE_DB) return "The project store couldn't save that (see its log)";
     return fallback;
 }
@@ -322,39 +335,60 @@ static void set_project(App *app, const char *real)
         if (app->prompt) prompt_close(app->prompt);
         app->menu.active = false;
         snprintf(app->project_dir, sizeof(app->project_dir), "%s", real);
+        /* Into the store first, so the observer never starts reading (and
+         * writing) the files an import is about to set aside. */
+        store_adopt_project(app);
         if (app->observer) observer_set_project(app->observer, real);
         app->findings_version = UINT64_MAX; /* re-list */
         /* A different project has different chats: start fresh (after the
          * current reply finishes, so it is saved with its own project). */
         if (app->chat) app->clear_chat_when_idle = true;
-        store_adopt_project(app);
     }
     app->lists_dirty = true;
 }
 
 /* Start the local services (Docker) in the background; the UI thread
  * retries the connection when this finishes. */
+/* Off the UI thread: the first time, start the local services (Docker);
+ * after that, just probe whether the database is reachable. */
+extern char **environ;
+
 static void *services_main(void *arg)
 {
     App *app = arg;
-    char cmd[PATH_MAX + 64];
-    snprintf(cmd, sizeof(cmd), "'%s../tools/services.sh' up >/dev/null 2>&1", GetApplicationDirectory());
-    int rc = system(cmd);
-    (void)rc;
+    if (!app->services_started && !getenv("SCRIBODO_SCRIPT")) {
+        app->services_started = true;
+        char tool[PATH_MAX + 64];
+        snprintf(tool, sizeof(tool), "%s../tools/services.sh", GetApplicationDirectory());
+        char *argv[] = { tool, "up", NULL }; /* no shell: the path is never interpreted */
+        posix_spawn_file_actions_t fa;
+        posix_spawn_file_actions_init(&fa);
+        posix_spawn_file_actions_addopen(&fa, STDOUT_FILENO, "/dev/null", O_WRONLY, 0);
+        posix_spawn_file_actions_addopen(&fa, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
+        pid_t pid;
+        if (posix_spawn(&pid, tool, &fa, NULL, argv, environ) == 0) {
+            int st;
+            waitpid(pid, &st, 0);
+        }
+        posix_spawn_file_actions_destroy(&fa);
+    }
+    atomic_store(&app->store_reachable, store_probe());
     atomic_store(&app->services_state, 2);
     return NULL;
+}
+
+static void store_try_later(App *app)
+{
+    if (atomic_load(&app->services_state) != 0) return;
+    atomic_store(&app->services_state, 1);
+    if (pthread_create(&app->services_thread, NULL, services_main, app) != 0) atomic_store(&app->services_state, 0);
 }
 
 static void store_begin(App *app)
 {
     app->store_why[0] = '\0';
     if (store_start(getenv("SCRIBODO_DB_NAME"), app->store_why, sizeof(app->store_why))) return;
-    /* Not reachable: start the services once (not under a UI script). */
-    if (!app->services_started && !getenv("SCRIBODO_SCRIPT")) {
-        app->services_started = true;
-        atomic_store(&app->services_state, 1);
-        if (pthread_create(&app->services_thread, NULL, services_main, app) != 0) atomic_store(&app->services_state, 0);
-    }
+    store_try_later(app); /* start the services / keep probing in the background */
 }
 
 /* A project opened while the store is up is moved into it once. */
@@ -372,6 +406,28 @@ static void store_adopt_project(App *app)
         char msg[400];
         snprintf(msg, sizeof(msg), "%s", why);
         set_status(app, msg);
+    }
+}
+
+/* The two ways out of a paused project that isn't offline (red-team 008). */
+static void store_resolve_problem(App *app)
+{
+    char why[256] = "";
+    int problem = store_problem(app->project_dir, NULL, 0);
+    bool ok = problem == STORE_PROBLEM_COPY ? store_fork(app->project_dir, why, sizeof(why))
+            : problem == STORE_PROBLEM_MISSING ? store_restore(app->project_dir, why, sizeof(why))
+                                                : false;
+    if (ok)
+        set_status(app, why[0] ? why
+                        : problem == STORE_PROBLEM_COPY ? "This copy is now its own project (the original is unchanged)"
+                                                        : "The project was restored into the project store from its saved files");
+    else
+        set_status(app, why[0] ? why : "Nothing to do");
+    app->lists_dirty = true;
+    app->findings_version = UINT64_MAX;
+    if (app->observer) {
+        observer_set_project(app->observer, app->project_dir);
+        observer_poke(app->observer);
     }
 }
 
@@ -786,10 +842,7 @@ static bool finish_prompt(App *app, const char *typed)
         }
         /* Titles are kept to 150 bytes, cut on a character boundary. */
         char title[160];
-        snprintf(title, sizeof(title), "%.150s", typed);
-        size_t tl = strlen(title);
-        while (tl > 0 && ((unsigned char)title[tl] & 0xC0) == 0x80) title[tl--] = '\0';
-        if (tl < strlen(typed) && tl > 0 && ((unsigned char)title[tl - 1] & 0xC0) == 0xC0) title[--tl] = '\0';
+        utf8_clip(title, sizeof(title), typed, 150);
         typed = title;
         if (strcmp(app->prompt_project, app->project_dir) != 0) return true; /* project changed: nothing done */
         if (!chat_store_rename(app->project_dir, app->menu_chat, typed)) {
@@ -823,6 +876,12 @@ static bool finish_prompt(App *app, const char *typed)
     bool self = tag == PT_RENAME_DOC && same_file(old_full, full);
     if (name_taken(app, name) && !self) {
         prompt_set_error(app->prompt, "A file with that name already exists");
+        return false;
+    }
+    if (tag == PT_NEW_DOC && store_mode(app->project_dir, NULL, 0, NULL) == STORE_PAUSED) {
+        /* An earlier document's History under this name can only be set
+         * aside in the store; otherwise the new one would inherit it. */
+        prompt_set_error(app->prompt, "New documents wait for the project store (notes, canon, chats and History are paused)");
         return false;
     }
     if (tag == PT_NEW_DOC) {
@@ -864,8 +923,13 @@ static bool finish_prompt(App *app, const char *typed)
         /* One update: the document keeps its id, so its History, sources,
          * attachments and observer state all follow. */
         char problems[160] = "";
-        if (!store_rename_document(spid, app->rename_from, name))
-            snprintf(problems, sizeof(problems), "the project store couldn't record it");
+        if (!store_rename_document(spid, app->rename_from, name)) {
+            /* Never leave the file renamed without its record: that would cut
+             * the document off from its History and sources. */
+            renamex_np(full, old_full, self ? 0 : RENAME_EXCL);
+            prompt_set_error(app->prompt, "The project store couldn't record the rename; nothing was changed");
+            return false;
+        }
         for (size_t i = 0; i < app->nattached; i++)
             if (!strcmp(app->attached[i], app->rename_from)) snprintf(app->attached[i], sizeof(app->attached[i]), "%s", name);
         recent_rename_doc(app->project_dir, app->rename_from, name);
@@ -913,9 +977,14 @@ static void import_documents(App *app)
         set_status(app, "Open a project folder first (\xE2\x8C\x98O)");
         return;
     }
+    if (store_mode(app->project_dir, NULL, 0, NULL) == STORE_PAUSED) {
+        set_status(app, "Importing waits for the project store (notes, canon, chats and History are paused)");
+        return;
+    }
     char **paths = NULL;
     size_t n = dialogs_choose_files("Import documents into this project (they are copied)", &paths);
     size_t done = 0;
+    bool history_kept = false;
     char first[PATH_MAX + 260] = "";
     for (size_t i = 0; i < n; i++) {
         const char *base = base_name(paths[i]);
@@ -940,6 +1009,9 @@ static void import_documents(App *app)
         if (ok) {
             done++;
             if (!first[0]) snprintf(first, sizeof(first), "%s", dst);
+            /* An earlier document by this name keeps its History; this one
+             * starts its own (as with New). */
+            if (!set_aside_history(app, name)) history_kept = true;
         }
     }
     dialogs_free_paths(paths, n);
@@ -947,7 +1019,8 @@ static void import_documents(App *app)
     app->lists_dirty = true;
     if (first[0] && !editor_is_dirty(app->editor)) open_path(app, first);
     char msg[200];
-    snprintf(msg, sizeof(msg), "Imported %zu of %zu document%s", done, n, n == 1 ? "" : "s");
+    snprintf(msg, sizeof(msg), "Imported %zu of %zu document%s%s", done, n, n == 1 ? "" : "s",
+             history_kept ? " (older History under a reused name couldn't be set aside)" : "");
     set_status(app, msg);
     if (done) observer_poke(app->observer);
 }
@@ -1802,7 +1875,9 @@ static int draw_attach_row(App *app, Rectangle r)
 static void send_chat(App *app, char *text)
 {
     if (store_mode(app->project_dir, NULL, 0, NULL) == STORE_PAUSED) {
-        set_status(app, "Chat is paused while the project store is offline (nothing would be saved)");
+        set_status(app, app->store_problem == STORE_PROBLEM_COPY      ? "Chat is paused: this folder is a copy (make it its own project in the Explorer)"
+                        : app->store_problem == STORE_PROBLEM_MISSING ? "Chat is paused: this project is missing from the store (restore it in the Explorer)"
+                                                                      : "Chat is paused while the project store is offline (nothing would be saved)");
         free(text);
         return;
     }
@@ -1810,9 +1885,9 @@ static void send_chat(App *app, char *text)
         chat_store_new_id(app->chat_id, sizeof(app->chat_id));
         snprintf(app->chat_project, sizeof(app->chat_project), "%s", app->project_dir);
         /* Title: the first line of the first message, shortened. */
-        size_t n = strcspn(text, "\n");
-        if (n > 48) n = 48;
-        snprintf(app->chat_title, sizeof(app->chat_title), "%.*s%s", (int)n, text, strlen(text) > n ? "\xE2\x80\xA6" : "");
+        size_t line = strcspn(text, "\n");
+        size_t n = utf8_clip(app->chat_title, sizeof(app->chat_title) - 4, text, line < 48 ? line : 48);
+        if (strlen(text) > n) strcat(app->chat_title, "\xE2\x80\xA6");
     }
     /* The attached documents, read now (by reference: nothing is copied
      * into the project). An edit request uses the edited document alone. */
@@ -1970,11 +2045,18 @@ static void update_labels(App *app)
     if (!app->llm) snprintf(msg, sizeof(msg), "Fake model (testing)");
     snprintf(app->model_label, sizeof(app->model_label), "\xE2\x97\x8F %s", msg);
     StoreMode sm = store_mode(app->project_dir, NULL, 0, NULL);
+    app->store_problem = sm == STORE_PAUSED && store_online() && app->project_dir[0]
+                             ? store_problem(app->project_dir, app->store_original, sizeof(app->store_original))
+                             : 0;
     if (!app->store_wanted) {
         app->store_label[0] = '\0';
     } else if (atomic_load(&app->services_state) == 1) {
         snprintf(app->store_label, sizeof(app->store_label), "\xE2\x97\x8F Starting the project store\xE2\x80\xA6");
         app->store_color = COL_WARN;
+    } else if (store_online() && app->store_problem) {
+        snprintf(app->store_label, sizeof(app->store_label), "\xE2\x97\x8F Project store \xC2\xB7 %s",
+                 app->store_problem == STORE_PROBLEM_COPY ? "this folder is a copy" : "project missing");
+        app->store_color = COL_ERR;
     } else if (store_online()) {
         snprintf(app->store_label, sizeof(app->store_label), "\xE2\x97\x8F Project store");
         app->store_color = COL_OK;
@@ -2021,7 +2103,15 @@ static Clay_RenderCommandArray build_layout(App *app)
                                .padding = CLAY_PADDING_ALL(12), .childGap = 2,
                                .layoutDirection = CLAY_TOP_TO_BOTTOM },
                    .backgroundColor = COL_PANEL, .clip = { .horizontal = true, .vertical = true, .childOffset = Clay_GetScrollOffset() } }) {
-                if (store_mode(app->project_dir, NULL, 0, NULL) == STORE_PAUSED)
+                if (app->store_problem == STORE_PROBLEM_COPY) {
+                    coming_soon("This folder is a copy of a project in the store.");
+                    coming_soon("Notes, canon, chats and History are paused.");
+                    list_item(CLAY_ID("StoreFixItem"), "Make it its own project", false);
+                } else if (app->store_problem == STORE_PROBLEM_MISSING) {
+                    coming_soon("This project is missing from the store.");
+                    coming_soon("Notes, canon, chats and History are paused.");
+                    list_item(CLAY_ID("StoreFixItem"), "Restore it from its saved files", false);
+                } else if (store_mode(app->project_dir, NULL, 0, NULL) == STORE_PAUSED)
                     coming_soon("Project store offline: notes, canon, chats and History are paused");
                 section_header("DOCUMENTS");
                 const char *cur = editor_path(app->editor) ? base_name(editor_path(app->editor)) : "";
@@ -2462,10 +2552,19 @@ int main(int argc, char **argv)
 
         if (app.llm) llm_server_tick(app.llm);
         if (app.embed) llm_server_tick(app.embed);
-        if (atomic_load(&app.services_state) == 2) { /* the services script finished: try again */
+        /* While the store is wanted but offline, probe every 15 s; when it
+         * answers, connect (on this thread), adopt the project, refresh. */
+        if (app.store_wanted && !store_online() && atomic_load(&app.services_state) == 0 && GetTime() >= app.store_next_probe) {
+            app.store_next_probe = GetTime() + 15.0;
+            store_try_later(&app);
+        }
+        if (atomic_load(&app.services_state) == 2) {
             pthread_join(app.services_thread, NULL);
             atomic_store(&app.services_state, 0);
-            store_begin(&app);
+            if (atomic_load(&app.store_reachable)) {
+                app.store_why[0] = '\0';
+                store_start(getenv("SCRIBODO_DB_NAME"), app.store_why, sizeof(app.store_why));
+            }
             if (store_online()) {
                 store_adopt_project(&app);
                 app.lists_dirty = true;
@@ -2500,7 +2599,11 @@ int main(int argc, char **argv)
                 attach_reset(&app); /* the old project's documents aren't this one's */
             }
         }
-        if (GetTime() - app.lists_refreshed > 3.0) app.lists_dirty = true;
+        /* Changes made here mark the lists at once; this catches the rest
+         * (files added in Finder, other windows). Store queries cost more
+         * than a directory read, so they're polled less often. */
+        double every = store_mode(app.project_dir, NULL, 0, NULL) == STORE_DB ? 10.0 : 3.0;
+        if (GetTime() - app.lists_refreshed > every) app.lists_dirty = true;
 
         /* Close requests: never lose unsaved prose silently. */
         if (WindowShouldClose()) {
@@ -2553,6 +2656,7 @@ int main(int argc, char **argv)
                 observer_request_rebuild(app.observer);
                 set_status(&app, "Rebuilding the semantic index from the project store\xE2\x80\xA6");
             }
+            else if (app.store_problem && Clay_PointerOver(CLAY_ID("StoreFixItem"))) store_resolve_problem(&app);
             else if (Clay_PointerOver(CLAY_ID("NewDocItem"))) begin_new_document(&app);
             else if (Clay_PointerOver(CLAY_ID("ImportItem"))) import_documents(&app);
             else if (Clay_PointerOver(CLAY_ID("NewNoteItem"))) {

@@ -102,6 +102,22 @@ static void test_utf8_simd_matches_scalar(void)
 }
 
 /* Random edits against a plain array reference implementation. */
+static void test_utf8_clip(void)
+{
+    char out[8];
+    /* "aé€😀" = 1 + 2 + 3 + 4 bytes */
+    const char *s = "a\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80";
+    CHECK(utf8_clip(out, sizeof(out), s, 2) == 1 && !strcmp(out, "a"));             /* inside é */
+    CHECK(utf8_clip(out, sizeof(out), s, 3) == 3 && !strcmp(out, "a\xC3\xA9"));      /* after é */
+    CHECK(utf8_clip(out, sizeof(out), s, 5) == 3);                                   /* inside € */
+    CHECK(utf8_clip(out, sizeof(out), s, 100) == 6 && !strcmp(out, "a\xC3\xA9\xE2\x82\xAC")); /* dst: 7 bytes */
+    CHECK(utf8_clip(out, sizeof(out), "abc", 100) == 3 && !strcmp(out, "abc"));
+    CHECK(utf8_clip(out, 1, "abc", 100) == 0 && out[0] == '\0');
+    char big[16];
+    CHECK(utf8_clip(big, sizeof(big), s, 9) == 6);                                   /* inside 😀 */
+    CHECK(utf8_clip(big, sizeof(big), s, 10) == 10 && !strcmp(big, s));
+}
+
 static void test_gap_buffer_random(void)
 {
     TextBuffer tb;
@@ -415,6 +431,7 @@ static void test_diff(void)
 int main(void)
 {
     TestCase tests[] = {
+        { "utf8_clip", test_utf8_clip },
         { "utf8_basic", test_utf8_basic },
         { "utf8_invalid", test_utf8_invalid },
         { "utf8_simd_matches_scalar", test_utf8_simd_matches_scalar },

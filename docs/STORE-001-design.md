@@ -1,6 +1,6 @@
 # Store 001: MariaDB as the structured authority
 
-**Status:** implemented. Each module dispatches on `store_mode()`, and the importer runs on first open. Qdrant (step 4b) is next.
+**Status:** implemented, red-teamed (`REDTEAM-008-store.md`). Each module dispatches on `store_mode()`, and the importer runs on first open. Qdrant (step 4b) is implemented too.
 **SOW:** §5 (data model), §6 (MariaDB, local-only), §7 (backups, offline), acceptance criteria 1, 6, 8 and 10.
 
 ## Why
@@ -45,7 +45,19 @@ On the first open of a project with the database available:
 2. Resolve every document file name, following `renames.jsonl`, to a `documents` row.
 3. Move the old files to `.scribodo/legacy-<date>/`, kept read-only for one release so nothing is deleted.
 
-The import is idempotent: rows are keyed by the existing ids, so a crash mid-import resumes.
+The import is idempotent: rows are keyed by the existing ids, so a crash mid-import resumes. Hardened in red-team 008:
+- **One importer at a time.** It holds an exclusive lock on `.scribodo/import.lock`. While the lock is held, every other window and thread sees the project as paused, so nothing is written to files that are about to be set aside.
+- **Resumable into the same project.** `.scribodo/import-pending` names the project row being filled. A crashed import continues into that row instead of starting another.
+- **Never into someone else's rows.** A project row that already has this path (the folder's marker was lost) is superseded, not reused. Any record or chat id that belongs to another project gets an id of its own, derived from the project and the original id, so a re-run gets the same one.
+- **Files that change underneath.** A fingerprint (sizes and times) of the imported files is taken before and after each pass. If anything changed, the import runs again, up to four passes.
+- **Times** come from each snapshot's epoch timestamp plus the milliseconds in its file name, not from parsing the local-time name (which is ambiguous across a DST change).
+
+## Copies and missing projects
+
+The marker (`.scribodo/store.json`, version 2) records the project id and the folder's device and inode. On use, it is checked against the store (cached for 30 s per thread):
+- **Moved folder** (same inode, new path): the project's path is updated.
+- **Copy** (another inode, and the original folder still holds the project): paused, with "Make it its own project". `store_fork` writes the original's data as files into the copy and imports them as a new project with ids of its own. The original is never written to.
+- **Missing** (no such project row: the store was reset, or the folder came from another machine): paused, with "Restore it from its saved files". `store_restore` puts back the newest `legacy-*` files and imports them. With none, the project starts again from its documents.
 
 ## Backups (SOW §7)
 
@@ -78,4 +90,6 @@ Merging offline file writes into the database later was rejected. Record version
 
 **Per-thread connections:** the UI and the observer worker each get their own connection (thread-local, opened on first use), because a MariaDB connection must not be shared between threads.
 
-**Byte-exact names:** every table uses `utf8mb4_bin`. The server's default collation ignores case and accents, which would make `a.md`/`A.md` and `é.md`/`e.md` collide on case-sensitive volumes.
+**Byte-exact names:** names and other author text use `utf8mb4_nopad_bin` (migration 003). The server's default collation ignores case and accents, which would make `a.md`/`A.md` and `é.md`/`e.md` collide on case-sensitive volumes. Plain `utf8mb4_bin` still ignores trailing spaces, so `Chapter.md` and `Chapter.md ` would be one name. Generated ids keep `utf8mb4_bin`: foreign keys pin their collation, and they never contain spaces.
+
+**History order** is the insertion sequence `revisions.seq` (migration 003), not a timestamp. Two saves in one millisecond, or a clock stepped back, can't reorder History.

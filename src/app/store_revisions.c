@@ -47,8 +47,8 @@ bool sdb_revision_record(Db *db, const char *project_id, const char *doc_path, c
     DbRows r;
     bool same = false;
     if (ok && db_query(db,
-                       any_match ? "SELECT id FROM revisions WHERE document_id = ? AND hash = ? ORDER BY created_at DESC LIMIT 1"
-                                 : "SELECT id, hash FROM revisions WHERE document_id = ? ORDER BY created_at DESC LIMIT 1",
+                       any_match ? "SELECT id FROM revisions WHERE document_id = ? AND hash = ? ORDER BY seq DESC LIMIT 1"
+                                 : "SELECT id, hash FROM revisions WHERE document_id = ? ORDER BY seq DESC LIMIT 1",
                        any_match ? (DbArg[2]){ DB_S(doc), DB_S(hash) } : (DbArg[2]){ DB_S(doc), DB_S(NULL) },
                        any_match ? 2 : 1, &r)) {
         if (r.nrows && (any_match || (db_cell(&r, 0, 1) && !strcmp(db_cell(&r, 0, 1), hash)))) {
@@ -84,7 +84,7 @@ size_t sdb_revision_list(Db *db, const char *project_id, const char *doc_path, R
     DbRows r;
     if (!db_query(db,
                   "SELECT id, origin, note, hash, created_at, CHAR_LENGTH(content) FROM revisions WHERE document_id = ? "
-                  "ORDER BY created_at DESC",
+                  "ORDER BY seq DESC",
                   (DbArg[1]){ DB_S(doc) }, 1, &r))
         return 0;
     Revision *list = r.nrows ? calloc(r.nrows, sizeof(Revision)) : NULL;

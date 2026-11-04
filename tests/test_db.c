@@ -10,6 +10,8 @@
 #include "../src/app/store.h"
 #include "../src/app/store_backends.h"
 #include "../src/llm/semantic.h"
+#include <fcntl.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include "../src/app/renames.h"
 #include "test_util.h"
@@ -51,8 +53,10 @@ static void test_db(void)
         fprintf(stderr, "    %s\n", err);
         return;
     }
-    CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 2);
-    CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 2); /* idempotent */
+    bool migrated = db_migrate(db, err, sizeof(err));
+    if (!migrated) fprintf(stderr, "    %s\n", err);
+    CHECK(migrated && db_schema_version(db) == 3);
+    CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 3); /* idempotent */
 
     /* Author text with quotes, backslashes, SQL and Unicode goes through
      * prepared statements untouched. */
@@ -122,6 +126,59 @@ static void test_db(void)
 }
 
 /* Stable ids for projects and documents; names compare byte for byte. */
+/* Migration 003 on a database that already has data (red-team 008):
+ * History gets an insertion order that holds when times tie, and names that
+ * differ only by trailing spaces are different names. */
+static void test_migration(void)
+{
+    char saved[64], err[512] = "";
+    snprintf(saved, sizeof(saved), "%s", g_name);
+    snprintf(g_name, sizeof(g_name), "%s_m", saved);
+    CHECK(admin("CREATE DATABASE %s CHARACTER SET utf8mb4") && admin("GRANT ALL ON %s.* TO 'scribodo'@'%%'"));
+    DbConfig c;
+    CHECK(db_config_default(&c, err, sizeof(err)));
+    snprintf(c.database, sizeof(c.database), "%s", g_name);
+    Db *db = db_open(&c, err, sizeof(err));
+    CHECK(db != NULL);
+    if (db) {
+        CHECK(db_migrate_upto(db, 2, err, sizeof(err)) && db_schema_version(db) == 2);
+        CHECK(db_run(db, "INSERT INTO projects (id, name, path, path_hash, created_at, updated_at) VALUES ('p-1','b','/b','h',1,1)",
+                     NULL, 0, NULL));
+        CHECK(db_run(db, "INSERT INTO documents (id, project_id, name, created_at) VALUES ('d-1','p-1','ch.md',1)", NULL, 0, NULL));
+        /* Inserted out of time order: seq must follow time for old rows. */
+        CHECK(db_run(db, "INSERT INTO revisions (id, document_id, hash, content, origin, created_at) VALUES"
+                         " ('r-b','d-1','h2','second','save',20), ('r-a','d-1','h1','first','save',10)",
+                     NULL, 0, NULL));
+        bool migrated = db_migrate(db, err, sizeof(err));
+        if (!migrated) fprintf(stderr, "    %s\n", err);
+        CHECK(migrated && db_schema_version(db) == 3);
+        DbRows r;
+        CHECK(db_query(db, "SELECT id FROM revisions ORDER BY seq", NULL, 0, &r) && r.nrows == 2 &&
+              !strcmp(db_cell(&r, 0, 0), "r-a") && !strcmp(db_cell(&r, 1, 0), "r-b"));
+        db_rows_free(&r);
+        /* New rows come after, even with an older (or equal) time. */
+        CHECK(db_run(db, "INSERT INTO revisions (id, document_id, hash, content, origin, created_at) VALUES"
+                         " ('r-c','d-1','h3','third','save',5)",
+                     NULL, 0, NULL));
+        CHECK(db_query(db, "SELECT id FROM revisions ORDER BY seq DESC LIMIT 1", NULL, 0, &r) && r.nrows == 1 &&
+              !strcmp(db_cell(&r, 0, 0), "r-c"));
+        db_rows_free(&r);
+        /* Trailing spaces are significant now. */
+        CHECK(db_run(db, "INSERT INTO documents (id, project_id, name, created_at) VALUES ('d-2','p-1','ch.md ',1)", NULL, 0,
+                     NULL));
+        CHECK(db_query(db, "SELECT id FROM documents WHERE name = ?", (DbArg[1]){ DB_S("ch.md") }, 1, &r) && r.nrows == 1 &&
+              !strcmp(db_cell(&r, 0, 0), "d-1"));
+        db_rows_free(&r);
+        /* Foreign keys still hold after the change. */
+        CHECK(!db_run(db, "INSERT INTO revisions (id, document_id, hash, content, origin, created_at) VALUES"
+                          " ('r-x','d-missing','h','x','save',1)",
+                      NULL, 0, NULL));
+        db_close(db);
+    }
+    admin("DROP DATABASE %s");
+    snprintf(g_name, sizeof(g_name), "%s", saved);
+}
+
 static void test_store_ids(void)
 {
     char why[256];
@@ -142,6 +199,20 @@ static void test_store_ids(void)
     CHECK(store_rename_document(p1, "a.md", "b.md"));
     CHECK(store_document_name(d1, name, sizeof(name)) && !strcmp(name, "b.md"));
     CHECK(store_document_name(d2, name, sizeof(name)) && strncmp(name, "b.md (earlier", 13) == 0);
+    CHECK(store_document_id(p1, "b.md", false, d3, sizeof(d3)) && !strcmp(d3, d1));
+    /* A connection the server drops (restart, timeout) is noticed and
+     * reopened on next use (red-team 008). */
+    Db *db = store_db();
+    DbRows r;
+    CHECK(db && db_query(db, "SELECT CONNECTION_ID()", NULL, 0, &r) && r.nrows == 1);
+    char kill_sql[64];
+    snprintf(kill_sql, sizeof(kill_sql), "KILL CONNECTION %s", r.nrows ? db_cell(&r, 0, 0) : "0");
+    db_rows_free(&r);
+    CHECK(admin(kill_sql));
+    CHECK(!db_query(db, "SELECT 1", NULL, 0, &r) && db_broken(db));
+    Db *again = store_db();
+    CHECK(again && store_online() && db_query(again, "SELECT 1", NULL, 0, &r) && r.nrows == 1);
+    if (again) db_rows_free(&r);
     CHECK(store_document_id(p1, "b.md", false, d3, sizeof(d3)) && !strcmp(d3, d1));
     store_stop();
     store_set_offline(true);
@@ -173,6 +244,14 @@ static void test_backends(void)
     free(t0);
     CHECK(n && sdb_revision_load(db, pid, "/x/other.md", &list[1]) == NULL); /* not that document's */
     free(list);
+    /* History order is the order recorded, whatever the clock said (two
+     * saves in one millisecond, a clock stepped back). */
+    CHECK(db_run(db, "UPDATE revisions SET created_at = 100 WHERE id = ?", (DbArg[1]){ DB_S(r2) }, 1, NULL));
+    CHECK(db_run(db, "UPDATE revisions SET created_at = 200 WHERE id = ?", (DbArg[1]){ DB_S(r1) }, 1, NULL));
+    n = sdb_revision_list(db, pid, "/x/ch1.md", &list);
+    CHECK(n == 2 && !strcmp(list[0].origin, "ai-edit")); /* r2, recorded last, is still the newest */
+    free(list);
+    CHECK(sdb_revision_record(db, pid, "/x/ch1.md", "second", "save", NULL, false, &rec, NULL, 0) && !rec); /* same as newest */
 
     /* Records: versions, sources by id, the document's current name after a rename. */
     SourceRef src = { .kind = SRC_DOC, .start = 0, .len = 5, .quote = "first" };
@@ -209,11 +288,40 @@ static void test_backends(void)
     CHECK(n == 2);
     free(list);
 
+    /* Another project's ids are never linked (red-team 008): its revision,
+     * its chat and its records come through as plain quotes. */
+    char other[40];
+    CHECK(store_project_id("/private/var/empty", true, other, sizeof(other)));
+    char ofid[40];
+    store_new_id('f', ofid, sizeof(ofid));
+    SourceRef xs = src; /* r1 is pid's revision, of a document named ch1.md there */
+    snprintf(xs.doc, sizeof(xs.doc), "Chapter One.md");
+    FindingInfo xf = fi; /* related: pid's canon entry */
+    CHECK(sdb_record_append(db, other, REC_FINDING, ofid, "new", "Elsewhere.", &xs, 1, &xf, true, NULL));
+    DbRows xr;
+    CHECK(db_query(db, "SELECT revision_id FROM source_refs WHERE record_id = ?", (DbArg[1]){ DB_S(ofid) }, 1, &xr) &&
+          xr.nrows == 1 && db_cell(&xr, 0, 0) == NULL);
+    db_rows_free(&xr);
+    CHECK(db_query(db, "SELECT related_id FROM record_versions WHERE record_id = ?", (DbArg[1]){ DB_S(ofid) }, 1, &xr) &&
+          xr.nrows == 1 && db_cell(&xr, 0, 0) == NULL);
+    db_rows_free(&xr);
+
     /* Chats: messages in order, referenced documents by id. */
     ChatMessage u = { .role = CHAT_USER, .content = "compare", .docs = "Chapter One.md\nnotes.md" };
     ChatMessage a = { .role = CHAT_ASSISTANT, .content = "They differ." };
     CHECK(sdb_chat_append(db, pid, "20261104-150000-abcd", "Compare", &u) && sdb_chat_append(db, pid, "20261104-150000-abcd", "x", &a));
     CHECK(store_rename_document(pid, "notes.md", "Notes.md"));
+    {
+        char ofid2[40];
+        store_new_id('f', ofid2, sizeof(ofid2));
+        SourceRef cs = { .kind = SRC_CHAT, .message = 0, .start = 0, .len = 3, .quote = "com" };
+        snprintf(cs.chat, sizeof(cs.chat), "20261104-150000-abcd"); /* pid's chat */
+        CHECK(sdb_record_append(db, other, REC_FINDING, ofid2, "new", "Elsewhere.", &cs, 1, NULL, true, NULL));
+        DbRows cr;
+        CHECK(db_query(db, "SELECT conversation_id FROM source_refs WHERE record_id = ?", (DbArg[1]){ DB_S(ofid2) }, 1, &cr) &&
+              cr.nrows == 1 && db_cell(&cr, 0, 0) == NULL);
+        db_rows_free(&cr);
+    }
     ChatMessage *msgs = NULL;
     size_t nm = 0;
     CHECK(sdb_chat_load(db, pid, "20261104-150000-abcd", &msgs, &nm) && nm == 2 && msgs[0].role == CHAT_USER &&
@@ -321,6 +429,153 @@ static void test_import(void)
     system(cmd);
 }
 
+/* Red-team 008: a copied folder never merges into the original; a missing
+ * project restores from its set-aside files; one importer at a time; a stale
+ * project row at the same path is not reused. */
+static void write_file(const char *path, const char *text)
+{
+    FILE *f = fopen(path, "wb");
+    if (f) {
+        fputs(text, f);
+        fclose(f);
+    }
+}
+
+static size_t note_count(const char *proj)
+{
+    Record *r = NULL;
+    size_t n = records_list(proj, REC_NOTE, &r);
+    records_free(r, n);
+    return n;
+}
+
+static void test_import_safety(void)
+{
+    char why[256];
+    CHECK(store_start(g_name, why, sizeof(why)));
+    const char *tmp = getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp";
+    char a[512], b[512], doc[700], cmd[1200];
+    snprintf(a, sizeof(a), "%s/scribodo-safe-a-%d", tmp, (int)getpid());
+    snprintf(b, sizeof(b), "%s/scribodo-safe-b-%d", tmp, (int)getpid());
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s' '%s'", a, b);
+    system(cmd);
+    mkdir(a, 0755);
+    snprintf(doc, sizeof(doc), "%s/ch1.md", a);
+    write_file(doc, "One.\n");
+    char nid[40];
+    records_new_id(REC_NOTE, nid, sizeof(nid));
+    CHECK(records_append(a, REC_NOTE, nid, "active", "original note", NULL, 0, NULL));
+    CHECK(revisions_record(a, doc, "One.\n", "save", NULL, NULL));
+
+    /* Copied before either was moved into the store: both import the same
+     * snapshot files, and each must get its own History. */
+    char d0[512];
+    snprintf(d0, sizeof(d0), "%s/scribodo-safe-d-%d", tmp, (int)getpid());
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s' && cp -R '%s' '%s'", d0, a, d0);
+    CHECK(system(cmd) == 0);
+
+    /* Another importer holds the lock: refused, and writers see it paused. */
+    char lockp[700];
+    snprintf(lockp, sizeof(lockp), "%s/.scribodo/import.lock", a);
+    int fd = open(lockp, O_RDWR | O_CREAT, 0644);
+    CHECK(fd >= 0 && flock(fd, LOCK_EX | LOCK_NB) == 0);
+    CHECK(store_mode(a, NULL, 0, NULL) == STORE_PAUSED);
+    CHECK(!records_append(a, REC_NOTE, nid, "active", "lost?", NULL, 0, NULL));
+    CHECK(!store_import(a, why, sizeof(why)) && strstr(why, "another window"));
+    flock(fd, LOCK_UN);
+    close(fd);
+    CHECK(store_mode(a, NULL, 0, NULL) == STORE_FILES);
+
+    /* A stale row for this path (an earlier project here, marker lost) is
+     * superseded, not reused. */
+    char stale[40], pa[40];
+    CHECK(store_project_id(a, true, stale, sizeof(stale)));
+    CHECK(store_import(a, why, sizeof(why)));
+    CHECK(store_mode(a, pa, sizeof(pa), NULL) == STORE_DB && strcmp(pa, stale) != 0);
+    CHECK(note_count(a) == 1);
+    CHECK(store_import(d0, why, sizeof(why)));
+    char pd[40], docd[700];
+    CHECK(store_mode(d0, pd, sizeof(pd), NULL) == STORE_DB && strcmp(pd, pa) != 0);
+    snprintf(docd, sizeof(docd), "%s/ch1.md", d0);
+    Revision *drevs = NULL;
+    CHECK(revisions_list(d0, docd, &drevs) == 1);
+    free(drevs);
+    drevs = NULL;
+    CHECK(revisions_list(a, doc, &drevs) == 1);
+    free(drevs);
+    CHECK(note_count(d0) == 1);
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", d0);
+    system(cmd);
+    char pending[700];
+    snprintf(pending, sizeof(pending), "%s/.scribodo/import-pending", a);
+    struct stat st;
+    CHECK(stat(pending, &st) != 0);
+
+    /* A copy of the folder: paused as a copy, then forked into its own
+     * project; the original is untouched by the copy's writes. */
+    snprintf(cmd, sizeof(cmd), "cp -R '%s' '%s'", a, b);
+    CHECK(system(cmd) == 0);
+    store_forget_verification();
+    char orig[1024];
+    CHECK(store_mode(b, NULL, 0, NULL) == STORE_PAUSED);
+    CHECK(store_problem(b, orig, sizeof(orig)) == STORE_PROBLEM_COPY);
+    CHECK(store_fork(b, why, sizeof(why)));
+    char pb[40];
+    CHECK(store_mode(b, pb, sizeof(pb), NULL) == STORE_DB && strcmp(pa, pb) != 0);
+    CHECK(note_count(b) == 1);
+    Record *r = NULL;
+    size_t n = records_list(b, REC_NOTE, &r);
+    CHECK(n == 1 && strcmp(r[0].id, nid) != 0 && !strcmp(record_current(&r[0])->content, "original note"));
+    char bnid[40];
+    snprintf(bnid, sizeof(bnid), "%s", n ? r[0].id : "");
+    records_free(r, n);
+    CHECK(records_append(b, REC_NOTE, bnid, "active", "copy's edit", NULL, 0, NULL));
+    n = records_list(a, REC_NOTE, &r);
+    CHECK(n == 1 && !strcmp(record_current(&r[0])->content, "original note"));
+    records_free(r, n);
+    char docb[700];
+    snprintf(docb, sizeof(docb), "%s/ch1.md", b);
+    Revision *revs = NULL;
+    n = revisions_list(b, docb, &revs);
+    CHECK(n == 1);
+    free(revs);
+    store_forget_verification();
+    CHECK(store_mode(a, NULL, 0, NULL) == STORE_DB); /* the original is still itself */
+
+    /* Moved to another volume (or restored from a backup): a new inode, but
+     * the original is gone, so it is the project, not a copy. */
+    char c[512];
+    snprintf(c, sizeof(c), "%s/scribodo-safe-c-%d", tmp, (int)getpid());
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s' && cp -R '%s' '%s' && rm -rf '%s'", c, b, c, b);
+    CHECK(system(cmd) == 0);
+    store_forget_verification();
+    char pc[40];
+    CHECK(store_mode(c, pc, sizeof(pc), NULL) == STORE_DB && !strcmp(pc, pb));
+    CHECK(store_problem(c, NULL, 0) == 0);
+    n = records_list(c, REC_NOTE, &r);
+    CHECK(n == 1 && !strcmp(record_current(&r[0])->content, "copy's edit"));
+    records_free(r, n);
+    snprintf(cmd, sizeof(cmd), "cp -R '%s' '%s'", c, b); /* and a copy of it again is a copy */
+    CHECK(system(cmd) == 0);
+    store_forget_verification();
+    CHECK(store_problem(b, NULL, 0) == STORE_PROBLEM_COPY);
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", c);
+    system(cmd);
+
+    /* The project's rows disappear (store reset): paused as missing, then
+     * restored from the set-aside files. */
+    Db *db = store_db();
+    CHECK(db_run(db, "DELETE FROM projects WHERE id = ?", (DbArg[1]){ DB_S(pa) }, 1, NULL));
+    store_forget_verification();
+    CHECK(store_mode(a, NULL, 0, NULL) == STORE_PAUSED && store_problem(a, NULL, 0) == STORE_PROBLEM_MISSING);
+    CHECK(store_restore(a, why, sizeof(why)));
+    char pa2[40];
+    CHECK(store_mode(a, pa2, sizeof(pa2), NULL) == STORE_DB && strcmp(pa2, pa) != 0);
+    CHECK(note_count(a) == 1);
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s' '%s'", a, b);
+    system(cmd);
+}
+
 /* Semantic retrieval against the local Qdrant (fake embedder): committed
  * canon only, kinds kept apart, and a wiped index rebuilt from MariaDB with
  * exact provenance (SOW acceptance 10). */
@@ -401,8 +656,8 @@ int main(void)
         fprintf(stderr, "dbtest: can't set up a test database (is tools/services.sh up?)\n");
         return 1;
     }
-    TestCase tests[] = { { "db", test_db }, { "store_ids", test_store_ids }, { "backends", test_backends }, { "import", test_import }, { "semantic", test_semantic } };
-    int rc = run_tests(tests, 5);
+    TestCase tests[] = { { "db", test_db }, { "migration", test_migration }, { "store_ids", test_store_ids }, { "backends", test_backends }, { "import", test_import }, { "import_safety", test_import_safety }, { "semantic", test_semantic } };
+    int rc = run_tests(tests, 7);
     admin("DROP DATABASE %s");
     return rc;
 }

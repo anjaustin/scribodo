@@ -36,4 +36,8 @@ int utf8_encode_one(uint32_t cp, uint8_t out[4]);
  * bytes consumed (>= 1 when avail > 0). Invalid input yields U+FFFD. */
 int utf8_decode_one(const uint8_t *s, size_t avail, uint32_t *cp);
 
+/* Copy at most `max` bytes of the string `src` (and less than `dstlen`)
+ * into dst, never cutting a UTF-8 sequence in two. Returns bytes copied. */
+size_t utf8_clip(char *dst, size_t dstlen, const char *src, size_t max);
+
 #endif

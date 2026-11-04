@@ -165,7 +165,8 @@ static char *slurp(const char *path)
 static int by_updated_desc(const void *a, const void *b)
 {
     const ChatSummary *x = a, *y = b;
-    return (y->updated > x->updated) - (y->updated < x->updated);
+    if (y->updated != x->updated) return (y->updated > x->updated) - (y->updated < x->updated);
+    return (y->updated_nsec > x->updated_nsec) - (y->updated_nsec < x->updated_nsec);
 }
 
 size_t chat_store_list(const char *project_dir, ChatSummary **out)
@@ -208,6 +209,7 @@ size_t chat_store_list_files(const char *project_dir, ChatSummary **out)
         memset(c, 0, sizeof(*c));
         memcpy(c->id, ent->d_name, len - 6);
         c->updated = st.st_mtimespec.tv_sec;
+        c->updated_nsec = st.st_mtimespec.tv_nsec;
         snprintf(c->title, sizeof(c->title), "Chat %s", c->id);
         /* Title from the meta line, or the latest rename. */
         FILE *f = fopen(path, "rb");

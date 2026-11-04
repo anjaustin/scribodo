@@ -32,12 +32,16 @@ Db *db_open(const DbConfig *c, char *err, size_t errlen);
 void db_close(Db *db);
 /* Apply any migrations not yet applied (each in its own transaction). */
 bool db_migrate(Db *db, char *err, size_t errlen);
+/* Tests: apply migrations only up to version `upto`. */
+bool db_migrate_upto(Db *db, int upto, char *err, size_t errlen);
 int db_schema_version(Db *db);
 
 bool db_begin(Db *db);
 bool db_commit(Db *db);
 void db_rollback(Db *db);
 const char *db_error(Db *db);
+/* The connection was lost (the caller should drop it and reconnect). */
+bool db_broken(Db *db);
 
 /* ---- prepared statements ------------------------------------------------- */
 

@@ -1,0 +1,27 @@
+# Run 4: a copy of the project folder (cp -R after run 2). The store
+# recognises it as a copy and pauses it rather than mixing its writes into
+# the original; "Make it its own project" gives it the original's data
+# under a project of its own (red-team 008).
+wait 5
+dialog "$DIR/book-copy"
+click_element WelcomeOpen
+expect element_w StoreFixItem 10 2000
+click_element ChatInput
+type "hello from the copy"
+key ENTER
+expect status "Chat is paused: this folder is a copy"
+expect chat_count 0
+click_element StoreFixItem
+expect status "now its own project"
+expect explorer_has "Chapter One.md"
+expect explorer_has "remember the lighthouse"
+expect explorer_has "Old chat"
+click_element CanonItem0
+expect record "Ångström."
+click_element RecordClose
+click_element ChatInput
+type "only in the copy"
+key ENTER
+wait_chat
+expect chat_count 2
+expect files "$DIR/book-copy/.scribodo" "store.json" 1

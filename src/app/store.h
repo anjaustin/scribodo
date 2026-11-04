@@ -33,6 +33,9 @@ void store_set_offline(bool offline);
  * mid-use is dropped and reopened on the next call. */
 Db *store_db(void);
 void store_thread_done(void); /* close this thread's connection */
+/* Can the database be reached? (a short, separate connection: safe on any
+ * thread; the UI thread then calls store_start). */
+bool store_probe(void);
 
 /* Where a project's structured data lives. A project is in the store once
  * it has been imported (<project>/.scribodo/store.json names its id). */
@@ -45,8 +48,23 @@ typedef enum {
 /* The mode for `project_dir`; for STORE_DB also its project id and this
  * thread's connection. */
 StoreMode store_mode(const char *project_dir, char *project_id, size_t idlen, Db **db);
-/* Mark a project as moved into the store (after a successful import). */
+/* Mark a project as moved into the store (after a successful import): the
+ * marker records the folder's identity (device, inode). */
 bool store_mark_imported(const char *project_dir, const char *project_id);
+
+/* Why a project with a marker is paused although the store is up:
+ *   STORE_PROBLEM_COPY     this folder isn't the one the project belongs to
+ *                          (a copy, or a replacement); *original gets that path
+ *   STORE_PROBLEM_MISSING  the store has no such project (reset, another
+ *                          database, a restored folder)
+ * 0 when there is no problem. A moved folder is not a problem: the project's
+ * path follows it. */
+enum { STORE_PROBLEM_COPY = 1, STORE_PROBLEM_MISSING = 2 };
+int store_problem(const char *project_dir, char *original, size_t len);
+void store_forget_verification(void);
+/* Internal (store_import): this thread is importing `project_dir` (NULL:
+ * done), so it alone still sees the project's files. */
+void store_set_importing(const char *project_dir);
 
 /* A new stable id: "<prefix>-YYYYMMDD-HHMMSS-<16 hex>". */
 void store_new_id(char prefix, char *out, size_t outlen);

@@ -22,6 +22,7 @@ typedef struct {
     char id[40];
     char title[160];
     time_t updated;
+    long updated_nsec; /* orders chats changed within one second */
 } ChatSummary;
 
 /* Directory for a project rooted at `project_dir` (created on demand). */

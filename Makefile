@@ -164,6 +164,9 @@ uitest-db: $(APP)
 	    SCRIBODO_STORE=db SCRIBODO_DB_NAME=$$db SCRIBODO_SCRIPT=$$s SCRIBODO_SCRIPT_DIR=$$work SCRIBODO_SHOT_DIR=$$PWD/build/ui/store \
 	      $(WATCHDOG) 180 ui-store ./$(APP) 2>>build/ui/store/stderr.log || fail=1; echo; \
 	  done; \
+	  cp -R $$work/book $$work/book-copy; \
+	  SCRIBODO_STORE=db SCRIBODO_DB_NAME=$$db SCRIBODO_SCRIPT=tests/ui/store/4_copy.scribo SCRIBODO_SCRIPT_DIR=$$work \
+	    SCRIBODO_SHOT_DIR=$$PWD/build/ui/store $(WATCHDOG) 180 ui-store ./$(APP) 2>>build/ui/store/stderr.log || fail=1; echo; \
 	  SCRIBODO_STORE=db SCRIBODO_DB_PORT=1 SCRIBODO_SCRIPT=tests/ui/store/3_paused.scribo SCRIBODO_SCRIPT_DIR=$$work \
 	    SCRIBODO_SHOT_DIR=$$PWD/build/ui/store $(WATCHDOG) 180 ui-store ./$(APP) 2>>build/ui/store/stderr.log || fail=1; \
 	  tools/services.sh testdb drop $$db >/dev/null; exit $$fail

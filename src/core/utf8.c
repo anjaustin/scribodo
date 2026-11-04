@@ -1,5 +1,7 @@
 #include "utf8.h"
 
+#include <string.h>
+
 #include <stdbool.h>
 
 #if defined(__ARM_NEON) || defined(__ARM_NEON__)
@@ -169,4 +171,18 @@ size_t utf8_encode(const uint32_t *cps, size_t n, uint8_t *out)
 #else
     return utf8_encode_scalar(cps, n, out);
 #endif
+}
+
+size_t utf8_clip(char *dst, size_t dstlen, const char *src, size_t max)
+{
+    if (!dstlen) return 0;
+    size_t len = strlen(src), n = len;
+    if (n > max) n = max;
+    if (n > dstlen - 1) n = dstlen - 1;
+    /* Cut before the first byte of the sequence that doesn't fit. */
+    if (n < len)
+        while (n > 0 && ((unsigned char)src[n] & 0xC0) == 0x80) n--;
+    memcpy(dst, src, n);
+    dst[n] = '\0';
+    return n;
 }

@@ -39,5 +39,10 @@ bool sdb_chat_rename(Db *db, const char *project_id, const char *id, const char 
 /* Move a project's .scribodo/ files into the store (see store_import.c).
  * True if it is in the store afterwards (or already was). */
 bool store_import(const char *project_dir, char *why, size_t whylen);
+/* A copied folder becomes its own project (the original's data, new ids). */
+bool store_fork(const char *project_dir, char *why, size_t whylen);
+/* A project whose store record is missing is restored from its newest
+ * set-aside files (or starts again on its documents if there are none). */
+bool store_restore(const char *project_dir, char *why, size_t whylen);
 
 #endif

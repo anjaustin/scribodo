@@ -9,7 +9,18 @@
 struct Db {
     MYSQL *m;
     char err[512];
+    bool broken; /* the connection was lost: it must be reopened */
 };
+
+/* Client errors that mean the connection itself is gone (server restarted,
+ * killed, timed out): 2002/2003 can't connect, 2006 gone away, 2013/2055
+ * lost during a query. */
+static void note_errno(Db *db, unsigned e)
+{
+    if (e == 2002 || e == 2003 || e == 2006 || e == 2013 || e == 2055) db->broken = true;
+}
+
+bool db_broken(Db *db) { return db->broken; }
 
 /* ---- configuration ------------------------------------------------------- */
 
@@ -64,7 +75,10 @@ Db *db_open(const DbConfig *c, char *err, size_t errlen)
         return NULL;
     }
     mysql_autocommit(db->m, 1);
-    if (mysql_query(db->m, "SET SESSION sql_mode = 'STRICT_ALL_TABLES,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION'") != 0) {
+    /* Lock waits end as an ordinary error (2 s) well before the 5 s read
+     * timeout would drop the connection (red-team 008). */
+    if (mysql_query(db->m, "SET SESSION sql_mode = 'STRICT_ALL_TABLES,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION',"
+                           " innodb_lock_wait_timeout = 2") != 0) {
         snprintf(err, errlen, "Project store setup failed: %s", mysql_error(db->m));
         mysql_close(db->m);
         free(db);
@@ -85,6 +99,7 @@ const char *db_error(Db *db) { return db->err; }
 static void set_err(Db *db, const char *what, const char *detail)
 {
     snprintf(db->err, sizeof(db->err), "%s: %s", what, detail ? detail : "");
+    note_errno(db, mysql_errno(db->m));
 }
 
 bool db_begin(Db *db)
@@ -119,6 +134,7 @@ static MYSQL_STMT *prepare(Db *db, const char *sql, const DbArg *args, size_t na
     }
     if (mysql_stmt_prepare(st, sql, strlen(sql)) != 0) {
         set_err(db, "prepare", mysql_stmt_error(st));
+        note_errno(db, mysql_stmt_errno(st));
         mysql_stmt_close(st);
         return NULL;
     }
@@ -168,7 +184,10 @@ bool db_run(Db *db, const char *sql, const DbArg *args, size_t nargs, uint64_t *
     MYSQL_STMT *st = prepare(db, sql, args, nargs, &b);
     if (!st) return false;
     bool ok = mysql_stmt_execute(st) == 0;
-    if (!ok) set_err(db, "execute", mysql_stmt_error(st));
+    if (!ok) {
+        set_err(db, "execute", mysql_stmt_error(st));
+        note_errno(db, mysql_stmt_errno(st));
+    }
     if (ok && affected) *affected = (uint64_t)mysql_stmt_affected_rows(st);
     free(b);
     mysql_stmt_close(st);
@@ -190,7 +209,10 @@ bool db_query(Db *db, const char *sql, const DbArg *args, size_t nargs, DbRows *
     MYSQL_STMT *st = prepare(db, sql, args, nargs, &pb);
     if (!st) return false;
     bool ok = mysql_stmt_execute(st) == 0;
-    if (!ok) set_err(db, "execute", mysql_stmt_error(st));
+    if (!ok) {
+        set_err(db, "execute", mysql_stmt_error(st));
+        note_errno(db, mysql_stmt_errno(st));
+    }
     MYSQL_RES *meta = ok ? mysql_stmt_result_metadata(st) : NULL;
     size_t ncols = meta ? mysql_num_fields(meta) : 0;
     MYSQL_BIND *rb = ncols ? calloc(ncols, sizeof(MYSQL_BIND)) : NULL;
@@ -215,6 +237,7 @@ bool db_query(Db *db, const char *sql, const DbArg *args, size_t nargs, DbRows *
         if (rc == MYSQL_NO_DATA) break;
         if (rc == 1) {
             set_err(db, "fetch", mysql_stmt_error(st));
+            note_errno(db, mysql_stmt_errno(st));
             ok = false;
             break;
         }
@@ -362,7 +385,48 @@ static const char *const k_migration_002[] = {
     NULL,
 };
 
-static const char *const *const k_migrations[] = { k_migration_001, k_migration_002 };
+/* 003 (red-team 008):
+ *  - revisions get an insertion sequence: History order no longer depends on
+ *    timestamps (two saves in one millisecond, or a clock step back);
+ *    existing rows are numbered by time.
+ *  - names and other author text compare byte for byte without pad-space
+ *    ("Chapter" and "Chapter " are different names; utf8mb4_bin ignored
+ *    trailing spaces). Generated ids keep utf8mb4_bin (foreign keys pin
+ *    their collation, and they never contain spaces).
+ * DDL commits as it goes, so each step can run again after a failure. */
+static const char *const k_migration_003[] = {
+    "ALTER TABLE revisions ADD COLUMN IF NOT EXISTS seq BIGINT NULL",
+    "SET @scribodo_n := 0",
+    "UPDATE revisions SET seq = (@scribodo_n := @scribodo_n + 1) ORDER BY created_at, id",
+    "ALTER TABLE revisions MODIFY seq BIGINT NOT NULL AUTO_INCREMENT, ADD UNIQUE KEY IF NOT EXISTS rev_seq (seq),"
+    " ADD KEY IF NOT EXISTS rev_doc_seq (document_id, seq)",
+    "ALTER TABLE projects MODIFY name VARCHAR(255) COLLATE utf8mb4_nopad_bin NOT NULL, MODIFY path VARCHAR(2048) COLLATE utf8mb4_nopad_bin NOT NULL",
+    "ALTER TABLE documents MODIFY name VARCHAR(255) COLLATE utf8mb4_nopad_bin NOT NULL",
+    "ALTER TABLE conversations MODIFY title VARCHAR(255) COLLATE utf8mb4_nopad_bin NOT NULL",
+    "ALTER TABLE revisions MODIFY note VARCHAR(255) COLLATE utf8mb4_nopad_bin NOT NULL DEFAULT ''",
+    "ALTER TABLE record_versions MODIFY status VARCHAR(16) COLLATE utf8mb4_nopad_bin NOT NULL, MODIFY finding_type VARCHAR(24) COLLATE utf8mb4_nopad_bin NULL, MODIFY subject VARCHAR(255) COLLATE utf8mb4_nopad_bin NULL, MODIFY relation VARCHAR(255) COLLATE utf8mb4_nopad_bin NULL, MODIFY object VARCHAR(255) COLLATE utf8mb4_nopad_bin NULL",
+    "ALTER TABLE entities MODIFY name VARCHAR(255) COLLATE utf8mb4_nopad_bin NOT NULL, MODIFY norm_name VARCHAR(255) COLLATE utf8mb4_nopad_bin NOT NULL, MODIFY type VARCHAR(24) COLLATE utf8mb4_nopad_bin NOT NULL DEFAULT 'entity'",
+    "ALTER TABLE links MODIFY relation VARCHAR(255) COLLATE utf8mb4_nopad_bin NOT NULL",
+    /* new columns default to it too (ids stay as they are: foreign keys pin them, and they never hold spaces) */
+    "ALTER TABLE projects DEFAULT COLLATE utf8mb4_nopad_bin",
+    "ALTER TABLE documents DEFAULT COLLATE utf8mb4_nopad_bin",
+    "ALTER TABLE revisions DEFAULT COLLATE utf8mb4_nopad_bin",
+    "ALTER TABLE conversations DEFAULT COLLATE utf8mb4_nopad_bin",
+    "ALTER TABLE messages DEFAULT COLLATE utf8mb4_nopad_bin",
+    "ALTER TABLE message_documents DEFAULT COLLATE utf8mb4_nopad_bin",
+    "ALTER TABLE records DEFAULT COLLATE utf8mb4_nopad_bin",
+    "ALTER TABLE record_versions DEFAULT COLLATE utf8mb4_nopad_bin",
+    "ALTER TABLE source_refs DEFAULT COLLATE utf8mb4_nopad_bin",
+    "ALTER TABLE entities DEFAULT COLLATE utf8mb4_nopad_bin",
+    "ALTER TABLE links DEFAULT COLLATE utf8mb4_nopad_bin",
+    "ALTER TABLE observer_pieces DEFAULT COLLATE utf8mb4_nopad_bin",
+    "ALTER TABLE observer_chats DEFAULT COLLATE utf8mb4_nopad_bin",
+    "ALTER TABLE jobs DEFAULT COLLATE utf8mb4_nopad_bin",
+    "ALTER TABLE semantic_marks DEFAULT COLLATE utf8mb4_nopad_bin",
+    NULL,
+};
+
+static const char *const *const k_migrations[] = { k_migration_001, k_migration_002, k_migration_003 };
 
 int db_schema_version(Db *db)
 {
@@ -373,7 +437,9 @@ int db_schema_version(Db *db)
     return v;
 }
 
-bool db_migrate(Db *db, char *err, size_t errlen)
+bool db_migrate(Db *db, char *err, size_t errlen) { return db_migrate_upto(db, 1 << 30, err, errlen); }
+
+bool db_migrate_upto(Db *db, int upto, char *err, size_t errlen)
 {
     if (!db_run(db,
                 "CREATE TABLE IF NOT EXISTS schema_migrations (version INT PRIMARY KEY, applied_at DOUBLE NOT NULL) "
@@ -392,7 +458,7 @@ bool db_migrate(Db *db, char *err, size_t errlen)
         snprintf(err, errlen, "The project store is from a newer Scribodo (schema %d, this version knows %d)", have, latest);
         return false;
     }
-    for (int v = have + 1; v <= latest; v++) {
+    for (int v = have + 1; v <= latest && v <= upto; v++) {
         for (const char *const *stmt = k_migrations[v - 1]; *stmt; stmt++)
             if (!db_run(db, *stmt, NULL, 0, NULL)) {
                 snprintf(err, errlen, "Migration %d failed: %s", v, db->err);

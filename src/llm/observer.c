@@ -1,11 +1,14 @@
 #define _DARWIN_C_SOURCE
 #include "observer.h"
 
+#include "core/utf8.h"
+
 #include <dirent.h>
 #include <errno.h>
 #include <limits.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -640,72 +643,138 @@ static cJSON *state_load_files(const char *project);
  * observer_chats (keyed by ids, presented by current names). */
 static cJSON *state_load_db(Db *db, const char *pid)
 {
+    DbRows r, c;
+    /* A failed query is not an empty state (that would re-read everything):
+     * NULL, and the caller treats the store as unavailable. */
+    if (!db_query(db,
+                  "SELECT d.name, p.piece_hash FROM observer_pieces p JOIN documents d ON d.id = p.document_id"
+                  " WHERE d.project_id = ? ORDER BY d.name",
+                  (DbArg[1]){ DB_S(pid) }, 1, &r))
+        return NULL;
+    if (!db_query(db,
+                  "SELECT o.conversation_id, o.msg, o.off FROM observer_chats o JOIN conversations c ON c.id = o.conversation_id"
+                  " WHERE c.project_id = ?",
+                  (DbArg[1]){ DB_S(pid) }, 1, &c)) {
+        db_rows_free(&r);
+        return NULL;
+    }
     cJSON *j = cJSON_CreateObject();
     cJSON *docs = cJSON_AddObjectToObject(j, "docs"), *chats = cJSON_AddObjectToObject(j, "chats");
-    DbRows r;
-    if (db_query(db,
-                 "SELECT d.name, p.piece_hash FROM observer_pieces p JOIN documents d ON d.id = p.document_id"
-                 " WHERE d.project_id = ? ORDER BY d.name",
-                 (DbArg[1]){ DB_S(pid) }, 1, &r)) {
-        for (size_t i = 0; i < r.nrows; i++) {
-            cJSON *arr = cJSON_GetObjectItem(docs, db_cell(&r, i, 0));
-            if (!arr) arr = cJSON_AddArrayToObject(docs, db_cell(&r, i, 0));
-            cJSON_AddItemToArray(arr, cJSON_CreateString(db_cell(&r, i, 1)));
-        }
-        db_rows_free(&r);
+    for (size_t i = 0; i < r.nrows; i++) {
+        cJSON *arr = cJSON_GetObjectItem(docs, db_cell(&r, i, 0));
+        if (!arr) arr = cJSON_AddArrayToObject(docs, db_cell(&r, i, 0));
+        cJSON_AddItemToArray(arr, cJSON_CreateString(db_cell(&r, i, 1)));
     }
-    if (db_query(db,
-                 "SELECT o.conversation_id, o.msg, o.off FROM observer_chats o JOIN conversations c ON c.id = o.conversation_id"
-                 " WHERE c.project_id = ?",
-                 (DbArg[1]){ DB_S(pid) }, 1, &r)) {
-        for (size_t i = 0; i < r.nrows; i++) {
-            cJSON *o = cJSON_AddObjectToObject(chats, db_cell(&r, i, 0));
-            cJSON_AddNumberToObject(o, "n", atof(db_cell(&r, i, 1)));
-            cJSON_AddNumberToObject(o, "off", atof(db_cell(&r, i, 2)));
-        }
-        db_rows_free(&r);
+    for (size_t i = 0; i < c.nrows; i++) {
+        cJSON *o = cJSON_AddObjectToObject(chats, db_cell(&c, i, 0));
+        cJSON_AddNumberToObject(o, "n", atof(db_cell(&c, i, 1)));
+        cJSON_AddNumberToObject(o, "off", atof(db_cell(&c, i, 2)));
     }
+    db_rows_free(&r);
+    db_rows_free(&c);
     return j;
 }
 
-/* Replace the project's read state with `st`, in one transaction. */
+/* Run "INSERT IGNORE INTO observer_pieces VALUES (?,?),…" or a matching
+ * DELETE for up to 200 (document, hash) pairs at a time. */
+static bool pieces_batch(Db *db, bool insert, const char *did, const char *const *hashes, size_t n)
+{
+    bool ok = true;
+    for (size_t at = 0; ok && at < n; at += 200) {
+        size_t k = n - at < 200 ? n - at : 200;
+        char *sql = malloc(160 + k * 8);
+        DbArg *args = malloc((1 + 2 * k) * sizeof(DbArg));
+        if (!sql || !args) {
+            free(sql);
+            free(args);
+            return false;
+        }
+        size_t na = 0, len = 0;
+        if (insert) {
+            len = (size_t)sprintf(sql, "INSERT IGNORE INTO observer_pieces (document_id, piece_hash) VALUES ");
+            for (size_t q = 0; q < k; q++) {
+                len += (size_t)sprintf(sql + len, "%s(?,?)", q ? "," : "");
+                args[na++] = DB_S(did);
+                args[na++] = DB_S(hashes[at + q]);
+            }
+        } else {
+            len = (size_t)sprintf(sql, "DELETE FROM observer_pieces WHERE document_id = ? AND piece_hash IN (");
+            args[na++] = DB_S(did);
+            for (size_t q = 0; q < k; q++) {
+                len += (size_t)sprintf(sql + len, "%s?", q ? "," : "");
+                args[na++] = DB_S(hashes[at + q]);
+            }
+            sprintf(sql + len, ")");
+        }
+        ok = db_run(db, sql, args, na, NULL);
+        free(sql);
+        free(args);
+    }
+    return ok;
+}
+
+static bool in_array(cJSON *arr, const char *s)
+{
+    cJSON *it;
+    cJSON_ArrayForEach(it, arr) if (cJSON_IsString(it) && !strcmp(it->valuestring, s)) return true;
+    return false;
+}
+
+/* Bring the project's stored read state to `st`, writing only the
+ * differences (red-team 008: rewriting every piece each job held locks long
+ * enough to stall the UI's History saves). */
 static bool state_save_db(Db *db, const char *pid, cJSON *st)
 {
-    if (!db_begin(db)) return false;
-    bool ok = db_run(db,
-                     "DELETE p FROM observer_pieces p JOIN documents d ON d.id = p.document_id WHERE d.project_id = ?",
-                     (DbArg[1]){ DB_S(pid) }, 1, NULL) &&
-              db_run(db,
-                     "DELETE o FROM observer_chats o JOIN conversations c ON c.id = o.conversation_id WHERE c.project_id = ?",
-                     (DbArg[1]){ DB_S(pid) }, 1, NULL);
+    cJSON *old = state_load_db(db, pid);
+    if (!old) return false;
+    bool ok = db_begin(db);
+    cJSON *docs = cJSON_GetObjectItem(st, "docs"), *odocs = cJSON_GetObjectItem(old, "docs");
     cJSON *doc;
-    cJSON_ArrayForEach(doc, cJSON_GetObjectItem(st, "docs"))
+    cJSON_ArrayForEach(doc, docs)
     {
         if (!ok) break;
-        char did[40];
-        if (!store_document_id(pid, doc->string, true, did, sizeof(did))) continue;
+        cJSON *prev = cJSON_GetObjectItem(odocs, doc->string);
+        size_t n = (size_t)cJSON_GetArraySize(doc), m = prev ? (size_t)cJSON_GetArraySize(prev) : 0;
+        const char **add = calloc(n ? n : 1, sizeof(char *)), **del = calloc(m ? m : 1, sizeof(char *));
+        size_t na = 0, nd = 0;
         cJSON *h;
-        cJSON_ArrayForEach(h, doc)
-        {
-            if (!cJSON_IsString(h)) continue;
-            ok = db_run(db, "INSERT IGNORE INTO observer_pieces (document_id, piece_hash) VALUES (?, ?)",
-                        (DbArg[2]){ DB_S(did), DB_S(h->valuestring) }, 2, NULL);
-            if (!ok) break;
+        cJSON_ArrayForEach(h, doc) if (add && cJSON_IsString(h) && !(prev && in_array(prev, h->valuestring))) add[na++] = h->valuestring;
+        if (prev) cJSON_ArrayForEach(h, prev) if (del && cJSON_IsString(h) && !in_array(doc, h->valuestring)) del[nd++] = h->valuestring;
+        if (na || nd) {
+            char did[40];
+            if (store_document_id(pid, doc->string, true, did, sizeof(did)))
+                ok = pieces_batch(db, true, did, add, na) && pieces_batch(db, false, did, del, nd);
         }
+        free(add);
+        free(del);
     }
-    cJSON *c;
+    /* Documents gone from the state (deleted files): their pieces go. */
+    cJSON_ArrayForEach(doc, odocs)
+    {
+        if (!ok) break;
+        if (cJSON_GetObjectItem(docs, doc->string)) continue;
+        char did[40];
+        if (store_document_id(pid, doc->string, false, did, sizeof(did)))
+            ok = db_run(db, "DELETE FROM observer_pieces WHERE document_id = ?", (DbArg[1]){ DB_S(did) }, 1, NULL);
+    }
+    cJSON *c, *ochats = cJSON_GetObjectItem(old, "chats");
     cJSON_ArrayForEach(c, cJSON_GetObjectItem(st, "chats"))
     {
         if (!ok) break;
         cJSON *n = cJSON_GetObjectItem(c, "n"), *off = cJSON_GetObjectItem(c, "off");
-        DbArg a[4] = { DB_S(c->string), DB_I(cJSON_IsNumber(n) ? (int64_t)n->valuedouble : 0),
-                       DB_I(cJSON_IsNumber(off) ? (int64_t)off->valuedouble : 0), DB_S(pid) };
-        /* Only this project's conversations (the row must exist). */
+        double nv = cJSON_IsNumber(n) ? n->valuedouble : 0, ov = cJSON_IsNumber(off) ? off->valuedouble : 0;
+        cJSON *was = cJSON_GetObjectItem(ochats, c->string);
+        if (was && cJSON_GetNumberValue(cJSON_GetObjectItem(was, "n")) == nv &&
+            cJSON_GetNumberValue(cJSON_GetObjectItem(was, "off")) == ov)
+            continue; /* unchanged */
+        DbArg a[4] = { DB_I((int64_t)nv), DB_I((int64_t)ov), DB_S(c->string), DB_S(pid) };
         ok = db_run(db,
                     "INSERT INTO observer_chats (conversation_id, msg, off)"
-                    " SELECT id, ?, ? FROM conversations WHERE id = ? AND project_id = ?",
-                    (DbArg[4]){ a[1], a[2], a[0], a[3] }, 4, NULL);
+                    " SELECT id, ?, ? FROM conversations WHERE id = ? AND project_id = ?"
+                    " ON DUPLICATE KEY UPDATE msg = VALUES(msg), off = VALUES(off)",
+                    a, 4, NULL);
     }
+    cJSON_Delete(old);
     if (ok) ok = db_commit(db);
     else db_rollback(db);
     return ok;
@@ -1195,9 +1264,11 @@ static size_t parse_candidates(const Job *j, const char *json, const char *revis
         snprintf(c->info.type, sizeof(c->info.type), "%s", t);
         cJSON *sub = cJSON_GetObjectItem(it, "subject"), *rel = cJSON_GetObjectItem(it, "relation"),
               *obj = cJSON_GetObjectItem(it, "object");
-        if (cJSON_IsString(sub)) snprintf(c->info.subject, sizeof(c->info.subject), "%s", sub->valuestring);
-        if (cJSON_IsString(rel)) snprintf(c->info.relation, sizeof(c->info.relation), "%s", rel->valuestring);
-        if (cJSON_IsString(obj)) snprintf(c->info.object, sizeof(c->info.object), "%s", obj->valuestring);
+        /* Model text, clipped on character boundaries (a split character
+         * is invalid UTF-8, which the store refuses). */
+        if (cJSON_IsString(sub)) utf8_clip(c->info.subject, sizeof(c->info.subject), sub->valuestring, SIZE_MAX);
+        if (cJSON_IsString(rel)) utf8_clip(c->info.relation, sizeof(c->info.relation), rel->valuestring, SIZE_MAX);
+        if (cJSON_IsString(obj)) utf8_clip(c->info.object, sizeof(c->info.object), obj->valuestring, SIZE_MAX);
         /* A relationship links two *named* entities ("the eyes" and "the
          * sea" are not a relationship worth recording). */
         if (!strcmp(t, "relationship") && (!is_upper_start((const unsigned char *)c->info.subject) ||
@@ -1247,7 +1318,8 @@ static void plain_check(const char *check, char *out, size_t outlen)
     }
     char buf[300];
     size_t k = 0;
-    for (const char *p = check; *p && k + 16 < sizeof(buf);) {
+    const char *p = check;
+    for (; *p && k + 16 < sizeof(buf);) {
         if (!strncmp(p, "CANON", 5)) {
             k += (size_t)snprintf(buf + k, sizeof(buf) - k, "canon");
             p += 5;
@@ -1257,6 +1329,13 @@ static void plain_check(const char *check, char *out, size_t outlen)
         } else {
             buf[k++] = *p++;
         }
+    }
+    /* never end inside a character */
+    /* stopped inside a character (its bytes are copied one for one): back
+     * up to its first byte */
+    while (k > 0 && ((unsigned char)*p & 0xC0) == 0x80) {
+        k--;
+        p--;
     }
     buf[k] = '\0';
     /* first sentence (a period followed by a space and a capital, or the end) */
@@ -1269,7 +1348,7 @@ static void plain_check(const char *check, char *out, size_t outlen)
         end++;
     }
     if (buf[0] >= 'a' && buf[0] <= 'z') buf[0] = (char)(buf[0] - 32);
-    snprintf(out, outlen, "%s", buf);
+    utf8_clip(out, outlen, buf, SIZE_MAX);
 }
 
 /* Returns true if the job completed (its text is now read). */
@@ -1432,7 +1511,8 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSO
             if (!cands[i].keep) continue;
             char id[40];
             records_new_id(REC_FINDING, id, sizeof(id));
-            records_create_ex(project, REC_FINDING, id, "new", cands[i].desc, &cands[i].src, 1, &cands[i].info);
+            if (!records_create_ex(project, REC_FINDING, id, "new", cands[i].desc, &cands[i].src, 1, &cands[i].info))
+                io_failed = true;
         }
         for (size_t c = 0; c < nconf; c++) {
             Cand *cd = &cands[conflicts[c].cand];
@@ -1443,7 +1523,7 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSO
             fi.related_text = conflicts[c].canon_text;
             char id[40];
             records_new_id(REC_FINDING, id, sizeof(id));
-            records_create_ex(project, REC_FINDING, id, "new", conflicts[c].check, &cd->src, 1, &fi);
+            if (!records_create_ex(project, REC_FINDING, id, "new", conflicts[c].check, &cd->src, 1, &fi)) io_failed = true;
         }
         pthread_mutex_unlock(&g_findings_mu);
         /* Index what was read (documents as draft text, chats as chat), and
@@ -1472,8 +1552,10 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSO
                 free(hs);
             }
         }
-        /* Mark the text read. */
-        if (j->is_doc) {
+        /* Mark the text read, unless a finding couldn't be saved: then it is
+         * read again later rather than silently missing (red-team 008). */
+        if (io_failed) {
+        } else if (j->is_doc) {
             cJSON *docs = cJSON_GetObjectItem(st, "docs");
             cJSON *arr = cJSON_GetObjectItem(docs, j->name);
             if (!cJSON_IsArray(arr)) {
@@ -1488,7 +1570,7 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSO
         } else {
             set_chat_progress(cJSON_GetObjectItem(st, "chats"), j->name, j->msg_to, j->off_to);
         }
-        if (!state_save(project, st)) io_failed = true;
+        if (!io_failed && !state_save(project, st)) io_failed = true;
         ok = !io_failed;
     }
     for (size_t i = 0; i < nc; i++) {
