@@ -137,6 +137,16 @@ The chat feature was red-teamed separately; see [`REDTEAM-003-chat.md`](REDTEAM-
   A tenth, invalid mutation (it didn't compile) was voided by the harness and rewritten.
 - **UBSan caught a real bug:** missing JSON numbers (a document source has no `message` field) read as NaN and were cast to integers. The revision index had the same latent bug. Both now use a checked reader.
 
+## Observer
+
+See [`OBSERVER-001-design.md`](OBSERVER-001-design.md):
+- unit tests for evidence matching and an end-to-end fake-backend run;
+- `observer.scribo` (30 checks) and `real-observer.scribo`;
+- ASan/UBSan and the new `make tsan`, all clean;
+- 10 of 10 mutations caught.
+
+UI scripts start with the observer **off**, so other scripts' file expectations stay deterministic. A script turns it on with `observer on` and waits with `wait_observer`.
+
 ## Findings from the chat work
 
 Each of these was caught by the suites and has a regression check:

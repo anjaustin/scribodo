@@ -56,16 +56,16 @@ $(RAYLIB_LIB): $(RAYLIB_OBJS)
 
 # --- Scribodo ----------------------------------------------------------------
 CORE_SRCS := src/core/utf8.c src/core/text_buffer.c src/core/undo.c src/core/wrap.c src/core/doc_io.c src/core/diff.c
-LLM_SRCS  := src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/app/chat_store.c src/app/revisions.c src/app/records.c
+LLM_SRCS  := src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/llm/observer.c
 LLM_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(LLM_SRCS)) $(BUILD)/third_party/cJSON/cJSON.o
 APP_SRCS  := src/main.c src/app/script.c src/ui/font.c src/ui/clay_render.c src/ui/editor.c src/ui/input.c \
-             src/ui/chat_view.c src/ui/review_view.c src/ui/record_view.c src/ui/vendor_impl.c
+             src/ui/chat_view.c src/ui/review_view.c src/ui/record_view.c src/ui/findings_view.c src/ui/vendor_impl.c
 CORE_OBJS := $(patsubst %.c,$(BUILD)/%.o,$(CORE_SRCS))
 APP_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(APP_SRCS))
 APP   := $(BUILD)/scribodo
 TESTS := $(BUILD)/test_core $(BUILD)/test_doc_io $(BUILD)/test_editor $(BUILD)/test_llm
 
-.PHONY: all run test uitest uitest-real sanitize clean distclean llama model llmtest
+.PHONY: all run test uitest uitest-real sanitize tsan clean distclean llama model llmtest
 
 all: $(APP)
 
@@ -162,6 +162,13 @@ uitest-real: $(APP) $(LLAMA_BIN)
 SAN_FLAGS := -O1 -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined
 sanitize:
 	$(MAKE) --no-print-directory BUILD=build/asan OPT="$(SAN_FLAGS)" test
+
+# ThreadSanitizer over the threaded code (chat worker, observer, supervisor).
+tsan:
+	@mkdir -p build/tsan
+	$(CC) -std=c11 -O1 -g -fsanitize=thread -Isrc -Ithird_party/cJSON $(CORE_SRCS) $(LLM_SRCS) third_party/cJSON/cJSON.c \
+	  tests/test_llm.c -o build/tsan/test_llm -lpthread
+	TSAN_OPTIONS=halt_on_error=1 $(WATCHDOG) 300 tsan ./build/tsan/test_llm
 
 run: $(APP)
 	./$(APP) assets/sample/sample.md

@@ -1,6 +1,7 @@
 /* Notes and canon (SOW §4.4): versioned project records.
  *
  *   <project>/.scribodo/notes.jsonl   <project>/.scribodo/canon.jsonl
+ *   <project>/.scribodo/findings.jsonl  (observer findings)
  *
  * Each line is one complete version of one record:
  *
@@ -26,7 +27,7 @@
 #include <stddef.h>
 #include <time.h>
 
-typedef enum { REC_NOTE = 0, REC_CANON = 1 } RecordKind;
+typedef enum { REC_NOTE = 0, REC_CANON = 1, REC_FINDING = 2 } RecordKind;
 typedef enum { SRC_DOC = 0, SRC_CHAT = 1 } SourceKind;
 
 /* Where a record came from. A document source names an immutable revision
@@ -42,6 +43,16 @@ typedef struct {
     char *quote;         /* the referenced text (UTF-8) */
 } SourceRef;
 
+/* Observer findings (REC_FINDING) carry a type and, for relationships, a
+ * typed link; conflicts and overlaps name the related canon entry or note.
+ * Status: "new", "saved", "committed" or "dismissed". */
+typedef struct {
+    char type[24];      /* entity, event, relationship, question, conflict */
+    char subject[80], relation[48], object[80];
+    char related[40];   /* id of the canon entry (conflict) or note (overlap) */
+    char *related_text; /* that entry's text when the finding was made */
+} FindingInfo;
+
 typedef struct {
     int ver;
     time_t ts;
@@ -49,23 +60,28 @@ typedef struct {
     char *content;
     SourceRef *sources;
     size_t nsources;
+    FindingInfo finding; /* REC_FINDING only */
 } RecordVersion;
 
 typedef struct {
     char id[40];
     RecordVersion *versions; /* oldest first; versions[nversions-1] is current */
     size_t nversions;
+    size_t created_seq;      /* order of creation in the log (higher = newer) */
 } Record;
 
 static inline const RecordVersion *record_current(const Record *r) { return &r->versions[r->nversions - 1]; }
 
-/* New id: "n-YYYYMMDD-HHMMSS-xxxx" (note) or "c-…" (canon). */
+/* New id: "n-YYYYMMDD-HHMMSS-xxxx" (note), "c-…" (canon) or "f-…" (finding). */
 void records_new_id(RecordKind kind, char *out, size_t outlen);
 
 /* Append a new version of record `id` (its number is one past the newest).
  * Returns false on I/O failure or an invalid id; *ver_out gets the number. */
 bool records_append(const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
                     const SourceRef *sources, size_t nsources, int *ver_out);
+/* As records_append, with finding details (NULL for notes and canon). */
+bool records_append_ex(const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
+                       const SourceRef *sources, size_t nsources, const FindingInfo *finding, int *ver_out);
 
 /* All records, most recently changed first. Caller frees with records_free. */
 size_t records_list(const char *project_dir, RecordKind kind, Record **out);

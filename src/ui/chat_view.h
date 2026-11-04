@@ -47,6 +47,8 @@ long chat_view_take_apply(ChatView *v);
 Rectangle chat_view_last_apply_rect(const ChatView *v);
 /* A reply's "Note" or "Canon" link was clicked: its index (and which), or -1. */
 long chat_view_take_record(ChatView *v, bool *canon);
+/* Put text in the message box (not sent): the author sees and sends it. */
+void chat_view_set_input(ChatView *v, const char *text);
 Rectangle chat_view_last_note_rect(const ChatView *v, bool canon);
 
 #endif

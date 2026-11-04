@@ -1,0 +1,85 @@
+# The observer (SOW §4.3): findings from stored text, each with an exact
+# source, shown only in the sidebar; the author's actions are the only way a
+# finding reaches the chat, notes or canon.
+observer on
+mkdir "$DIR/obs"
+write "$DIR/obs/chapter.md" "The fog came in off the fjord in late October.\n\nZoë Ångström climbed the stairs. “You’re late,” said Dvořák."
+open "$DIR/obs/chapter.md"
+wait 30
+click_element ObserverToggle
+wait_observer
+expect findings_has "entity|new|Dvořák is mentioned."
+expect findings_has "entity|new|Ångström is mentioned."
+expect files "$DIR/obs/.scribodo/observer" "state.json" 1
+# Findings are never part of the chat on their own.
+click_element ChatInput
+type "hello"
+key ENTER
+wait_chat
+expect chat_last_not "mentioned"
+wait_observer
+# Discuss puts the finding in the message box; the author sends it.
+click_element Finding0
+expect element_w FindingDiscuss 40 3000
+click_element FindingDiscuss
+expect status "message box"
+expect chat_count 2
+key ENTER
+wait_chat
+expect chat_last "About this observer finding: Dvořák is mentioned."
+wait_observer
+# Save as note: the note keeps the finding's source; the finding is "saved".
+click_element Finding0
+click_element FindingNote
+expect record "Dvořák is mentioned."
+expect lines "$DIR/obs/.scribodo/notes.jsonl" "\"quote\":\"Dvořák\"" 1
+expect findings_has "entity|saved|Dvořák is mentioned."
+click_element RecordClose
+# Commit to canon: a draft first; the finding is "committed" only on Commit.
+click_element Finding1
+click_element FindingCanon
+expect record "Canon draft"
+expect findings_has "entity|new|Ångström is mentioned."
+click_element RecordCommit
+expect record "Canon · v1 · committed"
+expect findings_has "entity|committed|Ångström is mentioned."
+click_element RecordClose
+# Dismiss hides it.
+click_element Finding2
+click_element FindingDismiss
+expect findings_not "Zoë is mentioned."
+expect lines "$DIR/obs/.scribodo/findings.jsonl" "\"status\":\"dismissed\"" 1
+# A saved paragraph that contradicts committed canon is flagged, with both.
+click_index 49 2
+key C cmd shift
+click_element RecordEditor
+key A cmd
+type "Zoë's eyes are green."
+click_element RecordCommit
+click_element RecordClose
+click_index 0
+key DOWN cmd
+expect cursor 108
+key ENTER
+key ENTER
+type "Zoë's eyes are brown."
+key S cmd
+wait_observer
+expect findings_has "conflict|new|Canon says Zoë's eyes: green; the new text says brown."
+expect lines "$DIR/obs/.scribodo/findings.jsonl" "\"related_text\":\"Zoë's eyes are green.\"" 1
+# New conflicts are listed first, even before newer findings; Source
+# selects the exact passage.
+key ENTER
+key ENTER
+type "Ingrid waited."
+key S cmd
+wait_observer
+expect findings_has "entity|new|Ingrid is mentioned."
+click_element Finding0
+click_element FindingSource
+expect selection 110 131
+expect status "Source passage selected"
+# Nothing new to read: no duplicates.
+key S cmd
+wait_observer
+expect findings_count 6

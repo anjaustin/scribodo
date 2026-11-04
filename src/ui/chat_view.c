@@ -229,6 +229,13 @@ void chat_view_submit_now(ChatView *v)
     if (blank) free(text);
 }
 
+void chat_view_set_input(ChatView *v, const char *text)
+{
+    editor_set_text_utf8(v->input, text);
+    size_t n = editor_length(v->input);
+    editor_set_selection(v->input, n, n);
+}
+
 void chat_view_clear_input(ChatView *v)
 {
     editor_clear(v->input);

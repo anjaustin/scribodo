@@ -40,6 +40,10 @@
  *   expect element_w NAME MIN MAX (width of a named element; 0 if absent)
  *   expect lines "path" "substring" COUNT  (lines of a file containing it)
  *   expect record "substring"    (the open note/canon panel: header + text)
+ *   observer on|off              (scripts start with the observer off)
+ *   wait_observer [MAX_FRAMES]   wait until the observer has nothing to do
+ *   expect findings_count N      expect findings_has "type|status|text substring"
+ *   expect findings_not "substring"
  *   expect running no            (only valid as the last command, after close)
  */
 #ifndef SCRIBODO_SCRIPT_H
@@ -68,6 +72,11 @@ typedef struct {
     bool (*model_ready)(void *ctx);
     /* The open note/canon panel as "header\ntext" (malloc'd), or "". */
     char *(*record_text)(void *ctx);
+    /* Observer: enable/disable (scripts start with it off), idle check, and
+     * the listed findings as "type|status|description\n" lines (malloc'd). */
+    void (*observer_enable)(void *ctx, bool on);
+    bool (*observer_idle)(void *ctx);
+    char *(*findings_text)(void *ctx);
 } ScriptHost;
 
 typedef struct Script Script;

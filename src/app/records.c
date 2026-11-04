@@ -2,6 +2,7 @@
 #include "records.h"
 
 #include <errno.h>
+#include <stddef.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,7 +17,7 @@ static bool log_path(const char *project_dir, RecordKind kind, bool create, char
     char base[1100];
     snprintf(base, sizeof(base), "%s/.scribodo", project_dir);
     if (create && mkdir(base, 0755) != 0 && errno != EEXIST) return false;
-    snprintf(out, outlen, "%s/%s", base, kind == REC_NOTE ? "notes.jsonl" : "canon.jsonl");
+    snprintf(out, outlen, "%s/%s", base, kind == REC_NOTE ? "notes.jsonl" : kind == REC_CANON ? "canon.jsonl" : "findings.jsonl");
     return true;
 }
 
@@ -35,7 +36,7 @@ void records_new_id(RecordKind kind, char *out, size_t outlen)
     localtime_r(&t, &tmv);
     char stamp[32];
     strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tmv);
-    snprintf(out, outlen, "%c-%s-%04x", kind == REC_NOTE ? 'n' : 'c', stamp, arc4random_uniform(0x10000));
+    snprintf(out, outlen, "%c-%s-%04x", kind == REC_NOTE ? 'n' : kind == REC_CANON ? 'c' : 'f', stamp, arc4random_uniform(0x10000));
 }
 
 static char *slurp(const char *path)
@@ -77,6 +78,7 @@ static void free_record(Record *r)
 {
     for (size_t v = 0; v < r->nversions; v++) {
         free(r->versions[v].content);
+        free(r->versions[v].finding.related_text);
         records_free_sources(r->versions[v].sources, r->versions[v].nsources);
     }
     free(r->versions);
@@ -179,6 +181,7 @@ size_t records_list(const char *project_dir, RecordKind kind, Record **out)
             }
             memset(&slots[n], 0, sizeof(Slot));
             snprintf(slots[n].r.id, sizeof(slots[n].r.id), "%s", id->valuestring);
+            slots[n].r.created_seq = line_no;
             n++;
         }
         Record *r = &slots[k].r;
@@ -195,13 +198,32 @@ size_t records_list(const char *project_dir, RecordKind kind, Record **out)
         v->ts = (time_t)num(j, "ts");
         snprintf(v->status, sizeof(v->status), "%s", status->valuestring);
         v->content = strdup(content->valuestring);
+        cJSON *fi = cJSON_GetObjectItem(j, "finding");
+        if (cJSON_IsObject(fi)) {
+            static const struct { const char *key; size_t off, len; } fields[] = {
+                { "type", offsetof(FindingInfo, type), sizeof(((FindingInfo *)0)->type) },
+                { "subject", offsetof(FindingInfo, subject), sizeof(((FindingInfo *)0)->subject) },
+                { "relation", offsetof(FindingInfo, relation), sizeof(((FindingInfo *)0)->relation) },
+                { "object", offsetof(FindingInfo, object), sizeof(((FindingInfo *)0)->object) },
+                { "related", offsetof(FindingInfo, related), sizeof(((FindingInfo *)0)->related) },
+            };
+            for (size_t q = 0; q < sizeof(fields) / sizeof(fields[0]); q++) {
+                cJSON *f = cJSON_GetObjectItem(fi, fields[q].key);
+                if (cJSON_IsString(f)) snprintf((char *)&v->finding + fields[q].off, fields[q].len, "%s", f->valuestring);
+            }
+            cJSON *rt = cJSON_GetObjectItem(fi, "related_text");
+            if (cJSON_IsString(rt)) v->finding.related_text = strdup(rt->valuestring);
+        }
         cJSON *srcs = cJSON_GetObjectItem(j, "sources");
         int ns = cJSON_IsArray(srcs) ? cJSON_GetArraySize(srcs) : 0;
         if (ns > 0) v->sources = calloc((size_t)ns, sizeof(SourceRef));
         for (int i = 0; v->sources && i < ns; i++)
             if (parse_source(cJSON_GetArrayItem(srcs, i), &v->sources[v->nsources])) v->nsources++;
         if (v->content) r->nversions++;
-        else records_free_sources(v->sources, v->nsources);
+        else {
+            records_free_sources(v->sources, v->nsources);
+            free(v->finding.related_text);
+        }
         slots[k].last_line = line_no;
         cJSON_Delete(j);
     }
@@ -220,6 +242,12 @@ size_t records_list(const char *project_dir, RecordKind kind, Record **out)
 
 bool records_append(const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
                     const SourceRef *sources, size_t nsources, int *ver_out)
+{
+    return records_append_ex(project_dir, kind, id, status, content, sources, nsources, NULL, ver_out);
+}
+
+bool records_append_ex(const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
+                       const SourceRef *sources, size_t nsources, const FindingInfo *finding, int *ver_out)
 {
     if (!valid_id(id)) return false;
     char path[1200];
@@ -241,6 +269,15 @@ bool records_append(const char *project_dir, RecordKind kind, const char *id, co
     cJSON_AddStringToObject(j, "content", content ? content : "");
     cJSON *arr = cJSON_AddArrayToObject(j, "sources");
     for (size_t i = 0; i < nsources; i++) cJSON_AddItemToArray(arr, source_json(&sources[i]));
+    if (finding) {
+        cJSON *fi = cJSON_AddObjectToObject(j, "finding");
+        cJSON_AddStringToObject(fi, "type", finding->type);
+        if (finding->subject[0]) cJSON_AddStringToObject(fi, "subject", finding->subject);
+        if (finding->relation[0]) cJSON_AddStringToObject(fi, "relation", finding->relation);
+        if (finding->object[0]) cJSON_AddStringToObject(fi, "object", finding->object);
+        if (finding->related[0]) cJSON_AddStringToObject(fi, "related", finding->related);
+        if (finding->related_text) cJSON_AddStringToObject(fi, "related_text", finding->related_text);
+    }
     char *s = cJSON_PrintUnformatted(j);
     cJSON_Delete(j);
     if (!s) return false;

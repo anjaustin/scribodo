@@ -128,8 +128,20 @@ On first launch the app checks the model file against its pinned hash (once), th
 - **Revise, Retract, Recommit:** each stores a new version. Every earlier version stays listed under the entry, and clicking one loads its wording.
 - **Sources:** each entry records where it came from: the document, an immutable snapshot of its text in History, the range and the quote, or the chat reply. Clicking the source line selects the passage again, even if it has moved.
 
+**The observer** (the **Observer** button; the count shows new findings):
+- It reads what you've **saved**: documents on ⌘S and chat messages as they finish. It lists characters, places and objects, events, relationships, open questions, and **possible conflicts** with committed canon. Each finding quotes its exact source.
+- It never writes into the chat, your documents, notes or canon. It pauses whenever chat is active, so replies stay fast.
+- Select a finding to act on it:
+  - **Discuss** puts it in the message box for you to edit and send.
+  - **Save as note** stores it as a note.
+  - **Commit to canon** opens a canon draft; nothing is canon until you press Commit.
+  - **Dismiss** hides it.
+  - **Source** selects the passage.
+- Findings are kept in `.scribodo/findings.jsonl`. See [`docs/OBSERVER-001-design.md`](docs/OBSERVER-001-design.md).
+
 ```sh
 make sanitize  # run the same tests under AddressSanitizer + UBSan
+make tsan      # the threaded code (chat, observer, supervisor) under ThreadSanitizer
 make uitest    # scripted UI tests: the real app in a hidden window (needs an awake display)
 make llmtest   # end-to-end against the real model: supervisor, streaming, auth, crash recovery
 make uitest-real  # the real model through the real UI

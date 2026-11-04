@@ -52,6 +52,7 @@ struct Script {
     int qhead, qcount;
     int wait;
     int wait_chat;      /* frames left to wait for the chat to go idle */
+    int wait_observer;  /* frames left to wait for the observer to go idle */
     int wait_ready;     /* frames left to wait for the model */
     char shot[1100];
     bool shot_pending;
@@ -413,6 +414,19 @@ static void run_expect(Script *s, ScriptHost *h, Tokens *t)
         free(c);
         ok = count == atoi(t->tok[4]);
         snprintf(detail, sizeof(detail), "found %d", count);
+    } else if ((!strcmp(what, "findings_has") || !strcmp(what, "findings_not")) && t->n == 3 && h->findings_text) {
+        char *c = h->findings_text(h->ctx);
+        bool has = c && strstr(c, t->tok[2]);
+        ok = !strcmp(what, "findings_has") ? has : (c && !has);
+        show(detail, sizeof(detail), "findings", c);
+        free(c);
+    } else if (!strcmp(what, "findings_count") && t->n == 3 && h->findings_text) {
+        char *c = h->findings_text(h->ctx);
+        int count = 0;
+        for (char *p = c; p && *p; p++) count += *p == '\n';
+        ok = c && count == atoi(t->tok[2]);
+        snprintf(detail, sizeof(detail), "found %d", count);
+        free(c);
     } else if (!strcmp(what, "record") && t->n == 3 && h->record_text) {
         /* The open note/canon panel: its header and text ("" when closed). */
         char *c = h->record_text(h->ctx);
@@ -545,6 +559,15 @@ static bool run_line(Script *s, ScriptHost *h)
         s->pc--; /* stay on this line so it reports pass/fail when done */
         return true;
     }
+    if (!strcmp(cmd, "observer") && t.n == 2 && h->observer_enable) {
+        h->observer_enable(h->ctx, !strcmp(t.tok[1], "on"));
+        return false;
+    }
+    if (!strcmp(cmd, "wait_observer") && h->observer_idle) {
+        s->wait_observer = t.n >= 2 ? atoi(t.tok[1]) : 60 * 60;
+        s->pc--; /* reports pass/fail when done */
+        return true;
+    }
     if (!strcmp(cmd, "wait_chat") && h->chat) {
         s->wait_chat = t.n >= 2 ? atoi(t.tok[1]) : 1200;
         return true;
@@ -621,6 +644,23 @@ bool script_frame(Script *s, ScriptHost *h)
             }
             if (--s->wait_ready == 0) {
                 report(s, false, "model did not become ready");
+                s->pc++;
+                continue;
+            }
+            return true;
+        }
+        if (s->wait_observer > 0) {
+            /* Idle on two consecutive checks a few frames apart, so a poke
+             * that is about to be picked up isn't mistaken for idleness. */
+            if (h->observer_idle(h->ctx) && s->wait_observer % 5 == 0) {
+                s->wait_observer = 0;
+                report(s, true, NULL);
+                s->pc++;
+                new_batch(s);
+                continue;
+            }
+            if (--s->wait_observer == 0) {
+                report(s, false, "observer did not finish");
                 s->pc++;
                 continue;
             }

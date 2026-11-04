@@ -1,0 +1,29 @@
+# The observer with the real model: findings with exact sources, and a
+# conflict with committed canon. (Model output varies; checks are loose.)
+observer on
+mkdir "$DIR/obs"
+write "$DIR/obs/chapter.md" "The fog came in off the fjord the way it always did in late October. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák, without turning around. He was hunched over the old Fresnel lens."
+open "$DIR/obs/chapter.md"
+wait_ready
+click_element ObserverToggle
+wait_observer 36000
+expect findings_has "entity|new|"
+expect findings_has "Dvořák"
+shot findings
+# Committed canon, then a saved paragraph that contradicts it.
+click_index 70 2
+key C cmd shift
+click_element RecordEditor
+key A cmd
+type "Zoë's eyes are green."
+click_element RecordCommit
+click_element RecordClose
+click_index 0
+key DOWN cmd
+key ENTER
+key ENTER
+type "Zoë's brown eyes narrowed at the sea."
+key S cmd
+wait_observer 36000
+expect findings_has "conflict|new|"
+shot conflict

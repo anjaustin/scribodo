@@ -14,6 +14,7 @@
 #include "../src/llm/chat.h"
 #include "../src/llm/http.h"
 #include "../src/llm/llm_text.h"
+#include "../src/llm/observer.h"
 #include "../src/llm/server.h"
 #include "cJSON.h"
 #include "test_util.h"
@@ -531,6 +532,192 @@ static void test_records(void)
     CHECK(records_list(empty, REC_CANON, &canon) == 0 && canon == NULL);
 }
 
+/* ---- observer ----------------------------------------------------------------------- */
+
+static bool locate_is(const char *text, const char *ev, const char *want)
+{
+    size_t s = 0, n = 0;
+    bool ok = obs_locate(text, strlen(text), ev, &s, &n);
+    if (!want) return !ok;
+    bool good = ok && n == strlen(want) && !strncmp(text + s, want, n);
+    if (!good) fprintf(stderr, "    locate [%s] got [%.*s]\n", ev, ok ? (int)n : 0, ok ? text + s : "");
+    return good;
+}
+
+static void test_observer_locate(void)
+{
+    const char *t = "\xE2\x80\x9CYou\xE2\x80\x99re late,\xE2\x80\x9D said Dvo\xC5\x99\xC3\xA1k, without turning around.\n"
+                    "He grunted \xE2\x80\x94 the *particular* grunt that meant\nwe will talk about this later.";
+    /* exact */
+    CHECK(locate_is(t, "without turning around", "without turning around"));
+    /* the model straightens quotes: map back to the curly source text */
+    CHECK(locate_is(t, "\"You're late,\" said Dvo\xC5\x99\xC3\xA1k", "\xE2\x80\x9CYou\xE2\x80\x99re late,\xE2\x80\x9D said Dvo\xC5\x99\xC3\xA1k"));
+    /* emphasis markers and line breaks ignored */
+    CHECK(locate_is(t, "the particular grunt that meant we will talk", "the *particular* grunt that meant\nwe will talk"));
+    /* a paraphrased ending: the longest matching prefix of 4+ words */
+    CHECK(locate_is(t, "He grunted \xE2\x80\x94 the particular grunt that meant trouble ahead", "He grunted \xE2\x80\x94 the *particular* grunt that meant"));
+    /* invented evidence is not found */
+    CHECK(locate_is(t, "Dvo\xC5\x99\xC3\xA1k smiled warmly at her", NULL));
+    CHECK(locate_is(t, "late", "late")); /* short but exact */
+    CHECK(locate_is(t, "", NULL));
+    /* case differences are tolerated */
+    CHECK(locate_is(t, "WITHOUT turning around", "without turning around"));
+}
+
+static void test_observer_text(void)
+{
+    size_t st[8], ln[8];
+    const char *doc = "\n\nFirst para\nstill first.\n\n  \n\nSecond.\n\n\n";
+    size_t n = obs_paragraphs(doc, st, ln, 8);
+    CHECK(n == 2 && !strncmp(doc + st[0], "First para\nstill first.", ln[0]) && ln[0] == 23 && !strncmp(doc + st[1], "Second.", ln[1]));
+    CHECK(obs_overlap("Zo\xC3\xAB\xE2\x80\x99s eyes are brown.", "Zo\xC3\xAB's eyes are green.") >= 3); /* name + "eyes" */
+    CHECK(obs_overlap("The fog came in.", "Dvo\xC5\x99\xC3\xA1k lost his hand.") == 0);
+    char *f = obs_fake_extract("The fog came. Zo\xC3\xAB's eyes are brown. Is Dvo\xC5\x99\xC3\xA1k her uncle?");
+    CHECK(f && strstr(f, "\"question\"") && strstr(f, "\"event\"") && strstr(f, "Dvo\xC5\x99\xC3\xA1k is mentioned"));
+    free(f);
+    f = obs_fake_judge("Zo\xC3\xAB's eyes are green.", "Zo\xC3\xAB's eyes are brown.");
+    CHECK(f && strstr(f, "\"conflict\""));
+    free(f);
+    f = obs_fake_judge("Zo\xC3\xAB's eyes are green.", "Zo\xC3\xAB's eyes are green.");
+    CHECK(f && !strstr(f, "\"conflict\""));
+    free(f);
+}
+
+static bool wait_jobs(Observer *o, unsigned want, double secs)
+{
+    for (int i = 0; i < (int)(secs * 50); i++) {
+        if (observer_jobs_done(o) >= want) {
+            char st[200];
+            observer_status(o, st, sizeof(st));
+            if (!strcmp(st, "Up to date")) return true;
+        }
+        usleep(20000);
+    }
+    return false;
+}
+
+static size_t count_findings(const char *proj, const char *type, const char *status, Record **out)
+{
+    Record *list = NULL;
+    size_t n = records_list(proj, REC_FINDING, &list), k = 0;
+    for (size_t i = 0; i < n; i++) {
+        const RecordVersion *v = record_current(&list[i]);
+        if ((!type || !strcmp(v->finding.type, type)) && (!status || !strcmp(v->status, status))) k++;
+    }
+    if (out) *out = list;
+    else records_free(list, n);
+    return k;
+}
+
+static void test_observer_run(void)
+{
+    char proj[700], doc[800];
+    snprintf(proj, sizeof(proj), "%s/obs-proj", g_dir);
+    mkdir(proj, 0755);
+    snprintf(doc, sizeof(doc), "%s/ch1.md", proj);
+    FILE *f = fopen(doc, "wb");
+    fputs("The fog came in off the fjord.\n\nZo\xC3\xAB's eyes are brown. Dvo\xC5\x99\xC3\xA1k waited.\n", f);
+    fclose(f);
+    char cid[40];
+    records_new_id(REC_CANON, cid, sizeof(cid));
+    CHECK(records_append(proj, REC_CANON, cid, "committed", "Zo\xC3\xAB's eyes are green.", NULL, 0, NULL));
+
+    Observer *o = observer_create(NULL);
+    CHECK(o != NULL);
+    if (!o) return;
+    observer_set_project(o, proj);
+    CHECK(wait_jobs(o, 1, 10));
+    Record *list = NULL;
+    size_t total = count_findings(proj, NULL, NULL, &list);
+    CHECK(total >= 3);
+    size_t nlist = records_list(proj, REC_FINDING, &list) ;
+    bool zoe = false, conflict = false, sourced = true;
+    for (size_t i = 0; i < nlist; i++) {
+        const RecordVersion *v = record_current(&list[i]);
+        sourced = sourced && v->nsources == 1 && v->sources[0].kind == SRC_DOC && !strcmp(v->sources[0].doc, "ch1.md") &&
+                  v->sources[0].revision[0] && !strcmp(v->status, "new");
+        if (!strcmp(v->finding.type, "entity") && !strcmp(v->finding.subject, "Dvo\xC5\x99\xC3\xA1k")) {
+            /* The evidence range is exact, in codepoints of the stored revision. */
+            zoe = v->sources[0].start == 54 && v->sources[0].len == 6 && !strcmp(v->sources[0].quote, "Dvo\xC5\x99\xC3\xA1k");
+        }
+        if (!strcmp(v->finding.type, "conflict"))
+            conflict = !strcmp(v->finding.related, cid) && v->finding.related_text &&
+                       !strcmp(v->finding.related_text, "Zo\xC3\xAB's eyes are green.") && strstr(v->content, "brown") &&
+                       !strcmp(v->sources[0].quote, "Zo\xC3\xAB's eyes are brown.");
+    }
+    CHECK(zoe && conflict && sourced);
+    records_free(list, nlist);
+    records_free(NULL, 0);
+
+    /* Nothing new: no new findings (state remembers the paragraphs). */
+    unsigned done = observer_jobs_done(o);
+    observer_poke(o);
+    usleep(300000);
+    CHECK(observer_jobs_done(o) == done && count_findings(proj, NULL, NULL, NULL) == total);
+
+    /* A new paragraph: only it is read; a repeated name is not a new finding. */
+    f = fopen(doc, "ab");
+    fputs("\nDvo\xC5\x99\xC3\xA1k met Ingrid at the quay.\n", f);
+    fclose(f);
+    observer_poke(o);
+    CHECK(wait_jobs(o, done + 1, 10));
+    CHECK(count_findings(proj, "entity", NULL, NULL) == 3); /* Zoë? no: sentence-initial; Dvořák, Ingrid + fjord? */
+
+    /* While chat is active nothing runs; it resumes once chat is idle. */
+    done = observer_jobs_done(o);
+    observer_set_chat_active(o, true);
+    ChatMessage m = { .role = CHAT_USER, .content = "Should Ingrid know about the Letter?" };
+    CHECK(chat_store_append(proj, "20261104-120000-abcd", "t", &m));
+    observer_poke(o);
+    usleep(800000);
+    char st[200];
+    observer_status(o, st, sizeof(st));
+    CHECK(observer_jobs_done(o) == done && strstr(st, "Waiting"));
+    observer_set_chat_active(o, false);
+    CHECK(wait_jobs(o, done + 1, 10));
+    Record *l2 = NULL;
+    size_t n2 = records_list(proj, REC_FINDING, &l2);
+    bool chat_src = false;
+    for (size_t i = 0; i < n2; i++) {
+        const RecordVersion *v = record_current(&l2[i]);
+        if (v->sources && v->sources[0].kind == SRC_CHAT && !strcmp(v->finding.type, "question"))
+            chat_src = v->sources[0].message == 0 && !strcmp(v->sources[0].chat, "20261104-120000-abcd") &&
+                       !strcmp(v->sources[0].quote, "Should Ingrid know about the Letter?");
+    }
+    CHECK(chat_src);
+
+    /* Status changes are new versions. */
+    CHECK(n2 > 0 && observer_set_finding_status(o, proj, l2[0].id, "dismissed"));
+    CHECK(count_findings(proj, NULL, "dismissed", NULL) == 1);
+    records_free(l2, n2);
+
+    /* Evidence that isn't in the text is never recorded. */
+    f = fopen(doc, "ab");
+    fputs("\nA quiet morning. [[invent]]\n", f);
+    fclose(f);
+    done = observer_jobs_done(o);
+    observer_poke(o);
+    CHECK(wait_jobs(o, done + 1, 10));
+    Record *l3 = NULL;
+    size_t n3 = records_list(proj, REC_FINDING, &l3);
+    bool invented = false;
+    for (size_t i = 0; i < n3; i++) invented = invented || strstr(record_current(&l3[i])->content, "sails away");
+    CHECK(!invented);
+    records_free(l3, n3);
+
+    /* Documents that aren't valid UTF-8 are skipped, not misread. */
+    char bad[800];
+    snprintf(bad, sizeof(bad), "%s/bad.md", proj);
+    f = fopen(bad, "wb");
+    fputs("Caf\xE9 Oslo\n", f);
+    fclose(f);
+    done = observer_jobs_done(o);
+    observer_poke(o);
+    usleep(400000);
+    CHECK(observer_jobs_done(o) == done);
+    observer_destroy(o);
+}
+
 static void test_revisions(void)
 {
     char doc[700];
@@ -566,16 +753,17 @@ static void test_revisions(void)
 #include <poll.h>
 #include <pthread.h>
 #include <sys/socket.h>
+#include <stdatomic.h>
 #include <sys/un.h>
 #include <time.h>
 
 typedef enum { STUB_TRUNCATE, STUB_NEVER_READ, STUB_CONTEXT_ERROR, STUB_OK } StubMode;
-typedef struct { char path[256]; int lfd; StubMode mode; volatile int stop; } Stub;
+typedef struct { char path[256]; int lfd; StubMode mode; atomic_int stop; } Stub;
 
 static void *stub_main(void *arg)
 {
     Stub *st = arg;
-    while (!st->stop) {
+    while (!atomic_load(&st->stop)) {
         /* accept() ignores SO_RCVTIMEO on macOS: poll so stop is noticed. */
         struct pollfd pfd = { .fd = st->lfd, .events = POLLIN };
         if (poll(&pfd, 1, 50) <= 0) continue;
@@ -636,7 +824,7 @@ static bool stub_start(Stub *st, StubMode mode, pthread_t *th)
 
 static void stub_stop(Stub *st, pthread_t th)
 {
-    st->stop = 1;
+    atomic_store(&st->stop, 1);
     pthread_join(th, NULL);
     close(st->lfd);
     unlink(st->path);
@@ -953,6 +1141,9 @@ int main(int argc, char **argv)
         { "edit_too_long", test_edit_too_long },
         { "revisions", test_revisions },
         { "records", test_records },
+        { "observer_locate", test_observer_locate },
+        { "observer_text", test_observer_text },
+        { "observer_run", test_observer_run },
         { "truncated_stream_is_an_error", test_truncated_stream_is_an_error },
         { "ok_stream_and_context_error", test_ok_stream_and_context_error },
         { "stop_never_hangs", test_stop_never_hangs },

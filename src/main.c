@@ -26,10 +26,12 @@
 #include "llm/llm_text.h"
 #include "app/script.h"
 #include "llm/chat.h"
+#include "llm/observer.h"
 #include "llm/server.h"
 #include "ui/chat_view.h"
 #include "ui/clay_render.h"
 #include "ui/editor.h"
+#include "ui/findings_view.h"
 #include "ui/font.h"
 #include "ui/input.h"
 #include "ui/record_view.h"
@@ -118,6 +120,17 @@ typedef struct {
     char canon_labels[REC_SHOW][72];
     RecordView *record;
     Rectangle record_rect;
+    char canon_finding[40];      /* the open canon draft came from this finding */
+
+    /* Observer (SOW §4.3) */
+    Observer *observer;
+    FindingsView *findings;
+    Record *flist;
+    size_t nflist;
+    uint64_t findings_version;
+    Rectangle findings_rect;
+    char observer_label[220];
+    char observer_button[40];
     bool record_close_armed;     /* a discard of uncommitted canon text was asked for... */
     double record_close_armed_at; /* ...at this time (a second press within 5 s confirms) */
 
@@ -184,7 +197,7 @@ static void refresh_lists(App *app)
     static const struct { const char *origin, *label; } names[] = {
         { "save", "Saved" }, { "ai-edit", "AI edit" }, { "before-ai-edit", "Before AI edit" },
         { "restore", "Restored" }, { "before-restore", "Before restore" },
-        { "source", "Quoted in a note/canon" },
+        { "source", "Quoted" },
     };
     for (size_t i = 0; i < app->nrevs && i < REV_SHOW; i++) {
         const char *lbl = app->revs[i].origin;
@@ -241,6 +254,8 @@ static void set_project_from(App *app, const char *doc_path)
     project_of(doc_path, real, sizeof(real));
     if (strcmp(real, app->project_dir) != 0) {
         snprintf(app->project_dir, sizeof(app->project_dir), "%s", real);
+        if (app->observer) observer_set_project(app->observer, real);
+        app->findings_version = UINT64_MAX; /* re-list */
         /* A different project has different chats: start fresh (after the
          * current reply finishes, so it is saved with its own project). */
         if (app->chat) app->clear_chat_when_idle = true;
@@ -485,6 +500,7 @@ static void save(App *app)
     bool ok = editor_save(app->editor, msg, sizeof(msg));
     set_status(app, msg);
     if (ok) record_revision(app, "save", NULL);
+    if (ok && app->observer) observer_poke(app->observer); /* a saved revision: new text to read */
     app->lists_dirty = true;
 }
 
@@ -526,6 +542,8 @@ static void on_message_done(ChatSession *s, size_t index, void *ctx)
     if (!app->chat_project[0]) { free(copy.content); return; }
     if (!chat_store_append(app->chat_project, app->chat_id, app->chat_title, &copy))
         set_status(app, "Could not save the chat to .scribodo/chats");
+    else if (app->observer && copy.role == CHAT_ASSISTANT)
+        observer_poke(app->observer); /* a finished exchange is stored */
     free(copy.content);
     app->lists_dirty = true;
 }
@@ -668,6 +686,7 @@ static void show_record(App *app, RecordKind kind, const Record *rec, const char
         return;
     }
     app->record_close_armed = false;
+    app->canon_finding[0] = '\0';
     app->focus = FOCUS_RECORD;
 }
 
@@ -840,6 +859,10 @@ static void store_canon(App *app, const char *status, bool use_editor_text)
     if (app->project_dir[0] && records_append(app->project_dir, REC_CANON, id, status, text, src, ns, &ver)) {
         bool first = !record_view_id(v)[0];
         record_view_stored(v, id, ver, status, text);
+        if (first && app->canon_finding[0]) { /* the finding it came from is now committed */
+            observer_set_finding_status(app->observer, app->project_dir, app->canon_finding, "committed");
+            app->canon_finding[0] = '\0';
+        }
         set_status(app, !strcmp(status, "retracted") ? "Retracted \xC2\xB7 the entry and its history are kept"
                         : first                      ? "Committed to canon"
                                                      : "Canon revised \xC2\xB7 earlier versions are kept");
@@ -898,6 +921,97 @@ static void record_action(App *app, RecordAction act)
         }
         break;
     }
+    }
+}
+
+/* ---- observer findings ----------------------------------------------------------- */
+
+static void refresh_findings(App *app)
+{
+    records_free(app->flist, app->nflist);
+    app->flist = NULL;
+    app->nflist = app->project_dir[0] ? records_list(app->project_dir, REC_FINDING, &app->flist) : 0;
+    findings_view_set(app->findings, app->flist, app->nflist);
+    size_t fresh = 0;
+    for (size_t i = 0; i < app->nflist; i++) fresh += !strcmp(record_current(&app->flist[i])->status, "new");
+    if (fresh) snprintf(app->observer_button, sizeof(app->observer_button), "Observer (%zu)", fresh);
+    else snprintf(app->observer_button, sizeof(app->observer_button), "Observer");
+}
+
+static const Record *find_finding(App *app, const char *id)
+{
+    for (size_t i = 0; i < app->nflist; i++)
+        if (!strcmp(app->flist[i].id, id)) return &app->flist[i];
+    return NULL;
+}
+
+static void finding_action(App *app, FindingAction act, const char *id)
+{
+    const Record *r = find_finding(app, id);
+    if (!r || act == FA_NONE) return;
+    const RecordVersion *v = record_current(r);
+    switch (act) {
+    case FA_NONE: break;
+    case FA_DISCUSS: {
+        /* The finding goes into the message box, visibly; nothing reaches
+         * the assistant until the author sends it (SOW §4.3). */
+        if (chat_busy(app->chat)) {
+            set_status(app, "Wait for the reply to finish (or press Stop)");
+            break;
+        }
+        char text[2400];
+        int k = snprintf(text, sizeof(text), "About this observer finding: %s", v->content);
+        if (v->nsources && v->sources[0].quote && v->sources[0].quote[0])
+            k += snprintf(text + k, sizeof(text) - (size_t)k, "\nFrom %s: \xE2\x80\x9C%.600s\xE2\x80\x9D",
+                          v->sources[0].kind == SRC_DOC ? v->sources[0].doc : "our chat", v->sources[0].quote);
+        if (v->finding.related_text && !strcmp(v->finding.type, "conflict"))
+            snprintf(text + k, sizeof(text) - (size_t)k, "\nCanon says: %.600s", v->finding.related_text);
+        leave_edit_mode(app);
+        chat_view_set_input(app->chat_view, text);
+        app->focus = FOCUS_CHAT;
+        set_status(app, "The finding is in the message box \xC2\xB7 edit it and press Enter to discuss");
+        break;
+    }
+    case FA_NOTE: {
+        if (!close_record(app, false)) break;
+        char nid[40];
+        records_new_id(REC_NOTE, nid, sizeof(nid));
+        int ver = 0;
+        if (!records_append(app->project_dir, REC_NOTE, nid, "active", v->content, v->sources, v->nsources, &ver)) {
+            set_status(app, "Could not save the note to .scribodo/notes.jsonl");
+            break;
+        }
+        observer_set_finding_status(app->observer, app->project_dir, id, "saved");
+        RecordVersion nv = { .ver = ver, .ts = time(NULL), .content = v->content, .sources = v->sources, .nsources = v->nsources };
+        snprintf(nv.status, sizeof(nv.status), "active");
+        Record nr = { .versions = &nv, .nversions = 1 };
+        snprintf(nr.id, sizeof(nr.id), "%s", nid);
+        show_record(app, REC_NOTE, &nr, NULL, NULL, 0);
+        set_status(app, "Saved as a note");
+        app->lists_dirty = true;
+        break;
+    }
+    case FA_CANON: {
+        char fid[40];
+        snprintf(fid, sizeof(fid), "%s", id); /* show_record may refresh nothing, but keep a copy */
+        show_record(app, REC_CANON, NULL, v->content, v->sources, v->nsources);
+        if (record_view_active(app->record) && record_view_kind(app->record) == REC_CANON && !record_view_id(app->record)[0]) {
+            snprintf(app->canon_finding, sizeof(app->canon_finding), "%s", fid);
+            set_status(app, "A canon draft from the finding \xC2\xB7 state the fact, then Commit");
+        }
+        break;
+    }
+    case FA_DISMISS:
+        if (!observer_set_finding_status(app->observer, app->project_dir, id, "dismissed"))
+            set_status(app, "Could not update .scribodo/findings.jsonl");
+        break;
+    case FA_SOURCE:
+        if (v->nsources) {
+            SourceRef *copy = records_copy_sources(v->sources, 1);
+            if (copy) open_source(app, copy);
+            records_free_sources(copy, copy ? 1 : 0);
+        }
+        break;
     }
 }
 
@@ -967,11 +1081,6 @@ static void label(const char *s, int font, Clay_Color color)
                                          .wrapMode = CLAY_TEXT_WRAP_NONE }));
 }
 
-static void wrapped_label(const char *s, Clay_Color color)
-{
-    CLAY_TEXT(cstr(s), CLAY_TEXT_CONFIG({ .fontId = FONT_UI, .textColor = color,
-                                         .wrapMode = CLAY_TEXT_WRAP_WORDS }));
-}
 
 static void section_header(const char *s)
 {
@@ -1165,9 +1274,9 @@ static Clay_RenderCommandArray build_layout(App *app)
                                    .layoutDirection = CLAY_TOP_TO_BOTTOM },
                        .backgroundColor = COL_PANEL, .clip = { .vertical = true } }) {
                     section_header("OBSERVER");
-                    wrapped_label("Coming soon. The observer will list characters, events, relationships, open "
-                                  "questions, and possible continuity conflicts here \xE2\x80\x94 it never writes "
-                                  "into your chat or documents.", COL_DIM);
+                    label(app->observer_label, FONT_UI, COL_DIM);
+                    CLAY({ .id = CLAY_ID("Findings"),
+                           .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } } }) {}
                 }
             }
         }
@@ -1207,6 +1316,8 @@ static Rectangle host_element(void *ctx, const char *name)
     if (!strcmp(name, "NoteLast")) return chat_view_last_note_rect(app->chat_view, false);
     if (!strcmp(name, "CanonLast")) return chat_view_last_note_rect(app->chat_view, true);
     if (!strncmp(name, "Record", 6)) return record_view_element(app->record, name);
+    if (!strncmp(name, "Finding", 7) && strcmp(name, "Findings") != 0)
+        return app->observer_open ? findings_view_element(app->findings, name) : (Rectangle){ 0 };
     if (!strcmp(name, "RejectEdit")) return review_active(app->review) ? review_reject_rect(app->review_rect) : (Rectangle){ 0 };
     size_t n = strlen(name), k = n;
     while (k > 0 && name[k - 1] >= '0' && name[k - 1] <= '9') k--;
@@ -1232,6 +1343,10 @@ static char *host_record_text(void *ctx)
     free(t);
     return out;
 }
+
+static void host_observer_enable(void *ctx, bool on) { observer_set_enabled(((App *)ctx)->observer, on); }
+static bool host_observer_idle(void *ctx) { return observer_idle(((App *)ctx)->observer); }
+static char *host_findings_text(void *ctx) { return findings_view_text(((App *)ctx)->findings); }
 
 static bool host_model_ready(void *ctx)
 {
@@ -1360,7 +1475,13 @@ int main(int argc, char **argv)
     app.chat_view = app.chat ? chat_view_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI], app.chat) : NULL;
     app.review = review_create(&app.fonts[FONT_PROSE], &app.fonts[FONT_UI]);
     app.record = record_view_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI]);
-    if (!app.chat || !app.editor || !app.chat_view || !app.review || !app.record) {
+    app.observer = observer_create(app.llm);
+    app.findings = findings_view_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI]);
+    app.findings_version = UINT64_MAX;
+    /* UI scripts start with the observer off (deterministic files); a
+     * script turns it on with "observer on". */
+    if (app.observer && script_path) observer_set_enabled(app.observer, false);
+    if (!app.chat || !app.editor || !app.chat_view || !app.review || !app.record || !app.observer || !app.findings) {
         fprintf(stderr, "scribodo: out of memory\n");
         CloseWindow();
         return 1;
@@ -1380,7 +1501,7 @@ int main(int argc, char **argv)
     Script *script = NULL;
     ScriptHost host = { app.editor, &app.explorer_w, &app.observer_w, &app.editor_rect,
                         host_status, host_open, host_drop, &app, app.chat, host_element, host_model_ready,
-                        host_record_text };
+                        host_record_text, host_observer_enable, host_observer_idle, host_findings_text };
     if (script_path) {
         char err[256];
         script = script_load(script_path, getenv("SCRIBODO_SCRIPT_DIR"), getenv("SCRIBODO_SHOT_DIR"), err, sizeof(err));
@@ -1407,6 +1528,17 @@ int main(int argc, char **argv)
 
         if (app.llm) llm_server_tick(app.llm);
         chat_poll(app.chat);
+        /* The observer shares the model: it yields whenever chat is active. */
+        observer_set_chat_active(app.observer, chat_busy(app.chat));
+        if (observer_version(app.observer) != app.findings_version) {
+            app.findings_version = observer_version(app.observer);
+            refresh_findings(&app);
+        }
+        {
+            char st[200];
+            observer_status(app.observer, st, sizeof(st));
+            snprintf(app.observer_label, sizeof(app.observer_label), "%s", st);
+        }
         const char *cn = chat_take_notice(app.chat);
         if (cn) set_status(&app, cn);
         if (app.clear_chat_when_idle && !chat_busy(app.chat)) {
@@ -1582,6 +1714,7 @@ int main(int argc, char **argv)
             app.editor_rect.height = app.review_rect.y - er.y - 8;
         }
         app.chat_list_rect = ELEMENT_RECT("ChatMessages");
+        app.findings_rect = app.observer_open ? ELEMENT_RECT("Findings") : (Rectangle){ 0 };
         app.chat_input_rect = ELEMENT_RECT("ChatInput");
         Rectangle save_rect = ELEMENT_RECT("SaveButton");
         Rectangle obs_rect = ELEMENT_RECT("ObserverToggle");
@@ -1595,6 +1728,7 @@ int main(int argc, char **argv)
         chat_view_update(app.chat_view, app.chat_list_rect, app.chat_input_rect, idle && app.focus == FOCUS_CHAT);
         if (review_active(app.review)) review_update(app.review, app.review_rect);
         if (record_view_active(app.record)) record_view_update(app.record, app.record_rect, idle && app.focus == FOCUS_RECORD);
+        if (app.observer_open) findings_view_update(app.findings, app.findings_rect);
         input_discard_chars(); /* after both views: nothing typed now may appear later */
         long apply = chat_view_take_apply(app.chat_view);
         if (apply >= 0) {
@@ -1662,6 +1796,11 @@ int main(int argc, char **argv)
         if (record_view_active(app.record))
             record_action(&app, record_view_draw(app.record, app.record_rect, app.focus == FOCUS_RECORD));
         chat_view_draw(app.chat_view, app.chat_list_rect, app.chat_input_rect, app.focus == FOCUS_CHAT);
+        if (app.observer_open && app.findings_rect.width > 0) {
+            char fid[40] = "";
+            FindingAction fa = findings_view_draw(app.findings, app.findings_rect, fid, sizeof(fid));
+            if (fa != FA_NONE) finding_action(&app, fa, fid);
+        }
 
         bool can_save = (editor_is_dirty(app.editor) || editor_overwrite_armed(app.editor)) &&
                         !editor_is_read_only(app.editor);
@@ -1669,7 +1808,7 @@ int main(int argc, char **argv)
         if (GuiButton(save_rect, "Save")) save(&app);
         GuiEnable();
         /* raygui draws with the primary face only (no fallback), so ASCII. */
-        if (GuiButton(obs_rect, app.observer_open ? "Hide observer" : "Observer"))
+        if (GuiButton(obs_rect, app.observer_open ? "Hide observer" : app.observer_button[0] ? app.observer_button : "Observer"))
             app.observer_open = !app.observer_open;
         if (chat_busy(app.chat)) GuiDisable();
         if (GuiButton(new_rect, "New chat")) new_chat(&app);
@@ -1726,6 +1865,9 @@ int main(int argc, char **argv)
     records_free(app.notes, app.nnotes);
     records_free(app.canon, app.ncanon);
     free(app.revs);
+    observer_destroy(app.observer);  /* cancels its request before the server stops */
+    findings_view_destroy(app.findings);
+    records_free(app.flist, app.nflist);
     chat_destroy(app.chat);          /* cancels any reply in progress */
     llm_server_destroy(app.llm);     /* stops llama-server and removes its socket */
     editor_destroy(app.editor);
