@@ -67,6 +67,15 @@ Qdrant is not backed up. It's rebuilt from MariaDB and the documents (acceptance
   Retrieval filters on `authority`, so canon is never confused with draft text (acceptance criterion 10).
 - **Rebuild:** derived data only. A "Rebuild index" action drops the collection and re-embeds from MariaDB.
 
-## Open questions
+## When the database is down
 
-- What the app does when Docker isn't installed or won't start. Proposed: documents and chat still work, and the Explorer shows "Project store unavailable" for notes, canon, findings and history until the services are up. That's the honest degraded mode, since the SOW makes the database the authority.
+There is one authority per project, and nothing to merge:
+- **A project not yet moved to the store** (no `.scribodo/store.json`) keeps working on its local files, exactly as before. It's imported the first time it's opened with the database up.
+- **A project in the store, with the database down:** documents stay fully editable and saveable, since they're plain files. Notes, canon, chats, History and the observer pause behind a banner: "Project store offline — your documents are unaffected". They resume when the database is back.
+- **Self-repair:** at launch, if the database is unreachable and Docker is running, the app runs `tools/services.sh up` itself and retries.
+
+Merging offline file writes into the database later was rejected. Record version numbers and message sequences would restart in the new files and collide with the database's, needing renumbering rules that are easy to get wrong.
+
+**Per-thread connections:** the UI and the observer worker each get their own connection (thread-local, opened on first use), because a MariaDB connection must not be shared between threads.
+
+**Byte-exact names:** every table uses `utf8mb4_bin`. The server's default collation ignores case and accents, which would make `a.md`/`A.md` and `é.md`/`e.md` collide on case-sensitive volumes.

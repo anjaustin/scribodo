@@ -67,7 +67,7 @@ APP_OBJS  += $(BUILD)/src/platform/dialogs_mac.o
 APP   := $(BUILD)/scribodo
 TESTS := $(BUILD)/test_core $(BUILD)/test_doc_io $(BUILD)/test_editor $(BUILD)/test_llm
 
-.PHONY: all run test uitest uitest-real sanitize tsan cstest clean distclean llama model llmtest
+.PHONY: all run test uitest uitest-real sanitize tsan cstest dbtest clean distclean llama model llmtest
 
 all: $(APP)
 
@@ -127,6 +127,45 @@ uitest: $(APP)
 	    $(WATCHDOG) 120 ui-$$name ./$(APP) 2>build/ui/$$name/stderr.log || fail=1; \
 	  echo; \
 	done; exit $$fail
+
+# --- Project store (MariaDB client) ---------------------------------------------
+# Connector/C from the pinned submodule, static, against Homebrew's static
+# OpenSSL (the binary then needs only system libraries).
+OPENSSL_DIR ?= /opt/homebrew/opt/openssl@3
+MARIADB_LIB := $(BUILD)/mariadb-cc/libmariadb/libmariadbclient.a
+MARIADB_INC := -Ithird_party/mariadb-connector-c/include -I$(BUILD)/mariadb-cc/include
+MARIADB_LIBS := $(MARIADB_LIB) $(OPENSSL_DIR)/lib/libssl.a $(OPENSSL_DIR)/lib/libcrypto.a -lz -liconv
+$(MARIADB_LIB):
+	$(CMAKE) -S third_party/mariadb-connector-c -B $(BUILD)/mariadb-cc -DCMAKE_BUILD_TYPE=Release \
+	  -DWITH_UNIT_TESTS=OFF -DWITH_SSL=OPENSSL -DOPENSSL_ROOT_DIR=$(OPENSSL_DIR) -DOPENSSL_USE_STATIC_LIBS=TRUE \
+	  -DCLIENT_PLUGIN_DIALOG=STATIC -DCLIENT_PLUGIN_AUTH_GSSAPI_CLIENT=OFF -DCLIENT_PLUGIN_REMOTE_IO=OFF \
+	  -DWITH_CURL=OFF -DWITH_EXTERNAL_ZLIB=ON > $(BUILD)/mariadb-cc.log
+	$(CMAKE) --build $(BUILD)/mariadb-cc --target mariadbclient -j8 >> $(BUILD)/mariadb-cc.log
+
+$(BUILD)/src/app/db.o: src/app/db.c $(MARIADB_LIB)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(INCLUDES) $(MARIADB_INC) -MMD -MP -c $< -o $@
+
+$(BUILD)/tests/test_db.o: tests/test_db.c $(MARIADB_LIB)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(INCLUDES) $(MARIADB_INC) -MMD -MP -c $< -o $@
+
+$(BUILD)/src/app/store.o: src/app/store.c $(MARIADB_LIB)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(INCLUDES) $(MARIADB_INC) -MMD -MP -c $< -o $@
+
+STORE_SRCS := src/app/db.c src/app/store.c src/app/store_revisions.c src/app/store_records.c src/app/store_chats.c
+STORE_OBJS := $(patsubst %.c,$(BUILD)/%.o,$(STORE_SRCS))
+$(BUILD)/src/app/store_%.o: src/app/store_%.c $(MARIADB_LIB)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(INCLUDES) $(MARIADB_INC) -MMD -MP -c $< -o $@
+
+$(BUILD)/test_db: $(STORE_OBJS) $(BUILD)/tests/test_db.o $(BUILD)/src/app/records.o $(BUILD)/src/app/chat_store.o $(BUILD)/third_party/cJSON/cJSON.o $(MARIADB_LIB)
+	$(CC) $(CFLAGS) $(STORE_OBJS) $(BUILD)/tests/test_db.o $(BUILD)/src/app/records.o $(BUILD)/src/app/chat_store.o $(BUILD)/third_party/cJSON/cJSON.o -o $@ $(MARIADB_LIBS)
+
+# Against the running local services (tools/services.sh up).
+dbtest: $(BUILD)/test_db
+	$(WATCHDOG) 120 dbtest ./$(BUILD)/test_db
 
 # Rename safety on a case-sensitive volume (builds a temporary disk image).
 cstest: $(APP)

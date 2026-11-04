@@ -1,0 +1,399 @@
+#define _DARWIN_C_SOURCE
+#include "db.h"
+
+#include <mysql.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+struct Db {
+    MYSQL *m;
+    char err[512];
+};
+
+/* ---- configuration ------------------------------------------------------- */
+
+bool db_config_default(DbConfig *c, char *err, size_t errlen)
+{
+    memset(c, 0, sizeof(*c));
+    snprintf(c->host, sizeof(c->host), "127.0.0.1");
+    const char *port = getenv("SCRIBODO_DB_PORT");
+    c->port = port ? (unsigned)atoi(port) : 33061;
+    snprintf(c->user, sizeof(c->user), "scribodo");
+    snprintf(c->database, sizeof(c->database), "scribodo");
+    c->timeout_s = 5;
+    char path[1024];
+    const char *dir = getenv("SCRIBODO_SECRETS");
+    const char *home = getenv("HOME");
+    if (dir) snprintf(path, sizeof(path), "%s/db_password", dir);
+    else snprintf(path, sizeof(path), "%s/Library/Application Support/Scribodo/services/db_password", home ? home : "");
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        snprintf(err, errlen, "The database password isn't set up (run tools/services.sh up)");
+        return false;
+    }
+    size_t n = fread(c->password, 1, sizeof(c->password) - 1, f);
+    fclose(f);
+    c->password[n] = '\0';
+    c->password[strcspn(c->password, "\r\n")] = '\0';
+    return c->password[0] != '\0';
+}
+
+/* ---- connection ---------------------------------------------------------- */
+
+Db *db_open(const DbConfig *c, char *err, size_t errlen)
+{
+    Db *db = calloc(1, sizeof(Db));
+    if (!db) return NULL;
+    db->m = mysql_init(NULL);
+    if (!db->m) {
+        free(db);
+        snprintf(err, errlen, "Out of memory");
+        return NULL;
+    }
+    unsigned t = c->timeout_s ? c->timeout_s : 5;
+    mysql_options(db->m, MYSQL_OPT_CONNECT_TIMEOUT, &t);
+    mysql_options(db->m, MYSQL_OPT_READ_TIMEOUT, &t);
+    mysql_options(db->m, MYSQL_OPT_WRITE_TIMEOUT, &t);
+    mysql_options(db->m, MYSQL_SET_CHARSET_NAME, "utf8mb4");
+    /* Local only: never read config files that could redirect us. */
+    if (!mysql_real_connect(db->m, c->host, c->user, c->password, c->database, c->port, NULL, 0)) {
+        snprintf(err, errlen, "Can't reach the project store: %s", mysql_error(db->m));
+        mysql_close(db->m);
+        free(db);
+        return NULL;
+    }
+    mysql_autocommit(db->m, 1);
+    if (mysql_query(db->m, "SET SESSION sql_mode = 'STRICT_ALL_TABLES,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION'") != 0) {
+        snprintf(err, errlen, "Project store setup failed: %s", mysql_error(db->m));
+        mysql_close(db->m);
+        free(db);
+        return NULL;
+    }
+    return db;
+}
+
+void db_close(Db *db)
+{
+    if (!db) return;
+    mysql_close(db->m);
+    free(db);
+}
+
+const char *db_error(Db *db) { return db->err; }
+
+static void set_err(Db *db, const char *what, const char *detail)
+{
+    snprintf(db->err, sizeof(db->err), "%s: %s", what, detail ? detail : "");
+}
+
+bool db_begin(Db *db)
+{
+    if (mysql_query(db->m, "START TRANSACTION") != 0) {
+        set_err(db, "begin", mysql_error(db->m));
+        return false;
+    }
+    return true;
+}
+
+bool db_commit(Db *db)
+{
+    if (mysql_commit(db->m) != 0) {
+        set_err(db, "commit", mysql_error(db->m));
+        return false;
+    }
+    return true;
+}
+
+void db_rollback(Db *db) { mysql_rollback(db->m); }
+
+/* ---- prepared statements ------------------------------------------------- */
+
+static MYSQL_STMT *prepare(Db *db, const char *sql, const DbArg *args, size_t nargs, MYSQL_BIND **binds_out)
+{
+    *binds_out = NULL;
+    MYSQL_STMT *st = mysql_stmt_init(db->m);
+    if (!st) {
+        set_err(db, "statement", "out of memory");
+        return NULL;
+    }
+    if (mysql_stmt_prepare(st, sql, strlen(sql)) != 0) {
+        set_err(db, "prepare", mysql_stmt_error(st));
+        mysql_stmt_close(st);
+        return NULL;
+    }
+    if (mysql_stmt_param_count(st) != nargs) {
+        set_err(db, "prepare", "wrong number of parameters");
+        mysql_stmt_close(st);
+        return NULL;
+    }
+    if (nargs) {
+        MYSQL_BIND *b = calloc(nargs, sizeof(MYSQL_BIND));
+        if (!b) {
+            mysql_stmt_close(st);
+            return NULL;
+        }
+        for (size_t i = 0; i < nargs; i++) {
+            const DbArg *a = &args[i];
+            if (a->type == 's') {
+                if (a->s) {
+                    b[i].buffer_type = MYSQL_TYPE_STRING;
+                    b[i].buffer = (void *)a->s;
+                    b[i].buffer_length = strlen(a->s);
+                } else {
+                    b[i].buffer_type = MYSQL_TYPE_NULL;
+                }
+            } else if (a->type == 'i') {
+                b[i].buffer_type = MYSQL_TYPE_LONGLONG;
+                b[i].buffer = (void *)&a->i;
+            } else {
+                b[i].buffer_type = MYSQL_TYPE_DOUBLE;
+                b[i].buffer = (void *)&a->d;
+            }
+        }
+        if (mysql_stmt_bind_param(st, b) != 0) {
+            set_err(db, "bind", mysql_stmt_error(st));
+            free(b);
+            mysql_stmt_close(st);
+            return NULL;
+        }
+        *binds_out = b;
+    }
+    return st;
+}
+
+bool db_run(Db *db, const char *sql, const DbArg *args, size_t nargs, uint64_t *affected)
+{
+    MYSQL_BIND *b;
+    MYSQL_STMT *st = prepare(db, sql, args, nargs, &b);
+    if (!st) return false;
+    bool ok = mysql_stmt_execute(st) == 0;
+    if (!ok) set_err(db, "execute", mysql_stmt_error(st));
+    if (ok && affected) *affected = (uint64_t)mysql_stmt_affected_rows(st);
+    free(b);
+    mysql_stmt_close(st);
+    return ok;
+}
+
+void db_rows_free(DbRows *r)
+{
+    if (!r) return;
+    for (size_t i = 0; i < r->nrows * r->ncols; i++) free(r->cells[i]);
+    free(r->cells);
+    memset(r, 0, sizeof(*r));
+}
+
+bool db_query(Db *db, const char *sql, const DbArg *args, size_t nargs, DbRows *out)
+{
+    memset(out, 0, sizeof(*out));
+    MYSQL_BIND *pb;
+    MYSQL_STMT *st = prepare(db, sql, args, nargs, &pb);
+    if (!st) return false;
+    bool ok = mysql_stmt_execute(st) == 0;
+    if (!ok) set_err(db, "execute", mysql_stmt_error(st));
+    MYSQL_RES *meta = ok ? mysql_stmt_result_metadata(st) : NULL;
+    size_t ncols = meta ? mysql_num_fields(meta) : 0;
+    MYSQL_BIND *rb = ncols ? calloc(ncols, sizeof(MYSQL_BIND)) : NULL;
+    unsigned long *lens = ncols ? calloc(ncols, sizeof(unsigned long)) : NULL;
+    my_bool *nulls = ncols ? calloc(ncols, sizeof(my_bool)) : NULL;
+    if (ok && ncols && (!rb || !lens || !nulls)) ok = false;
+    for (size_t c = 0; ok && c < ncols; c++) {
+        rb[c].buffer_type = MYSQL_TYPE_STRING; /* every column read as text; sizes found per row */
+        rb[c].buffer = NULL;
+        rb[c].buffer_length = 0;
+        rb[c].length = &lens[c];
+        rb[c].is_null = &nulls[c];
+    }
+    if (ok && ncols && mysql_stmt_bind_result(st, rb) != 0) {
+        set_err(db, "bind result", mysql_stmt_error(st));
+        ok = false;
+    }
+    size_t cap = 0;
+    out->ncols = ncols;
+    while (ok && ncols) {
+        int rc = mysql_stmt_fetch(st);
+        if (rc == MYSQL_NO_DATA) break;
+        if (rc == 1) {
+            set_err(db, "fetch", mysql_stmt_error(st));
+            ok = false;
+            break;
+        }
+        if (out->nrows == cap) {
+            cap = cap ? cap * 2 : 16;
+            char **cells = realloc(out->cells, cap * ncols * sizeof(char *));
+            if (!cells) {
+                ok = false;
+                break;
+            }
+            out->cells = cells;
+        }
+        char **row = out->cells + out->nrows * ncols;
+        for (size_t c = 0; c < ncols; c++) {
+            row[c] = NULL;
+            if (nulls[c]) continue;
+            /* Numeric columns report no length until converted: always fetch
+             * into a real buffer, and again if the value is longer. */
+            unsigned long size = lens[c] > 64 ? lens[c] : 64, got = 0;
+            char *v = malloc(size + 1);
+            MYSQL_BIND one = { 0 };
+            one.buffer_type = MYSQL_TYPE_STRING;
+            one.length = &got;
+            for (int attempt = 0; v && attempt < 2; attempt++) {
+                one.buffer = v;
+                one.buffer_length = size + 1;
+                if (mysql_stmt_fetch_column(st, &one, (unsigned)c, 0) != 0) {
+                    free(v);
+                    v = NULL;
+                    break;
+                }
+                if (got <= size) break;
+                size = got;
+                char *nv = realloc(v, size + 1);
+                if (!nv) {
+                    free(v);
+                    v = NULL;
+                }
+                v = nv;
+            }
+            if (!v) {
+                ok = false;
+                break;
+            }
+            v[got <= size ? got : size] = '\0';
+            row[c] = v;
+        }
+        out->nrows++;
+    }
+    if (meta) mysql_free_result(meta);
+    free(rb);
+    free(lens);
+    free(nulls);
+    free(pb);
+    mysql_stmt_close(st);
+    if (!ok) db_rows_free(out);
+    return ok;
+}
+
+/* ---- migrations ------------------------------------------------------------- */
+
+/* Each migration is a list of statements, applied in one transaction (DDL
+ * commits implicitly in MariaDB, so each statement is also idempotent: IF
+ * NOT EXISTS). */
+static const char *const k_migration_001[] = {
+    "CREATE TABLE IF NOT EXISTS projects ("
+    " id VARCHAR(40) COLLATE utf8mb4_bin PRIMARY KEY, name VARCHAR(255) NOT NULL, path VARCHAR(2048) COLLATE utf8mb4_bin NOT NULL,"
+    " path_hash CHAR(64) COLLATE utf8mb4_bin NOT NULL UNIQUE, created_at DOUBLE NOT NULL, updated_at DOUBLE NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+    "CREATE TABLE IF NOT EXISTS documents ("
+    " id VARCHAR(40) COLLATE utf8mb4_bin PRIMARY KEY, project_id VARCHAR(40) COLLATE utf8mb4_bin NOT NULL,"
+    " name VARCHAR(255) COLLATE utf8mb4_bin NOT NULL, current_revision_id VARCHAR(40) NULL, created_at DOUBLE NOT NULL, renamed_at DOUBLE NULL,"
+    " UNIQUE KEY doc_name (project_id, name),"
+    " FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+    "CREATE TABLE IF NOT EXISTS revisions ("
+    " id VARCHAR(40) PRIMARY KEY, document_id VARCHAR(40) NOT NULL, hash CHAR(16) NOT NULL,"
+    " content LONGTEXT NOT NULL, origin VARCHAR(24) NOT NULL, note VARCHAR(255) NOT NULL DEFAULT '',"
+    " created_at DOUBLE NOT NULL, KEY rev_doc (document_id, created_at),"
+    " FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+    "CREATE TABLE IF NOT EXISTS conversations ("
+    " id VARCHAR(40) PRIMARY KEY, project_id VARCHAR(40) NOT NULL, title VARCHAR(255) NOT NULL,"
+    " created_at DOUBLE NOT NULL, updated_at DOUBLE NOT NULL,"
+    " FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+    "CREATE TABLE IF NOT EXISTS messages ("
+    " id BIGINT AUTO_INCREMENT PRIMARY KEY, conversation_id VARCHAR(40) NOT NULL, seq INT NOT NULL,"
+    " role ENUM('user','assistant') NOT NULL, content LONGTEXT NOT NULL,"
+    " error TINYINT(1) NOT NULL DEFAULT 0, is_edit TINYINT(1) NOT NULL DEFAULT 0, truncated TINYINT(1) NOT NULL DEFAULT 0,"
+    " created_at DOUBLE NOT NULL, UNIQUE KEY msg_seq (conversation_id, seq),"
+    " FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+    "CREATE TABLE IF NOT EXISTS message_documents ("
+    " message_id BIGINT NOT NULL, document_id VARCHAR(40) NOT NULL, PRIMARY KEY (message_id, document_id),"
+    " FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,"
+    " FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+    "CREATE TABLE IF NOT EXISTS records ("
+    " id VARCHAR(40) PRIMARY KEY, project_id VARCHAR(40) NOT NULL, kind ENUM('note','canon','finding') NOT NULL,"
+    " created_at DOUBLE NOT NULL, KEY rec_kind (project_id, kind),"
+    " FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+    "CREATE TABLE IF NOT EXISTS record_versions ("
+    " record_id VARCHAR(40) NOT NULL, ver INT NOT NULL, status VARCHAR(16) NOT NULL, content LONGTEXT NOT NULL,"
+    " finding_type VARCHAR(24) NULL, subject VARCHAR(255) NULL, relation VARCHAR(255) NULL, object VARCHAR(255) NULL,"
+    " related_id VARCHAR(40) NULL, related_text LONGTEXT NULL, created_at DOUBLE NOT NULL,"
+    " PRIMARY KEY (record_id, ver),"
+    " FOREIGN KEY (record_id) REFERENCES records(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+    "CREATE TABLE IF NOT EXISTS source_refs ("
+    " id BIGINT AUTO_INCREMENT PRIMARY KEY, record_id VARCHAR(40) NOT NULL, ver INT NOT NULL,"
+    " kind ENUM('doc','chat') NOT NULL, document_id VARCHAR(40) NULL, revision_id VARCHAR(40) NULL,"
+    " conversation_id VARCHAR(40) NULL, message_seq INT NULL, start BIGINT NOT NULL, len BIGINT NOT NULL,"
+    " quote LONGTEXT NOT NULL, KEY src_rec (record_id, ver),"
+    " FOREIGN KEY (record_id, ver) REFERENCES record_versions(record_id, ver) ON DELETE CASCADE,"
+    " FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE SET NULL,"
+    " FOREIGN KEY (revision_id) REFERENCES revisions(id) ON DELETE SET NULL,"
+    " FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE SET NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+    "CREATE TABLE IF NOT EXISTS entities ("
+    " id VARCHAR(40) PRIMARY KEY, project_id VARCHAR(40) NOT NULL, name VARCHAR(255) NOT NULL,"
+    " norm_name VARCHAR(255) NOT NULL, type VARCHAR(24) NOT NULL DEFAULT 'entity',"
+    " UNIQUE KEY ent_name (project_id, norm_name),"
+    " FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+    "CREATE TABLE IF NOT EXISTS links ("
+    " id BIGINT AUTO_INCREMENT PRIMARY KEY, project_id VARCHAR(40) NOT NULL, from_entity VARCHAR(40) NOT NULL,"
+    " relation VARCHAR(255) NOT NULL, to_entity VARCHAR(40) NOT NULL, finding_id VARCHAR(40) NULL,"
+    " KEY link_from (from_entity), KEY link_to (to_entity),"
+    " FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,"
+    " FOREIGN KEY (from_entity) REFERENCES entities(id) ON DELETE CASCADE,"
+    " FOREIGN KEY (to_entity) REFERENCES entities(id) ON DELETE CASCADE,"
+    " FOREIGN KEY (finding_id) REFERENCES records(id) ON DELETE SET NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+    "CREATE TABLE IF NOT EXISTS observer_pieces ("
+    " document_id VARCHAR(40) NOT NULL, piece_hash CHAR(16) NOT NULL, PRIMARY KEY (document_id, piece_hash),"
+    " FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+    "CREATE TABLE IF NOT EXISTS observer_chats ("
+    " conversation_id VARCHAR(40) PRIMARY KEY, msg INT NOT NULL, off BIGINT NOT NULL,"
+    " FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+    "CREATE TABLE IF NOT EXISTS jobs ("
+    " id VARCHAR(40) PRIMARY KEY, project_id VARCHAR(40) NOT NULL, kind VARCHAR(24) NOT NULL,"
+    " state VARCHAR(16) NOT NULL, attempts INT NOT NULL DEFAULT 0, last_error TEXT NULL, updated_at DOUBLE NOT NULL,"
+    " FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+    NULL,
+};
+
+static const char *const *const k_migrations[] = { k_migration_001 };
+
+int db_schema_version(Db *db)
+{
+    DbRows r;
+    if (!db_query(db, "SELECT COALESCE(MAX(version), 0) FROM schema_migrations", NULL, 0, &r)) return -1;
+    int v = r.nrows && db_cell(&r, 0, 0) ? atoi(db_cell(&r, 0, 0)) : 0;
+    db_rows_free(&r);
+    return v;
+}
+
+bool db_migrate(Db *db, char *err, size_t errlen)
+{
+    if (!db_run(db,
+                "CREATE TABLE IF NOT EXISTS schema_migrations (version INT PRIMARY KEY, applied_at DOUBLE NOT NULL) "
+                "ENGINE=InnoDB",
+                NULL, 0, NULL)) {
+        snprintf(err, errlen, "%s", db->err);
+        return false;
+    }
+    int have = db_schema_version(db);
+    if (have < 0) {
+        snprintf(err, errlen, "%s", db->err);
+        return false;
+    }
+    int latest = (int)(sizeof(k_migrations) / sizeof(k_migrations[0]));
+    if (have > latest) {
+        snprintf(err, errlen, "The project store is from a newer Scribodo (schema %d, this version knows %d)", have, latest);
+        return false;
+    }
+    for (int v = have + 1; v <= latest; v++) {
+        for (const char *const *stmt = k_migrations[v - 1]; *stmt; stmt++)
+            if (!db_run(db, *stmt, NULL, 0, NULL)) {
+                snprintf(err, errlen, "Migration %d failed: %s", v, db->err);
+                return false;
+            }
+        DbArg a[2] = { DB_I(v), DB_D(0) };
+        if (!db_run(db, "INSERT INTO schema_migrations (version, applied_at) VALUES (?, UNIX_TIMESTAMP(NOW(6)) + ?)", a, 2,
+                    NULL)) {
+            snprintf(err, errlen, "Recording migration %d failed: %s", v, db->err);
+            return false;
+        }
+    }
+    return true;
+}
