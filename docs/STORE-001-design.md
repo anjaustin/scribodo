@@ -76,9 +76,20 @@ The marker (`.scribodo/store.json`, version 2) records the project id and the fo
 - `files/<project>`: the project folder, copied with `ditto`. That's the documents plus `.scribodo/`, which holds the store marker.
 - `manifest.json` (database, path, project id, schema version) and `SHA256SUMS`.
 
-`tools/backup.sh verify BACKUP` checks the checksums. `tools/restore.sh BACKUP [--db NAME] [--to FOLDER] [--replace]` checks them first and changes nothing if one fails. It then loads the dump into an empty (or, with `--replace`, an existing) database and puts the folder back where it came from, or at `FOLDER`, which must not exist.
+`tools/backup.sh verify BACKUP` checks that every listed file is present and unchanged, and that there's nothing else (no extra files, no links). The checksums travel with the backup, so they detect damage, not deliberate tampering: only restore backups you made.
+
+`tools/restore.sh BACKUP --to FOLDER [--db NAME] [--replace]` is for disasters. It changes nothing if a check fails, and it refuses while the app is running. Hardened in red-team 009:
+- **The dump** must be plain `mariadb-dump` output. It's loaded in the client's sandbox mode (no shell, no file access) by a one-time user that can reach only the target database.
+- **The database** must be `scribodo` or a `scribodo_test_*` one. It must be empty, unless `--replace`, which returns **every** project in that database to the time of the backup.
+- **The folder** goes to `FOLDER`, which must not exist and is never taken from the backup itself.
+- **The index:** the restored database's semantic index is dropped, and the app rebuilds it from the store.
 
 Qdrant isn't backed up. When a project's collection is missing, the next sync rebuilds the whole index from the store (acceptance criterion 10), documents and chats included. The marks alone would otherwise claim everything was already indexed.
+
+**From the app** (Explorer → PROJECT):
+- **Back up now** runs `tools/backup.sh` in the background, so you keep writing. For a project in the store, it also adds `export/`: the project's own History, notes, canon, findings and chats, written in the file format with their original times. Sources point at the exported snapshots.
+- **Restore from a backup…** never overwrites anything, and never touches the database. The backed-up project goes into a new folder beside the current one, "Name (restored <time>)", built from its documents plus `export/` (or, for a project on files, its own `.scribodo/`). It then opens and is imported as a project of its own; ids that belong to the original get their own.
+- **Whole-database disasters** are restored with `tools/restore.sh`. So is a backup made by the CLI without an export, and the app says so.
 
 `make backuptest` rehearses a disaster:
 1. a project is used;

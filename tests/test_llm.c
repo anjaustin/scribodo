@@ -1488,6 +1488,7 @@ static bool remote_cfg(RemoteConfig *c, const char *url, const char *key, int mo
 
 static void test_remote(void)
 {
+    char cmd_buf[900];
     RemoteConfig c;
     char err[200];
     /* Configuration: HTTPS (plain http only to this machine), no credentials
@@ -1524,6 +1525,8 @@ static void test_remote(void)
     chat_lock(s);
     const ChatMessage *m = chat_message(s, 1);
     CHECK(m && !m->error && !strcmp(m->content, "The knight drew his sword."));
+    CHECK(m && m->via && !strcmp(m->via, "Frontier \xC2\xB7 127.0.0.1")); /* the reply says where it came from */
+    CHECK(chat_message(s, 0)->via && !strcmp(chat_message(s, 0)->via, m->via)); /* and the message where it went */
     chat_unlock(s);
     CHECK(atomic_load(&st.requests) == 1 && strstr(st.last, "POST /v1/chat/completions") &&
           strstr(st.last, "Authorization: Bearer sk-test") && strstr(st.last, "\"model\":\"m1\"") && strstr(st.last, "Tell me") &&
@@ -1535,6 +1538,21 @@ static void test_remote(void)
     chat_lock(s);
     m = chat_message(s, 3);
     CHECK(m && strstr(m->content, "fake model") && strstr(m->content, "Locally now"));
+    CHECK(m && !m->via && !chat_message(s, 2)->via); /* local messages carry no via */
+    /* Saved and reloaded, the marks stay with their messages. */
+    ChatMessage saved[4];
+    for (int i = 0; i < 4; i++) saved[i] = *chat_message(s, (size_t)i);
+    chat_unlock(s);
+    char proj[600];
+    snprintf(proj, sizeof(proj), "%s/remote-proj", g_dir);
+    mkdir(proj, 0755);
+    for (int i = 0; i < 4; i++) CHECK(chat_store_append(proj, "20261104-120000-abcd", "Remote", &saved[i]));
+    ChatMessage *back = NULL;
+    size_t nb = 0;
+    CHECK(chat_store_load(proj, "20261104-120000-abcd", &back, &nb) && nb == 4 && back[0].via && back[1].via &&
+          !strcmp(back[1].via, "Frontier \xC2\xB7 127.0.0.1") && !back[2].via && !back[3].via);
+    chat_store_free_messages(back, nb);
+    chat_lock(s);
     chat_unlock(s);
     CHECK(atomic_load(&st.requests) == 1);
     chat_destroy(s);
@@ -1554,6 +1572,51 @@ static void test_remote(void)
     m = chat_message(s, 1);
     CHECK(m && m->error && strstr(m->content, "refused the API key") && !strstr(m->content, "fake model"));
     chat_unlock(s);
+    chat_destroy(s);
+    rstub_stop(&st, th);
+
+    /* Red-team 009: remote.json writable by others, or a key file that is
+     * one of Scribodo's own secrets, is refused. */
+    {
+        char cfgp[700], json[1400], sd[700], kf2[800];
+        snprintf(cfgp, sizeof(cfgp), "%s/remote.json", g_dir);
+        snprintf(sd, sizeof(sd), "%s/Scribodo/services", g_dir);
+        snprintf(cmd_buf, sizeof(cmd_buf), "mkdir -p '%s'", sd);
+        system(cmd_buf);
+        snprintf(kf2, sizeof(kf2), "%s/qdrant_api_key", sd);
+        FILE *kfp = fopen(kf2, "wb");
+        fputs("not-for-providers", kfp);
+        fclose(kfp);
+        chmod(kf2, 0600);
+        snprintf(json, sizeof(json), "{\"base_url\":\"https://a.example/v1\",\"model\":\"m\",\"api_key_file\":\"%s\"}", kf2);
+        CHECK(!remote_parse(json, &c, err, sizeof(err)) && strstr(err, "service secrets"));
+        FILE *cf = fopen(cfgp, "wb");
+        fputs(json, cf);
+        fclose(cf);
+        chmod(cfgp, 0666);
+        setenv("SCRIBODO_REMOTE_CONFIG", cfgp, 1);
+        CHECK(!remote_load(&c, err, sizeof(err)) && strstr(err, "not writable by others"));
+        unsetenv("SCRIBODO_REMOTE_CONFIG");
+    }
+
+    /* Local turns before switching never reach the remote model. */
+    CHECK(rstub_start(&st, RSTUB_OK, &th));
+    snprintf(url, sizeof(url), "http://127.0.0.1:%d/v1", st.port);
+    CHECK(remote_cfg(&c, url, "sk-test", 0600, err, sizeof(err)));
+    s = chat_create(NULL);
+    d.done = 0;
+    chat_on_message_done(s, on_done, &d);
+    CHECK(chat_send(s, "PRIVATE local turn", NULL, err, sizeof(err)));
+    wait_idle(s, &d, 2);
+    CHECK(chat_select_remote(s, &c));
+    CHECK(chat_send(s, "Now remote", NULL, err, sizeof(err)));
+    wait_idle(s, &d, 4);
+    CHECK(atomic_load(&st.requests) == 1 && strstr(st.last, "Now remote") && !strstr(st.last, "PRIVATE"));
+    d.done = 0;
+    CHECK(chat_send(s, "Remote again", NULL, err, sizeof(err)));
+    wait_idle(s, &d, 2);
+    CHECK(atomic_load(&st.requests) == 2 && strstr(st.last, "Now remote") && strstr(st.last, "Remote again") &&
+          !strstr(st.last, "PRIVATE")); /* the remote exchange is its context */
     chat_destroy(s);
     rstub_stop(&st, th);
 

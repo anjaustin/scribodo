@@ -65,6 +65,11 @@ void store_forget_verification(void);
 /* Internal (store_import): this thread is importing `project_dir` (NULL:
  * done), so it alone still sees the project's files. */
 void store_set_importing(const char *project_dir);
+/* Internal (exports): file writers on this thread stamp what they write
+ * with `t` (epoch seconds) instead of now; 0 restores now. Keeps History,
+ * notes and chats dated as they were when a project is exported. */
+void store_set_write_time(double t);
+double store_write_time(void); /* the override, or the current time */
 
 /* A new stable id: "<prefix>-YYYYMMDD-HHMMSS-<16 hex>". */
 void store_new_id(char prefix, char *out, size_t outlen);

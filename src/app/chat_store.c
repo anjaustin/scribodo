@@ -93,7 +93,7 @@ bool chat_store_append(const char *project_dir, const char *id, const char *titl
         cJSON_AddStringToObject(meta, "type", "meta");
         cJSON_AddNumberToObject(meta, "version", 1);
         cJSON_AddStringToObject(meta, "title", title ? title : "Chat");
-        cJSON_AddNumberToObject(meta, "created", (double)time(NULL));
+        cJSON_AddNumberToObject(meta, "created", (double)(time_t)store_write_time());
         ok = write_line(fd, meta);
         cJSON_Delete(meta);
     }
@@ -101,9 +101,10 @@ bool chat_store_append(const char *project_dir, const char *id, const char *titl
     cJSON_AddStringToObject(j, "type", "message");
     cJSON_AddStringToObject(j, "role", m->role == CHAT_USER ? "user" : "assistant");
     cJSON_AddStringToObject(j, "content", m->content ? m->content : "");
-    cJSON_AddNumberToObject(j, "ts", (double)time(NULL));
+    cJSON_AddNumberToObject(j, "ts", (double)(time_t)store_write_time());
     if (m->error) cJSON_AddBoolToObject(j, "error", true);
     if (m->is_edit) cJSON_AddBoolToObject(j, "edit", true);
+    if (m->via && m->via[0]) cJSON_AddStringToObject(j, "via", m->via); /* went to a remote model */
     /* The documents a user message was sent with; an empty list is recorded
      * too, so "nothing attached" is never confused with "not recorded". */
     if (m->role == CHAT_USER && m->docs) {
@@ -305,6 +306,8 @@ bool chat_store_load_files(const char *project_dir, const char *id, ChatMessage 
                 }
                 if (!joined && cJSON_IsArray(docs)) joined = strdup(""); /* recorded: none */
                 (*msgs)[*n].docs = joined;
+                cJSON *via = cJSON_GetObjectItem(j, "via");
+                (*msgs)[*n].via = cJSON_IsString(via) && via->valuestring[0] ? strdup(via->valuestring) : NULL;
                 (*msgs)[*n].ts = cJSON_GetNumberValue(cJSON_GetObjectItem(j, "ts"));
                 if ((*msgs)[*n].ts != (*msgs)[*n].ts) (*msgs)[*n].ts = 0; /* NaN when missing */
                 (*n)++;
@@ -321,6 +324,7 @@ void chat_store_free_messages(ChatMessage *msgs, size_t n)
     for (size_t i = 0; i < n; i++) {
         free(msgs[i].content);
         free(msgs[i].docs);
+        free(msgs[i].via);
     }
     free(msgs);
 }

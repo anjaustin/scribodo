@@ -169,7 +169,7 @@ UI scripts start with the observer **off**, so other scripts' file expectations 
 
 ## Project store
 
-**`make dbtest`** (214 checks) runs against the local MariaDB in throwaway databases. It covers:
+**`make dbtest`** (324 checks) runs against the local MariaDB in throwaway databases. It covers:
 - migrations, including 003 applied to a database that already has data;
 - prepared statements, with hostile text and a 3 MB value;
 - NULLs, foreign keys, rollback and cascades;
@@ -183,7 +183,7 @@ UI scripts start with the observer **off**, so other scripts' file expectations 
 
 It's also clean under ASan/UBSan.
 
-**`make uitest-db`** runs the app five times on one database:
+**`make uitest-db`** runs the app six times on one database (run 6 backs up from the app and restores into a new folder):
 1. A project with existing files is moved into the store, then notes, canon, a chat, a rename and the observer are used.
 2. After a restart everything comes back, the chat resumes (SOW acceptance 1), and the observer reads nothing twice.
 3. The entity graph (`5_entities.scribo`): the fake observer's relationship finding ("Zoë is Mara's sister.") becomes two entities and a link. "›" goes to the other entity, and the relationship opens its passage.
@@ -207,3 +207,17 @@ Each of these was caught by the suites and has a regression check:
 - **The app aborted inside GLFW when no display was available.** It now checks `IsWindowReady()` and exits with a clear message.
 - **Drag auto-scroll has two mechanisms:** explicit edge scrolling, and keep-the-caret-visible scrolling that fires on every drag update. Either one alone auto-scrolls; together they scroll faster. This isn't a bug, but worth knowing before tuning scroll speed.
 - **Harness bug:** screenshots taken just before `EndDrawing` missed the last draw batch (the Save button). The capture now flushes raylib's batch first.
+
+## Offline, backup and remote
+
+- **`make offlinetest`** (acceptance 8): everything inside a macOS sandbox with no network but this machine (`tools/offline/no-network.sb`), with controls proving the sandbox blocks outside hosts. It covers the store suite and the real models (chat, edit, the observer on files and on the store, `llmtest`). It needs the real model to itself.
+- **`make backuptest`:** a disaster rehearsal, plus crafted backups that must be refused:
+  - planted files;
+  - links;
+  - a shell escape;
+  - another database;
+  - a file that isn't a dump;
+  - a missing `--to`.
+
+  A `--replace` must also drop the stale index.
+- **`make remotetest`:** the remote model against a stand-in provider. It checks what actually reached the provider: one request, with its key and document, nothing from before the switch, and nothing after switching back.

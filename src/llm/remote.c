@@ -9,6 +9,7 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "cJSON.h"
 
@@ -74,13 +75,23 @@ bool remote_parse(const char *json, RemoteConfig *c, char *err, size_t errlen)
         while (n > 0 && c->base_url[n - 1] == '/') c->base_url[--n] = '\0';
         snprintf(c->model, sizeof(c->model), "%s", model->valuestring);
         c->context_tokens = cJSON_IsNumber(ctx) && ctx->valuedouble >= 2048 && ctx->valuedouble <= 2e6 ? (int)ctx->valuedouble : 32000;
-        /* The key: from a private file, never from remote.json itself. */
+        /* The key: from a private file of the author's, never from
+         * remote.json itself, and never one of Scribodo's own secrets (which
+         * would then go to the provider as the key). */
         struct stat st;
-        if (stat(kf->valuestring, &st) != 0) {
+        char real[1024] = "", secrets[1024];
+        snprintf(secrets, sizeof(secrets), "%s/Library/Application Support/Scribodo/services/", getenv("HOME") ? getenv("HOME") : "");
+        if (stat(kf->valuestring, &st) != 0 || !realpath(kf->valuestring, real)) {
             snprintf(err, errlen, "The API key file doesn't exist");
             ok = false;
         } else if (st.st_mode & 077) {
             snprintf(err, errlen, "The API key file must be private (chmod 600)");
+            ok = false;
+        } else if (st.st_uid != getuid() || !S_ISREG(st.st_mode)) {
+            snprintf(err, errlen, "The API key file must be a file of yours");
+            ok = false;
+        } else if (!strncmp(real, secrets, strlen(secrets)) || strstr(real, "/Scribodo/services/")) {
+            snprintf(err, errlen, "The API key file can't be one of Scribodo's own service secrets");
             ok = false;
         } else {
             char *k = slurp(kf->valuestring, sizeof(c->key) - 1);
@@ -111,8 +122,15 @@ bool remote_load(RemoteConfig *c, char *err, size_t errlen)
     const char *env = getenv("SCRIBODO_REMOTE_CONFIG");
     if (env) snprintf(path, sizeof(path), "%s", env);
     else snprintf(path, sizeof(path), "%s/Library/Application Support/Scribodo/remote.json", getenv("HOME") ? getenv("HOME") : "");
+    struct stat st;
+    if (stat(path, &st) != 0) return false; /* not configured: the normal case */
+    /* Others able to change it could point the key, or the content, anywhere. */
+    if (st.st_uid != getuid() || (st.st_mode & 022)) {
+        snprintf(err, errlen, "remote.json must be yours and not writable by others (chmod 600)");
+        return false;
+    }
     char *json = slurp(path, 64 * 1024);
-    if (!json) return false; /* not configured: the normal case */
+    if (!json) return false;
     bool ok = remote_parse(json, c, err, errlen);
     free(json);
     return ok;
@@ -122,7 +140,7 @@ char *remote_adapt_request(const RemoteConfig *c, const char *local_request)
 {
     cJSON *j = cJSON_Parse(local_request);
     if (!j) return NULL;
-    static const char *const local_only[] = { "repeat_penalty", "id_slot", "cache_prompt", "chat_template_kwargs" };
+    static const char *const local_only[] = { "repeat_penalty", "id_slot", "cache_prompt", "chat_template_kwargs", "seed" };
     for (size_t i = 0; i < sizeof(local_only) / sizeof(local_only[0]); i++) cJSON_DeleteItemFromObject(j, local_only[i]);
     cJSON_DeleteItemFromObject(j, "model");
     cJSON_AddStringToObject(j, "model", c->model);
@@ -179,6 +197,7 @@ static size_t on_data(char *data, size_t size, size_t nmemb, void *arg)
             }
             s->len = 0;
         } else {
+            if (s->len >= 4u << 20) return 0; /* a 4 MB line isn't a reply: stop */
             if (!grow(&s->line, &s->cap, s->len + 2)) return 0;
             s->line[s->len++] = data[i];
         }

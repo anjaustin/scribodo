@@ -6,6 +6,8 @@
 
 **Result:** criteria 1–10 pass on this Mac. Criterion 11 passes for macOS; Linux is out of scope. Remaining gaps are listed at the end.
 
+**Update (red-team 009 and the gap fixes):** gaps 1–4 below are closed; gap 5 had its red-team review (REDTEAM-009).
+
 **How it was run:**
 - **The full suites:** `make test`, `sanitize`, `tsan`, `uitest`, `dbtest`, `uitest-db`, `backuptest`, `remotetest` and `cstest`.
 - **Real-model suites:** `make uitest-real` and `make llmtest`, run with nothing else using the model.
@@ -27,8 +29,15 @@
 
 ## Gaps and risks
 
-1. **Offline was shown by observation, not by a run with networking switched off.** Every socket was sampled and all were loopback. A short-lived connection between samples could be missed, but the HTTP client can only name 127.0.0.1 or a Unix socket. Only the remote adapter, which is off unless configured, can reach another host.
-2. **Messages sent to a remote model aren't marked as such in the saved chat.** The indicator shows while it's selected; afterwards, the chat log doesn't say which messages left the device.
-3. **Real-model checks are loose,** because model output varies. They check the kind of finding and that it has a source, not exact wording.
-4. **Backup and restore are command-line tools** (`tools/backup.sh`, `tools/restore.sh`) without an in-app action.
-5. **The entity graph, backup/recovery and the remote adapter haven't had a red-team review yet.** The editor, chat, edits, observer, projects, attachments and the store have (REDTEAM-001 to 008).
+All five are closed.
+
+1. ~~Offline was shown by observation.~~ **`make offlinetest`** runs everything inside a macOS sandbox that denies all network access except this machine: the app, both llama-servers and their children. Controls prove it: an outside host is unreachable inside the sandbox and reachable outside it, while loopback works. The store suite (fake model), real chat, real edit, the real observer (on files and on the store with the real embedder) and the real model's end-to-end suite all pass inside it.
+2. ~~Remote messages aren't marked in the saved chat.~~ Each message sent to or answered by a remote model records where ("Frontier · host"), in the chat files and the store (migration 005). It's shown in amber when the chat is reopened. Remote requests carry only what was already exchanged with the remote: earlier local turns stay on this Mac.
+3. ~~Real-model checks are loose.~~ The real observer (temperature 0) must flag the conflict against the committed canon entry, quoting the contradicting sentence. Each checked finding's Source must land on the exact passage ("Source passage selected", never "moved since"). Chat checks the name "Zoë". Real-model chat runs use a fixed seed (`SCRIBODO_SEED`) for reproducibility.
+4. ~~Backup and restore are command-line only.~~ Explorer → PROJECT has **Back up now** (in the background, with a per-project export keeping original dates) and **Restore from a backup…**, which opens the project as a new folder and never overwrites anything or touches the database (`6_backup.scribo`). Whole-database disasters stay with `tools/restore.sh`.
+5. ~~Not red-teamed.~~ [REDTEAM-009](REDTEAM-009-graph-backup-remote.md): 9 findings, including one high (crafted backups), all fixed; 21/21 mutations caught.
+
+Remaining, by design:
+- Linux is out of scope.
+- Entity names in scripts without capitals (CJK) aren't recognised.
+- A first name's folding into a full name depends on the order names arrive in.

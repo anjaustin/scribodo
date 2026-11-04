@@ -54,6 +54,8 @@ struct Script {
     int qhead, qcount;
     int wait;
     int wait_chat;      /* frames left to wait for the chat to go idle */
+    int wait_status;    /* frames left to wait for the status to contain wait_text */
+    char wait_text[256];
     int wait_observer;  /* frames left to wait for the observer to go idle */
     int wait_ready;     /* frames left to wait for the model */
     char shot[1100];
@@ -395,9 +397,10 @@ static void run_expect(Script *s, ScriptHost *h, Tokens *t)
         ok = editor_is_dirty(e) == yes(t->tok[2]);
     } else if (!strcmp(what, "readonly") && t->n == 3) {
         ok = editor_is_read_only(e) == yes(t->tok[2]);
-    } else if (!strcmp(what, "status") && t->n == 3) {
+    } else if ((!strcmp(what, "status") || !strcmp(what, "status_not")) && t->n == 3) {
         const char *st = h->status(h->ctx);
-        ok = st && strstr(st, t->tok[2]);
+        bool has = st && strstr(st, t->tok[2]);
+        ok = !strcmp(what, "status") ? has : (st && !has);
         show(detail, sizeof(detail), "status", st);
     } else if (!strcmp(what, "clipboard") && t->n == 3) {
         const char *c = input_get_clipboard();
@@ -592,6 +595,14 @@ static bool run_line(Script *s, ScriptHost *h)
         s->pc--; /* reports pass/fail when done */
         return true;
     }
+    /* wait_status "text" [frames]: until the status line contains text
+     * (background work: backups); fails if it never does. */
+    if (!strcmp(cmd, "wait_status") && t.n >= 2 && h->status) {
+        snprintf(s->wait_text, sizeof(s->wait_text), "%s", t.tok[1]);
+        s->wait_status = t.n >= 3 ? atoi(t.tok[2]) : 60 * 60;
+        s->pc--; /* reports pass/fail when done */
+        return true;
+    }
     if (!strcmp(cmd, "wait_chat") && h->chat) {
         s->wait_chat = t.n >= 2 ? atoi(t.tok[1]) : 1200;
         return true;
@@ -603,6 +614,39 @@ static bool run_line(Script *s, ScriptHost *h)
             return false;
         }
         queue_click_button(s, (int)(r.x + r.width / 2), (int)(r.y + r.height / 2), 1, false, MOUSE_BUTTON_RIGHT);
+        return true;
+    }
+    /* dialog_latest DIR: the next dialog answers with DIR's newest entry
+     * (names that sort by time, as backups' do). */
+    if (!strcmp(cmd, "dialog_latest") && t.n == 2) {
+        DIR *d = opendir(t.tok[1]);
+        struct dirent *ent;
+        char best[256] = "";
+        while (d && (ent = readdir(d)) != NULL)
+            if (ent->d_name[0] != '.' && strcmp(ent->d_name, best) > 0) snprintf(best, sizeof(best), "%s", ent->d_name);
+        if (d) closedir(d);
+        char path[1400];
+        snprintf(path, sizeof(path), "%s/%s", t.tok[1], best);
+        if (!best[0]) report(s, false, "the folder is empty");
+        dialogs_script_answer(best[0] ? path : "");
+        return false;
+    }
+    /* click_finding TEXT: click the first finding whose line (findings_has
+     * format) contains TEXT. */
+    if (!strcmp(cmd, "click_finding") && t.n == 2 && h->findings_text && h->element) {
+        char *c = h->findings_text(h->ctx);
+        int idx = -1, i = 0;
+        for (char *save = NULL, *l = c ? strtok_r(c, "\n", &save) : NULL; l && idx < 0; l = strtok_r(NULL, "\n", &save), i++)
+            if (strstr(l, t.tok[1])) idx = i;
+        free(c);
+        char name[32];
+        snprintf(name, sizeof(name), "Finding%d", idx);
+        Rectangle r = idx >= 0 ? h->element(h->ctx, name) : (Rectangle){ 0 };
+        if (r.width <= 0) {
+            report(s, false, "no such finding");
+            return false;
+        }
+        queue_click_button(s, (int)(r.x + r.width / 2), (int)(r.y + 12), 1, false, MOUSE_BUTTON_LEFT);
         return true;
     }
     if (!strcmp(cmd, "dialog") && t.n == 2) {
@@ -699,6 +743,18 @@ bool script_frame(Script *s, ScriptHost *h)
             if (--s->wait_observer == 0) {
                 report(s, false, "observer did not finish");
                 s->pc++;
+                continue;
+            }
+            return true;
+        }
+        if (s->wait_status > 0) {
+            const char *st = h->status(h->ctx);
+            bool found = st && strstr(st, s->wait_text);
+            if (found || --s->wait_status == 0) {
+                s->wait_status = 0;
+                report(s, found, found ? NULL : "status never showed it");
+                s->pc++;
+                new_batch(s);
                 continue;
             }
             return true;

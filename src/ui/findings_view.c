@@ -350,13 +350,18 @@ Rectangle findings_view_element(const FindingsView *v, const char *name)
 char *findings_view_text(const FindingsView *v)
 {
     size_t cap = 1;
-    for (size_t i = 0; i < v->n; i++) cap += strlen(v->items[i].desc) + 64;
+    for (size_t i = 0; i < v->n; i++)
+        cap += strlen(v->items[i].desc) + (v->items[i].related ? strlen(v->items[i].related) : 0) +
+               (v->items[i].quote ? strlen(v->items[i].quote) : 0) + 80;
     char *s = malloc(cap);
     if (!s) return NULL;
     size_t k = 0;
     s[0] = '\0';
     for (size_t i = 0; i < v->n; i++)
-        k += (size_t)snprintf(s + k, cap - k, "%s|%s%s|%s\n", v->items[i].type, v->items[i].status,
-                              v->items[i].stale ? ",outdated" : "", v->items[i].desc);
+        /* type|status|description, then what it relates to and its evidence
+         * (tests check provenance, not just that a finding exists). */
+        k += (size_t)snprintf(s + k, cap - k, "%s|%s%s|%s|%s|quote: %s\n", v->items[i].type, v->items[i].status,
+                              v->items[i].stale ? ",outdated" : "", v->items[i].desc,
+                              v->items[i].related ? v->items[i].related : "", v->items[i].quote ? v->items[i].quote : "");
     return s;
 }

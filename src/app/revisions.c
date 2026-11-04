@@ -167,15 +167,27 @@ static bool record_impl(const char *project_dir, const char *doc_path, const cha
     free(list);
     if (same) return true; /* identical to the newest revision */
 
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
+    double wt = store_write_time(); /* now, or an export's original time */
+    struct timeval tv = { .tv_sec = (time_t)wt, .tv_usec = (suseconds_t)((wt - (double)(time_t)wt) * 1e6) };
     struct tm tmv;
     time_t now = tv.tv_sec;
     localtime_r(&now, &tmv);
     char stamp[40], file[160], path[1700], idx[1600];
     strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tmv);
-    snprintf(file, sizeof(file), "%s-%03d-%s.md", stamp, (int)(tv.tv_usec / 1000), origin);
-    snprintf(path, sizeof(path), "%s/%s", dir, file);
+    /* Never replace a snapshot: two in one millisecond (an export of tied
+     * times, a fast double save) take the next free name. */
+    int ms = (int)(tv.tv_usec / 1000);
+    for (int tries = 0;; tries++) {
+        snprintf(file, sizeof(file), "%s-%03d-%s.md", stamp, ms, origin);
+        snprintf(path, sizeof(path), "%s/%s", dir, file);
+        if (access(path, F_OK) != 0 || tries == 999) break;
+        if (++ms == 1000) { /* into the next second */
+            ms = 0;
+            now++;
+            localtime_r(&now, &tmv);
+            strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tmv);
+        }
+    }
     size_t len = strlen(text);
     if (!write_atomic(path, text, len)) return false;
 

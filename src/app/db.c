@@ -10,6 +10,7 @@ struct Db {
     MYSQL *m;
     char err[512];
     bool broken; /* the connection was lost: it must be reopened */
+    bool in_tx;  /* inside db_begin .. commit/rollback */
 };
 
 /* Client errors that mean the connection itself is gone (server restarted,
@@ -108,11 +109,13 @@ bool db_begin(Db *db)
         set_err(db, "begin", mysql_error(db->m));
         return false;
     }
+    db->in_tx = true;
     return true;
 }
 
 bool db_commit(Db *db)
 {
+    db->in_tx = false;
     if (mysql_commit(db->m) != 0) {
         set_err(db, "commit", mysql_error(db->m));
         return false;
@@ -120,7 +123,13 @@ bool db_commit(Db *db)
     return true;
 }
 
-void db_rollback(Db *db) { mysql_rollback(db->m); }
+void db_rollback(Db *db)
+{
+    db->in_tx = false;
+    mysql_rollback(db->m);
+}
+
+bool db_in_transaction(Db *db) { return db->in_tx; }
 
 /* ---- prepared statements ------------------------------------------------- */
 
@@ -437,7 +446,35 @@ static const char *const k_migration_004[] = {
     NULL,
 };
 
-static const char *const *const k_migrations[] = { k_migration_001, k_migration_002, k_migration_003, k_migration_004 };
+/* 005: which messages went to a remote model (SOW: remote use is visibly
+ * identified, also afterwards). */
+static const char *const k_migration_005[] = {
+    "ALTER TABLE messages ADD COLUMN IF NOT EXISTS via VARCHAR(400) COLLATE utf8mb4_nopad_bin NULL",
+    NULL,
+};
+
+/* 006 (red-team 009):
+ *  - one link per finding, enforced (two connections could both insert);
+ *    duplicates from before are removed first;
+ *  - whether a project's entity graph has been built (backfill once, not
+ *    every session);
+ *  - a semantic rebuild in progress (resumed if it was interrupted). */
+static const char *const k_migration_006[] = {
+    "DELETE l FROM links l JOIN links k ON k.finding_id = l.finding_id AND k.id < l.id",
+    "ALTER TABLE links ADD UNIQUE KEY IF NOT EXISTS link_finding (finding_id)",
+    "ALTER TABLE projects ADD COLUMN IF NOT EXISTS graph_built TINYINT(1) NOT NULL DEFAULT 0",
+    "ALTER TABLE projects ADD COLUMN IF NOT EXISTS index_rebuild_pending TINYINT(1) NOT NULL DEFAULT 0",
+    /* each record's current status, kept with it (counting live findings
+     * per mention through their versions was too slow) */
+    "ALTER TABLE records ADD COLUMN IF NOT EXISTS current_status VARCHAR(16) COLLATE utf8mb4_nopad_bin NULL",
+    "UPDATE records r JOIN (SELECT record_id, MAX(ver) AS mv FROM record_versions GROUP BY record_id) x ON x.record_id = r.id"
+    " JOIN record_versions v ON v.record_id = x.record_id AND v.ver = x.mv SET r.current_status = v.status",
+    "ALTER TABLE records ADD KEY IF NOT EXISTS rec_status (project_id, kind, current_status)",
+    NULL,
+};
+
+static const char *const *const k_migrations[] = { k_migration_001, k_migration_002, k_migration_003, k_migration_004,
+                                                   k_migration_005, k_migration_006 };
 
 int db_schema_version(Db *db)
 {

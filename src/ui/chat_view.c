@@ -344,8 +344,13 @@ void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_foc
         const ChatMessage *m = chat_message(v->chat, i);
         refresh(v, i, m->content, width);
         const MsgCache *c = &v->cache[i];
-        const char *who = m->role == CHAT_USER ? "You" : "Scribodo";
-        sfont_draw_utf8(v->label, who, (int)strlen(who), list.x + PAD, y, COL_LABEL);
+        /* A message that went to (or came from) a remote model says so,
+         * also when the chat is reopened later. */
+        char who[480];
+        if (m->via && m->via[0])
+            snprintf(who, sizeof(who), m->role == CHAT_USER ? "You \xC2\xB7 sent to %s" : "%s", m->via);
+        else snprintf(who, sizeof(who), "%s", m->role == CHAT_USER ? "You" : "Scribodo");
+        sfont_draw_utf8(v->label, who, (int)strlen(who), list.x + PAD, y, m->via && m->via[0] ? (Color){ 0xE6, 0xB4, 0x50, 0xFF } : COL_LABEL);
         y += LABEL_H;
         float bh = c->height + 2 * BUBBLE_PAD;
         if ((long)i == v->flash_index && GetTime() - v->flash_t < 2.5)

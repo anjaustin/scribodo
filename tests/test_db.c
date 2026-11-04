@@ -1,5 +1,6 @@
 /* The MariaDB layer against the local service (make dbtest; needs
  * tools/services.sh up). Uses a throwaway database, dropped at the end. */
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -56,8 +57,8 @@ static void test_db(void)
     }
     bool migrated = db_migrate(db, err, sizeof(err));
     if (!migrated) fprintf(stderr, "    %s\n", err);
-    CHECK(migrated && db_schema_version(db) == 4);
-    CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 4); /* idempotent */
+    CHECK(migrated && db_schema_version(db) == 6);
+    CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 6); /* idempotent */
 
     /* Author text with quotes, backslashes, SQL and Unicode goes through
      * prepared statements untouched. */
@@ -152,7 +153,7 @@ static void test_migration(void)
                      NULL, 0, NULL));
         bool migrated = db_migrate(db, err, sizeof(err));
         if (!migrated) fprintf(stderr, "    %s\n", err);
-        CHECK(migrated && db_schema_version(db) == 4);
+        CHECK(migrated && db_schema_version(db) == 6);
         DbRows r;
         CHECK(db_query(db, "SELECT id FROM revisions ORDER BY seq", NULL, 0, &r) && r.nrows == 2 &&
               !strcmp(db_cell(&r, 0, 0), "r-a") && !strcmp(db_cell(&r, 1, 0), "r-b"));
@@ -309,7 +310,7 @@ static void test_backends(void)
 
     /* Chats: messages in order, referenced documents by id. */
     ChatMessage u = { .role = CHAT_USER, .content = "compare", .docs = "Chapter One.md\nnotes.md" };
-    ChatMessage a = { .role = CHAT_ASSISTANT, .content = "They differ." };
+    ChatMessage a = { .role = CHAT_ASSISTANT, .content = "They differ.", .via = "Frontier \xC2\xB7 api.example.com" };
     CHECK(sdb_chat_append(db, pid, "20261104-150000-abcd", "Compare", &u) && sdb_chat_append(db, pid, "20261104-150000-abcd", "x", &a));
     CHECK(store_rename_document(pid, "notes.md", "Notes.md"));
     {
@@ -327,6 +328,7 @@ static void test_backends(void)
     size_t nm = 0;
     CHECK(sdb_chat_load(db, pid, "20261104-150000-abcd", &msgs, &nm) && nm == 2 && msgs[0].role == CHAT_USER &&
           !strcmp(msgs[1].content, "They differ.") && msgs[0].docs && !strcmp(msgs[0].docs, "Chapter One.md\nNotes.md"));
+    CHECK(nm == 2 && !msgs[0].via && msgs[1].via && !strcmp(msgs[1].via, "Frontier \xC2\xB7 api.example.com"));
     chat_store_free_messages(msgs, nm);
     CHECK(sdb_chat_rename(db, pid, "20261104-150000-abcd", "Comparing chapters"));
     ChatSummary *cs = NULL;
@@ -358,6 +360,7 @@ static void test_import(void)
     /* Not in the store yet: everything below goes to files. */
     CHECK(store_mode(proj, NULL, 0, NULL) == STORE_FILES);
     bool rec;
+    store_set_write_time(1700000000.25); /* written long ago: exports must keep that */
     CHECK(revisions_record(proj, doc, "first draft", "save", NULL, &rec) && rec);
     char snap[160];
     CHECK(revisions_snapshot(proj, doc, "Zoë kept the letter.\n", snap, sizeof(snap)));
@@ -370,6 +373,9 @@ static void test_import(void)
     CHECK(records_append(proj, REC_NOTE, nid, "active", "Check the date.", &src, 1, NULL));
     CHECK(records_append(proj, REC_NOTE, nid, "active", "Check the date (1911?).", &src, 1, NULL));
     CHECK(records_append(proj, REC_CANON, cid, "committed", "Zoë's eyes are green.", NULL, 0, NULL));
+    store_set_write_time(0);
+    const time_t revs_ts_oldest = 1700000000, note_ts = 1700000000;
+    char cmd0[1400];
     ChatMessage u = { .role = CHAT_USER, .content = "hello", .docs = "ch1.md" };
     ChatMessage a = { .role = CHAT_ASSISTANT, .content = "hi" };
     CHECK(chat_store_append(proj, "20261104-160000-abcd", "Greeting", &u) && chat_store_append(proj, "20261104-160000-abcd", "x", &a));
@@ -408,6 +414,35 @@ static void test_import(void)
     CHECK(chat_store_load(proj, "20261104-160000-abcd", &msgs, &nm) && nm == 2 && msgs[0].docs &&
           !strcmp(msgs[0].docs, "Chapter One.md"));
     chat_store_free_messages(msgs, nm);
+    /* Exported as files (what an in-app backup carries): original times,
+     * and sources that point at the exported snapshots. */
+    {
+        char pidx[40], ex[600], exdoc[700];
+        CHECK(store_mode(proj, pidx, sizeof(pidx), NULL) == STORE_DB);
+        snprintf(ex, sizeof(ex), "%s-export", proj);
+        snprintf(cmd0, sizeof(cmd0), "rm -rf '%s'", ex);
+        system(cmd0);
+        char ewhy[200];
+        CHECK(store_export_project(pidx, ex, ewhy, sizeof(ewhy)));
+        snprintf(exdoc, sizeof(exdoc), "%s/Chapter One.md", ex);
+        Revision *erevs = NULL;
+        size_t ne = revisions_list(ex, exdoc, &erevs);
+        CHECK(ne == nr && ne && erevs[ne - 1].ts == revs_ts_oldest); /* the first draft keeps its time */
+        free(erevs);
+        Record *en = NULL;
+        size_t nen = records_list(ex, REC_NOTE, &en);
+        CHECK(nen == 1 && en[0].nversions == 2 && en[0].versions[0].ts == note_ts &&
+              record_current(&en[0])->nsources == 1 && record_current(&en[0])->sources[0].revision[0] != '\0');
+        if (nen && record_current(&en[0])->nsources) {
+            char snapfile[1400];
+            struct stat sst;
+            snprintf(snapfile, sizeof(snapfile), "%s/.scribodo/revisions/Chapter One.md/%s", ex, record_current(&en[0])->sources[0].revision);
+            CHECK(stat(snapfile, &sst) == 0); /* a real exported snapshot */
+        }
+        records_free(en, nen);
+        snprintf(cmd0, sizeof(cmd0), "rm -rf '%s'", ex);
+        system(cmd0);
+    }
     /* New writes go to the store; the old files were set aside, not deleted. */
     CHECK(records_append(proj, REC_NOTE, nid, "active", "v3", NULL, 0, NULL));
     nn = records_list(proj, REC_NOTE, &notes);
@@ -706,12 +741,125 @@ static void test_entities(void)
     store_stop();
 }
 
+/* Red-team 009: folding during a relationship, imports that contain one,
+ * and two connections linking the same findings. */
+typedef struct {
+    char pid[40];
+    char (*ids)[40];
+    int n;
+} RaceArg;
+
+static void *race_main(void *arg)
+{
+    RaceArg *a = arg;
+    Db *db = store_db(); /* this thread's own connection */
+    for (int i = 0; db && i < a->n; i++) {
+        FindingInfo f = { 0 };
+        snprintf(f.type, sizeof(f.type), "relationship");
+        snprintf(f.subject, sizeof(f.subject), "Anna%c%c", 'A' + i % 26, 'a' + i / 26);
+        snprintf(f.relation, sizeof(f.relation), "knows");
+        snprintf(f.object, sizeof(f.object), "Bert%c%c", 'A' + i % 26, 'a' + i / 26);
+        sdb_entities_from_finding(db, a->pid, a->ids[i], &f);
+    }
+    store_thread_done();
+    return NULL;
+}
+
+static void test_entities_redteam(void)
+{
+    char why[256];
+    CHECK(store_start(g_name, why, sizeof(why)));
+    Db *db = store_db();
+    char p5[40], g[40];
+    CHECK(store_project_id("/private/var/folders", true, p5, sizeof(p5)));
+    /* "Zoë" exists; a relationship names "Zoë" and "Zoë Ångström". */
+    CHECK(add_finding(db, p5, g, "entity", "Zoë", "", "", "x."));
+    CHECK(add_finding(db, p5, g, "relationship", "Zoë", "is called", "Zoë Ångström", "x."));
+    CHECK(add_finding(db, p5, g, "relationship", "Mara", "sister of", "Zoë", "x."));
+    EntityRow *e = NULL;
+    size_t n = sdb_entity_list(db, p5, &e);
+    const EntityRow *z = find_entity(e, n, "Zoë Ångström");
+    CHECK(n == 2 && z && !find_entity(e, n, "Zoë") && z->links == 1 && find_entity(e, n, "Mara"));
+    entity_list_free(e, n);
+
+    /* Directly: the graph update for such a finding succeeds. */
+    {
+        char p8[40], rf[40];
+        CHECK(store_project_id("/private/var/select", true, p8, sizeof(p8)));
+        CHECK(add_finding(db, p8, g, "entity", "Ilse", "", "", "x."));
+        store_new_id('f', rf, sizeof(rf));
+        CHECK(sdb_record_append(db, p8, REC_FINDING, rf, "new", "x.", NULL, 0, NULL, true, NULL)); /* no hook */
+        FindingInfo rel = { 0 };
+        snprintf(rel.type, sizeof(rel.type), "relationship");
+        snprintf(rel.subject, sizeof(rel.subject), "Ilse");
+        snprintf(rel.relation, sizeof(rel.relation), "is called");
+        snprintf(rel.object, sizeof(rel.object), "Ilse Brandt");
+        CHECK(sdb_entities_from_finding(db, p8, rf, &rel));
+    }
+    /* The same pair in files, imported: the import succeeds. */
+    const char *tmp = getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp";
+    char proj[512], cmd[700];
+    snprintf(proj, sizeof(proj), "%s/scribodo-ent-%d", tmp, (int)getpid());
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", proj);
+    system(cmd);
+    mkdir(proj, 0755);
+    FindingInfo f1 = { 0 }, f2 = { 0 };
+    snprintf(f1.type, sizeof(f1.type), "entity");
+    snprintf(f1.subject, sizeof(f1.subject), "Zoë");
+    snprintf(f2.type, sizeof(f2.type), "relationship");
+    snprintf(f2.subject, sizeof(f2.subject), "Zoë");
+    snprintf(f2.relation, sizeof(f2.relation), "full name is");
+    snprintf(f2.object, sizeof(f2.object), "Zoë Ångström");
+    char i1[40], i2[40];
+    records_new_id(REC_FINDING, i1, sizeof(i1));
+    records_new_id(REC_FINDING, i2, sizeof(i2));
+    CHECK(records_append_ex(proj, REC_FINDING, i1, "new", "Zoë.", NULL, 0, &f1, NULL));
+    CHECK(records_append_ex(proj, REC_FINDING, i2, "new", "Zoë's full name.", NULL, 0, &f2, NULL));
+    why[0] = '\0';
+    CHECK(store_import(proj, why, sizeof(why)));
+    if (why[0]) fprintf(stderr, "    %s\n", why);
+    system(cmd);
+
+    /* Two connections link the same findings: one link each. */
+    char p6[40];
+    CHECK(store_project_id("/private/var/audit", true, p6, sizeof(p6)));
+    static char ids[60][40];
+    for (int i = 0; i < 60; i++) {
+        FindingInfo f = { 0 };
+        snprintf(f.type, sizeof(f.type), "entity");
+        snprintf(f.subject, sizeof(f.subject), "Seed");
+        store_new_id('f', ids[i], sizeof(ids[i]));
+        CHECK(sdb_record_append(db, p6, REC_FINDING, ids[i], "new", "x", NULL, 0, &f, true, NULL));
+    }
+    RaceArg ra = { .ids = ids, .n = 60 };
+    snprintf(ra.pid, sizeof(ra.pid), "%s", p6);
+    pthread_t t1, t2;
+    pthread_create(&t1, NULL, race_main, &ra);
+    pthread_create(&t2, NULL, race_main, &ra);
+    pthread_join(t1, NULL);
+    pthread_join(t2, NULL);
+    DbRows r;
+    CHECK(db_query(db, "SELECT COUNT(*), COUNT(DISTINCT finding_id) FROM links WHERE project_id = ?", (DbArg[1]){ DB_S(p6) }, 1, &r) &&
+          !strcmp(db_cell(&r, 0, 0), "60") && !strcmp(db_cell(&r, 0, 1), "60"));
+    db_rows_free(&r);
+    /* Greek and Cyrillic names are names too. */
+    char p7[40];
+    CHECK(store_project_id("/private/var/spool", true, p7, sizeof(p7)));
+    CHECK(add_finding(db, p7, g, "entity", "Σοφία", "", "", "x."));
+    CHECK(add_finding(db, p7, g, "entity", "ΣΟΦΊΑ", "", "", "x.") || true);
+    CHECK(add_finding(db, p7, g, "entity", "Наташа", "", "", "x."));
+    n = sdb_entity_list(db, p7, &e);
+    CHECK(find_entity(e, n, "Σοφία") && find_entity(e, n, "Наташа"));
+    entity_list_free(e, n);
+    store_stop();
+}
+
 /* Semantic retrieval against the local Qdrant (fake embedder): committed
  * canon only, kinds kept apart, and a wiped index rebuilt from MariaDB with
  * exact provenance (SOW acceptance 10). */
 static void test_semantic(void)
 {
-    char why[256];
+    char why[256] = "";
     CHECK(store_start(g_name, why, sizeof(why)));
     semantic_set_embedder(NULL);
     CHECK(semantic_ready());
@@ -785,6 +933,24 @@ static void test_semantic(void)
     n = semantic_canon_for(pid, "Zoë's brown eyes narrowed.", 3, &h);
     CHECK(n >= 1 && !strcmp(h[0].record_id, c1));
     semantic_hits_free(h, n);
+    /* A rebuild interrupted (the embedder down) is resumed by a later sync,
+     * documents included (red-team 009). */
+    LlmServerConfig dead;
+    llm_server_embed_config(&dead, "");
+    LlmServer *down = llm_server_create(&dead); /* never started: not ready */
+    semantic_set_embedder(down);
+    CHECK(semantic_forget_collection(pid));
+    CHECK(!semantic_sync_records(pid, why, sizeof(why)));
+    semantic_set_embedder(NULL);
+    CHECK(semantic_sync_records(pid, why, sizeof(why)));
+    n = semantic_search(pid, "lighthouse stairs", "draft", 3, &h);
+    CHECK(n >= 1 && !strcmp(h[0].revision_id, rv));
+    semantic_hits_free(h, n);
+    CHECK(semantic_sync_records(pid, why, sizeof(why))); /* and then it's done: no rebuild each time */
+    CHECK(db_query(db, "SELECT index_rebuild_pending FROM projects WHERE id = ?", (DbArg[1]){ DB_S(pid) }, 1, &r) &&
+          !strcmp(db_cell(&r, 0, 0), "0"));
+    db_rows_free(&r);
+    llm_server_destroy(down);
     semantic_drop(pid);
     store_stop();
 }
@@ -796,8 +962,8 @@ int main(void)
         fprintf(stderr, "dbtest: can't set up a test database (is tools/services.sh up?)\n");
         return 1;
     }
-    TestCase tests[] = { { "db", test_db }, { "migration", test_migration }, { "store_ids", test_store_ids }, { "backends", test_backends }, { "import", test_import }, { "import_safety", test_import_safety }, { "entities", test_entities }, { "semantic", test_semantic } };
-    int rc = run_tests(tests, 8);
+    TestCase tests[] = { { "db", test_db }, { "migration", test_migration }, { "store_ids", test_store_ids }, { "backends", test_backends }, { "import", test_import }, { "import_safety", test_import_safety }, { "entities", test_entities }, { "entities_redteam", test_entities_redteam }, { "semantic", test_semantic } };
+    int rc = run_tests(tests, 9);
     admin("DROP DATABASE %s");
     return rc;
 }

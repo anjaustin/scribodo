@@ -337,7 +337,7 @@ static bool append_impl(const char *project_dir, RecordKind kind, const char *id
     cJSON *j = cJSON_CreateObject();
     cJSON_AddStringToObject(j, "id", id);
     cJSON_AddNumberToObject(j, "ver", ver);
-    cJSON_AddNumberToObject(j, "ts", (double)time(NULL));
+    cJSON_AddNumberToObject(j, "ts", (double)(time_t)store_write_time());
     cJSON_AddStringToObject(j, "status", status);
     cJSON_AddStringToObject(j, "content", content ? content : "");
     cJSON *arr = cJSON_AddArrayToObject(j, "sources");

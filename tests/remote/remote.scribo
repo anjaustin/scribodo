@@ -7,9 +7,14 @@ mkdir "$DIR/rem"
 write "$DIR/rem/ch1.md" "The ferry runs on Tuesdays."
 open "$DIR/rem/ch1.md"
 expect status "Opened"
+# A local exchange first: it must never reach the remote model.
+click_element ChatInput
+type "PRIVATE local remark"
+key ENTER
+wait_chat
 click_element ModelPicker
 click_element MenuItem1
-expect status "Using Frontier: chat messages, attached documents and edit passages now go to 127.0.0.1"
+expect status "Using Frontier: new chat messages, their attached documents and edit passages go to 127.0.0.1. Earlier messages and the observer stay on this Mac."
 click_element ChatInput
 type "hello remote"
 key ENTER

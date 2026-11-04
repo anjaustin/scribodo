@@ -57,7 +57,7 @@ $(RAYLIB_LIB): $(RAYLIB_OBJS)
 
 # --- Scribodo ----------------------------------------------------------------
 CORE_SRCS := src/core/utf8.c src/core/text_buffer.c src/core/undo.c src/core/wrap.c src/core/doc_io.c src/core/diff.c
-STORE_SRCS := src/app/db.c src/app/store.c src/app/store_revisions.c src/app/store_records.c src/app/store_chats.c src/app/store_import.c src/app/store_entities.c
+STORE_SRCS := src/app/db.c src/app/store.c src/app/store_revisions.c src/app/store_records.c src/app/store_chats.c src/app/store_import.c src/app/store_entities.c src/app/backup.c
 LLM_SRCS  := src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/app/recent.c src/app/renames.c src/llm/observer.c src/llm/semantic.c src/llm/remote.c $(STORE_SRCS)
 LLM_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(LLM_SRCS)) $(BUILD)/third_party/cJSON/cJSON.o
 APP_SRCS  := src/main.c src/app/script.c src/ui/font.c src/ui/clay_render.c src/ui/editor.c src/ui/input.c \
@@ -69,7 +69,7 @@ APP_OBJS  += $(BUILD)/src/platform/dialogs_mac.o
 APP   := $(BUILD)/scribodo
 TESTS := $(BUILD)/test_core $(BUILD)/test_doc_io $(BUILD)/test_editor $(BUILD)/test_llm
 
-.PHONY: all run test uitest uitest-real sanitize tsan cstest dbtest uitest-db backuptest remotetest clean distclean llama model llmtest
+.PHONY: all run test uitest uitest-real sanitize tsan cstest dbtest uitest-db backuptest remotetest offlinetest clean distclean llama model llmtest
 
 all: $(APP)
 
@@ -164,6 +164,8 @@ uitest-db: $(APP)
 	    SCRIBODO_STORE=db SCRIBODO_DB_NAME=$$db SCRIBODO_SCRIPT=$$s SCRIBODO_SCRIPT_DIR=$$work SCRIBODO_SHOT_DIR=$$PWD/build/ui/store \
 	      $(WATCHDOG) 180 ui-store ./$(APP) 2>>build/ui/store/stderr.log || fail=1; echo; \
 	  done; \
+	  SCRIBODO_STORE=db SCRIBODO_DB_NAME=$$db SCRIBODO_BACKUPS=$$work/backups SCRIBODO_SCRIPT=tests/ui/store/6_backup.scribo SCRIBODO_SCRIPT_DIR=$$work \
+	    SCRIBODO_SHOT_DIR=$$PWD/build/ui/store $(WATCHDOG) 240 ui-store ./$(APP) 2>>build/ui/store/stderr.log || fail=1; echo; \
 	  SCRIBODO_STORE=db SCRIBODO_DB_NAME=$$db SCRIBODO_SCRIPT=tests/ui/store/5_entities.scribo SCRIBODO_SCRIPT_DIR=$$work \
 	    SCRIBODO_SHOT_DIR=$$PWD/build/ui/store $(WATCHDOG) 180 ui-store ./$(APP) 2>>build/ui/store/stderr.log || fail=1; echo; \
 	  cp -R $$work/book $$work/book-copy; \
@@ -172,6 +174,11 @@ uitest-db: $(APP)
 	  SCRIBODO_STORE=db SCRIBODO_DB_PORT=1 SCRIBODO_SCRIPT=tests/ui/store/3_paused.scribo SCRIBODO_SCRIPT_DIR=$$work \
 	    SCRIBODO_SHOT_DIR=$$PWD/build/ui/store $(WATCHDOG) 180 ui-store ./$(APP) 2>>build/ui/store/stderr.log || fail=1; \
 	  tools/services.sh testdb drop $$db >/dev/null; exit $$fail
+
+# Acceptance 8: the store suite and the real models inside a sandbox with
+# no network but this machine. Needs the real model to itself.
+offlinetest: $(APP) $(BUILD)/test_llm $(LLAMA_BIN)
+	tools/offlinetest.sh
 
 # The optional remote model, against a stand-in provider on 127.0.0.1.
 remotetest: $(APP)
@@ -218,7 +225,7 @@ uitest-real: $(APP) $(LLAMA_BIN)
 	@fail=0; for s in $(REAL_UI_SCRIPTS); do \
 	  name=$$(basename $$s .scribo); work=build/ui/$$name/work; rm -rf build/ui/$$name; \
 	  mkdir -p $$work && cp -R tests/ui/fixtures/. $$work/; \
-	  SCRIBODO_LLM=real SCRIBODO_SCRIPT=$$s SCRIBODO_SCRIPT_DIR=$$PWD/$$work SCRIBODO_SHOT_DIR=$$PWD/build/ui/$$name \
+	  SCRIBODO_LLM=real SCRIBODO_SEED=42 SCRIBODO_SCRIPT=$$s SCRIBODO_SCRIPT_DIR=$$PWD/$$work SCRIBODO_SHOT_DIR=$$PWD/build/ui/$$name \
 	    $(WATCHDOG) 600 ui-$$name ./$(APP) 2>build/ui/$$name/stderr.log || fail=1; echo; \
 	done; exit $$fail
 

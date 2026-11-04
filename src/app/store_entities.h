@@ -29,6 +29,8 @@ bool sdb_entities_from_finding(Db *db, const char *pid, const char *finding_id, 
 
 /* Rebuild entities and links from every finding of the project. */
 bool sdb_entities_backfill(Db *db, const char *pid);
+/* Has the project's graph been built (backfilled) already? */
+bool sdb_entities_built(Db *db, const char *pid);
 
 typedef struct {
     char id[40];

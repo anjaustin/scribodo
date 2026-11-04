@@ -44,12 +44,13 @@ bool sdb_chat_append(Db *db, const char *project_id, const char *id, const char 
     } else {
         ok = false;
     }
-    DbArg a[8] = { DB_S(id), DB_I(seq), DB_S(m->role == CHAT_USER ? "user" : "assistant"), DB_S(m->content ? m->content : ""),
-                   DB_I(m->error ? 1 : 0), DB_I(m->is_edit ? 1 : 0), DB_I(m->truncated ? 1 : 0), DB_D(t) };
+    DbArg a[9] = { DB_S(id), DB_I(seq), DB_S(m->role == CHAT_USER ? "user" : "assistant"), DB_S(m->content ? m->content : ""),
+                   DB_I(m->error ? 1 : 0), DB_I(m->is_edit ? 1 : 0), DB_I(m->truncated ? 1 : 0), DB_D(t),
+                   DB_S(m->via && m->via[0] ? m->via : NULL) };
     ok = ok && db_run(db,
-                      "INSERT INTO messages (conversation_id, seq, role, content, error, is_edit, truncated, created_at)"
-                      " VALUES (?,?,?,?,?,?,?,?)",
-                      a, 8, NULL);
+                      "INSERT INTO messages (conversation_id, seq, role, content, error, is_edit, truncated, created_at, via)"
+                      " VALUES (?,?,?,?,?,?,?,?,?)",
+                      a, 9, NULL);
     /* The documents this message was sent with. */
     if (ok && m->docs && m->docs[0]) {
         char *copy = strdup(m->docs);
@@ -97,7 +98,7 @@ bool sdb_chat_load(Db *db, const char *project_id, const char *id, ChatMessage *
     DbRows r, d;
     DbArg k[2] = { DB_S(id), DB_S(project_id) };
     if (!db_query(db,
-                  "SELECT m.seq, m.role, m.content, m.error, m.is_edit, m.truncated FROM messages m"
+                  "SELECT m.seq, m.role, m.content, m.error, m.is_edit, m.truncated, m.via, m.created_at FROM messages m"
                   " JOIN conversations c ON c.id = m.conversation_id WHERE m.conversation_id = ? AND c.project_id = ?"
                   " ORDER BY m.seq",
                   k, 2, &r))
@@ -119,6 +120,8 @@ bool sdb_chat_load(Db *db, const char *project_id, const char *id, ChatMessage *
         m->error = db_cell(&r, i, 3) && atoi(db_cell(&r, i, 3));
         m->is_edit = db_cell(&r, i, 4) && atoi(db_cell(&r, i, 4));
         m->truncated = db_cell(&r, i, 5) && atoi(db_cell(&r, i, 5));
+        m->via = db_cell(&r, i, 6) && db_cell(&r, i, 6)[0] ? strdup(db_cell(&r, i, 6)) : NULL;
+        m->ts = db_cell(&r, i, 7) ? atof(db_cell(&r, i, 7)) : 0;
         /* The documents' *current* names: renames are followed for free. */
         int seq = atoi(db_cell(&r, i, 0));
         size_t len = 1;

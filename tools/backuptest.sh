@@ -34,11 +34,43 @@ tools/restore.sh "$bk-tampered" --db $other --to "$work/never" >/dev/null 2>&1; 
 # Disaster.
 rm -rf "$work/book"
 tools/services.sh testdb drop $db >/dev/null
-step "restore (database recreated, folder back in place)"; tools/restore.sh "$bk" --db $db >/dev/null; ok $?
+step "a restore needs --to (never the backup's own path)"
+tools/restore.sh "$bk" --db $db >/dev/null 2>&1; r=$?; [ $r != 0 ] && [ ! -e "$work/book" ]; ok $?
+step "restore (database recreated, folder back in place)"; tools/restore.sh "$bk" --db $db --to "$work/book" >/dev/null; ok $?
 step "everything comes back, index rebuilt"; out=$(run $db tests/ui/store/2_resume.scribo); r=$?; ok $r; echo "$out" | sed 's/^/    /'
 
 tools/services.sh testdb create $other >/dev/null
 tools/restore.sh "$bk" --db $other --to "$work/copy1" >/dev/null 2>&1
-step "restoring over a database with data is refused"
+step "restoring over a database with data is refused without --replace"
 tools/restore.sh "$bk" --db $other --to "$work/copy2" >/dev/null 2>&1; r=$?; [ $r != 0 ] && [ ! -e "$work/copy2" ]; ok $?
+# Red-team 009: crafted backups.
+craft() { rm -rf "$bk-craft"; cp -R "$bk" "$bk-craft"; }
+resum() { (cd "$bk-craft" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 shasum -a 256 > SHA256SUMS); }
+craft; echo x > "$bk-craft/files/book/planted.md"
+step "a file not in the backup's list is refused"; tools/restore.sh "$bk-craft" --db $other --replace --to "$work/c1" >/dev/null 2>&1; r=$?; [ $r != 0 ] && [ ! -e "$work/c1" ]; ok $?
+craft; ln -s /etc/hosts "$bk-craft/files/book/link.md"; resum
+step "a link in the backup is refused"; tools/restore.sh "$bk-craft" --db $other --replace --to "$work/c2" >/dev/null 2>&1; r=$?; [ $r != 0 ] && [ ! -e "$work/c2" ]; ok $?
+export PATH="$HOME/.docker/bin:$PATH"
+dbexists() { docker compose -f docker/compose.yml exec -T mariadb sh -c 'MYSQL_PWD="$(cat /run/secrets/db_root_password)" mariadb -uroot -N -e "SHOW DATABASES LIKE \"$1\""' sh "$1" | grep -c .; }
+craft; printf -- '-- MariaDB dump 10.19\nCREATE DATABASE scribodo_test_pwned;\n-- Dump completed\n' | gzip > "$bk-craft/db.sql.gz"; resum
+step "a dump can't create another database"
+tools/restore.sh "$bk-craft" --db $other --replace --to "$work/c3" >/dev/null 2>&1; r=$?; [ $r != 0 ] && [ "$(dbexists scribodo_test_pwned)" = 0 ] && [ ! -e "$work/c3" ]; ok $?
+tools/services.sh testdb drop scribodo_test_pwned >/dev/null 2>&1
+# (\! would run inside the database container: that's where to look.)
+incontainer() { docker compose -f docker/compose.yml exec -T mariadb sh -c "$1"; }
+incontainer 'rm -f /tmp/scribodo_pwned'
+craft; printf -- '-- MariaDB dump 10.19\n\\! touch /tmp/scribodo_pwned\n-- Dump completed\n' | gzip > "$bk-craft/db.sql.gz"; resum
+step "a dump with a shell escape is refused"
+tools/restore.sh "$bk-craft" --db $other --replace --to "$work/c3b" >/dev/null 2>&1; r=$?
+[ $r != 0 ] && ! incontainer 'test -e /tmp/scribodo_pwned' && [ ! -e "$work/c3b" ]; ok $?
+craft; printf -- 'DROP TABLE projects;\n' | gzip > "$bk-craft/db.sql.gz"; resum
+step "a dump that isn't mariadb-dump output is refused"; tools/restore.sh "$bk-craft" --db $other --replace --to "$work/c4" >/dev/null 2>&1; r=$?; [ $r != 0 ]; ok $?
+step "a database other than scribodo[_test_*] is refused"; tools/restore.sh "$bk" --db mysql --replace --to "$work/c5" >/dev/null 2>&1; r=$?; [ $r != 0 ]; ok $?
+# The index of a restored database is dropped (it described later data).
+key="$(cat "${SCRIBODO_SECRETS:-$HOME/Library/Application Support/Scribodo/services}/qdrant_api_key")"
+curl -s -o /dev/null -X PUT -H @<(printf 'Authorization: Bearer %s\n' "$key") -H 'Content-Type: application/json' \
+    -d '{"vectors":{"size":4,"distance":"Cosine"}}' "http://127.0.0.1:6333/collections/${other}__pstale"
+tools/restore.sh "$bk" --db $other --replace --to "$work/c6" >/dev/null 2>&1
+left=$(curl -s -H @<(printf 'Authorization: Bearer %s\n' "$key") http://127.0.0.1:6333/collections | grep -c "${other}__pstale")
+step "--replace drops the restored database's stale index"; [ "$left" = 0 ]; ok $?
 exit $fail

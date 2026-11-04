@@ -120,6 +120,7 @@ void chat_clear(ChatSession *s)
     for (size_t i = 0; i < s->count; i++) {
         free(s->msgs[i].content);
         free(s->msgs[i].docs);
+        free(s->msgs[i].via);
     }
     s->count = 0;
     s->version++;
@@ -154,6 +155,7 @@ bool chat_load_messages(ChatSession *s, const ChatMessage *msgs, size_t n)
             s->msgs[s->count - 1].error = msgs[i].error;
             s->msgs[s->count - 1].is_edit = msgs[i].is_edit;
             s->msgs[s->count - 1].docs = msgs[i].docs ? strdup(msgs[i].docs) : NULL;
+            s->msgs[s->count - 1].via = msgs[i].via && msgs[i].via[0] ? strdup(msgs[i].via) : NULL;
         }
     }
     pthread_mutex_unlock(&s->mu);
@@ -331,6 +333,9 @@ char *chat_build_request(const ChatMessage *msgs, size_t n, const ChatContext *c
     cJSON_AddBoolToObject(root, "stream", true);
     cJSON_AddNumberToObject(root, "max_tokens", MAX_REPLY_TOKENS);
     cJSON_AddNumberToObject(root, "temperature", 0.7);
+    /* Reproducible sampling for test runs (local model only). */
+    const char *seed = getenv("SCRIBODO_SEED");
+    if (seed && seed[0]) cJSON_AddNumberToObject(root, "seed", atoi(seed));
     cJSON_AddNumberToObject(root, "top_p", 0.95);
     cJSON_AddNumberToObject(root, "repeat_penalty", 1.05);
     cJSON_AddNumberToObject(root, "id_slot", CHAT_SLOT);
@@ -398,6 +403,8 @@ char *chat_build_edit_request(const char *instruction, const char *passage, cons
     long out_tokens = count_tokens(count, cctx, pass) * 2 + 64;
     cJSON_AddNumberToObject(root, "max_tokens", out_tokens > MAX_REPLY_TOKENS ? out_tokens : MAX_REPLY_TOKENS);
     cJSON_AddNumberToObject(root, "temperature", 0.4);
+    const char *seed = getenv("SCRIBODO_SEED");
+    if (seed && seed[0]) cJSON_AddNumberToObject(root, "seed", atoi(seed));
     cJSON_AddNumberToObject(root, "top_p", 0.95);
     cJSON_AddNumberToObject(root, "repeat_penalty", 1.05);
     cJSON_AddNumberToObject(root, "id_slot", CHAT_SLOT);
@@ -559,14 +566,21 @@ static long server_count(const char *text, void *ctx)
 static bool build_in_worker(ChatSession *s)
 {
     pthread_mutex_lock(&s->mu);
-    size_t n = s->target; /* everything before the in-progress reply */
-    ChatMessage *copy = calloc(n ? n : 1, sizeof(ChatMessage));
+    size_t total = s->target; /* everything before the in-progress reply */
+    ChatMessage *copy = calloc(total ? total : 1, sizeof(ChatMessage));
     bool ok = copy != NULL;
-    for (size_t i = 0; ok && i < n; i++) {
-        copy[i] = s->msgs[i];
-        copy[i].content = strdup(s->msgs[i].content);
-        copy[i].docs = NULL; /* not needed to build the request */
-        ok = copy[i].content != NULL;
+    size_t n = 0;
+    for (size_t i = 0; ok && i < total; i++) {
+        /* A remote model gets only what was already exchanged with it (and
+         * this message): turns with the local model stay on this Mac
+         * (red-team 009). */
+        if (s->via_remote && !(s->msgs[i].via && s->msgs[i].via[0])) continue;
+        copy[n] = s->msgs[i];
+        copy[n].content = strdup(s->msgs[i].content);
+        copy[n].docs = NULL; /* not needed to build the request */
+        copy[n].via = NULL;
+        ok = copy[n].content != NULL;
+        n++;
     }
     ChatContext ctx = { s->ctx_title, s->ctx_text, s->ctx_docs, s->nctx_docs };
     pthread_mutex_unlock(&s->mu);
@@ -790,6 +804,13 @@ static bool send_common(ChatSession *s, const char *text, const ChatContext *ctx
         s->msgs[s->target].streaming = true;
         s->msgs[s->target].is_edit = passage != NULL;
         s->msgs[user_index].is_edit = passage != NULL;
+        /* Which messages left this Mac, kept with them (shown and saved). */
+        if (s->via_remote) {
+            char via[400];
+            snprintf(via, sizeof(via), "%s \xC2\xB7 %s", s->remote.name, s->remote.host);
+            s->msgs[user_index].via = strdup(via);
+            s->msgs[s->target].via = strdup(via);
+        }
         s->user_index = user_index;
         s->user_done_pending = true;
         s->last_truncated = false;

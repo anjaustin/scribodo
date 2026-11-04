@@ -1,6 +1,8 @@
 #define _DARWIN_C_SOURCE
 #include "semantic.h"
 
+#include "core/utf8.h"
+
 #include <CommonCrypto/CommonDigest.h>
 #include <math.h>
 #include <stdatomic.h>
@@ -302,6 +304,22 @@ static bool delete_points(const char *pid, const char *key, const char *value)
     return ok;
 }
 
+static bool sync_records_impl(const char *project_id, char *err, size_t errlen);
+
+static bool rebuild_pending(Db *db, const char *pid)
+{
+    DbRows r;
+    if (!db_query(db, "SELECT index_rebuild_pending FROM projects WHERE id = ?", (DbArg[1]){ DB_S(pid) }, 1, &r)) return false;
+    bool p = r.nrows && db_cell(&r, 0, 0) && atoi(db_cell(&r, 0, 0)) == 1;
+    db_rows_free(&r);
+    return p;
+}
+
+static void set_rebuild_pending(Db *db, const char *pid, bool on)
+{
+    db_run(db, "UPDATE projects SET index_rebuild_pending = ? WHERE id = ?", (DbArg[2]){ DB_I(on ? 1 : 0), DB_S(pid) }, 2, NULL);
+}
+
 bool semantic_sync_records(const char *project_id, char *err, size_t errlen)
 {
     Db *db = store_db();
@@ -310,10 +328,22 @@ bool semantic_sync_records(const char *project_id, char *err, size_t errlen)
         snprintf(err, errlen, "The semantic index isn't available");
         return false;
     }
-    /* No collection: a new project, or an index that was lost (restored
-     * from a backup, Qdrant wiped). Its marks would say everything is
-     * indexed, so the whole index is rebuilt from the store instead. */
-    if (created) return semantic_rebuild(project_id, err, errlen) >= 0;
+    /* No collection (a new project, or an index that was lost: restored
+     * from a backup, Qdrant wiped), or a rebuild that didn't finish: the
+     * marks can't be trusted, so the whole index is rebuilt from the
+     * store (red-team 009). */
+    if (errlen) err[0] = '\0';
+    if (created || rebuild_pending(db, project_id)) return semantic_rebuild(project_id, err, errlen) >= 0;
+    return sync_records_impl(project_id, err, errlen);
+}
+
+static bool sync_records_impl(const char *project_id, char *err, size_t errlen)
+{
+    Db *db = store_db();
+    if (!db || !ensure_collection(project_id)) {
+        snprintf(err, errlen, "The semantic index isn't available");
+        return false;
+    }
     DbRows r;
     /* The current version of every note and canon entry. */
     if (!db_query(db,
@@ -548,13 +578,16 @@ long semantic_rebuild(const char *project_id, char *err, size_t errlen)
         snprintf(err, errlen, "The project store is offline");
         return -1;
     }
+    /* Pending until every part is indexed: an interrupted rebuild (an
+     * embedding error, the app quitting) is resumed by the next sync. */
+    set_rebuild_pending(db, project_id, true);
     semantic_drop(project_id); /* fine if it didn't exist */
     if (!ensure_collection(project_id)) {
         snprintf(err, errlen, "Qdrant isn't reachable");
         return -1;
     }
-    if (!semantic_sync_records(project_id, err, errlen)) return -1;
-    long count = 0;
+    if (!sync_records_impl(project_id, err, errlen)) return -1;
+    long count = 0, failed = 0;
     DbRows r;
     /* Each document's current revision, in paragraphs. */
     if (db_query(db,
@@ -579,16 +612,23 @@ long semantic_rebuild(const char *project_id, char *err, size_t errlen)
                 pl = b;
             }
             for (size_t k = 0; k < np; k++) {
-                size_t len = pl[k] > 2000 ? 2000 : pl[k];
-                char *piece = malloc(len + 1);
-                if (!piece) continue;
-                memcpy(piece, text + ps[k], len);
-                piece[len] = '\0';
+                char *para = malloc(pl[k] + 1), *piece = malloc(2001);
+                if (!para || !piece) {
+                    free(para);
+                    free(piece);
+                    failed++;
+                    continue;
+                }
+                memcpy(para, text + ps[k], pl[k]);
+                para[pl[k]] = '\0';
+                size_t len = utf8_clip(piece, 2001, para, 2000); /* whole characters */
+                free(para);
                 size_t cps = 0;
                 for (size_t b = 0; b < ps[k]; b++) cps += ((unsigned char)text[b] & 0xC0) != 0x80;
                 size_t clen = 0;
                 for (size_t b = 0; b < len; b++) clen += ((unsigned char)piece[b] & 0xC0) != 0x80;
                 if (semantic_index_text(project_id, "draft", db_cell(&r, i, 0), db_cell(&r, i, 1), NULL, 0, cps, clen, piece)) count++;
+                else failed++;
                 free(piece);
             }
             free(ps);
@@ -602,14 +642,18 @@ long semantic_rebuild(const char *project_id, char *err, size_t errlen)
                  " WHERE c.project_id = ? AND m.error = 0 AND NOT (m.role = 'assistant' AND m.is_edit = 1)",
                  (DbArg[1]){ DB_S(project_id) }, 1, &r)) {
         for (size_t i = 0; i < r.nrows; i++) {
-            const char *text = db_cell(&r, i, 2);
-            size_t len = strlen(text) > 2000 ? 2000 : strlen(text);
-            char *piece = malloc(len + 1);
-            if (!piece) continue;
-            memcpy(piece, text, len);
-            piece[len] = '\0';
-            if (semantic_index_text(project_id, "chat", NULL, NULL, db_cell(&r, i, 0), atol(db_cell(&r, i, 1)), 0, len, piece))
+            const char *text = db_cell(&r, i, 2) ? db_cell(&r, i, 2) : "";
+            char *piece = malloc(2001);
+            if (!piece) {
+                failed++;
+                continue;
+            }
+            utf8_clip(piece, 2001, text, 2000);
+            size_t clen = 0; /* the range is in characters */
+            for (const char *b = piece; *b; b++) clen += ((unsigned char)*b & 0xC0) != 0x80;
+            if (semantic_index_text(project_id, "chat", NULL, NULL, db_cell(&r, i, 0), atol(db_cell(&r, i, 1)), 0, clen, piece))
                 count++;
+            else failed++;
             free(piece);
         }
         db_rows_free(&r);
@@ -620,6 +664,11 @@ long semantic_rebuild(const char *project_id, char *err, size_t errlen)
         count += atol(db_cell(&rc, 0, 0));
         db_rows_free(&rc);
     }
+    if (failed) {
+        snprintf(err, errlen, "%ld passages couldn't be indexed; the rebuild resumes later", failed);
+        return -1;
+    }
+    set_rebuild_pending(db, project_id, false);
     return count;
 }
 

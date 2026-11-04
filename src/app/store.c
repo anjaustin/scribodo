@@ -182,6 +182,16 @@ static _Thread_local const char *t_importing;
 
 void store_set_importing(const char *project_dir) { t_importing = project_dir; }
 
+static _Thread_local double t_write_time;
+void store_set_write_time(double t) { t_write_time = t; }
+double store_write_time(void)
+{
+    if (t_write_time > 0) return t_write_time;
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (double)tv.tv_sec + (double)tv.tv_usec / 1e6;
+}
+
 /* Per-thread cache of the last folder verified (store_mode runs often). */
 static _Thread_local struct {
     char dir[PATH_MAX];

@@ -8,7 +8,7 @@ key ENTER
 expect chat_busy yes
 wait_chat 3600
 expect chat_count 2
-expect chat_last "Zo"
+expect chat_last "Zoë"
 expect chat_last_not "<think"
 expect chat_last_not "<|"
 expect files "$DIR/.scribodo/chats" ".jsonl" 1

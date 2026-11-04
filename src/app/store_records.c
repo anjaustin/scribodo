@@ -88,6 +88,8 @@ bool sdb_record_append(Db *db, const char *project_id, RecordKind kind, const ch
                     " start, len, quote) VALUES (?,?,?,?,?,?,?,?,?,?)",
                     a, 10, NULL);
     }
+    /* The record's current status, kept with it for fast filtering. */
+    ok = ok && db_run(db, "UPDATE records SET current_status = ? WHERE id = ?", (DbArg[2]){ DB_S(status), DB_S(id) }, 2, NULL);
     if (ok) ok = db_commit(db);
     else db_rollback(db);
     /* A new finding's entities and link (the graph is derived from

@@ -1,0 +1,11 @@
+;; No network except this machine: everything run under it (the app, its
+;; llama-servers, their children) can reach 127.0.0.1 and Unix sockets
+;; only. Used by tools/offlinetest.sh for SOW acceptance 8.
+(version 1)
+(allow default)
+(deny network-outbound)
+(deny network-bind)
+(allow network-outbound (remote ip "localhost:*"))
+(allow network-outbound (remote unix-socket))
+(allow network-bind (local ip "localhost:*"))
+(allow network-bind (local unix-socket))

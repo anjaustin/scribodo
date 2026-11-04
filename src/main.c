@@ -39,6 +39,7 @@
 #include "app/store.h"
 #include "app/store_backends.h"
 #include "app/store_entities.h"
+#include "app/backup.h"
 #include "app/revisions.h"
 #include "llm/llm_text.h"
 #include "app/script.h"
@@ -151,7 +152,16 @@ typedef struct {
     char ent_open[40];
     EntityDetail ent;
     char ent_row_labels[ENT_ROWS][160];
-    char ent_backfilled[PATH_MAX]; /* the project whose graph was rebuilt this session */
+    /* What each entity row held when it was laid out: clicks act on these,
+     * never on indices into lists that may have been refreshed since. */
+    char drawn_ent[ENT_SHOW][40];
+    char drawn_row_finding[ENT_ROWS][40], drawn_row_other[ENT_ROWS][40];
+    /* Building a project's graph from its findings (once per project, in
+     * the background: thousands of findings take seconds). */
+    pthread_t graph_thread;
+    atomic_int graph_state; /* 0 idle, 1 running, 2 finished */
+    char graph_project[PATH_MAX];
+    char graph_tried[PATH_MAX]; /* one attempt per project per session */
     RecordView *record;
     Rectangle record_rect;
     char canon_finding[40];      /* the open canon draft came from this finding */
@@ -188,6 +198,14 @@ typedef struct {
     bool store_wanted;            /* use the store (off for UI scripts unless SCRIBODO_STORE=db) */
     char store_why[256];          /* why it's offline */
     pthread_t services_thread;
+    /* A backup running in the background (Explorer: PROJECT). */
+    pthread_t backup_thread;
+    atomic_int backup_state; /* 0 idle, 1 running, 2 finished */
+    char backup_dir[PATH_MAX];
+    char backup_dest[PATH_MAX + 64];
+    char backup_why[400];
+    bool backup_ok;
+    char backup_label[160];
     atomic_int services_state;    /* 0 idle, 1 working (services up / probing), 2 finished */
     atomic_bool store_reachable;  /* the last probe reached the database */
     double store_next_probe;      /* while offline: when to probe again */
@@ -323,6 +341,17 @@ static void record_label(char *out, size_t outlen, const char *prefix, const cha
     snprintf(out, outlen, "%s%s", prefix, line[0] ? line : "(empty)");
 }
 
+static void *graph_main(void *arg)
+{
+    App *app = arg;
+    char pid[64];
+    Db *db = NULL;
+    if (store_mode(app->graph_project, pid, sizeof(pid), &db) == STORE_DB && db) sdb_entities_backfill(db, pid);
+    store_thread_done();
+    atomic_store(&app->graph_state, 2);
+    return NULL;
+}
+
 static void refresh_entities(App *app)
 {
     entity_list_free(app->ents, app->nents);
@@ -335,11 +364,13 @@ static void refresh_entities(App *app)
         app->ent_open[0] = '\0';
         return;
     }
-    /* Findings from before the graph existed (or a failed update) are
-     * folded in once per session; it's idempotent. */
-    if (strcmp(app->ent_backfilled, app->project_dir) != 0) {
-        sdb_entities_backfill(db, pid);
-        snprintf(app->ent_backfilled, sizeof(app->ent_backfilled), "%s", app->project_dir);
+    /* Findings from before the graph existed are folded in once per
+     * project, off the UI thread (red-team 009). */
+    if (atomic_load(&app->graph_state) == 0 && strcmp(app->graph_tried, app->project_dir) != 0 && !sdb_entities_built(db, pid)) {
+        snprintf(app->graph_project, sizeof(app->graph_project), "%s", app->project_dir);
+        snprintf(app->graph_tried, sizeof(app->graph_tried), "%s", app->project_dir);
+        atomic_store(&app->graph_state, 1);
+        if (pthread_create(&app->graph_thread, NULL, graph_main, app) != 0) atomic_store(&app->graph_state, 0);
     }
     app->nents = sdb_entity_list(db, pid, &app->ents);
     for (size_t i = 0; i < app->nents && i < ENT_SHOW; i++) {
@@ -516,6 +547,98 @@ static void store_resolve_problem(App *app)
         observer_set_project(app->observer, app->project_dir);
         observer_poke(app->observer);
     }
+}
+
+/* ---- backups (SOW §7) ------------------------------------------------------------ */
+
+static void open_project(App *app, const char *dir);
+
+static void tools_dir(char *out, size_t outlen) { snprintf(out, outlen, "%s../tools", GetApplicationDirectory()); }
+
+static void *backup_main(void *arg)
+{
+    App *app = arg;
+    char tools[PATH_MAX];
+    tools_dir(tools, sizeof(tools));
+    app->backup_ok = backup_project(tools, app->backup_dir, app->backup_dest, sizeof(app->backup_dest), app->backup_why,
+                                    sizeof(app->backup_why));
+    store_thread_done(); /* its own store connection */
+    atomic_store(&app->backup_state, 2);
+    return NULL;
+}
+
+static void begin_backup(App *app)
+{
+    if (!app->project_dir[0]) {
+        set_status(app, "Open a project to back it up");
+        return;
+    }
+    if (atomic_load(&app->backup_state) != 0) {
+        set_status(app, "A backup is already running");
+        return;
+    }
+    if (editor_is_dirty(app->editor)) {
+        set_status(app, "Save the document first: a backup takes what's on disk");
+        return;
+    }
+    snprintf(app->backup_dir, sizeof(app->backup_dir), "%s", app->project_dir);
+    atomic_store(&app->backup_state, 1);
+    if (pthread_create(&app->backup_thread, NULL, backup_main, app) != 0) {
+        atomic_store(&app->backup_state, 0);
+        set_status(app, "Couldn't start the backup");
+        return;
+    }
+    set_status(app, "Backing up this project\xE2\x80\xA6");
+}
+
+static void backup_poll(App *app)
+{
+    if (atomic_load(&app->backup_state) != 2) return;
+    pthread_join(app->backup_thread, NULL);
+    atomic_store(&app->backup_state, 0);
+    char msg[800];
+    if (app->backup_ok) {
+        snprintf(msg, sizeof(msg), "Backed up to %s", app->backup_dest);
+        time_t t = time(NULL);
+        struct tm tmv;
+        localtime_r(&t, &tmv);
+        char when[32];
+        strftime(when, sizeof(when), "%H:%M", &tmv);
+        snprintf(app->backup_label, sizeof(app->backup_label), "Last backup: today %s", when);
+    } else {
+        snprintf(msg, sizeof(msg), "%s", app->backup_why[0] ? app->backup_why : "The backup failed");
+    }
+    set_status(app, msg);
+}
+
+static void begin_restore(App *app)
+{
+    char chosen[PATH_MAX];
+    char def[PATH_MAX];
+    backup_default_dir(def, sizeof(def));
+    if (!dialogs_choose_folder("Choose a backup to restore (it opens as a separate project; nothing is overwritten)", "Restore",
+                               false, chosen, sizeof(chosen)))
+        return;
+    /* Next to the current project (or in the backups' folder). */
+    char parent[PATH_MAX];
+    if (app->project_dir[0]) {
+        snprintf(parent, sizeof(parent), "%s", app->project_dir);
+        char *sl = strrchr(parent, '/');
+        if (sl && sl != parent) *sl = '\0';
+    } else {
+        snprintf(parent, sizeof(parent), "%s", def);
+    }
+    char tools[PATH_MAX], restored[PATH_MAX + 400], why[400];
+    tools_dir(tools, sizeof(tools));
+    set_status(app, "Restoring\xE2\x80\xA6");
+    if (!backup_restore_copy(tools, chosen, parent, restored, sizeof(restored), why, sizeof(why))) {
+        set_status(app, why);
+        return;
+    }
+    open_project(app, restored);
+    char msg[900];
+    snprintf(msg, sizeof(msg), "Restored as \xE2\x80\x9C%s\xE2\x80\x9D, a separate project (the original is unchanged)", base_name(restored));
+    set_status(app, msg);
 }
 
 static void set_project_from(App *app, const char *doc_path)
@@ -2246,16 +2369,29 @@ static Clay_RenderCommandArray build_layout(App *app)
                 if (app->project_dir[0] && app->ncanon == 0) coming_soon("Select a passage, then \xE2\x8C\x98\xE2\x87\xA7" "C");
                 for (size_t i = 0; i < app->ncanon && i < REC_SHOW; i++)
                     list_item(CLAY_IDI("CanonItem", (uint32_t)i), app->canon_labels[i], !strcmp(open_id, app->canon[i].id));
+                if (app->project_dir[0]) {
+                    section_header("PROJECT");
+                    list_item(CLAY_ID("BackupItem"), atomic_load(&app->backup_state) ? "Backing up\xE2\x80\xA6" : "Back up now", false);
+                    list_item(CLAY_ID("RestoreItem"), "Restore from a backup\xE2\x80\xA6", false);
+                    if (app->backup_label[0]) coming_soon(app->backup_label);
+                }
+                memset(app->drawn_ent, 0, sizeof(app->drawn_ent));
+                memset(app->drawn_row_finding, 0, sizeof(app->drawn_row_finding));
+                memset(app->drawn_row_other, 0, sizeof(app->drawn_row_other));
                 if (store_mode(app->project_dir, NULL, 0, NULL) == STORE_DB) {
                     section_header("ENTITIES");
                     if (app->nents == 0) coming_soon("The observer lists who and what appears here");
                     for (size_t i = 0; i < app->nents && i < ENT_SHOW; i++) {
                         bool open = !strcmp(app->ent_open, app->ents[i].id);
+                        snprintf(app->drawn_ent[i], sizeof(app->drawn_ent[i]), "%s", app->ents[i].id);
                         list_item(CLAY_IDI("EntityItem", (uint32_t)i), app->ent_labels[i], open);
                         if (!open) continue;
                         /* Its relationships (click: the passage; \xE2\x80\xBA: go to the other one)
                          * and mentions (click: the passage). */
                         for (size_t k = 0; k < app->ent.nrows && k < ENT_ROWS; k++) {
+                            snprintf(app->drawn_row_finding[k], sizeof(app->drawn_row_finding[k]), "%s", app->ent.rows[k].finding_id);
+                            snprintf(app->drawn_row_other[k], sizeof(app->drawn_row_other[k]), "%s",
+                                     app->ent.rows[k].is_link ? app->ent.rows[k].other_id : "");
                             if (!app->ent.rows[k].is_link) {
                                 list_item(CLAY_IDI("EntRow", (uint32_t)k), app->ent_row_labels[k], false);
                                 continue;
@@ -2601,6 +2737,8 @@ int main(int argc, char **argv)
         semantic_set_embedder(app.embed);
     }
     app.chat = chat_create(app.llm);
+    /* TLS secrets are never written out for a remote model's traffic. */
+    unsetenv("SSLKEYLOGFILE");
     /* A remote model only if the author configured one; never selected here. */
     app.remote_ok = remote_load(&app.remote, app.remote_why, sizeof(app.remote_why));
     if (!app.remote_ok && app.remote_why[0]) {
@@ -2716,6 +2854,12 @@ int main(int argc, char **argv)
                 if (app.observer) observer_poke(app.observer);
             }
         }
+        backup_poll(&app);
+        if (atomic_load(&app.graph_state) == 2) { /* the graph is built: show it */
+            pthread_join(app.graph_thread, NULL);
+            atomic_store(&app.graph_state, 0);
+            app.lists_dirty = true;
+        }
         chat_poll(app.chat);
         /* The observer shares the model: it yields whenever chat is active. */
         observer_set_chat_active(app.observer, chat_busy(app.chat));
@@ -2802,6 +2946,8 @@ int main(int argc, char **argv)
             }
             else if (app.store_problem && Clay_PointerOver(CLAY_ID("StoreFixItem"))) store_resolve_problem(&app);
             else if (Clay_PointerOver(CLAY_ID("NewDocItem"))) begin_new_document(&app);
+            else if (Clay_PointerOver(CLAY_ID("BackupItem"))) begin_backup(&app);
+            else if (Clay_PointerOver(CLAY_ID("RestoreItem"))) begin_restore(&app);
             else if (Clay_PointerOver(CLAY_ID("ImportItem"))) import_documents(&app);
             else if (Clay_PointerOver(CLAY_ID("NewNoteItem"))) {
                 if (close_record(&app, false) && record_view_open(app.record, REC_NOTE, NULL, "", NULL, 0))
@@ -2843,22 +2989,22 @@ int main(int argc, char **argv)
                         break;
                     }
                 /* Entities: copy what's needed first (opening refreshes the lists). */
-                for (size_t i = 0; i < app.nents && i < ENT_SHOW; i++)
-                    if (Clay_PointerOver(CLAY_IDI("EntityItem", (uint32_t)i))) {
+                for (size_t i = 0; i < ENT_SHOW; i++)
+                    if (app.drawn_ent[i][0] && Clay_PointerOver(CLAY_IDI("EntityItem", (uint32_t)i))) {
                         char id[40];
-                        snprintf(id, sizeof(id), "%s", app.ents[i].id);
+                        snprintf(id, sizeof(id), "%s", app.drawn_ent[i]);
                         toggle_entity(&app, id);
                         break;
                     }
-                for (size_t k = 0; app.ent_open[0] && k < app.ent.nrows && k < ENT_ROWS; k++) {
+                for (size_t k = 0; app.ent_open[0] && k < ENT_ROWS; k++) {
                     char id[40];
-                    if (app.ent.rows[k].is_link && Clay_PointerOver(CLAY_IDI("EntGo", (uint32_t)k))) {
-                        snprintf(id, sizeof(id), "%s", app.ent.rows[k].other_id);
+                    if (app.drawn_row_other[k][0] && Clay_PointerOver(CLAY_IDI("EntGo", (uint32_t)k))) {
+                        snprintf(id, sizeof(id), "%s", app.drawn_row_other[k]);
                         toggle_entity(&app, id);
                         break;
                     }
-                    if (Clay_PointerOver(CLAY_IDI("EntRow", (uint32_t)k))) {
-                        snprintf(id, sizeof(id), "%s", app.ent.rows[k].finding_id);
+                    if (app.drawn_row_finding[k][0] && Clay_PointerOver(CLAY_IDI("EntRow", (uint32_t)k))) {
+                        snprintf(id, sizeof(id), "%s", app.drawn_row_finding[k]);
                         open_finding_source(&app, id);
                         break;
                     }
@@ -3166,8 +3312,8 @@ int main(int argc, char **argv)
                 } else {
                     char msg[400];
                     if (remote)
-                        snprintf(msg, sizeof(msg), "Using %s: chat messages, attached documents and edit passages now go to %s. "
-                                                   "The observer stays local.", app.remote.name, app.remote.host);
+                        snprintf(msg, sizeof(msg), "Using %s: new chat messages, their attached documents and edit passages go to %s. "
+                                                   "Earlier messages and the observer stay on this Mac.", app.remote.name, app.remote.host);
                     else snprintf(msg, sizeof(msg), "Using the local model: nothing leaves this Mac");
                     set_status(&app, msg);
                 }
@@ -3225,6 +3371,8 @@ int main(int argc, char **argv)
     records_free(app.notes, app.nnotes);
     records_free(app.canon, app.ncanon);
     free(app.revs);
+    if (atomic_load(&app.backup_state) != 0) pthread_join(app.backup_thread, NULL); /* a backup finishes, never cut off */
+    if (atomic_load(&app.graph_state) != 0) pthread_join(app.graph_thread, NULL);
     observer_destroy(app.observer);  /* cancels its request before the server stops */
     if (atomic_load(&app.services_state) == 1) pthread_detach(app.services_thread);
     store_stop();

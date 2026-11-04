@@ -33,6 +33,7 @@ typedef struct {
     bool stopped;    /* reply stopped by the author part-way (incomplete) */
     bool is_edit;    /* user: an edit request; assistant: a proposed replacement */
     char *docs;      /* user: names of the documents attached, '\n'-separated ("" = none), or NULL */
+    char *via;       /* sent to / answered by a remote model ("Frontier · api.example.com"); NULL = this Mac */
     double ts;       /* when it was stored (loaded chats), else 0 */
 } ChatMessage;
 

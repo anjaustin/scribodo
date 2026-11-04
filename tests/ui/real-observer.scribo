@@ -1,5 +1,6 @@
 # The observer with the real model: findings with exact sources, and a
-# conflict with committed canon. (Model output varies; checks are loose.)
+# conflict with committed canon. The observer samples at temperature 0, so
+# its findings are reproducible; checks cover provenance, not wording.
 observer on
 mkdir "$DIR/obs"
 write "$DIR/obs/chapter.md" "The fog came in off the fjord the way it always did in late October. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák, without turning around. He was hunched over the old Fresnel lens."
@@ -9,6 +10,11 @@ click_element ObserverToggle
 wait_observer 36000
 expect findings_has "entity|new|"
 expect findings_has "Dvořák"
+# Its source is the exact passage, unmoved.
+click_finding "Dvořák"
+click_element FindingSource
+expect status "Source passage selected"
+expect status_not "moved since"
 shot findings
 # Committed canon, then a saved paragraph that contradicts it.
 click_index 70 2
@@ -26,4 +32,11 @@ type "Zoë's brown eyes narrowed at the sea."
 key S cmd
 wait_observer 36000
 expect findings_has "conflict|new|"
+# Flagged against the committed entry, citing the sentence that contradicts it.
+expect findings_has "Canon: Zoë's eyes are green."
+expect findings_has "quote: Zoë's brown eyes narrowed"
+click_finding "conflict|new|"
+click_element FindingSource
+expect status "Source passage selected"
+expect status_not "moved since"
 shot conflict

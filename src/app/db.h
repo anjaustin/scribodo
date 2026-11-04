@@ -42,6 +42,9 @@ void db_rollback(Db *db);
 const char *db_error(Db *db);
 /* The connection was lost (the caller should drop it and reconnect). */
 bool db_broken(Db *db);
+/* Inside db_begin .. commit/rollback (callers that group statements join
+ * the caller's transaction instead of starting their own). */
+bool db_in_transaction(Db *db);
 
 /* ---- prepared statements ------------------------------------------------- */
 

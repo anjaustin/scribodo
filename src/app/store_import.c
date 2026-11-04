@@ -232,13 +232,14 @@ static bool import_chats(Db *db, const char *project_dir, const char *pid, IdMap
         if (ok && strcmp(cid, list[i].id)) map_add(chats_map, list[i].id, cid);
         for (size_t k = 0; ok && k < n; k++) {
             uint64_t added = 0;
-            DbArg a[8] = { DB_S(cid), DB_I(k), DB_S(msgs[k].role == CHAT_USER ? "user" : "assistant"),
+            DbArg a[9] = { DB_S(cid), DB_I(k), DB_S(msgs[k].role == CHAT_USER ? "user" : "assistant"),
                            DB_S(msgs[k].content ? msgs[k].content : ""), DB_I(msgs[k].error ? 1 : 0),
-                           DB_I(msgs[k].is_edit ? 1 : 0), DB_I(msgs[k].truncated ? 1 : 0), DB_D(msgs[k].ts ? msgs[k].ts : t0) };
+                           DB_I(msgs[k].is_edit ? 1 : 0), DB_I(msgs[k].truncated ? 1 : 0), DB_D(msgs[k].ts ? msgs[k].ts : t0),
+                           DB_S(msgs[k].via && msgs[k].via[0] ? msgs[k].via : NULL) };
             ok = db_run(db,
-                        "INSERT IGNORE INTO messages (conversation_id, seq, role, content, error, is_edit, truncated, created_at)"
-                        " VALUES (?,?,?,?,?,?,?,?)",
-                        a, 8, &added);
+                        "INSERT IGNORE INTO messages (conversation_id, seq, role, content, error, is_edit, truncated, created_at,"
+                        " via) VALUES (?,?,?,?,?,?,?,?,?)",
+                        a, 9, &added);
             if (!ok || !added || !msgs[k].docs || !msgs[k].docs[0]) continue;
             char *copy = strdup(msgs[k].docs);
             for (char *save = NULL, *nm = copy ? strtok_r(copy, "\n", &save) : NULL; ok && nm;
@@ -463,7 +464,15 @@ static bool import_once(Db *db, const char *project_dir, const char *pid, char *
     ok = ok && import_records(db, project_dir, pid, REC_CANON, map, nmap, &recs, &chats);
     ok = ok && import_records(db, project_dir, pid, REC_FINDING, map, nmap, &recs, &chats);
     ok = ok && import_observer(db, project_dir, pid);
-    ok = ok && sdb_entities_backfill(db, pid); /* the graph, from the imported findings */
+    /* The graph, from the imported findings: derived data, so a failure
+     * here never fails the import (red-team 009); it's retried later. */
+    if (ok)
+        ok = db_run(db,
+                    "UPDATE records r JOIN (SELECT v.record_id, MAX(v.ver) AS mv FROM record_versions v JOIN records q ON q.id = v.record_id"
+                    " WHERE q.project_id = ? GROUP BY v.record_id) x ON x.record_id = r.id"
+                    " JOIN record_versions v ON v.record_id = x.record_id AND v.ver = x.mv SET r.current_status = v.status",
+                    (DbArg[1]){ DB_S(pid) }, 1, NULL);
+    if (ok) sdb_entities_backfill(db, pid);
     if (ok) ok = db_commit(db);
     else db_rollback(db);
     free(map);
@@ -584,29 +593,66 @@ static void set_marker_aside(const char *project_dir, bool aside)
 /* Write the project's data from the store as files in `project_dir` (so a
  * normal import can take them in as a new project). Times of notes and
  * canon versions become the export time; sources keep their passages. */
+typedef struct {
+    char id[40];    /* the store's revision id */
+    char file[160]; /* the snapshot it became */
+} ExportRev;
+
+/* Write the project's data from the store as files in `project_dir` (so a
+ * normal import can take them in as a project). Everything keeps its
+ * original time; sources keep their passages and point at the exported
+ * snapshots. False if anything couldn't be written. */
 static bool export_files(Db *db, const char *pid, const char *project_dir)
 {
     DbRows docs;
-    bool ok = db_query(db, "SELECT id, name FROM documents WHERE project_id = ?", (DbArg[1]){ DB_S(pid) }, 1, &docs);
+    if (!db_query(db, "SELECT id, name FROM documents WHERE project_id = ?", (DbArg[1]){ DB_S(pid) }, 1, &docs)) return false;
+    bool ok = true;
+    ExportRev *revs = NULL;
+    size_t nrevs = 0, cap = 0;
     for (size_t i = 0; ok && i < docs.nrows; i++) {
         DbRows r;
-        if (!db_query(db, "SELECT content, origin, note FROM revisions WHERE document_id = ? ORDER BY seq",
-                      (DbArg[1]){ DB_S(db_cell(&docs, i, 0)) }, 1, &r))
-            continue;
+        if (!db_query(db, "SELECT id, content, origin, note, created_at FROM revisions WHERE document_id = ? ORDER BY seq",
+                      (DbArg[1]){ DB_S(db_cell(&docs, i, 0)) }, 1, &r)) {
+            ok = false;
+            break;
+        }
         char path[PATH_MAX + 300];
         snprintf(path, sizeof(path), "%s/%s", project_dir, db_cell(&docs, i, 1));
-        for (size_t k = 0; k < r.nrows; k++)
-            revisions_record(project_dir, path, db_cell(&r, k, 0), db_cell(&r, k, 1), db_cell(&r, k, 2), NULL);
+        for (size_t k = 0; ok && k < r.nrows; k++) {
+            store_set_write_time(atof(db_cell(&r, k, 4) ? db_cell(&r, k, 4) : "0"));
+            bool rec = false;
+            ok = revisions_record(project_dir, path, db_cell(&r, k, 1), db_cell(&r, k, 2), db_cell(&r, k, 3), &rec);
+            Revision *list = NULL;
+            size_t n = ok ? revisions_list(project_dir, path, &list) : 0;
+            if (n && nrevs == cap) {
+                cap = cap ? cap * 2 : 64;
+                ExportRev *m = realloc(revs, cap * sizeof(ExportRev));
+                if (!m) ok = false;
+                else revs = m;
+            }
+            if (ok && n) { /* the newest snapshot is this revision (or the identical one before it) */
+                snprintf(revs[nrevs].id, sizeof(revs[0].id), "%s", db_cell(&r, k, 0));
+                snprintf(revs[nrevs].file, sizeof(revs[0].file), "%s", list[0].file);
+                nrevs++;
+            }
+            free(list);
+        }
         db_rows_free(&r);
     }
     db_rows_free(&docs);
     ChatSummary *cs = NULL;
     size_t nc = ok ? sdb_chat_list(db, pid, &cs) : 0;
-    for (size_t i = 0; i < nc; i++) {
+    for (size_t i = 0; ok && i < nc; i++) {
         ChatMessage *m = NULL;
         size_t n = 0;
-        if (!sdb_chat_load(db, pid, cs[i].id, &m, &n)) continue;
-        for (size_t k = 0; k < n; k++) chat_store_append(project_dir, cs[i].id, cs[i].title, &m[k]);
+        if (!sdb_chat_load(db, pid, cs[i].id, &m, &n)) {
+            ok = false;
+            break;
+        }
+        for (size_t k = 0; ok && k < n; k++) {
+            store_set_write_time(m[k].ts);
+            ok = chat_store_append(project_dir, cs[i].id, cs[i].title, &m[k]);
+        }
         chat_store_free_messages(m, n);
     }
     free(cs);
@@ -614,15 +660,41 @@ static bool export_files(Db *db, const char *pid, const char *project_dir)
     for (size_t k = 0; ok && k < 3; k++) {
         Record *recs = NULL;
         size_t n = sdb_record_list(db, pid, kinds[k], &recs);
-        for (size_t i = 0; i < n; i++)
-            for (size_t v = 0; v < recs[i].nversions; v++) {
+        for (size_t i = 0; ok && i < n; i++)
+            for (size_t v = 0; ok && v < recs[i].nversions; v++) {
                 RecordVersion *ver = &recs[i].versions[v];
-                for (size_t q = 0; q < ver->nsources; q++) ver->sources[q].revision[0] = '\0'; /* store ids mean nothing in files */
-                records_append_ex(project_dir, kinds[k], recs[i].id, ver->status, ver->content, ver->sources, ver->nsources,
-                                  kinds[k] == REC_FINDING ? &ver->finding : NULL, NULL);
+                for (size_t q = 0; q < ver->nsources; q++) {
+                    SourceRef *src = &ver->sources[q];
+                    if (src->kind != SRC_DOC) continue;
+                    const char *file = "";
+                    for (size_t e = 0; e < nrevs && !file[0]; e++)
+                        if (!strcmp(revs[e].id, src->revision)) file = revs[e].file;
+                    snprintf(src->revision, sizeof(src->revision), "%s", file); /* store ids mean nothing in files */
+                }
+                store_set_write_time((double)ver->ts);
+                ok = records_append_ex(project_dir, kinds[k], recs[i].id, ver->status, ver->content, ver->sources, ver->nsources,
+                                       kinds[k] == REC_FINDING ? &ver->finding : NULL, NULL);
             }
         records_free(recs, n);
     }
+    store_set_write_time(0);
+    free(revs);
+    return ok;
+}
+
+bool store_export_project(const char *project_id, const char *dir, char *why, size_t whylen)
+{
+    Db *db = store_db();
+    if (!db) {
+        snprintf(why, whylen, "The project store is offline");
+        return false;
+    }
+    char sd[PATH_MAX + 32];
+    snprintf(sd, sizeof(sd), "%s/.scribodo", dir);
+    mkdir(dir, 0755);
+    mkdir(sd, 0755);
+    bool ok = export_files(db, project_id, dir);
+    if (!ok) snprintf(why, whylen, "Couldn't export the project: %s", db_error(db)[0] ? db_error(db) : "a file couldn't be written");
     return ok;
 }
 

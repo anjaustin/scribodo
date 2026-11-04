@@ -13,11 +13,16 @@
 
 #include "core/utf8.h"
 
-/* Lowercase of the Latin letters a name is likely to use (ASCII, Latin-1,
- * Latin Extended-A); other letters are kept as they are. */
+/* Lowercase of the cased letters a name is likely to use: Latin (ASCII,
+ * Latin-1, Latin Extended-A), Greek and Cyrillic. Scripts without case
+ * (CJK and others) have no capitals, so names in them aren't recognised
+ * (docs: a known limit). */
 static uint32_t lower_cp(uint32_t c)
 {
     if (c >= 'A' && c <= 'Z') return c + 32;
+    if ((c >= 0x391 && c <= 0x3A9 && c != 0x3A2)) return c + 32;   /* Greek */
+    if (c >= 0x410 && c <= 0x42F) return c + 32;                   /* Cyrillic */
+    if (c >= 0x400 && c <= 0x40F) return c + 80;
     if (c >= 0xC0 && c <= 0xDE && c != 0xD7) return c + 32;
     if ((c >= 0x100 && c <= 0x137) || (c >= 0x14A && c <= 0x177)) return c | 1;
     if ((c >= 0x139 && c <= 0x148) || (c >= 0x179 && c <= 0x17E)) return (c & 1) ? c + 1 : c;
@@ -107,13 +112,21 @@ static size_t first_word(const char *norm) { return strcspn(norm, " "); }
  * full name's): mentions and links move, `from` goes. */
 static bool fold_entity(Db *db, const char *from, const char *into)
 {
+    /* All or nothing (inside the caller's transaction if there is one). */
+    bool own = !db_in_transaction(db);
+    if (own && !db_begin(db)) return false;
     DbArg a[2] = { DB_S(into), DB_S(from) };
-    return db_run(db, "INSERT IGNORE INTO entity_mentions (entity_id, finding_id) SELECT ?, finding_id FROM entity_mentions WHERE entity_id = ?",
+    bool ok = db_run(db, "INSERT IGNORE INTO entity_mentions (entity_id, finding_id) SELECT ?, finding_id FROM entity_mentions WHERE entity_id = ?",
                   a, 2, NULL) &&
            db_run(db, "UPDATE links SET from_entity = ? WHERE from_entity = ?", a, 2, NULL) &&
            db_run(db, "UPDATE links SET to_entity = ? WHERE to_entity = ?", a, 2, NULL) &&
            db_run(db, "DELETE FROM links WHERE from_entity = to_entity AND from_entity = ?", (DbArg[1]){ DB_S(into) }, 1, NULL) &&
            db_run(db, "DELETE FROM entities WHERE id = ?", (DbArg[1]){ DB_S(from) }, 1, NULL);
+    if (own) {
+        if (ok) ok = db_commit(db);
+        else db_rollback(db);
+    }
+    return ok;
 }
 
 /* The display name: trimmed, possessive dropped, at most 255 bytes. */
@@ -215,19 +228,21 @@ bool sdb_entities_from_finding(Db *db, const char *pid, const char *finding_id, 
     if (strcmp(f->type, "relationship") != 0) return true; /* entity, event, question, conflict: a mention */
     if (!f->object[0] || !f->relation[0] || !a_name(f->object)) return true; /* unnamed ends are not linked */
     if (!sdb_entity_upsert(db, pid, f->object, "entity", b, sizeof(b))) return false;
+    /* The object may have absorbed the subject ("Zoë" into "Zoë Ångström"):
+     * look the subject up again (red-team 009). */
+    if (!sdb_entity_upsert(db, pid, f->subject, "entity", a, sizeof(a))) return false;
     if (!strcmp(a, b)) return true;
     if (!mention(db, b, finding_id)) return false;
-    /* One link per finding. */
-    DbRows r;
-    if (!db_query(db, "SELECT id FROM links WHERE finding_id = ?", (DbArg[1]){ DB_S(finding_id) }, 1, &r)) return false;
-    bool have = r.nrows > 0;
-    db_rows_free(&r);
-    if (have) return true;
+    /* One link per finding (a unique key: two connections may race). */
     char rel[256];
     utf8_clip(rel, sizeof(rel), f->relation, 255);
     DbArg l[5] = { DB_S(pid), DB_S(a), DB_S(rel), DB_S(b), DB_S(finding_id) };
-    return db_run(db, "INSERT INTO links (project_id, from_entity, relation, to_entity, finding_id) VALUES (?,?,?,?,?)", l, 5,
-                  NULL);
+    /* Only the duplicate is tolerated (INSERT IGNORE would also hide a
+     * link to an entity that's gone). */
+    return db_run(db,
+                  "INSERT INTO links (project_id, from_entity, relation, to_entity, finding_id) VALUES (?,?,?,?,?)"
+                  " ON DUPLICATE KEY UPDATE finding_id = finding_id",
+                  l, 5, NULL);
 }
 
 bool sdb_entities_backfill(Db *db, const char *pid)
@@ -252,14 +267,22 @@ bool sdb_entities_backfill(Db *db, const char *pid)
         ok = sdb_entities_from_finding(db, pid, db_cell(&r, i, 0), &f);
     }
     db_rows_free(&r);
+    if (ok) db_run(db, "UPDATE projects SET graph_built = 1 WHERE id = ?", (DbArg[1]){ DB_S(pid) }, 1, NULL);
     return ok;
+}
+
+bool sdb_entities_built(Db *db, const char *pid)
+{
+    DbRows r;
+    if (!db_query(db, "SELECT graph_built FROM projects WHERE id = ?", (DbArg[1]){ DB_S(pid) }, 1, &r)) return true; /* don't retry blindly */
+    bool built = r.nrows && db_cell(&r, 0, 0) && atoi(db_cell(&r, 0, 0)) == 1;
+    db_rows_free(&r);
+    return built;
 }
 
 /* A finding's current status, as a join condition: dismissed findings
  * neither count as mentions nor support links. */
-#define LIVE_FINDING(alias)                                                                                         \
-    " (SELECT v.status FROM record_versions v WHERE v.record_id = " alias " ORDER BY v.ver DESC LIMIT 1)"     \
-    " <> 'dismissed'"
+#define LIVE_FINDING(alias) " (SELECT q.current_status FROM records q WHERE q.id = " alias ") <> 'dismissed'"
 
 void entity_list_free(EntityRow *e, size_t n)
 {
@@ -271,14 +294,21 @@ size_t sdb_entity_list(Db *db, const char *pid, EntityRow **out)
 {
     *out = NULL;
     DbRows r;
+    /* Mentions and links of live (not dismissed) findings, by the
+     * findings' current status (indexed). */
     if (!db_query(db,
-                  "SELECT e.id, e.name,"
-                  " (SELECT COUNT(*) FROM entity_mentions m WHERE m.entity_id = e.id AND" LIVE_FINDING("m.finding_id") ") AS mentions,"
-                  " (SELECT COUNT(*) FROM links l WHERE (l.from_entity = e.id OR l.to_entity = e.id) AND l.finding_id IS NOT NULL"
-                  "   AND" LIVE_FINDING("l.finding_id") ") AS nlinks"
-                  " FROM entities e WHERE e.project_id = ?"
-                  " HAVING mentions + nlinks > 0 ORDER BY nlinks + mentions DESC, e.name",
-                  (DbArg[1]){ DB_S(pid) }, 1, &r))
+                  "SELECT e.id, e.name, COALESCE(mc.n, 0), COALESCE(lc.n, 0) FROM entities e"
+                  " LEFT JOIN (SELECT m.entity_id, COUNT(*) AS n FROM entity_mentions m JOIN records r ON r.id = m.finding_id"
+                  "            WHERE r.project_id = ? AND r.current_status <> 'dismissed' GROUP BY m.entity_id) mc ON mc.entity_id = e.id"
+                  " LEFT JOIN (SELECT x.eid, COUNT(*) AS n FROM"
+                  "             (SELECT l.from_entity AS eid FROM links l JOIN records r ON r.id = l.finding_id"
+                  "              WHERE l.project_id = ? AND r.current_status <> 'dismissed'"
+                  "              UNION ALL SELECT l.to_entity FROM links l JOIN records r ON r.id = l.finding_id"
+                  "              WHERE l.project_id = ? AND r.current_status <> 'dismissed') x"
+                  "            GROUP BY x.eid) lc ON lc.eid = e.id"
+                  " WHERE e.project_id = ? AND COALESCE(mc.n, 0) + COALESCE(lc.n, 0) > 0"
+                  " ORDER BY COALESCE(lc.n, 0) + COALESCE(mc.n, 0) DESC, e.name",
+                  (DbArg[4]){ DB_S(pid), DB_S(pid), DB_S(pid), DB_S(pid) }, 4, &r))
         return 0;
     EntityRow *list = r.nrows ? calloc(r.nrows, sizeof(EntityRow)) : NULL;
     for (size_t i = 0; list && i < r.nrows; i++) {

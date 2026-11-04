@@ -177,6 +177,7 @@ make dbtest    # the store against the local MariaDB (tools/services.sh up), in 
 make uitest-db # the app on the store: move a project in, resume after a restart, entities, a copied folder, database down
 make backuptest # back up, lose the folder, database and index, restore, resume
 make remotetest # the optional remote model, against a stand-in provider on 127.0.0.1
+make offlinetest # acceptance 8: the store suite and the real models in a sandbox with no network but this Mac
 make uitest    # scripted UI tests: the real app in a hidden window (needs an awake display)
 make llmtest   # end-to-end against the real model: supervisor, streaming, auth, crash recovery
 make uitest-real  # the real model through the real UI
