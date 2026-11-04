@@ -16,6 +16,7 @@
 
 #include "app/chat_store.h"
 #include "app/store.h"
+#include "llm/semantic.h"
 #include "app/revisions.h"
 #include "cJSON.h"
 #include "llm/http.h"
@@ -25,7 +26,7 @@
 #define PIECE_MAX 2000        /* longest piece of one paragraph or message */
 #define IDLE_DELAY 1.5        /* seconds of chat idleness before observer work */
 #define RETRY_DELAY 5.0       /* after a failed request */
-#define MAX_JUDGE_PAIRS 16    /* canon checks per job: 8 findings x 2 entries, so none are skipped */
+#define MAX_JUDGE_PAIRS 24    /* canon checks per job: 8 findings x 3 entries, so none are skipped */
 #define MAX_DOC_BYTES (16u << 20) /* the editor's own limit is lower */
 
 /* All finding writes (observer worker and UI status changes) take this. */
@@ -39,6 +40,7 @@ struct Observer {
     pthread_cond_t cv;
     bool stop, poked, enabled, running;
     bool io_error;           /* can't write the observer's files: back off */
+    bool rebuild;            /* rebuild the project's semantic index next */
     struct PendingRename {
         char project[PATH_MAX], from[256], to[256];
     } *renames;              /* document renames to apply to that project's state */
@@ -808,6 +810,7 @@ typedef struct {
     Seg *segs;
     size_t nsegs, cap_segs;
     uint64_t *hashes;     /* document pieces read by this job */
+    cJSON *current;       /* every piece of the document now (hex hashes), for pruning the index */
     size_t nhashes, cap_hashes;
 } Job;
 
@@ -819,6 +822,7 @@ static void job_free(Job *j)
     free(j->chunk);
     free(j->segs);
     free(j->hashes);
+    cJSON_Delete(j->current);
     memset(j, 0, sizeof(*j));
 }
 
@@ -1007,6 +1011,16 @@ static bool find_job(const char *project, cJSON *st, Job *j)
         }
         free(ps);
         free(pl);
+        if (j->nsegs) {
+            /* Every piece the document has now: what was read before plus
+             * this job's (the semantic index drops the rest). */
+            j->current = cJSON_Duplicate(kept, true);
+            for (size_t h = 0; j->current && h < j->nhashes; h++) {
+                char hex[17];
+                snprintf(hex, sizeof(hex), "%016llx", (unsigned long long)j->hashes[h]);
+                cJSON_AddItemToArray(j->current, cJSON_CreateString(hex));
+            }
+        }
         cJSON_DeleteItemFromObject(docs, names[i]);
         cJSON_AddItemToObject(docs, names[i], kept);
         if (j->nsegs) {
@@ -1292,6 +1306,15 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSO
         }
     }
 
+    /* Projects in the store get semantic retrieval when the index is up;
+     * canon and notes are synced into it first (cheap when unchanged). */
+    char sem_pid[64] = "";
+    bool use_sem = store_mode(project, sem_pid, sizeof(sem_pid), NULL) == STORE_DB && semantic_ready();
+    if (use_sem) {
+        char serr[200];
+        use_sem = semantic_sync_records(sem_pid, serr, sizeof(serr));
+    }
+
     /* Compare with committed canon (possible conflicts) and notes (overlaps). */
     typedef struct {
         size_t cand;
@@ -1326,10 +1349,32 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSO
                 score[1] = sc;
             }
         }
-        for (int b = 0; b < 2 && pairs < MAX_JUDGE_PAIRS; b++) {
-            if (best[b] == SIZE_MAX) continue;
+        /* Semantic candidates (projects in the store with an index): the
+         * entries nearest in meaning, which shared words can miss ("the old
+         * woman" vs canon about "Grandmother Signe"). Lexical ones too. */
+        size_t cand[4] = { SIZE_MAX, SIZE_MAX, SIZE_MAX, SIZE_MAX };
+        int ncand = 0;
+        if (use_sem) {
+            SemHit *hits = NULL;
+            size_t nh = semantic_canon_for(sem_pid, stmt, 2, &hits);
+            for (size_t k = 0; k < nh && ncand < 2; k++)
+                for (size_t c = 0; c < ncanon; c++)
+                    if (!strcmp(canon[c].id, hits[k].record_id) && !strcmp(record_current(&canon[c])->status, "committed")) {
+                        cand[ncand++] = c;
+                        break;
+                    }
+            semantic_hits_free(hits, nh);
+        }
+        for (int b = 0; b < 2 && ncand < 3; b++) {
+            bool dup = false;
+            for (int k = 0; k < ncand; k++) dup = dup || cand[k] == best[b];
+            if (best[b] != SIZE_MAX && !dup) cand[ncand++] = best[b];
+        }
+        for (int b = 0; b < ncand && pairs < MAX_JUDGE_PAIRS; b++) {
+            best[0] = cand[b];
+            if (best[0] == SIZE_MAX) continue;
             pairs++;
-            const RecordVersion *v = record_current(&canon[best[b]]);
+            const RecordVersion *v = record_current(&canon[best[0]]);
             char check[300];
             bool conflict = backend_judge(o, v->content, stmt, check, sizeof(check));
             if (atomic_load(&o->cancel)) {
@@ -1337,20 +1382,20 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSO
                 break;
             }
             for (size_t q = 0; conflict && q < nconf; q++) /* same canon, same passage: once */
-                if (!strcmp(conflicts[q].canon_id, canon[best[b]].id) && cands[conflicts[q].cand].src.start == cands[i].src.start)
+                if (!strcmp(conflicts[q].canon_id, canon[best[0]].id) && cands[conflicts[q].cand].src.start == cands[i].src.start)
                     conflict = false;
             for (size_t e = 0; conflict && e < ne; e++) { /* already flagged earlier */
                 const RecordVersion *ev = record_current(&existing[e]);
                 /* Same canon entry *with the same text* (a revised entry is
                  * checked afresh), same passage. */
-                conflict = !(!strcmp(ev->finding.type, "conflict") && !strcmp(ev->finding.related, canon[best[b]].id) &&
+                conflict = !(!strcmp(ev->finding.type, "conflict") && !strcmp(ev->finding.related, canon[best[0]].id) &&
                              ev->finding.related_text && !strcmp(ev->finding.related_text, v->content) &&
                              ev->nsources && ev->sources[0].quote && !strcmp(ev->sources[0].quote, cands[i].src.quote));
             }
             if (conflict && nconf < MAX_JUDGE_PAIRS) {
                 Conflict *cf = &conflicts[nconf++];
                 cf->cand = i;
-                snprintf(cf->canon_id, sizeof(cf->canon_id), "%s", canon[best[b]].id);
+                snprintf(cf->canon_id, sizeof(cf->canon_id), "%s", canon[best[0]].id);
                 cf->canon_text = strdup(v->content);
                 plain_check(check, cf->check, sizeof(cf->check));
             }
@@ -1401,6 +1446,32 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSO
             records_create_ex(project, REC_FINDING, id, "new", conflicts[c].check, &cd->src, 1, &fi);
         }
         pthread_mutex_unlock(&g_findings_mu);
+        /* Index what was read (documents as draft text, chats as chat), and
+         * drop the document's points for pieces it no longer has. */
+        if (use_sem) {
+            char did[40] = "";
+            if (j->is_doc) store_document_id(sem_pid, j->name, true, did, sizeof(did));
+            char rev[160] = "";
+            if (j->is_doc) revisions_snapshot(project, j->path, j->src, rev, sizeof(rev));
+            for (size_t q = 0; q < j->nsegs; q++) {
+                const Seg *sg = &j->segs[q];
+                char *piece = dupn(j->chunk + sg->chunk_off, sg->len);
+                if (!piece) continue;
+                const char *base = j->is_doc ? j->src : j->msgs[sg->message];
+                size_t start = cp_count(base, sg->src_off), len = cp_count(piece, sg->len);
+                if (j->is_doc) semantic_index_text(sem_pid, "draft", did, rev[0] ? rev : NULL, NULL, 0, start, len, piece);
+                else semantic_index_text(sem_pid, "chat", NULL, NULL, j->name, sg->message, start, len, piece);
+                free(piece);
+            }
+            if (j->is_doc && did[0] && j->current) {
+                size_t n = (size_t)cJSON_GetArraySize(j->current), k = 0;
+                const char **hs = calloc(n ? n : 1, sizeof(char *));
+                cJSON *it;
+                cJSON_ArrayForEach(it, j->current) if (hs && cJSON_IsString(it)) hs[k++] = it->valuestring;
+                if (hs) semantic_prune_doc(sem_pid, did, hs, k);
+                free(hs);
+            }
+        }
         /* Mark the text read. */
         if (j->is_doc) {
             cJSON *docs = cJSON_GetObjectItem(st, "docs");
@@ -1444,7 +1515,7 @@ static void *worker(void *arg)
         while (!o->stop) {
             double t = now_s();
             bool idle = !atomic_load(&o->chat_active) && t - o->idle_since >= IDLE_DELAY;
-            bool ready = o->poked && o->project[0] && o->enabled && t >= o->retry_at;
+            bool ready = (o->poked || o->rebuild) && o->project[0] && o->enabled && t >= o->retry_at;
             if (ready && idle) break;
             if (ready && !idle && !waiting_shown) {
                 snprintf(o->status, sizeof(o->status), "Waiting while you chat\xE2\x80\xA6");
@@ -1466,11 +1537,31 @@ static void *worker(void *arg)
         char project[PATH_MAX];
         snprintf(project, sizeof(project), "%s", o->project);
         uint64_t gen = o->gen;
+        bool rebuild = o->rebuild; /* read under the lock */
+        bool was_poked = o->poked;
+        o->rebuild = false;
         o->poked = false;
         o->running = true;
         atomic_store(&o->cancel, false);
         pthread_mutex_unlock(&o->mu);
 
+        if (rebuild) { /* the index is derived: drop it and rebuild it from MariaDB */
+            char pid[64], err[200] = "";
+            long n = -1;
+            set_status(o, "Rebuilding the semantic index\xE2\x80\xA6");
+            if (store_mode(project, pid, sizeof(pid), NULL) == STORE_DB) n = semantic_rebuild(pid, err, sizeof(err));
+            else snprintf(err, sizeof(err), "this project isn't in the project store");
+            char msg[300];
+            if (n >= 0) snprintf(msg, sizeof(msg), "Index rebuilt: %ld passages", n);
+            else snprintf(msg, sizeof(msg), "Couldn't rebuild the index: %s", err);
+            pthread_mutex_lock(&o->mu);
+            snprintf(o->status, sizeof(o->status), "%s", msg);
+            o->running = false;
+            o->poked = was_poked; /* only work that was already waiting (the result stays visible) */
+            o->version++;
+            pthread_mutex_unlock(&o->mu);
+            continue;
+        }
         cJSON *st = state_load(project);
         if (!st) { /* the project store is down: wait, and say so */
             pthread_mutex_lock(&o->mu);
@@ -1612,6 +1703,14 @@ void observer_rename_doc(Observer *o, const char *project_dir, const char *from,
         o->nrenames++;
     }
     o->poked = true;
+    pthread_cond_signal(&o->cv);
+    pthread_mutex_unlock(&o->mu);
+}
+
+void observer_request_rebuild(Observer *o)
+{
+    pthread_mutex_lock(&o->mu);
+    o->rebuild = true;
     pthread_cond_signal(&o->cv);
     pthread_mutex_unlock(&o->mu);
 }

@@ -49,6 +49,7 @@
  *   expect findings_not "substring"
  *   expect attached "a.md,b.md"  the chat's attached documents, in order
  *   expect explorer_has "row"    a row the Explorer lists (exact)
+ *   expect observer_status "substring"
  *   expect running no            (only valid as the last command, after close)
  */
 #ifndef SCRIBODO_SCRIPT_H
@@ -86,6 +87,8 @@ typedef struct {
      * (one per line), malloc'd. */
     char *(*attached_text)(void *ctx);
     char *(*explorer_text)(void *ctx);
+    /* The observer's status line (malloc'd). */
+    char *(*observer_status)(void *ctx);
 } ScriptHost;
 
 typedef struct Script Script;

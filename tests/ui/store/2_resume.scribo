@@ -31,3 +31,7 @@ expect findings_count 3
 observer on
 wait_observer
 expect findings_count 3
+# Rebuilding the semantic index (a derived copy) from the store.
+click_element RebuildIndex
+wait_observer
+expect observer_status "Index rebuilt:"

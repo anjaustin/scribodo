@@ -41,6 +41,7 @@
 #include "app/script.h"
 #include "llm/chat.h"
 #include "llm/observer.h"
+#include "llm/semantic.h"
 #include "llm/server.h"
 #include "ui/chat_view.h"
 #include "ui/clay_render.h"
@@ -103,6 +104,7 @@ typedef struct {
 
     /* Model and chat */
     LlmServer *llm;
+    LlmServer *embed;             /* the embedding model (semantic retrieval) */
     ChatSession *chat;
     ChatView *chat_view;
     /* A conversation belongs to the project it started in, even if the author
@@ -2112,6 +2114,8 @@ static Clay_RenderCommandArray build_layout(App *app)
                        .backgroundColor = COL_PANEL, .clip = { .vertical = true } }) {
                     section_header("OBSERVER");
                     label(app->observer_label, FONT_UI, COL_DIM);
+                    if (store_mode(app->project_dir, NULL, 0, NULL) == STORE_DB)
+                        list_item(CLAY_ID("RebuildIndex"), "Rebuild the index", false);
                     CLAY({ .id = CLAY_ID("Findings"),
                            .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } } }) {}
                 }
@@ -2215,6 +2219,13 @@ static char *host_attached_text(void *ctx)
         strcat(s, app->attached[i]);
     }
     return s;
+}
+
+static char *host_observer_status(void *ctx)
+{
+    char st[200];
+    observer_status(((App *)ctx)->observer, st, sizeof(st));
+    return strdup(st);
 }
 
 static char *host_explorer_text(void *ctx)
@@ -2355,6 +2366,12 @@ int main(int argc, char **argv)
         llm_server_default_config(&cfg, GetApplicationDirectory());
         app.llm = llm_server_create(&cfg);
         if (app.llm) llm_server_start(app.llm);
+        /* Embeddings for the semantic index (a second, small server). */
+        LlmServerConfig ecfg;
+        llm_server_embed_config(&ecfg, GetApplicationDirectory());
+        app.embed = llm_server_create(&ecfg);
+        if (app.embed) llm_server_start(app.embed);
+        semantic_set_embedder(app.embed);
     }
     app.chat = chat_create(app.llm);
     app.editor = editor_create(&app.fonts[FONT_PROSE]);
@@ -2418,7 +2435,7 @@ int main(int argc, char **argv)
     ScriptHost host = { app.editor, &app.explorer_w, &app.observer_w, &app.editor_rect,
                         host_status, host_open, host_drop, &app, app.chat, host_element, host_model_ready,
                         host_record_text, host_observer_enable, host_observer_idle, host_findings_text,
-                        host_attached_text, host_explorer_text };
+                        host_attached_text, host_explorer_text, host_observer_status };
     if (script_path) {
         char err[256];
         script = script_load(script_path, getenv("SCRIBODO_SCRIPT_DIR"), getenv("SCRIBODO_SHOT_DIR"), err, sizeof(err));
@@ -2444,6 +2461,7 @@ int main(int argc, char **argv)
         if (script && !script_frame(script, &host)) break;
 
         if (app.llm) llm_server_tick(app.llm);
+        if (app.embed) llm_server_tick(app.embed);
         if (atomic_load(&app.services_state) == 2) { /* the services script finished: try again */
             pthread_join(app.services_thread, NULL);
             atomic_store(&app.services_state, 0);
@@ -2531,6 +2549,10 @@ int main(int argc, char **argv)
             } else if (Clay_PointerOver(CLAY_ID("Editor"))) app.focus = FOCUS_DOC;
             else if (Clay_PointerOver(CLAY_ID("ChatInput"))) app.focus = FOCUS_CHAT;
             else if (Clay_PointerOver(CLAY_ID("NewChatItem"))) new_chat(&app);
+            else if (app.observer_open && Clay_PointerOver(CLAY_ID("RebuildIndex"))) {
+                observer_request_rebuild(app.observer);
+                set_status(&app, "Rebuilding the semantic index from the project store\xE2\x80\xA6");
+            }
             else if (Clay_PointerOver(CLAY_ID("NewDocItem"))) begin_new_document(&app);
             else if (Clay_PointerOver(CLAY_ID("ImportItem"))) import_documents(&app);
             else if (Clay_PointerOver(CLAY_ID("NewNoteItem"))) {
@@ -2912,6 +2934,7 @@ int main(int argc, char **argv)
     records_free(app.flist, app.nflist);
     chat_destroy(app.chat);          /* cancels any reply in progress */
     llm_server_destroy(app.llm);     /* stops llama-server and removes its socket */
+    llm_server_destroy(app.embed);
     editor_destroy(app.editor);
     for (size_t i = 0; i < app.ndocs; i++) free(app.docs[i]);
     free(app.chats);

@@ -40,6 +40,9 @@ void observer_destroy(Observer *o);
 void observer_set_project(Observer *o, const char *project_dir);
 /* A document was renamed: what was read of it stays read. */
 void observer_rename_doc(Observer *o, const char *project_dir, const char *from, const char *to);
+/* Drop the project's semantic index and rebuild it from the store (on the
+ * worker, between jobs; the status line reports progress). */
+void observer_request_rebuild(Observer *o);
 /* Something was stored (a save, a finished reply): look for new work. */
 void observer_poke(Observer *o);
 /* Call every frame. While true, observer requests are cancelled and none

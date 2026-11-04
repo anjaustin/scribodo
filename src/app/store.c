@@ -46,6 +46,7 @@ void store_stop(void)
 }
 
 bool store_online(void) { return atomic_load(&g_online) && !atomic_load(&g_forced_offline); }
+const char *store_database(void) { return g_cfg.database[0] ? g_cfg.database : "scribodo"; }
 void store_set_offline(bool offline) { atomic_store(&g_forced_offline, offline); }
 
 Db *store_db(void)

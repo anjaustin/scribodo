@@ -10,6 +10,8 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <sys/un.h>
 #include <unistd.h>
 
@@ -209,12 +211,12 @@ static bool send_all(int fd, const char *p, size_t n, atomic_bool *cancel, doubl
 }
 
 /* Connect without blocking indefinitely (a wedged server's full backlog). */
-static bool connect_bounded(int fd, const struct sockaddr_un *addr, atomic_bool *cancel, double deadline,
+static bool connect_bounded(int fd, const struct sockaddr *addr, socklen_t addrlen, atomic_bool *cancel, double deadline,
                             char *err, size_t errlen)
 {
     int fl = fcntl(fd, F_GETFL);
     fcntl(fd, F_SETFL, fl | O_NONBLOCK);
-    int rc = connect(fd, (const struct sockaddr *)addr, sizeof(*addr));
+    int rc = connect(fd, addr, addrlen);
     if (rc != 0 && errno != EINPROGRESS && errno != EAGAIN) {
         snprintf(err, errlen, "connect: %s", strerror(errno));
         return false;
@@ -251,7 +253,10 @@ bool http_request(const char *socket_path, const char *method, const char *path,
                   atomic_bool *cancel, int timeout_ms, HttpResult *res)
 {
     memset(res, 0, sizeof(*res));
-    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    /* "tcp:PORT" is 127.0.0.1:PORT (the local Qdrant); anything else is a
+     * Unix socket path. There is no way to name another host. */
+    bool tcp = !strncmp(socket_path, "tcp:", 4);
+    int fd = socket(tcp ? AF_INET : AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) {
         snprintf(res->error, sizeof(res->error), "socket: %s", strerror(errno));
         return false;
@@ -259,14 +264,32 @@ bool http_request(const char *socket_path, const char *method, const char *path,
     int one = 1;
     setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
     struct sockaddr_un addr = { .sun_family = AF_UNIX };
-    if (strlen(socket_path) >= sizeof(addr.sun_path)) {
-        close(fd);
-        snprintf(res->error, sizeof(res->error), "socket path too long");
-        return false;
+    struct sockaddr_in in = { .sin_family = AF_INET };
+    const struct sockaddr *sa;
+    socklen_t salen;
+    if (tcp) {
+        int port = atoi(socket_path + 4);
+        if (port <= 0 || port > 65535) {
+            close(fd);
+            snprintf(res->error, sizeof(res->error), "bad port");
+            return false;
+        }
+        in.sin_port = htons((uint16_t)port);
+        in.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        sa = (const struct sockaddr *)&in;
+        salen = sizeof(in);
+    } else {
+        if (strlen(socket_path) >= sizeof(addr.sun_path)) {
+            close(fd);
+            snprintf(res->error, sizeof(res->error), "socket path too long");
+            return false;
+        }
+        strcpy(addr.sun_path, socket_path);
+        sa = (const struct sockaddr *)&addr;
+        salen = sizeof(addr);
     }
-    strcpy(addr.sun_path, socket_path);
     double deadline = now_ms() + (timeout_ms > 0 ? timeout_ms : 30000);
-    if (!connect_bounded(fd, &addr, cancel, deadline, res->error, sizeof(res->error))) {
+    if (!connect_bounded(fd, sa, salen, cancel, deadline, res->error, sizeof(res->error))) {
         close(fd);
         return false;
     }

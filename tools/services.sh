@@ -40,6 +40,12 @@ case "${1:-status}" in
             compose exec -T mariadb mariadb -uroot -p"$root" -e "CREATE DATABASE IF NOT EXISTS \`$name\` CHARACTER SET utf8mb4; GRANT ALL ON \`$name\`.* TO 'scribodo'@'%';"
         else
             compose exec -T mariadb mariadb -uroot -p"$root" -e "DROP DATABASE IF EXISTS \`$name\`;"
+            # and its semantic index collections ("<database>__<project>")
+            key="$(cat "$SCRIBODO_SECRETS/qdrant_api_key")"
+            for c in $(curl -s -H "Authorization: Bearer $key" http://127.0.0.1:6333/collections |
+                       python3 -c 'import json,sys; print(" ".join(c["name"] for c in json.load(sys.stdin)["result"]["collections"]))'); do
+                case "$c" in "${name}__"*) curl -s -o /dev/null -X DELETE -H "Authorization: Bearer $key" "http://127.0.0.1:6333/collections/$c" ;; esac
+            done
         fi
         ;;
     down) compose down ;;

@@ -21,7 +21,8 @@ typedef struct {
  * false to stop reading. */
 typedef bool (*HttpLineFn)(const char *line, size_t len, void *ctx);
 
-/* Perform a request. `body` may be NULL. If `on_line` is non-NULL the body is
+/* Perform a request on `socket_path` (a Unix socket, or "tcp:PORT" for
+ * 127.0.0.1:PORT; no other host can be named). `body` may be NULL. If `on_line` is non-NULL the body is
  * streamed to it line by line and result->body stays NULL. `cancel`, if
  * non-NULL, is polled between reads; setting it aborts the request.
  * `timeout_ms` bounds each wait for data (not the whole request). */

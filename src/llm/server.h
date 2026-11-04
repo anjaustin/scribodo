@@ -36,6 +36,7 @@ typedef struct {
     int ctx_total;          /* -c (split evenly across slots) */
     int slots;              /* -np */
     int batch;              /* -b and -ub */
+    bool embedding;         /* an embedding server (Qwen3-Embedding), not the chat model */
 } LlmServerConfig;
 
 typedef struct LlmServer LlmServer;
@@ -43,6 +44,9 @@ typedef struct LlmServer LlmServer;
 /* Fill `cfg` with the default locations and validated settings. Paths that
  * cannot be resolved are left empty; llm_server_start() reports why. */
 void llm_server_default_config(LlmServerConfig *cfg, const char *app_dir);
+/* The embedding server: Qwen3-Embedding-0.6B (F16, Apache-2.0, 1,024
+ * dimensions, pinned hash), its own socket and run folder, one slot. */
+void llm_server_embed_config(LlmServerConfig *cfg, const char *app_dir);
 
 LlmServer *llm_server_create(const LlmServerConfig *cfg);
 void llm_server_destroy(LlmServer *s); /* stops it first */

@@ -77,13 +77,15 @@ static bool import_revisions(Db *db, const char *project_dir, const char *pid, R
         if (!store_document_id(pid, ent->d_name, true, did, sizeof(did))) continue;
         Revision *list = NULL;
         size_t n = revisions_list(project_dir, doc_path, &list); /* the file store: not imported yet */
+        size_t order = 0; /* ties within a millisecond keep the original order */
         for (size_t i = n; ok && i-- > 0;) {                      /* oldest first */
             char *text = revisions_load(project_dir, doc_path, &list[i]);
             if (!text) continue; /* a damaged snapshot is not imported */
             char id[40];
             derived_id(ent->d_name, list[i].file, id, sizeof(id));
             DbArg a[7] = { DB_S(id), DB_S(did), DB_S(list[i].hash), DB_S(text), DB_S(list[i].origin), DB_S(list[i].note),
-                           DB_D(snapshot_time(list[i].file) ? snapshot_time(list[i].file) : (double)list[i].ts) };
+                           DB_D((snapshot_time(list[i].file) ? snapshot_time(list[i].file) : (double)list[i].ts) +
+                                (double)(order++) * 1e-6) };
             ok = db_run(db,
                         "INSERT IGNORE INTO revisions (id, document_id, hash, content, origin, note, created_at)"
                         " VALUES (?,?,?,?,?,?,?)",

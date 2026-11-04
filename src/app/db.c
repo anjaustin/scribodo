@@ -352,7 +352,17 @@ static const char *const k_migration_001[] = {
     NULL,
 };
 
-static const char *const *const k_migrations[] = { k_migration_001 };
+/* 002: what the semantic index holds (Qdrant is derived; this lets the
+ * indexer skip text already embedded, and a rebuild start clean). */
+static const char *const k_migration_002[] = {
+    "CREATE TABLE IF NOT EXISTS semantic_marks ("
+    " project_id VARCHAR(40) NOT NULL, point_key VARCHAR(191) NOT NULL, content_hash CHAR(16) NOT NULL,"
+    " PRIMARY KEY (project_id, point_key),"
+    " FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+    NULL,
+};
+
+static const char *const *const k_migrations[] = { k_migration_001, k_migration_002 };
 
 int db_schema_version(Db *db)
 {

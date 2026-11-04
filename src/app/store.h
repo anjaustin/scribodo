@@ -24,6 +24,8 @@
 bool store_start(const char *database, char *why, size_t whylen);
 void store_stop(void);
 bool store_online(void);
+/* The database in use ("scribodo", or a test database). */
+const char *store_database(void);
 /* Force the file store (tests, or the author's choice). */
 void store_set_offline(bool offline);
 

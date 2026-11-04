@@ -432,6 +432,11 @@ static void run_expect(Script *s, ScriptHost *h, Tokens *t)
         ok = c && !strcmp(c, t->tok[2]);
         show(detail, sizeof(detail), "attached", c);
         free(c);
+    } else if (!strcmp(what, "observer_status") && t->n == 3 && h->observer_status) {
+        char *c = h->observer_status(h->ctx);
+        ok = c && strstr(c, t->tok[2]);
+        show(detail, sizeof(detail), "observer", c);
+        free(c);
     } else if (!strcmp(what, "explorer_has") && t->n == 3 && h->explorer_text) {
         char *c = h->explorer_text(h->ctx);
         ok = false;

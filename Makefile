@@ -58,7 +58,7 @@ $(RAYLIB_LIB): $(RAYLIB_OBJS)
 # --- Scribodo ----------------------------------------------------------------
 CORE_SRCS := src/core/utf8.c src/core/text_buffer.c src/core/undo.c src/core/wrap.c src/core/doc_io.c src/core/diff.c
 STORE_SRCS := src/app/db.c src/app/store.c src/app/store_revisions.c src/app/store_records.c src/app/store_chats.c src/app/store_import.c
-LLM_SRCS  := src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/app/recent.c src/app/renames.c src/llm/observer.c $(STORE_SRCS)
+LLM_SRCS  := src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/app/recent.c src/app/renames.c src/llm/observer.c src/llm/semantic.c $(STORE_SRCS)
 LLM_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(LLM_SRCS)) $(BUILD)/third_party/cJSON/cJSON.o
 APP_SRCS  := src/main.c src/app/script.c src/ui/font.c src/ui/clay_render.c src/ui/editor.c src/ui/input.c \
              src/ui/chat_view.c src/ui/review_view.c src/ui/record_view.c src/ui/findings_view.c src/ui/prompt_view.c src/ui/menu_view.c src/ui/vendor_impl.c

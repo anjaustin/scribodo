@@ -9,6 +9,7 @@
 #include "../src/app/db.h"
 #include "../src/app/store.h"
 #include "../src/app/store_backends.h"
+#include "../src/llm/semantic.h"
 #include <sys/stat.h>
 #include "../src/app/renames.h"
 #include "test_util.h"
@@ -50,8 +51,8 @@ static void test_db(void)
         fprintf(stderr, "    %s\n", err);
         return;
     }
-    CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 1);
-    CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 1); /* idempotent */
+    CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 2);
+    CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 2); /* idempotent */
 
     /* Author text with quotes, backslashes, SQL and Unicode goes through
      * prepared statements untouched. */
@@ -320,6 +321,79 @@ static void test_import(void)
     system(cmd);
 }
 
+/* Semantic retrieval against the local Qdrant (fake embedder): committed
+ * canon only, kinds kept apart, and a wiped index rebuilt from MariaDB with
+ * exact provenance (SOW acceptance 10). */
+static void test_semantic(void)
+{
+    char why[256];
+    CHECK(store_start(g_name, why, sizeof(why)));
+    semantic_set_embedder(NULL);
+    CHECK(semantic_ready());
+    char pid[40];
+    CHECK(store_project_id("/private/var/tmp", true, pid, sizeof(pid)));
+    semantic_drop(pid);
+    Db *db = store_db();
+    char c1[40], c2[40], c3[40], n1[40];
+    store_new_id('c', c1, sizeof(c1));
+    store_new_id('c', c2, sizeof(c2));
+    store_new_id('c', c3, sizeof(c3));
+    store_new_id('n', n1, sizeof(n1));
+    CHECK(sdb_record_append(db, pid, REC_CANON, c1, "committed", "Zoë's eyes are green.", NULL, 0, NULL, true, NULL));
+    CHECK(sdb_record_append(db, pid, REC_CANON, c2, "committed", "The lighthouse stands on Ytre Sula.", NULL, 0, NULL, true, NULL));
+    CHECK(sdb_record_append(db, pid, REC_CANON, c3, "retracted", "Dvořák is Zoë's uncle.", NULL, 0, NULL, true, NULL));
+    CHECK(sdb_record_append(db, pid, REC_NOTE, n1, "active", "Zoë's eyes might be grey in chapter two.", NULL, 0, NULL, true, NULL));
+    CHECK(semantic_sync_records(pid, why, sizeof(why)));
+    if (why[0]) fprintf(stderr, "    sync: %s\n", why);
+    SemHit *h = NULL;
+    size_t n = semantic_canon_for(pid, "Zoë's brown eyes narrowed.", 3, &h);
+    CHECK(n >= 1 && !strcmp(h[0].record_id, c1) && !strcmp(h[0].kind, "canon"));
+    bool leaked = false;
+    for (size_t i = 0; i < n; i++) leaked = leaked || !strcmp(h[i].record_id, c3) || !strcmp(h[i].record_id, n1);
+    CHECK(!leaked); /* retracted canon and notes are never canon */
+    semantic_hits_free(h, n);
+    /* Retracting moves an entry out of canon retrieval. */
+    CHECK(sdb_record_append(db, pid, REC_CANON, c1, "retracted", "Zoë's eyes are green.", NULL, 0, NULL, false, NULL));
+    CHECK(semantic_sync_records(pid, why, sizeof(why)));
+    n = semantic_canon_for(pid, "Zoë's brown eyes narrowed.", 3, &h);
+    leaked = false;
+    for (size_t i = 0; i < n; i++) leaked = leaked || !strcmp(h[i].record_id, c1);
+    CHECK(!leaked);
+    semantic_hits_free(h, n);
+    CHECK(sdb_record_append(db, pid, REC_CANON, c1, "committed", "Zoë's eyes are green.", NULL, 0, NULL, false, NULL));
+    /* Document text is indexed as draft, with its provenance. */
+    bool rec = false;
+    char rv[40];
+    CHECK(sdb_revision_record(db, pid, "/x/ch1.md", "The fog came in.\n\nZoë climbed the lighthouse stairs.", "save", NULL,
+                              false, &rec, rv, sizeof(rv)));
+    long count = semantic_rebuild(pid, why, sizeof(why));
+    CHECK(count >= 6); /* 4 records + 2 paragraphs */
+    n = semantic_search(pid, "lighthouse stairs", "draft", 3, &h);
+    CHECK(n >= 1 && !strcmp(h[0].kind, "draft") && !strcmp(h[0].revision_id, rv) && h[0].start == 18 && h[0].len == 34 &&
+          !strcmp(h[0].text, "Zoë climbed the lighthouse stairs."));
+    semantic_hits_free(h, n);
+    /* Wipe the index; retrieval is empty; a rebuild restores it exactly. */
+    CHECK(semantic_drop(pid));
+    n = semantic_canon_for(pid, "Zoë's brown eyes narrowed.", 3, &h);
+    CHECK(n == 0);
+    semantic_hits_free(h, n);
+    CHECK(semantic_rebuild(pid, why, sizeof(why)) == count);
+    n = semantic_canon_for(pid, "Zoë's brown eyes narrowed.", 3, &h);
+    CHECK(n >= 1 && !strcmp(h[0].record_id, c1) && !strcmp(h[0].status, "committed"));
+    semantic_hits_free(h, n);
+    n = semantic_search(pid, "lighthouse stairs", "draft", 3, &h);
+    CHECK(n >= 1 && !strcmp(h[0].revision_id, rv) && h[0].start == 18);
+    semantic_hits_free(h, n);
+    /* Syncing again does no work (everything is marked). */
+    DbRows r;
+    CHECK(db_query(db, "SELECT COUNT(*) FROM semantic_marks WHERE project_id = ?", (DbArg[1]){ DB_S(pid) }, 1, &r) &&
+          atol(db_cell(&r, 0, 0)) == count);
+    db_rows_free(&r);
+    CHECK(semantic_sync_records(pid, why, sizeof(why)));
+    semantic_drop(pid);
+    store_stop();
+}
+
 int main(void)
 {
     snprintf(g_name, sizeof(g_name), "scribodo_test_%d", (int)getpid());
@@ -327,8 +401,8 @@ int main(void)
         fprintf(stderr, "dbtest: can't set up a test database (is tools/services.sh up?)\n");
         return 1;
     }
-    TestCase tests[] = { { "db", test_db }, { "store_ids", test_store_ids }, { "backends", test_backends }, { "import", test_import } };
-    int rc = run_tests(tests, 4);
+    TestCase tests[] = { { "db", test_db }, { "store_ids", test_store_ids }, { "backends", test_backends }, { "import", test_import }, { "semantic", test_semantic } };
+    int rc = run_tests(tests, 5);
     admin("DROP DATABASE %s");
     return rc;
 }

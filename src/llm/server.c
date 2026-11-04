@@ -83,6 +83,28 @@ static bool mkdir_p(const char *path, mode_t mode)
     return true;
 }
 
+#define QWEN3_EMBED_SHA256 "421a27e58d165478cc7acb984a688c2aa41404968b0203e7cd743ece44c54340"
+
+void llm_server_embed_config(LlmServerConfig *c, const char *app_dir)
+{
+    llm_server_default_config(c, app_dir);
+    const char *home = getenv("HOME");
+    const char *model = getenv("SCRIBODO_EMBED_MODEL");
+    if (model) snprintf(c->model_path, sizeof(c->model_path), "%s", model);
+    else snprintf(c->model_path, sizeof(c->model_path), "%s/Library/Application Support/Scribodo/models/Qwen3-Embedding-0.6B-f16.gguf",
+                  home ? home : "");
+    snprintf(c->sha256, sizeof(c->sha256), "%s", QWEN3_EMBED_SHA256);
+    if (home) {
+        snprintf(c->run_dir, sizeof(c->run_dir), "%s/Library/Application Support/Scribodo/run-embed", home);
+        snprintf(c->log_path, sizeof(c->log_path), "%s/Library/Logs/Scribodo/embed-server.log", home);
+        snprintf(c->cache_path, sizeof(c->cache_path), "%s/Library/Application Support/Scribodo/embed-verified.txt", home);
+    }
+    c->ctx_total = 8192;
+    c->slots = 1;
+    c->batch = 8192;
+    c->embedding = true;
+}
+
 void llm_server_default_config(LlmServerConfig *c, const char *app_dir)
 {
     memset(c, 0, sizeof(*c));
@@ -197,7 +219,8 @@ static bool verify_model(LlmServer *s)
     for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; i++) snprintf(hex + 2 * i, 3, "%02x", dig[i]);
     if (strcmp(hex, s->cfg.sha256) != 0) {
         /* Precision gate: anything but the pinned BF16 file is refused. */
-        set_state(s, LLM_FAILED, "Model file does not match the pinned BF16 GGUF (sha256 %.12s\xE2\x80\xA6)", hex);
+        set_state(s, LLM_FAILED, "Model file does not match the pinned %s GGUF (sha256 %.12s\xE2\x80\xA6)",
+                  s->cfg.embedding ? "embedding" : "BF16", hex);
         return false;
     }
     cache_store(s, &st);
@@ -304,12 +327,20 @@ static bool spawn_server(LlmServer *s)
     snprintf(batch, sizeof(batch), "%d", s->cfg.batch);
     /* Validated BF16 configuration (MODEL-001): flash attention OFF (Metal
      * FA stages values in F16), BF16 KV cache, official template. */
-    char *argv[] = {
+    char *chat_argv[] = {
         s->cfg.server_bin, "-m", s->cfg.model_path, "--host", s->sock, "--api-key-file", s->keyfile,
         "-ngl", "99", "-fa", "off", "-ctk", "bf16", "-ctv", "bf16", "--jinja",
         "--reasoning-format", "deepseek", "-np", np, "-c", ctx, "-b", batch, "-ub", batch,
         "--cache-ram", "0", "--no-webui", "--no-slots", NULL,
     };
+    /* Embeddings: Qwen3-Embedding pools the last token; a whole input must
+     * fit in one micro-batch. */
+    char *embed_argv[] = {
+        s->cfg.server_bin, "-m", s->cfg.model_path, "--host", s->sock, "--api-key-file", s->keyfile,
+        "-ngl", "99", "-fa", "off", "--embedding", "--pooling", "last", "-np", np, "-c", ctx, "-b", batch, "-ub", batch,
+        "--cache-ram", "0", "--no-webui", "--no-slots", NULL,
+    };
+    char **argv = s->cfg.embedding ? embed_argv : chat_argv;
     posix_spawn_file_actions_t fa;
     posix_spawn_file_actions_init(&fa);
     posix_spawn_file_actions_addopen(&fa, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
@@ -353,7 +384,7 @@ static void *start_thread(void *arg)
     LlmServer *s = arg;
     if (!verify_model(s)) return NULL;
     if (atomic_load(&s->stopping)) return NULL;
-    set_state(s, LLM_STARTING, "Loading LFM3-1.7B (BF16)\xE2\x80\xA6");
+    set_state(s, LLM_STARTING, s->cfg.embedding ? "Loading Qwen3-Embedding\xE2\x80\xA6" : "Loading LFM3-1.7B (BF16)\xE2\x80\xA6");
     if (!spawn_server(s)) return NULL;
     double t0 = now_s();
     while (!atomic_load(&s->stopping)) {
@@ -364,7 +395,7 @@ static void *start_thread(void *arg)
         HttpResult r;
         if (http_request(s->sock, "GET", "/health", NULL, NULL, NULL, NULL, NULL, 1000, &r) && r.status == 200) {
             http_result_free(&r);
-            set_state(s, LLM_READY, "LFM3-1.7B \xC2\xB7 BF16 \xC2\xB7 local");
+            set_state(s, LLM_READY, s->cfg.embedding ? "Qwen3-Embedding \xC2\xB7 local" : "LFM3-1.7B \xC2\xB7 BF16 \xC2\xB7 local");
             s->ready_since = now_s();
             return NULL;
         }
