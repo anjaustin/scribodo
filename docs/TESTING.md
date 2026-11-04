@@ -107,6 +107,36 @@ The chat feature was red-teamed separately; see [`REDTEAM-003-chat.md`](REDTEAM-
 - **Red-team:** see [`REDTEAM-004-edits.md`](REDTEAM-004-edits.md) (17 findings, all fixed; 18 of 20 mutations caught, both misses documented).
 - **ASan caught an out-of-bounds read** in the diff tokenizer: `memcmp` against the punctuation table near the end of the text. It's fixed by bounding the comparison.
 
+## Notes and canon
+
+- **Unit tests:** `test_llm: records` covers:
+  - versions numbered per entry, with every version kept, most recently changed first;
+  - document and chat sources round-tripped;
+  - snapshots reused when the text is unchanged;
+  - a torn line skipped, and the next record starting on its own line;
+  - ids and source names that look like paths refused;
+  - hand-edited lines with missing numbers.
+- **`notes.scribo`** (45 checks) covers:
+  - a selection saved as a note with its exact source;
+  - editing (⌘S, and saving on Close);
+  - opening the source, including after the passage moved;
+  - a canon draft that stores nothing until Commit, and needs a second Close to discard;
+  - Revise, history, Retract and Recommit;
+  - chat replies as notes and canon drafts;
+  - deleting, and blank notes that are never stored.
+- **Mutation check:** 9 of 9 caught:
+  - canon discarded without confirmation;
+  - note edits lost on Close;
+  - canon stored when a draft opens;
+  - deleted notes still listed;
+  - a moved source not found;
+  - versions always 1;
+  - a torn line not terminated;
+  - source paths trusted;
+  - snapshots not reused.
+  A tenth, invalid mutation (it didn't compile) was voided by the harness and rewritten.
+- **UBSan caught a real bug:** missing JSON numbers (a document source has no `message` field) read as NaN and were cast to integers. The revision index had the same latent bug. Both now use a checked reader.
+
 ## Findings from the chat work
 
 Each of these was caught by the suites and has a regression check:

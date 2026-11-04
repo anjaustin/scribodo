@@ -400,6 +400,25 @@ static void run_expect(Script *s, ScriptHost *h, Tokens *t)
         ok = c && !strcmp(c, t->tok[3]);
         show(detail, sizeof(detail), "file", c);
         free(c);
+    } else if (!strcmp(what, "lines") && t->n == 5) {
+        /* Lines of a file containing a substring (e.g. versions in a log). */
+        char *c = slurp(t->tok[2]);
+        int count = 0;
+        for (char *line = c; line && *line;) {
+            char *nl = strchr(line, '\n');
+            if (nl) *nl = '\0';
+            if (strstr(line, t->tok[3])) count++;
+            line = nl ? nl + 1 : NULL;
+        }
+        free(c);
+        ok = count == atoi(t->tok[4]);
+        snprintf(detail, sizeof(detail), "found %d", count);
+    } else if (!strcmp(what, "record") && t->n == 3 && h->record_text) {
+        /* The open note/canon panel: its header and text ("" when closed). */
+        char *c = h->record_text(h->ctx);
+        ok = c && strstr(c, t->tok[2]);
+        show(detail, sizeof(detail), "record", c);
+        free(c);
     } else if (!strcmp(what, "files") && t->n == 5) {
         int count = 0;
         DIR *d = opendir(t->tok[2]);

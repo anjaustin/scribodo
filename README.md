@@ -122,6 +122,12 @@ On first launch the app checks the model file against its pinned hash (once), th
 - **Apply to document**, under any chat reply, proposes that reply for the current selection (or inserts it at the cursor), through the same review. A rewrite from ⌘K needs the passage selected.
 - **History** in the Explorer lists the document's 100 newest revisions (each save, AI edit and restore) from `.scribodo/revisions/`; the Explorer scrolls. Clicking one restores it, undoably, after first recording the current text.
 
+**Notes and canon** (kept in the project's `.scribodo/notes.jsonl` and `canon.jsonl`):
+- **Save as note:** select a passage and press ⌘⇧N, or click **Note** under a chat reply. It's saved at once with its source; edit it in the panel under the document (⌘S saves, and closing saves too). **+ New note** in the Explorer starts a blank one.
+- **Commit to canon:** select the passage that establishes a fact and press ⌘⇧C, click **Canon** under a reply, or press **To canon** on a note. It opens as a draft: state the fact, then press **Commit**. Nothing is canon until you do, and uncommitted text needs a second Close to discard.
+- **Revise, Retract, Recommit:** each stores a new version. Every earlier version stays listed under the entry, and clicking one loads its wording.
+- **Sources:** each entry records where it came from: the document, an immutable snapshot of its text in History, the range and the quote, or the chat reply. Clicking the source line selects the passage again, even if it has moved.
+
 ```sh
 make sanitize  # run the same tests under AddressSanitizer + UBSan
 make uitest    # scripted UI tests: the real app in a hidden window (needs an awake display)

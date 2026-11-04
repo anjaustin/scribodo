@@ -35,7 +35,10 @@ struct ChatView {
     uint64_t seen_version;
     bool copied;
     long apply_index;
-    Rectangle last_apply; /* the newest reply's Apply link, as last drawn */
+    long record_index;   /* reply whose Note/Canon link was clicked */
+    int record_kind;     /* 0 note, 1 canon */
+    Rectangle last_apply; /* the newest reply's links, as last drawn */
+    Rectangle last_note, last_canon;
     char *submitted;
 };
 
@@ -50,6 +53,7 @@ ChatView *chat_view_create(SFont *text_font, SFont *label_font, ChatSession *cha
     v->chat = chat;
     v->stick_to_end = true;
     v->apply_index = -1;
+    v->record_index = -1;
     v->input = editor_create(text_font);
     if (!v->input) {
         free(v);
@@ -165,11 +169,16 @@ void chat_view_update(ChatView *v, Rectangle list, Rectangle input, bool input_f
                 if (copyable) {
                     Rectangle copy = { list.x + PAD, y + 2, 40, LABEL_H };
                     Rectangle apply = { list.x + PAD + 52, y + 2, 120, LABEL_H };
+                    Rectangle note = { list.x + PAD + 184, y + 2, 40, LABEL_H };
+                    Rectangle canon = { list.x + PAD + 234, y + 2, 50, LABEL_H };
                     if (CheckCollisionPointRec(m, copy)) {
                         input_set_clipboard(msg->content);
                         v->copied = true;
                     } else if (CheckCollisionPointRec(m, apply)) {
                         v->apply_index = (long)i;
+                    } else if (CheckCollisionPointRec(m, note) || CheckCollisionPointRec(m, canon)) {
+                        v->record_index = (long)i;
+                        v->record_kind = CheckCollisionPointRec(m, canon) ? 1 : 0;
                     }
                     y += LABEL_H;
                 }
@@ -227,6 +236,15 @@ void chat_view_clear_input(ChatView *v)
 }
 
 Rectangle chat_view_last_apply_rect(const ChatView *v) { return v->last_apply; }
+Rectangle chat_view_last_note_rect(const ChatView *v, bool canon) { return canon ? v->last_canon : v->last_note; }
+
+long chat_view_take_record(ChatView *v, bool *canon)
+{
+    long i = v->record_index;
+    *canon = v->record_kind == 1;
+    v->record_index = -1;
+    return i;
+}
 
 long chat_view_take_apply(ChatView *v)
 {
@@ -279,7 +297,7 @@ void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_foc
     }
     float y = list.y + PAD - v->scroll;
     bool blink = fmod(GetTime(), 1.0) < 0.6;
-    v->last_apply = (Rectangle){ 0 };
+    v->last_apply = v->last_note = v->last_canon = (Rectangle){ 0 };
     for (size_t i = 0; i < n; i++) {
         const ChatMessage *m = chat_message(v->chat, i);
         refresh(v, i, m->content, width);
@@ -305,9 +323,13 @@ void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_foc
             const char *apply = "Apply to document";
             sfont_draw_utf8(v->label, apply, (int)strlen(apply), list.x + PAD + 52, y + 2, COL_LINK);
             v->last_apply = (Rectangle){ list.x + PAD + 52, y + 2, 120, LABEL_H };
+            sfont_draw_utf8(v->label, "Note", 4, list.x + PAD + 184, y + 2, COL_LINK);
+            sfont_draw_utf8(v->label, "Canon", 5, list.x + PAD + 234, y + 2, COL_LINK);
+            v->last_note = (Rectangle){ list.x + PAD + 184, y + 2, 40, LABEL_H };
+            v->last_canon = (Rectangle){ list.x + PAD + 234, y + 2, 50, LABEL_H };
             if (m->truncated || m->stopped) {
                 const char *note = m->stopped ? "Stopped before the end" : "Reply stopped at the length limit";
-                sfont_draw_utf8(v->label, note, (int)strlen(note), list.x + PAD + 190, y + 2, COL_LABEL);
+                sfont_draw_utf8(v->label, note, (int)strlen(note), list.x + PAD + 296, y + 2, COL_LABEL);
             }
             y += LABEL_H;
         }

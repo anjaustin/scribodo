@@ -102,6 +102,8 @@ char *editor_range_utf8(const Editor *e, size_t start, size_t len);
 bool editor_replace_range_utf8(Editor *e, size_t start, size_t len, const char *utf8);
 /* Number of occurrences of `utf8` in the document; *first gets the first. */
 size_t editor_find_utf8(const Editor *e, const char *utf8, size_t *first);
+/* The occurrence of `utf8` closest to `near`; false if none. */
+bool editor_find_near_utf8(const Editor *e, const char *utf8, size_t near, size_t *pos);
 /* Tracked anchor for the passage an AI edit targets (len 0: an insertion
  * point). It is highlighted (or marked) and its position follows every
  * change, including undo/redo; a change inside it (or typing at an insertion
@@ -118,6 +120,9 @@ void editor_reveal(Editor *e, size_t index);
  * Clears the buffer. `placeholder` is shown while it is empty. */
 void editor_set_scratch(Editor *e, const char *placeholder);
 void editor_clear(Editor *e);
+void editor_set_placeholder(Editor *e, const char *placeholder);
+/* Replace the whole text (scratch editors): no undo step, not dirty. */
+bool editor_set_text_utf8(Editor *e, const char *utf8);
 /* Padding and maximum text-column width (defaults suit the prose view). */
 void editor_set_layout(Editor *e, float side_pad, float top_pad, float max_col);
 /* Enter submits (see editor_take_submit) and Shift+Enter inserts a newline. */

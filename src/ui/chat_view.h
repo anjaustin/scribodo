@@ -45,5 +45,8 @@ bool chat_view_take_copied(ChatView *v);
 long chat_view_take_apply(ChatView *v);
 /* Where the newest reply's Apply link was drawn (for UI scripts). */
 Rectangle chat_view_last_apply_rect(const ChatView *v);
+/* A reply's "Note" or "Canon" link was clicked: its index (and which), or -1. */
+long chat_view_take_record(ChatView *v, bool *canon);
+Rectangle chat_view_last_note_rect(const ChatView *v, bool canon);
 
 #endif

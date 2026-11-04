@@ -1,0 +1,105 @@
+# Notes and canon (SOW §4.4): versioned records with sources, nothing
+# becomes canon without Commit, and every canon version stays traceable.
+open "$DIR/chapter.md"
+wait 30
+# ⌘⇧N saves the selection as a note at once, with an exact source.
+click_index 111 2
+expect selection 110 113
+key N cmd shift
+expect record "Note · v1"
+expect record "Zoë"
+expect lines "$DIR/.scribodo/notes.jsonl" "\"ver\":1" 1
+expect lines "$DIR/.scribodo/notes.jsonl" "\"start\":110,\"len\":3" 1
+expect files "$DIR/.scribodo/revisions/chapter.md" "-source.md" 1
+# Editing it is a new version; the document is untouched.
+type " — check her surname"
+key S cmd
+expect record "Note · v2"
+expect lines "$DIR/.scribodo/notes.jsonl" "\"ver\":2" 1
+expect dirty no
+# Unsaved edits are saved on Close.
+type "!"
+click_element RecordClose
+expect element_w RecordPanel 0 0
+expect lines "$DIR/.scribodo/notes.jsonl" "surname!" 1
+# Reopen from the Explorer, and jump to its source.
+click_element NoteItem0
+expect record "surname!"
+click_element RecordSource
+expect selection 110 113
+expect status "Source passage selected"
+# Text added before the passage: the source is found where it moved.
+click_index 0
+type "Dawn. "
+click_element RecordSource
+expect selection 116 119
+expect status "moved"
+key Z cmd
+# A canon draft from the note: nothing is stored until Commit.
+click_element RecordCanon
+expect record "Canon draft"
+expect files "$DIR/.scribodo" "canon.jsonl" 0
+# Closing uncommitted canon text needs a second press.
+click_element RecordClose
+expect status "isn't committed"
+expect element_w RecordPanel 100 3000
+click_element RecordEditor
+key A cmd
+type "Zoë's surname is Ångström."
+click_element RecordCommit
+expect record "Canon · v1 · committed"
+expect lines "$DIR/.scribodo/canon.jsonl" "\"status\":\"committed\"" 1
+expect lines "$DIR/.scribodo/canon.jsonl" "chapter.md" 1
+# Revising keeps the earlier version.
+key A cmd
+type "Zoë's surname is Ångström-Berg."
+click_element RecordRevise
+expect record "Canon · v2 · committed"
+expect lines "$DIR/.scribodo/canon.jsonl" "\"ver\":2" 1
+expect element_w RecordHistory0 100 3000
+# A history line loads that wording (undoable); Revise would store it.
+click_element RecordHistory0
+expect record "Ångström."
+key Z cmd
+expect record "Ångström-Berg."
+# Retract and recommit: each is a version, none is lost.
+click_element RecordRetract
+expect record "Canon · v3 · retracted"
+click_element RecordClose
+expect element_w RecordPanel 0 0
+click_element CanonItem0
+expect record "Canon · v3 · retracted"
+click_element RecordRecommit
+expect record "Canon · v4 · committed"
+expect lines "$DIR/.scribodo/canon.jsonl" "Ångström-Berg" 3
+click_element RecordClose
+# A chat reply as a note, and as a canon draft.
+click_element ChatInput
+type "hello"
+key ENTER
+wait_chat
+click_element NoteLast
+expect record "You said: hello"
+expect lines "$DIR/.scribodo/notes.jsonl" "\"kind\":\"chat\"" 1
+click_element CanonLast
+expect record "Canon draft"
+click_element RecordClose
+click_element RecordClose
+expect element_w RecordPanel 0 0
+expect lines "$DIR/.scribodo/canon.jsonl" "You said" 0
+# Deleting hides a note; its versions stay in the log.
+click_element NoteItem0
+expect record "You said: hello"
+click_element RecordDelete
+expect element_w RecordPanel 0 0
+expect lines "$DIR/.scribodo/notes.jsonl" "\"status\":\"deleted\"" 1
+expect element_w NoteItem0 0 0
+# A blank new note is nothing to keep.
+click_element NewNoteItem
+expect record "New note"
+click_element RecordClose
+expect lines "$DIR/.scribodo/notes.jsonl" "\"ver\":1" 2
+# ⌘⇧C needs a selection.
+click_index 0
+key C cmd shift
+expect status "Select the passage"

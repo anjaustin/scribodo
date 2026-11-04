@@ -1245,6 +1245,11 @@ void editor_set_scratch(Editor *e, const char *placeholder)
     editor_clear(e);
 }
 
+void editor_set_placeholder(Editor *e, const char *placeholder)
+{
+    snprintf(e->placeholder, sizeof(e->placeholder), "%s", placeholder ? placeholder : "");
+}
+
 void editor_clear(Editor *e)
 {
     tb_set(&e->buf, NULL, 0);
@@ -1253,6 +1258,26 @@ void editor_clear(Editor *e)
     e->saved_id = undo_state_id(&e->undo);
     e->scroll_y = 0;
     mark_changed(e);
+}
+
+static uint32_t *decode_dup(const char *utf8, size_t *n);
+
+bool editor_set_text_utf8(Editor *e, const char *utf8)
+{
+    size_t n = 0;
+    uint32_t *cps = decode_dup(utf8 ? utf8 : "", &n);
+    if (!cps) return false;
+    n = sanitize_text(cps, n);
+    if (n > e->max_chars) n = e->max_chars;
+    bool ok = tb_set(&e->buf, cps, n);
+    free(cps);
+    if (!ok) return false;
+    reset_undo(e);
+    stb_textedit_initialize_state(&e->st, 0);
+    e->saved_id = undo_state_id(&e->undo);
+    e->scroll_y = 0;
+    mark_changed(e);
+    return true;
 }
 
 void editor_set_layout(Editor *e, float side_pad, float top_pad, float max_col)
@@ -1335,6 +1360,29 @@ size_t editor_find_utf8(const Editor *e, const char *utf8, size_t *first)
     }
     free(needle);
     return count;
+}
+
+bool editor_find_near_utf8(const Editor *e, const char *utf8, size_t near, size_t *pos)
+{
+    size_t n = 0, total = tb_len(&e->buf), best = 0, best_d = SIZE_MAX;
+    uint32_t *needle = decode_dup(utf8, &n);
+    if (!needle || n == 0 || n > total) {
+        free(needle);
+        return false;
+    }
+    for (size_t i = 0; i + n <= total; i++) {
+        size_t k = 0;
+        while (k < n && tb_get(&e->buf, i + k) == needle[k]) k++;
+        size_t d = i > near ? i - near : near - i;
+        if (k == n && d < best_d) {
+            best = i;
+            best_d = d;
+        }
+    }
+    free(needle);
+    if (best_d == SIZE_MAX) return false;
+    *pos = best;
+    return true;
 }
 
 bool editor_anchor_set(Editor *e, size_t start, size_t len)

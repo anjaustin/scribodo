@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 #include "../src/app/chat_store.h"
+#include "../src/app/records.h"
 #include "../src/app/revisions.h"
 #include "../src/llm/chat.h"
 #include "../src/llm/http.h"
@@ -422,6 +423,112 @@ static void test_fake_edit(void)
     CHECK(!chat_message(s, 3)->is_edit && strstr(chat_message(s, 3)->content, "You said: thanks"));
     chat_unlock(s);
     chat_destroy(s);
+}
+
+/* Notes and canon: versioned, append-only, with provenance (SOW §4.4). */
+static void test_records(void)
+{
+    char proj[700];
+    snprintf(proj, sizeof(proj), "%s/records-proj", g_dir);
+    mkdir(proj, 0755);
+    char doc[800];
+    snprintf(doc, sizeof(doc), "%s/ch1.md", proj);
+
+    /* A document source points at an immutable snapshot of the text. */
+    char snap[160], snap2[160];
+    CHECK(revisions_snapshot(proj, doc, "Zoë kept the letter.", snap, sizeof(snap)) && strstr(snap, "-source.md"));
+    CHECK(revisions_snapshot(proj, doc, "Zoë kept the letter.", snap2, sizeof(snap2)) && !strcmp(snap, snap2)); /* reused */
+    Revision *revs;
+    size_t nr = revisions_list(proj, doc, &revs);
+    CHECK(nr == 1);
+    char *txt = nr ? revisions_load(proj, doc, &revs[0]) : NULL;
+    CHECK(txt && !strcmp(txt, "Zoë kept the letter."));
+    free(txt);
+    free(revs);
+
+    SourceRef src = { .kind = SRC_DOC, .start = 0, .len = 3, .quote = "Zoë" };
+    snprintf(src.doc, sizeof(src.doc), "ch1.md");
+    snprintf(src.revision, sizeof(src.revision), "%s", snap);
+    SourceRef chat = { .kind = SRC_CHAT, .message = 3, .start = 0, .len = 5, .quote = "a \"quoted\"\nline" };
+    snprintf(chat.chat, sizeof(chat.chat), "20261104-120000-abcd");
+
+    char nid[40], cid[40], cid2[40];
+    records_new_id(REC_NOTE, nid, sizeof(nid));
+    records_new_id(REC_CANON, cid, sizeof(cid));
+    records_new_id(REC_CANON, cid2, sizeof(cid2));
+    CHECK(nid[0] == 'n' && cid[0] == 'c');
+    int ver = 0;
+    CHECK(records_append(proj, REC_NOTE, nid, "active", "Check the letter's date.", &src, 1, &ver) && ver == 1);
+    CHECK(records_append(proj, REC_NOTE, nid, "active", "Check the letter's date (1911?).", &src, 1, &ver) && ver == 2);
+    CHECK(records_append(proj, REC_CANON, cid, "committed", "Zoë's grandmother wrote the letter.", &chat, 1, &ver) && ver == 1);
+    CHECK(records_append(proj, REC_CANON, cid2, "committed", "The lighthouse is on Ytre Sula.", NULL, 0, &ver) && ver == 1);
+    CHECK(records_append(proj, REC_CANON, cid, "committed", "Zoë's great-grandmother wrote the letter.", &chat, 1, &ver) && ver == 2);
+    CHECK(records_append(proj, REC_CANON, cid, "retracted", "Zoë's great-grandmother wrote the letter.", &chat, 1, &ver) && ver == 3);
+    /* Ids are never paths. */
+    CHECK(!records_append(proj, REC_NOTE, "../x", "active", "x", NULL, 0, NULL));
+    CHECK(!records_append(proj, REC_NOTE, "", "active", "x", NULL, 0, NULL));
+
+    Record *notes = NULL, *canon = NULL;
+    size_t nn = records_list(proj, REC_NOTE, &notes), nc = records_list(proj, REC_CANON, &canon);
+    CHECK(nn == 1 && notes[0].nversions == 2);
+    if (nn == 1) {
+        const RecordVersion *v = record_current(&notes[0]);
+        CHECK(v->ver == 2 && !strcmp(v->content, "Check the letter's date (1911?).") && !strcmp(v->status, "active"));
+        CHECK(v->nsources == 1 && v->sources[0].kind == SRC_DOC && !strcmp(v->sources[0].doc, "ch1.md") &&
+              !strcmp(v->sources[0].revision, snap) && v->sources[0].len == 3 && !strcmp(v->sources[0].quote, "Zoë"));
+        CHECK(!strcmp(notes[0].versions[0].content, "Check the letter's date."));
+    }
+    /* Most recently changed first; every version kept. */
+    CHECK(nc == 2 && !strcmp(canon[0].id, cid) && !strcmp(canon[1].id, cid2));
+    if (nc == 2) {
+        CHECK(canon[0].nversions == 3 && !strcmp(record_current(&canon[0])->status, "retracted"));
+        CHECK(!strcmp(canon[0].versions[0].content, "Zoë's grandmother wrote the letter."));
+        const SourceRef *cs = &canon[0].versions[0].sources[0];
+        CHECK(canon[0].versions[0].nsources == 1 && cs->kind == SRC_CHAT && cs->message == 3 &&
+              !strcmp(cs->chat, "20261104-120000-abcd") && !strcmp(cs->quote, "a \"quoted\"\nline"));
+    }
+    SourceRef *copy = nc ? records_copy_sources(canon[0].versions[0].sources, canon[0].versions[0].nsources) : NULL;
+    CHECK(copy && !strcmp(copy[0].quote, "a \"quoted\"\nline"));
+    records_free_sources(copy, 1);
+    records_free(notes, nn);
+    records_free(canon, nc);
+
+    /* A torn line (crash mid-write) is skipped, and the next append starts
+     * on its own line. Source names with path separators are dropped. */
+    char path[900];
+    snprintf(path, sizeof(path), "%s/.scribodo/notes.jsonl", proj);
+    FILE *f = fopen(path, "ab");
+    fputs("{\"id\":\"n-torn\",\"ver\":1,\"content\":\"half", f);
+    fclose(f);
+    char nid2[40];
+    records_new_id(REC_NOTE, nid2, sizeof(nid2));
+    SourceRef bad = { .kind = SRC_DOC, .quote = "q" };
+    snprintf(bad.doc, sizeof(bad.doc), "../../etc/passwd");
+    CHECK(records_append(proj, REC_NOTE, nid2, "active", "after the tear", &bad, 1, &ver) && ver == 1);
+    nn = records_list(proj, REC_NOTE, &notes);
+    CHECK(nn == 2 && !strcmp(notes[0].id, nid2) && !strcmp(record_current(&notes[0])->content, "after the tear"));
+    CHECK(nn == 2 && record_current(&notes[0])->nsources == 0);
+    records_free(notes, nn);
+    /* Hand-edited or foreign lines with missing numbers load as zeros. */
+    f = fopen(path, "ab");
+    fputs("{\"id\":\"n-hand\",\"status\":\"active\",\"content\":\"by hand\",\"sources\":[{\"kind\":\"doc\",\"quote\":\"q\"}]}\n", f);
+    fclose(f);
+    nn = records_list(proj, REC_NOTE, &notes);
+    CHECK(nn == 3 && !strcmp(notes[0].id, "n-hand") && record_current(&notes[0])->ver == 0 &&
+          record_current(&notes[0])->nsources == 1 && record_current(&notes[0])->sources[0].start == 0);
+    records_free(notes, nn);
+    char ridx[1000];
+    snprintf(ridx, sizeof(ridx), "%s/.scribodo/revisions/ch1.md/index.jsonl", proj);
+    f = fopen(ridx, "ab");
+    fputs("{\"file\":\"x.md\",\"origin\":\"save\"}\n", f);
+    fclose(f);
+    nr = revisions_list(proj, doc, &revs);
+    CHECK(nr == 2 && revs[0].ts == 0 && revs[0].bytes == 0);
+    free(revs);
+    /* No project history yet: an empty list, not an error. */
+    char empty[800];
+    snprintf(empty, sizeof(empty), "%s/none", g_dir);
+    CHECK(records_list(empty, REC_CANON, &canon) == 0 && canon == NULL);
 }
 
 static void test_revisions(void)
@@ -845,6 +952,7 @@ int main(int argc, char **argv)
         { "fake_edit", test_fake_edit },
         { "edit_too_long", test_edit_too_long },
         { "revisions", test_revisions },
+        { "records", test_records },
         { "truncated_stream_is_an_error", test_truncated_stream_is_an_error },
         { "ok_stream_and_context_error", test_ok_stream_and_context_error },
         { "stop_never_hangs", test_stop_never_hangs },

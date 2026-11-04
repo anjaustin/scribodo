@@ -1,6 +1,9 @@
 /* Document revision history: full-text snapshots per document.
  *
  *   <project>/.scribodo/revisions/<doc>/<stamp>-<origin>.md   (snapshot)
+ *
+ * Origins: save, before-ai-edit, ai-edit, before-restore, restore, and
+ * source (the text a note or canon entry quotes).
  *   <project>/.scribodo/revisions/<doc>/index.jsonl           (one line per revision)
  *
  * Revisions are recorded when an AI edit is accepted (the text before and
@@ -30,6 +33,11 @@ typedef struct {
  * a new revision was written (false if identical to the newest). */
 bool revisions_record(const char *project_dir, const char *doc_path, const char *text, const char *origin,
                       const char *note, bool *recorded);
+
+/* Make sure `text` is stored as a revision (origin "source", or the newest
+ * revision if identical) and return its snapshot file name: the immutable
+ * text a note or canon source reference points to. */
+bool revisions_snapshot(const char *project_dir, const char *doc_path, const char *text, char *file_out, size_t file_len);
 
 /* List revisions, newest first. Caller frees *out. */
 size_t revisions_list(const char *project_dir, const char *doc_path, Revision **out);

@@ -38,6 +38,8 @@
  *   expect chat_count N          expect chat_last "substring"
  *   expect chat_busy yes|no       expect chat_last_not "substring"
  *   expect element_w NAME MIN MAX (width of a named element; 0 if absent)
+ *   expect lines "path" "substring" COUNT  (lines of a file containing it)
+ *   expect record "substring"    (the open note/canon panel: header + text)
  *   expect running no            (only valid as the last command, after close)
  */
 #ifndef SCRIBODO_SCRIPT_H
@@ -64,6 +66,8 @@ typedef struct {
     Rectangle (*element)(void *ctx, const char *name);
     /* True once the model can take requests (always true for the fake). */
     bool (*model_ready)(void *ctx);
+    /* The open note/canon panel as "header\ntext" (malloc'd), or "". */
+    char *(*record_text)(void *ctx);
 } ScriptHost;
 
 typedef struct Script Script;

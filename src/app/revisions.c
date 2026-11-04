@@ -75,6 +75,14 @@ static char *slurp(const char *path)
     return buf;
 }
 
+/* Missing numbers read as NaN, which must never be cast to an integer. */
+static double num(cJSON *j, const char *key)
+{
+    cJSON *v = cJSON_GetObjectItem(j, key);
+    double d = cJSON_IsNumber(v) ? v->valuedouble : 0.0;
+    return d >= 0.0 && d < 1e15 ? d : 0.0;
+}
+
 size_t revisions_list(const char *project_dir, const char *doc_path, Revision **out)
 {
     *out = NULL;
@@ -106,8 +114,8 @@ size_t revisions_list(const char *project_dir, const char *doc_path, Revision **
             cJSON *note = cJSON_GetObjectItem(j, "note"), *h = cJSON_GetObjectItem(j, "hash");
             if (cJSON_IsString(note)) snprintf(r->note, sizeof(r->note), "%s", note->valuestring);
             if (cJSON_IsString(h)) snprintf(r->hash, sizeof(r->hash), "%s", h->valuestring);
-            r->ts = (time_t)cJSON_GetNumberValue(cJSON_GetObjectItem(j, "ts"));
-            r->bytes = (size_t)cJSON_GetNumberValue(cJSON_GetObjectItem(j, "bytes"));
+            r->ts = (time_t)num(j, "ts");
+            r->bytes = (size_t)num(j, "bytes");
         }
         cJSON_Delete(j);
     }
@@ -122,8 +130,8 @@ size_t revisions_list(const char *project_dir, const char *doc_path, Revision **
     return n;
 }
 
-bool revisions_record(const char *project_dir, const char *doc_path, const char *text, const char *origin,
-                      const char *note, bool *recorded)
+static bool record_impl(const char *project_dir, const char *doc_path, const char *text, const char *origin,
+                        const char *note, bool *recorded, char *file_out, size_t file_len)
 {
     if (recorded) *recorded = false;
     char dir[1500];
@@ -134,6 +142,7 @@ bool revisions_record(const char *project_dir, const char *doc_path, const char 
     Revision *list = NULL;
     size_t n = revisions_list(project_dir, doc_path, &list);
     bool same = n > 0 && !strcmp(list[0].hash, hash);
+    if (same && file_out) snprintf(file_out, file_len, "%s", list[0].file);
     free(list);
     if (same) return true; /* identical to the newest revision */
 
@@ -174,7 +183,20 @@ bool revisions_record(const char *project_dir, const char *doc_path, const char 
     }
     free(line);
     if (ok && recorded) *recorded = true;
+    if (ok && file_out) snprintf(file_out, file_len, "%s", file);
     return ok;
+}
+
+bool revisions_record(const char *project_dir, const char *doc_path, const char *text, const char *origin,
+                      const char *note, bool *recorded)
+{
+    return record_impl(project_dir, doc_path, text, origin, note, recorded, NULL, 0);
+}
+
+bool revisions_snapshot(const char *project_dir, const char *doc_path, const char *text, char *file_out, size_t file_len)
+{
+    if (file_len) file_out[0] = '\0';
+    return record_impl(project_dir, doc_path, text, "source", NULL, NULL, file_out, file_len) && file_out[0];
 }
 
 char *revisions_load(const char *project_dir, const char *doc_path, const Revision *r)
