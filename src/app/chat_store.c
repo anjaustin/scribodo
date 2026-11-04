@@ -42,14 +42,35 @@ static bool path_for(const char *project_dir, const char *id, char *out, size_t 
     return true;
 }
 
+/* One write() per line (JSON plus newline), so a crash can tear at most
+ * that line, never merge it with the next. */
 static bool write_line(int fd, cJSON *j)
 {
     char *s = cJSON_PrintUnformatted(j);
     if (!s) return false;
     size_t n = strlen(s);
-    bool ok = write(fd, s, n) == (ssize_t)n && write(fd, "\n", 1) == 1;
+    char *line = malloc(n + 2);
+    bool ok = line != NULL;
+    if (ok) {
+        memcpy(line, s, n);
+        line[n] = '\n';
+        line[n + 1] = '\0';
+        ok = write(fd, line, n + 1) == (ssize_t)(n + 1);
+    }
+    free(line);
     free(s);
     return ok;
+}
+
+/* If a previous crash left the file without a trailing newline, terminate
+ * that torn line so the next record starts on its own line. */
+static bool ensure_trailing_newline(int fd)
+{
+    off_t end = lseek(fd, 0, SEEK_END);
+    if (end <= 0) return true;
+    char last;
+    if (pread(fd, &last, 1, end - 1) != 1) return false;
+    return last == '\n' || write(fd, "\n", 1) == 1;
 }
 
 bool chat_store_append(const char *project_dir, const char *id, const char *title, const ChatMessage *m)
@@ -58,9 +79,9 @@ bool chat_store_append(const char *project_dir, const char *id, const char *titl
     if (!path_for(project_dir, id, path, sizeof(path))) return false;
     struct stat st;
     bool fresh = stat(path, &st) != 0;
-    int fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    int fd = open(path, O_RDWR | O_CREAT | O_APPEND, 0644);
     if (fd < 0) return false;
-    bool ok = true;
+    bool ok = ensure_trailing_newline(fd);
     if (fresh) {
         cJSON *meta = cJSON_CreateObject();
         cJSON_AddStringToObject(meta, "type", "meta");
@@ -165,7 +186,18 @@ bool chat_store_load(const char *project_dir, const char *id, ChatMessage **msgs
     size_t cap = 0;
     for (char *line = strtok(text, "\n"); line; line = strtok(NULL, "\n")) {
         cJSON *j = cJSON_Parse(line);
-        if (!j) continue; /* a torn final line after a crash is skipped */
+        if (!j) {
+            /* A torn line from a crash, possibly glued to a later record by an
+             * older version: recover the last complete record in it. */
+            char *rec = strstr(line, "{\"type\"");
+            char *last = NULL;
+            while (rec) {
+                last = rec;
+                rec = strstr(rec + 1, "{\"type\"");
+            }
+            if (last && last != line) j = cJSON_Parse(last);
+            if (!j) continue;
+        }
         cJSON *type = cJSON_GetObjectItem(j, "type");
         if (cJSON_IsString(type) && !strcmp(type->valuestring, "message")) {
             cJSON *role = cJSON_GetObjectItem(j, "role"), *content = cJSON_GetObjectItem(j, "content");
@@ -179,9 +211,9 @@ bool chat_store_load(const char *project_dir, const char *id, ChatMessage **msgs
                     }
                     *msgs = m;
                 }
-                (*msgs)[*n] = (ChatMessage){ strcmp(role->valuestring, "user") ? CHAT_ASSISTANT : CHAT_USER,
-                                             strdup(content->valuestring),
-                                             cJSON_IsTrue(cJSON_GetObjectItem(j, "error")), false };
+                (*msgs)[*n] = (ChatMessage){ .role = strcmp(role->valuestring, "user") ? CHAT_ASSISTANT : CHAT_USER,
+                                             .content = strdup(content->valuestring),
+                                             .error = cJSON_IsTrue(cJSON_GetObjectItem(j, "error")) };
                 (*n)++;
             }
         }

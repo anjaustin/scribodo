@@ -56,11 +56,17 @@ void llm_server_tick(LlmServer *s);
 /* Current state; `msg` (optional) receives a human-readable status line. */
 LlmState llm_server_state(LlmServer *s, char *msg, size_t msglen);
 
+/* Context available to one request: -c is split evenly across slots. */
+int llm_server_slot_ctx(LlmServer *s);
+
 /* Valid while the server is READY. */
 const char *llm_server_socket(LlmServer *s);
 const char *llm_server_key(LlmServer *s);
 
 /* Test hooks. */
+/* Mark READY on an externally provided socket (a stub server) without
+ * launching anything. */
+void llm_server_test_attach(LlmServer *s, const char *socket_path, const char *key);
 int llm_server_pid(LlmServer *s);
 int llm_server_restarts(LlmServer *s);
 

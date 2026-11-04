@@ -286,6 +286,10 @@ void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_foc
         y += bh;
         if (m->role == CHAT_ASSISTANT && !m->streaming && !m->error && m->content[0]) {
             sfont_draw_utf8(v->label, "Copy", 4, list.x + PAD, y + 2, COL_LINK);
+            if (m->truncated) {
+                const char *note = "Reply stopped at the length limit";
+                sfont_draw_utf8(v->label, note, (int)strlen(note), list.x + PAD + 56, y + 2, COL_LABEL);
+            }
             y += LABEL_H;
         }
         y += GAP;

@@ -74,6 +74,10 @@ typedef struct {
     ChatSession *chat;
     ChatView *chat_view;
     bool include_doc;
+    /* A conversation belongs to the project it started in, even if the author
+     * opens a document elsewhere while a reply is still streaming. */
+    char chat_project[PATH_MAX];
+    bool clear_chat_when_idle;
     char chat_id[40];
     char chat_title[160];
 
@@ -84,6 +88,7 @@ typedef struct {
     ChatSummary *chats;
     size_t nchats;
     double lists_refreshed;
+    bool lists_dirty; /* refreshed between click handling and layout (stable hit-testing) */
 
     /* Strings referenced by Clay must outlive the frame's render pass. */
     char doc_label[512];
@@ -144,13 +149,11 @@ static void set_project_from(App *app, const char *doc_path)
     if (!realpath(dir, real)) snprintf(real, sizeof(real), "%s", dir);
     if (strcmp(real, app->project_dir) != 0) {
         snprintf(app->project_dir, sizeof(app->project_dir), "%s", real);
-        /* A different project has different chats: start fresh. */
-        if (app->chat && !chat_busy(app->chat)) {
-            chat_clear(app->chat);
-            app->chat_id[0] = '\0';
-        }
+        /* A different project has different chats: start fresh (after the
+         * current reply finishes, so it is saved with its own project). */
+        if (app->chat) app->clear_chat_when_idle = true;
     }
-    refresh_lists(app);
+    app->lists_dirty = true;
 }
 
 /* ---- documents ------------------------------------------------------------------ */
@@ -178,7 +181,7 @@ static void save(App *app)
     char msg[512];
     editor_save(app->editor, msg, sizeof(msg));
     set_status(app, msg);
-    refresh_lists(app);
+    app->lists_dirty = true;
 }
 
 /* ---- chat ---------------------------------------------------------------------- */
@@ -186,7 +189,7 @@ static void save(App *app)
 static void on_message_done(ChatSession *s, size_t index, void *ctx)
 {
     App *app = ctx;
-    if (!app->project_dir[0]) return; /* no project: conversation stays in memory */
+    if (!app->chat_project[0]) return; /* no project: conversation stays in memory */
     chat_lock(s);
     const ChatMessage *m = chat_message(s, index);
     ChatMessage copy = { 0 };
@@ -196,10 +199,35 @@ static void on_message_done(ChatSession *s, size_t index, void *ctx)
     }
     chat_unlock(s);
     if (!m || !copy.content) return;
-    if (!chat_store_append(app->project_dir, app->chat_id, app->chat_title, &copy))
+    if (!chat_store_append(app->chat_project, app->chat_id, app->chat_title, &copy))
         set_status(app, "Could not save the chat to .scribodo/chats");
     free(copy.content);
-    refresh_lists(app);
+    app->lists_dirty = true;
+}
+
+/* A conversation started before any project was open has nowhere to be
+ * saved; when a project appears, adopt it rather than discard it (red-team
+ * 003: it used to be cleared, silently losing the author's text). */
+static void adopt_chat(App *app)
+{
+    snprintf(app->chat_project, sizeof(app->chat_project), "%s", app->project_dir);
+    if (!app->chat_id[0]) chat_store_new_id(app->chat_id, sizeof(app->chat_id));
+    if (!app->chat_title[0]) snprintf(app->chat_title, sizeof(app->chat_title), "Chat");
+    chat_lock(app->chat);
+    size_t n = chat_count(app->chat);
+    ChatMessage *copy = calloc(n ? n : 1, sizeof(ChatMessage));
+    for (size_t i = 0; copy && i < n; i++) {
+        copy[i] = *chat_message(app->chat, i);
+        copy[i].content = strdup(copy[i].content ? copy[i].content : "");
+    }
+    chat_unlock(app->chat);
+    bool ok = copy != NULL;
+    for (size_t i = 0; ok && i < n; i++)
+        ok = copy[i].content && chat_store_append(app->chat_project, app->chat_id, app->chat_title, &copy[i]);
+    for (size_t i = 0; copy && i < n; i++) free(copy[i].content);
+    free(copy);
+    set_status(app, ok ? "Chat saved to this project" : "Could not save the chat to .scribodo/chats");
+    app->lists_dirty = true;
 }
 
 static void new_chat(App *app)
@@ -211,6 +239,7 @@ static void new_chat(App *app)
     chat_clear(app->chat);
     app->chat_id[0] = '\0';
     app->chat_title[0] = '\0';
+    app->chat_project[0] = '\0';
     app->focus = FOCUS_CHAT;
 }
 
@@ -229,6 +258,7 @@ static void open_chat(App *app, const ChatSummary *c)
     chat_store_free_messages(msgs, n);
     snprintf(app->chat_id, sizeof(app->chat_id), "%s", c->id);
     snprintf(app->chat_title, sizeof(app->chat_title), "%s", c->title);
+    snprintf(app->chat_project, sizeof(app->chat_project), "%s", app->project_dir);
     chat_view_scroll_to_end(app->chat_view);
 }
 
@@ -236,6 +266,7 @@ static void send_chat(App *app, char *text)
 {
     if (!app->chat_id[0]) {
         chat_store_new_id(app->chat_id, sizeof(app->chat_id));
+        snprintf(app->chat_project, sizeof(app->chat_project), "%s", app->project_dir);
         /* Title: the first line of the first message, shortened. */
         size_t n = strcspn(text, "\n");
         if (n > 48) n = 48;
@@ -668,7 +699,21 @@ int main(int argc, char **argv)
 
         if (app.llm) llm_server_tick(app.llm);
         chat_poll(app.chat);
-        if (GetTime() - app.lists_refreshed > 3.0) refresh_lists(&app);
+        const char *cn = chat_take_notice(app.chat);
+        if (cn) set_status(&app, cn);
+        if (app.clear_chat_when_idle && !chat_busy(app.chat)) {
+            app.clear_chat_when_idle = false;
+            chat_lock(app.chat);
+            size_t nmsg = chat_count(app.chat);
+            chat_unlock(app.chat);
+            if (!app.chat_project[0] && nmsg > 0 && app.project_dir[0]) {
+                adopt_chat(&app);
+            } else if (strcmp(app.chat_project, app.project_dir) != 0) {
+                chat_clear(app.chat);
+                app.chat_id[0] = app.chat_title[0] = app.chat_project[0] = '\0';
+            }
+        }
+        if (GetTime() - app.lists_refreshed > 3.0) app.lists_dirty = true;
 
         /* Close requests: never lose unsaved prose silently. */
         if (WindowShouldClose()) {
@@ -752,6 +797,12 @@ int main(int argc, char **argv)
         const char *notice = editor_take_notice(app.editor);
         if (notice) set_status(&app, notice);
 
+        /* Refresh lists only now: clicks above were hit-tested against the
+         * lists as last drawn, so a re-sort can never redirect a click. */
+        if (app.lists_dirty) {
+            refresh_lists(&app);
+            app.lists_dirty = false;
+        }
         Clay_RenderCommandArray cmds = build_layout(&app);
         app.editor_rect = ELEMENT_RECT("Editor");
         app.chat_list_rect = ELEMENT_RECT("ChatMessages");

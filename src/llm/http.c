@@ -2,7 +2,9 @@
 #include "http.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <poll.h>
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +14,9 @@
 #include <unistd.h>
 
 enum { ST_HEADERS, ST_CHUNK_SIZE, ST_CHUNK_DATA, ST_CHUNK_CRLF, ST_BODY, ST_TRAILERS, ST_DONE };
+
+#define MAX_LINE (4u << 20)  /* one SSE line */
+#define MAX_BODY (64u << 20) /* whole-body responses (e.g. /tokenize of a novel) */
 
 static bool grow(char **buf, size_t *cap, size_t need)
 {
@@ -57,6 +62,7 @@ static void emit_line(HttpDecoder *d)
 static bool body_bytes(HttpDecoder *d, const char *p, size_t n)
 {
     if (!d->on_line) {
+        if (d->body_len + n > MAX_BODY) return false;
         if (!grow(&d->body, &d->body_cap, d->body_len + n + 1)) return false;
         memcpy(d->body + d->body_len, p, n);
         d->body_len += n;
@@ -64,7 +70,7 @@ static bool body_bytes(HttpDecoder *d, const char *p, size_t n)
         return true;
     }
     for (size_t i = 0; i < n; i++) {
-        if (!grow(&d->line, &d->line_cap, d->line_len + 2)) return false;
+        if (d->line_len >= MAX_LINE || !grow(&d->line, &d->line_cap, d->line_len + 2)) return false;
         if (p[i] == '\n') emit_line(d);
         else d->line[d->line_len++] = p[i];
     }
@@ -78,8 +84,14 @@ static bool parse_headers(HttpDecoder *d)
     d->status = atoi(d->hdr + 9);
     for (char *l = strstr(d->hdr, "\r\n"); l; l = strstr(l + 2, "\r\n")) {
         char *h = l + 2;
-        if (!strncasecmp(h, "Transfer-Encoding:", 18) && strstr(h, "chunked")) d->chunked = true;
-        if (!strncasecmp(h, "Content-Length:", 15)) d->content_length = strtol(h + 15, NULL, 10);
+        char *eol = strstr(h, "\r\n");
+        size_t hl = eol ? (size_t)(eol - h) : strlen(h);
+        if (hl > 18 && !strncasecmp(h, "Transfer-Encoding:", 18)) {
+            /* Match "chunked" within this header line only. */
+            for (size_t k = 18; k + 7 <= hl; k++)
+                if (!strncasecmp(h + k, "chunked", 7)) d->chunked = true;
+        }
+        if (hl > 15 && !strncasecmp(h, "Content-Length:", 15)) d->content_length = strtol(h + 15, NULL, 10);
     }
     if (d->chunked) {
         d->state = ST_CHUNK_SIZE;
@@ -163,17 +175,74 @@ void http_result_free(HttpResult *r)
     r->body = NULL;
 }
 
-static bool send_all(int fd, const char *p, size_t n)
+static double now_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
+}
+
+/* Send everything, but never block past `deadline` or after `cancel`: the
+ * socket has a 250 ms send timeout, so a server that stops reading cannot
+ * wedge the caller (red-team 003: Stop and quit used to hang). */
+static bool send_all(int fd, const char *p, size_t n, atomic_bool *cancel, double deadline, char *err, size_t errlen)
 {
     while (n) {
+        if (cancel && atomic_load(cancel)) {
+            snprintf(err, errlen, "cancelled");
+            return false;
+        }
+        if (now_ms() > deadline) {
+            snprintf(err, errlen, "timed out sending");
+            return false;
+        }
         ssize_t w = send(fd, p, n, 0);
         if (w < 0) {
-            if (errno == EINTR) continue;
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) continue;
+            snprintf(err, errlen, "send: %s", strerror(errno));
             return false;
         }
         p += w;
         n -= (size_t)w;
     }
+    return true;
+}
+
+/* Connect without blocking indefinitely (a wedged server's full backlog). */
+static bool connect_bounded(int fd, const struct sockaddr_un *addr, atomic_bool *cancel, double deadline,
+                            char *err, size_t errlen)
+{
+    int fl = fcntl(fd, F_GETFL);
+    fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+    int rc = connect(fd, (const struct sockaddr *)addr, sizeof(*addr));
+    if (rc != 0 && errno != EINPROGRESS && errno != EAGAIN) {
+        snprintf(err, errlen, "connect: %s", strerror(errno));
+        return false;
+    }
+    while (rc != 0) {
+        if (cancel && atomic_load(cancel)) {
+            snprintf(err, errlen, "cancelled");
+            return false;
+        }
+        if (now_ms() > deadline) {
+            snprintf(err, errlen, "timed out connecting");
+            return false;
+        }
+        struct pollfd pfd = { .fd = fd, .events = POLLOUT };
+        if (poll(&pfd, 1, 100) > 0) {
+            int soerr = 0;
+            socklen_t sl = sizeof(soerr);
+            getsockopt(fd, SOL_SOCKET, SO_ERROR, &soerr, &sl);
+            if (soerr) {
+                snprintf(err, errlen, "connect: %s", strerror(soerr));
+                return false;
+            }
+            rc = 0;
+        }
+    }
+    fcntl(fd, F_SETFL, fl);
+    struct timeval tv = { 0, 250000 };
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     return true;
 }
 
@@ -196,8 +265,8 @@ bool http_request(const char *socket_path, const char *method, const char *path,
         return false;
     }
     strcpy(addr.sun_path, socket_path);
-    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
-        snprintf(res->error, sizeof(res->error), "connect: %s", strerror(errno));
+    double deadline = now_ms() + (timeout_ms > 0 ? timeout_ms : 30000);
+    if (!connect_bounded(fd, &addr, cancel, deadline, res->error, sizeof(res->error))) {
         close(fd);
         return false;
     }
@@ -210,9 +279,13 @@ bool http_request(const char *socket_path, const char *method, const char *path,
                       "Content-Type: application/json\r\nContent-Length: %zu\r\n\r\n",
                       method, path, bearer ? "Authorization: Bearer " : "", bearer ? bearer : "",
                       bearer ? "\r\n" : "", blen);
-    if (hl <= 0 || (size_t)hl >= sizeof(head) || !send_all(fd, head, (size_t)hl) ||
-        (blen && !send_all(fd, body, blen))) {
-        snprintf(res->error, sizeof(res->error), "send failed");
+    if (hl <= 0 || (size_t)hl >= sizeof(head)) {
+        snprintf(res->error, sizeof(res->error), "request header too long");
+        close(fd);
+        return false;
+    }
+    if (!send_all(fd, head, (size_t)hl, cancel, deadline, res->error, sizeof(res->error)) ||
+        (blen && !send_all(fd, body, blen, cancel, deadline, res->error, sizeof(res->error)))) {
         close(fd);
         return false;
     }

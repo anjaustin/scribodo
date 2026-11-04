@@ -1,0 +1,33 @@
+# Chats and projects (red-team 003).
+# 1. A chat started before any document is open is adopted, not lost.
+expect chat_count 0
+click_element ChatInput
+type "an idea before any document"
+key ENTER
+wait_chat
+expect chat_count 2
+open "$DIR/chapter.md"
+wait 5
+expect chat_count 2
+expect files "$DIR/.scribodo/chats" ".jsonl" 1
+expect status "Chat saved"
+# 2. A reply still streaming when the author opens another project's
+#    document is saved with its own project, never the new one.
+mkdir "$DIR/book-b"
+write "$DIR/book-b/other.md" "Book B.\n"
+click_element ChatInput
+type "a long message so that the fake model keeps streaming while we switch to another project"
+key ENTER
+wait 5
+expect chat_busy yes
+drop "$DIR/book-b/other.md"
+wait_chat
+wait 5
+expect files "$DIR/book-b/.scribodo/chats" ".jsonl" 0
+expect chat_count 0
+# Back in the first project, the whole conversation is there.
+open "$DIR/chapter.md"
+wait 5
+click_element ChatItem0
+expect chat_count 4
+expect chat_last "keeps streaming"

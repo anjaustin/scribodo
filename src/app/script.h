@@ -26,7 +26,7 @@
  *   shot NAME                    save a screenshot after this frame draws
  *   clipboard "text"             set the (private) clipboard
  *   write "path" "content"       write a file (simulate another program)
- *   chmod "path" OCTAL
+ *   chmod "path" OCTAL           mkdir "path"
  *
  *   expect text "..."            expect selection ANCHOR CURSOR
  *   expect cursor N              expect dirty yes|no

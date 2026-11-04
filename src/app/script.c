@@ -567,6 +567,10 @@ static bool run_line(Script *s, ScriptHost *h)
         }
         return false;
     }
+    if (!strcmp(cmd, "mkdir") && t.n == 2) {
+        mkdir(t.tok[1], 0755);
+        return false;
+    }
     if (!strcmp(cmd, "chmod") && t.n == 3) {
         chmod(t.tok[1], (mode_t)strtoul(t.tok[2], NULL, 8));
         return false;
@@ -577,8 +581,9 @@ static bool run_line(Script *s, ScriptHost *h)
 
 bool script_frame(Script *s, ScriptHost *h)
 {
-    atomic_fetch_add(&s->frames, 1);
+    unsigned long frame = atomic_fetch_add(&s->frames, 1);
     atomic_store(&s->line, s->pc > 0 ? s->pc - 1 : 0);
+    if (frame < 2) return true; /* let the UI lay out once before the first command */
     for (;;) {
         if (s->qcount) {
             play_next_batch(s);

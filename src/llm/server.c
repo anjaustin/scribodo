@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -24,7 +25,8 @@ extern char **environ;
 /* Pinned artifact (docs/MODEL-001). */
 #define LFM3_GGUF_REV "cd0c74c575b5c416f3011b5b4c298077f26ca8c2"
 #define LFM3_GGUF_SHA256 "39158a79f56edb85e0c4252ce6447b8d7883ef82ffedd02f0cda7c84da5e9f68"
-#define MAX_RESTARTS 5
+#define MAX_RESTARTS 5      /* within one crash burst */
+#define HEALTHY_RESET_S 60  /* READY this long resets the restart budget */
 #define READY_TIMEOUT_S 180
 
 struct LlmServer {
@@ -36,6 +38,9 @@ struct LlmServer {
     char key[80];
     char keyfile[600];
     char pidfile[600];
+    char lockfile[600];
+    int lock_fd;            /* flock held while this window owns the server */
+    double ready_since;
     pid_t pid;
     pthread_t thread;
     bool thread_running;
@@ -120,6 +125,8 @@ LlmServer *llm_server_create(const LlmServerConfig *cfg)
     snprintf(s->sock, sizeof(s->sock), "%s/llama.sock", cfg->run_dir);
     snprintf(s->keyfile, sizeof(s->keyfile), "%s/api.key", cfg->run_dir);
     snprintf(s->pidfile, sizeof(s->pidfile), "%s/llama-server.pid", cfg->run_dir);
+    snprintf(s->lockfile, sizeof(s->lockfile), "%s/server.lock", cfg->run_dir);
+    s->lock_fd = -1;
     snprintf(s->msg, sizeof(s->msg), "Model not started");
     return s;
 }
@@ -199,21 +206,48 @@ static bool verify_model(LlmServer *s)
 
 /* ---- process management ------------------------------------------------ */
 
+/* One window owns the model server at a time (red-team 003: a second
+ * window used to kill the first one's server as an "orphan"). The lock is
+ * released automatically if this process dies, so a crashed owner's server
+ * really is an orphan once we hold it. */
+static bool acquire_instance_lock(LlmServer *s)
+{
+    if (s->lock_fd >= 0) return true;
+    int fd = open(s->lockfile, O_RDWR | O_CREAT, 0600);
+    if (fd < 0) return false;
+    if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
+        close(fd);
+        return false;
+    }
+    s->lock_fd = fd;
+    return true;
+}
+
+static void release_instance_lock(LlmServer *s)
+{
+    if (s->lock_fd >= 0) {
+        flock(s->lock_fd, LOCK_UN);
+        close(s->lock_fd);
+        s->lock_fd = -1;
+    }
+}
+
 static void kill_orphan(LlmServer *s)
 {
     FILE *f = fopen(s->pidfile, "r");
     if (!f) return;
     int pid = 0;
     if (fscanf(f, "%d", &pid) == 1 && pid > 1 && kill(pid, 0) == 0) {
-        /* Only kill it if it is still a llama-server (pids get reused). */
-        char cmd[128], out[256] = "";
-        snprintf(cmd, sizeof(cmd), "ps -p %d -o comm=", pid);
+        /* Only kill it if it is *our* llama-server: pids get reused, so the
+         * command line must name this run directory's socket. */
+        char cmd[128], out[4096] = "";
+        snprintf(cmd, sizeof(cmd), "ps -p %d -o args=", pid);
         FILE *p = popen(cmd, "r");
         if (p) {
             if (!fgets(out, sizeof(out), p)) out[0] = '\0';
             pclose(p);
         }
-        if (strstr(out, "llama-server")) {
+        if (strstr(out, "llama-server") && strstr(out, s->sock)) {
             kill(pid, SIGTERM);
             for (int i = 0; i < 50 && kill(pid, 0) == 0; i++) usleep(100000);
             if (kill(pid, 0) == 0) kill(pid, SIGKILL);
@@ -247,6 +281,10 @@ static bool spawn_server(LlmServer *s)
     }
     if (!mkdir_p(s->cfg.run_dir, 0700) || chmod(s->cfg.run_dir, 0700) != 0) {
         set_state(s, LLM_FAILED, "Cannot create %s", s->cfg.run_dir);
+        return false;
+    }
+    if (!acquire_instance_lock(s)) {
+        set_state(s, LLM_FAILED, "Another Scribodo window is using the model. Close it to use the model here.");
         return false;
     }
     kill_orphan(s);
@@ -327,10 +365,20 @@ static void *start_thread(void *arg)
         if (http_request(s->sock, "GET", "/health", NULL, NULL, NULL, NULL, NULL, 1000, &r) && r.status == 200) {
             http_result_free(&r);
             set_state(s, LLM_READY, "LFM3-1.7B \xC2\xB7 BF16 \xC2\xB7 local");
+            s->ready_since = now_s();
             return NULL;
         }
         http_result_free(&r);
         if (now_s() - t0 > READY_TIMEOUT_S) {
+            /* Don't leave a stuck server holding ~4 GB. */
+            pthread_mutex_lock(&s->mu);
+            pid_t pid = s->pid;
+            s->pid = 0;
+            pthread_mutex_unlock(&s->mu);
+            if (pid > 0) {
+                kill(pid, SIGKILL);
+                waitpid(pid, NULL, 0);
+            }
             set_state(s, LLM_FAILED, "llama-server did not become ready (see %s)", s->cfg.log_path);
             return NULL;
         }
@@ -358,6 +406,9 @@ void llm_server_start(LlmServer *s)
 void llm_server_tick(LlmServer *s)
 {
     LlmState st = llm_server_state(s, NULL, 0);
+    /* Crashes far apart are not a crash loop: a healthy minute resets the budget. */
+    if (st == LLM_READY && s->restarts > 0 && s->ready_since > 0 && now_s() - s->ready_since > HEALTHY_RESET_S)
+        s->restarts = 0;
     if (st == LLM_READY && !child_alive(s)) {
         set_state(s, LLM_RESTARTING, "llama-server stopped unexpectedly; restarting\xE2\x80\xA6");
         st = LLM_RESTARTING;
@@ -401,9 +452,12 @@ void llm_server_stop(LlmServer *s)
             waitpid(pid, &status, 0);
         }
     }
-    unlink(s->sock);
-    unlink(s->pidfile);
-    unlink(s->keyfile);
+    if (s->lock_fd >= 0) { /* only the owner cleans up the shared run dir */
+        unlink(s->sock);
+        unlink(s->pidfile);
+        unlink(s->keyfile);
+    }
+    release_instance_lock(s);
     set_state(s, LLM_STOPPED, "Model stopped");
 }
 
@@ -425,6 +479,12 @@ LlmState llm_server_state(LlmServer *s, char *msg, size_t msglen)
 }
 
 const char *llm_server_socket(LlmServer *s) { return s->sock; }
+
+int llm_server_slot_ctx(LlmServer *s)
+{
+    int slots = s->cfg.slots > 0 ? s->cfg.slots : 1;
+    return s->cfg.ctx_total > 0 ? s->cfg.ctx_total / slots : 32768;
+}
 const char *llm_server_key(LlmServer *s) { return s->key; }
 
 int llm_server_pid(LlmServer *s)
@@ -436,3 +496,10 @@ int llm_server_pid(LlmServer *s)
 }
 
 int llm_server_restarts(LlmServer *s) { return s->restarts; }
+
+void llm_server_test_attach(LlmServer *s, const char *socket_path, const char *key)
+{
+    snprintf(s->sock, sizeof(s->sock), "%s", socket_path);
+    snprintf(s->key, sizeof(s->key), "%s", key ? key : "");
+    set_state(s, LLM_READY, "test stub");
+}

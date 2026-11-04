@@ -25,10 +25,10 @@ char *llm_neutralize(const char *s);
 /* True if `s` contains a sequence llm_neutralize() would break. */
 bool llm_needs_neutralize(const char *s);
 
-/* Split model output into visible text and reasoning. Removes every
- * <think>...</think> block (an unterminated block runs to the end of the
- * text, as while streaming). Either output may be NULL if not wanted; both
- * are malloc'd. */
+/* Split model output into visible text and reasoning. A leading
+ * <think>...</think> block (unterminated while streaming) is reasoning; an
+ * orphan </think> marks everything before it as reasoning; any other <think>
+ * is left visible. Either output may be NULL; both are malloc'd. */
 void llm_split_thinking(const char *s, char **visible, char **reasoning);
 
 #endif

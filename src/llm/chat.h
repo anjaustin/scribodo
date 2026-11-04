@@ -28,6 +28,7 @@ typedef struct {
     char *content;   /* visible text (UTF-8) */
     bool error;      /* assistant message that failed */
     bool streaming;  /* still being generated */
+    bool truncated;  /* reply stopped at the length limit */
 } ChatMessage;
 
 typedef struct {
@@ -45,7 +46,9 @@ ChatSession *chat_create(LlmServer *server);
 void chat_destroy(ChatSession *s);
 
 /* Starts streaming a reply. Fails (returns false with a reason) if a reply
- * is already streaming or the model isn't ready. */
+ * is already streaming or the model isn't ready. The request (including
+ * exact token budgeting via the server's tokenizer) is built on the worker
+ * thread; `ctx` is copied. */
 bool chat_send(ChatSession *s, const char *text, const ChatContext *ctx, char *err, size_t errlen);
 void chat_cancel(ChatSession *s);
 bool chat_busy(ChatSession *s);
@@ -59,6 +62,10 @@ void chat_clear(ChatSession *s);
 bool chat_poll(ChatSession *s);
 void chat_on_message_done(ChatSession *s, ChatMessageDone fn, void *ctx);
 
+/* One-shot notice for the status bar (e.g. "document was cut off"), or
+ * NULL. The returned string is valid until the next call. */
+const char *chat_take_notice(ChatSession *s);
+
 void chat_lock(ChatSession *s);
 void chat_unlock(ChatSession *s);
 size_t chat_count(ChatSession *s);                    /* lock held */
@@ -67,14 +74,24 @@ uint64_t chat_version(ChatSession *s);
 
 /* ---- exposed for tests ------------------------------------------------ */
 
+/* Token counter: returns the number of tokens in `text`, or -1 if unknown
+ * (the builder then falls back to a conservative estimate). */
+typedef long (*ChatTokenCount)(const char *text, void *ctx);
+
 /* Build the JSON request body for the conversation `msgs[0..n)` (the
  * in-progress assistant message excluded). Returns malloc'd JSON. If the
- * document had to be truncated, *doc_truncated is set. */
+ * document had to be truncated, *doc_truncated is set. `count` may be NULL
+ * to use the estimate only. */
 char *chat_build_request(const ChatMessage *msgs, size_t n, const ChatContext *ctx, int ctx_tokens,
-                         bool *doc_truncated);
+                         ChatTokenCount count, void *count_ctx, bool *doc_truncated);
+
+/* Conservative token estimate (bytes / 1.5: denser than any text measured,
+ * including code, numbers, emoji and CJK; see docs/REDTEAM-003). */
+long chat_estimate_tokens(const char *text);
 
 /* Parse one server-sent-event line. Appends content to *acc. Returns:
- * 1 = more to come, 0 = finished, -1 = error (message in err). */
+ * 1 = more to come, 0 = finished, 2 = finished at the length limit,
+ * -1 = error (message in err). */
 int chat_parse_sse_line(const char *line, char **acc, size_t *acc_len, char *err, size_t errlen);
 
 #endif
