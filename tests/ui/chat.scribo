@@ -1,0 +1,64 @@
+# Chat pane end to end with the fake model (UI scripts never start the real one).
+open "$DIR/chapter.md"
+expect chat_count 0
+click_element ChatInput
+type "Who is Zoë?"
+key ENTER
+wait_chat
+expect chat_count 2
+expect chat_last "with document"
+expect chat_last "Who is Zoë?"
+expect files "$DIR/.scribodo/chats" ".jsonl" 1
+# Shift+Enter inserts a newline instead of sending.
+type "line one"
+key ENTER shift
+type "line two"
+expect chat_count 2
+key ENTER
+wait_chat
+expect chat_count 4
+expect chat_last "line one\nline two"
+# Without the document attached, the request carries no document.
+click_element IncludeDoc
+type "no doc please"
+key ENTER
+wait_chat
+expect chat_count 6
+expect chat_last_not "with document"
+# Stop cancels a reply mid-stream and keeps what was written so far.
+type "a fairly long message so that the fake model keeps streaming for a while longer"
+key ENTER
+wait 8
+expect chat_busy yes
+click_element SendButton
+wait_chat
+expect chat_busy no
+expect chat_count 8
+shot chat
+# A blank message is not sent.
+type "   "
+key ENTER
+expect chat_count 8
+key BACKSPACE
+key BACKSPACE
+key BACKSPACE
+# New chat clears the pane; the saved conversation reopens from the Explorer.
+click_element NewChatButton
+expect chat_count 0
+# Clicking inside the chat pane must not open a saved chat (ID collision regression).
+click_element ChatMessages
+expect chat_count 0
+click_element ChatItem0
+expect chat_count 8
+expect chat_last_not "keeps streaming for a while longer"
+# Focus: the document keeps its own keystrokes; Cmd+L jumps back to chat.
+click_index 0
+type "X"
+expect dirty yes
+expect chat_count 8
+key L cmd
+type "via shortcut"
+key ENTER
+wait_chat
+expect chat_count 10
+expect chat_last "via shortcut"

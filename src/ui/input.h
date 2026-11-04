@@ -23,6 +23,11 @@ bool shortcut_pressed(char letter);
 /* Next typed codepoint this frame (injected first, then real), or 0. */
 int input_get_char(void);
 
+/* Drop any typed characters not consumed this frame. Call once per frame,
+ * after every text view has updated, so keystrokes typed while nothing had
+ * focus are discarded instead of appearing later. */
+void input_discard_chars(void);
+
 /* --- test hooks ------------------------------------------------------- */
 
 /* Queue codepoints to be returned by input_get_char() this frame. */

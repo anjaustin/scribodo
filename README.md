@@ -61,7 +61,7 @@ Scribodo lets an author brainstorm in chat, develop prose in documents, and revi
 | Observer | Independent worker and job queue | Shares the runtime through a separate queue and never starves interactive chat. |
 | Remote models | Optional adapter(s) | Off until configured. Credentials live in the OS keychain, and a data-exit indicator is shown. |
 
-**Targets:** macOS and Linux desktop. Windows is not in scope for the MVP.
+**Target:** macOS on Apple Silicon. The MVP is built and validated on an Apple M4 (16 GB). Linux and Windows are out of scope for the MVP.
 
 ### Model policy
 
@@ -77,7 +77,7 @@ The local model must run with BF16 weights and BF16 compute. Quantized checkpoin
 
 ## Roadmap
 
-1. **Feasibility gate.** Validate raylib, raygui, and Clay text editing with UTF-8; LFM3-1.7B BF16 on Mac and Linux hardware; and local MariaDB and Qdrant.
+1. **Feasibility gate.** Validate raylib, raygui, and Clay text editing with UTF-8; LFM3-1.7B BF16 on this Mac ([done](docs/MODEL-001-lfm3-runtime.md)); and local MariaDB and Qdrant.
 2. **Foundation.** Workbench layout, projects, Markdown documents, MariaDB schema and migrations, revision history.
 3. **Creative workflow.** Persistent chat, the BF16 inference adapter, document context, reviewed AI edits.
 4. **Semantic and observer pipeline.** Embeddings, Qdrant indexing and retrieval, async extraction, provenance, the findings panel, and note and canon actions.
@@ -99,15 +99,28 @@ Requirements: a C11 compiler (Apple clang on macOS) and `make`. Every dependency
 ```sh
 git clone --recursive https://github.com/anjaustin/scribodo.git
 cd scribodo
-make test   # core unit tests (UTF-8, gap buffer, undo, wrap)
+make llama  # build the pinned llama-server (third_party/llama.cpp; a few minutes)
+make model  # download LFM3-1.7B BF16 (3.5 GB, SHA-256 checked; reuses a Hugging Face cache copy)
 make run    # launch with assets/sample/sample.md
 ./build/scribodo path/to/chapter.md
 ```
 
+On first launch the app checks the model file against its pinned hash (once), then starts `llama-server` in the background. The toolbar shows the model's status, which turns green when it's ready. The server listens only on a private Unix socket, uses a fresh API key each launch, and stops when the app quits.
+
+**Using it:**
+- **Chat:** click the chat box (or press ⌘L), type, and press Enter. Shift+Enter adds a new line, and Esc returns to the document.
+- **Include document:** when ticked, the assistant sees the open document as reference.
+- **Copy:** under any reply, puts its text on the clipboard for pasting into the document.
+- **Saving chats:** each message is saved to the project folder's `.scribodo/chats/`, and past chats reopen from the Explorer.
+
 ```sh
 make sanitize  # run the same tests under AddressSanitizer + UBSan
 make uitest    # scripted UI tests: the real app in a hidden window (needs an awake display)
+make llmtest   # end-to-end against the real model: supervisor, streaming, auth, crash recovery
+make uitest-real  # the real model through the real UI
 ```
+
+Every test runs under `tools/watchdog.sh`, so a hang is killed with its stack saved to `build/hangs/` instead of stalling the run.
 
 See [`docs/TESTING.md`](docs/TESTING.md) for how the UI tests work and what they can't cover.
 

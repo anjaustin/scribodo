@@ -37,3 +37,7 @@ void DrawRectangleRec(Rectangle r, Color c) { (void)r; (void)c; }
 void DrawRectangleRounded(Rectangle r, float rd, int s, Color c) { (void)r; (void)rd; (void)s; (void)c; }
 void sfont_draw(const SFont *f, uint32_t cp, float x, float y, Color c) { (void)f; (void)cp; (void)x; (void)y; (void)c; }
 const char *glfwGetKeyName(int key, int scancode) { (void)key; (void)scancode; return 0; }
+void sfont_draw_utf8(const SFont *f, const char *s, int len, float x, float y, Color c)
+{
+    (void)f; (void)s; (void)len; (void)x; (void)y; (void)c;
+}

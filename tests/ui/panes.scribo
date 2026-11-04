@@ -1,22 +1,28 @@
-# Splitter dragging, clamping, and window resizing.
+# Splitters, clamping, the observer toggle, and window resizing (1440x860).
 open "$DIR/chapter.md"
-expect explorer_w 219 221
-expect observer_w 279 281
-expect editor_w 760 780
-drag 222 400 340 400
-expect explorer_w 335 340
-drag 997 400 900 400
-expect observer_w 374 381
+expect explorer_w 209 211
+expect editor_w 795 805
+expect element_w Chat 419 421
+expect element_w Observer 0 0
+# Explorer splitter (x 210-215).
+drag 212 400 330 400
+expect explorer_w 325 330
+# Chat splitter sits at the chat pane's left edge (x 1015-1020).
+drag 1017 400 900 400
+expect element_w Chat 535 540
+# The observer opens from the toolbar.
+click_element ObserverToggle
+expect element_w Observer 259 261
 shot panes-wide
-# Dragging far past the limit clamps to 30% of the window.
-drag 340 400 1200 400
-expect explorer_w 383 385
-# Shrinking the window re-clamps both panes; the editor stays usable.
+# Dragging far past the limit clamps the explorer to 25% of the window.
+drag 330 400 1200 400
+expect explorer_w 359 361
+# Shrinking to the minimum keeps the document at least 320 px wide:
+# panes shrink to their minimums and the observer closes.
 resize 900 600
-expect explorer_w 269 271
-expect observer_w 269 271
-expect editor_w 340 360
+expect editor_w 320 900
+expect element_w Observer 0 0
 shot panes-narrow
-# The editor still has focus after splitter drags.
+# The editor keeps focus after splitter drags.
 type "x"
 expect dirty yes

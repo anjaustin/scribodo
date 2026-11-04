@@ -6,3 +6,4 @@
 -Ithird_party/stb
 -Wall
 -Wextra
+-Ithird_party/cJSON

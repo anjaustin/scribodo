@@ -93,6 +93,18 @@ size_t editor_hit_test(Editor *e, float x, float y);
 bool editor_index_screen_pos(Editor *e, size_t idx, float *x, float *y);
 bool editor_index_visible(Editor *e, size_t idx);
 float editor_scroll_y(const Editor *e);
+/* Scratch mode: an editable buffer with no file (e.g. the chat input).
+ * Clears the buffer. `placeholder` is shown while it is empty. */
+void editor_set_scratch(Editor *e, const char *placeholder);
+void editor_clear(Editor *e);
+/* Padding and maximum text-column width (defaults suit the prose view). */
+void editor_set_layout(Editor *e, float side_pad, float top_pad, float max_col);
+/* Enter submits (see editor_take_submit) and Shift+Enter inserts a newline. */
+void editor_set_submit_on_enter(Editor *e, bool on);
+bool editor_take_submit(Editor *e);
+/* Height of the laid-out text, for auto-sizing an input box. */
+float editor_content_height(Editor *e);
+
 /* Lower the size limit (tests). Never raises it above the built-in cap. */
 void editor_set_max_chars(Editor *e, size_t max);
 bool editor_is_dirty(const Editor *e);

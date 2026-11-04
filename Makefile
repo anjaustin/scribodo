@@ -4,6 +4,9 @@
 #   make run        build and launch with the sample document
 #   make test       build and run unit tests
 #   make sanitize   run the tests under AddressSanitizer + UBSan
+#   make llama      build the pinned llama-server (third_party/llama.cpp)
+#   make model      download the pinned LFM3-1.7B BF16 GGUF (3.5 GB, SHA-256 checked)
+#   make llmtest    end-to-end test against the real model (needs llama + model)
 #   make clean      remove build outputs (keeps the raylib build)
 #   make distclean  remove everything under build/
 #
@@ -24,7 +27,7 @@ WARN       := -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter
 CFLAGS     := $(CSTD) $(OPT) $(ARCH_FLAGS) -g $(WARN)
 
 RAYLIB_DIR := third_party/raylib/src
-INCLUDES   := -Isrc -I$(RAYLIB_DIR) -Ithird_party/raygui/src -Ithird_party/clay -Ithird_party/stb
+INCLUDES   := -Isrc -I$(RAYLIB_DIR) -Ithird_party/raygui/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON
 
 # --- raylib (static, GLFW desktop backend, OpenGL 3.3) ----------------------
 RAYLIB_SRCS  := rcore rshapes rtextures rtext rmodels raudio rglfw
@@ -53,18 +56,26 @@ $(RAYLIB_LIB): $(RAYLIB_OBJS)
 
 # --- Scribodo ----------------------------------------------------------------
 CORE_SRCS := src/core/utf8.c src/core/text_buffer.c src/core/undo.c src/core/wrap.c src/core/doc_io.c
-APP_SRCS  := src/main.c src/app/script.c src/ui/font.c src/ui/clay_render.c src/ui/editor.c src/ui/input.c src/ui/vendor_impl.c
+LLM_SRCS  := src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/app/chat_store.c
+LLM_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(LLM_SRCS)) $(BUILD)/third_party/cJSON/cJSON.o
+APP_SRCS  := src/main.c src/app/script.c src/ui/font.c src/ui/clay_render.c src/ui/editor.c src/ui/input.c \
+             src/ui/chat_view.c src/ui/vendor_impl.c
 CORE_OBJS := $(patsubst %.c,$(BUILD)/%.o,$(CORE_SRCS))
 APP_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(APP_SRCS))
 APP   := $(BUILD)/scribodo
-TESTS := $(BUILD)/test_core $(BUILD)/test_doc_io $(BUILD)/test_editor
+TESTS := $(BUILD)/test_core $(BUILD)/test_doc_io $(BUILD)/test_editor $(BUILD)/test_llm
 
-.PHONY: all run test uitest sanitize clean distclean
+.PHONY: all run test uitest uitest-real sanitize clean distclean llama model llmtest
 
 all: $(APP)
 
-$(APP): $(CORE_OBJS) $(APP_OBJS) $(RAYLIB_LIB)
-	$(CC) $(CFLAGS) $^ -o $@ $(LDLIBS) -lm
+$(APP): $(CORE_OBJS) $(LLM_OBJS) $(APP_OBJS) $(RAYLIB_LIB)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDLIBS) -lm -lpthread
+
+# cJSON is vendored; compile it without our warning flags.
+$(BUILD)/third_party/cJSON/cJSON.o: third_party/cJSON/cJSON.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CSTD) $(OPT) $(ARCH_FLAGS) -g -w -c $< -o $@
 
 # Vendored single-header implementations are compiled without our warnings.
 $(BUILD)/src/ui/vendor_impl.o: src/ui/vendor_impl.c | $(BUILD)/src/ui
@@ -80,25 +91,72 @@ $(BUILD)/test_core: $(CORE_OBJS) $(BUILD)/tests/test_core.o
 $(BUILD)/test_doc_io: $(CORE_OBJS) $(BUILD)/tests/test_doc_io.o
 	$(CC) $(CFLAGS) $^ -o $@
 
+$(BUILD)/test_llm: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_llm.o
+	$(CC) $(CFLAGS) $^ -o $@ -lpthread
+
 # The real editor, linked against headless raylib stubs.
 $(BUILD)/test_editor: $(CORE_OBJS) $(BUILD)/src/ui/editor.o $(BUILD)/src/ui/input.o $(BUILD)/tests/raylib_stubs.o $(BUILD)/tests/test_editor.o
 	$(CC) $(CFLAGS) $^ -o $@ -lm
 
+# Every test runs under tools/watchdog.sh: a hang is killed after a time limit
+# and its stacks are saved to build/hangs/ instead of stalling the run.
+WATCHDOG := tools/watchdog.sh
+TEST_TIMEOUT ?= 300
+
 test: $(TESTS)
-	@set -e; for t in $(TESTS); do echo "== $$t"; ./$$t; echo; done
+	@set -e; for t in $(TESTS); do echo "== $$t"; $(WATCHDOG) $(TEST_TIMEOUT) $$(basename $$t) ./$$t; echo; done
 
 # Scripted UI tests: each script drives the real app in a hidden window against
 # its own copy of tests/ui/fixtures in build/ui/<script>/work, where its
 # screenshots also land. build/ui is wiped (a fixed path) at the start.
-UI_SCRIPTS := $(wildcard tests/ui/*.scribo)
+UI_SCRIPTS := $(filter-out tests/ui/real-%,$(wildcard tests/ui/*.scribo))
+# tests/ui/real-*.scribo drive the real model through the UI (make uitest-real).
+REAL_UI_SCRIPTS := $(wildcard tests/ui/real-*.scribo)
 uitest: $(APP)
 	@chmod -R u+w build/ui 2>/dev/null; rm -rf build/ui
 	@fail=0; for s in $(UI_SCRIPTS); do \
 	  name=$$(basename $$s .scribo); work=build/ui/$$name/work; \
 	  mkdir -p $$work && cp -R tests/ui/fixtures/. $$work/; \
 	  SCRIBODO_SCRIPT=$$s SCRIBODO_SCRIPT_DIR=$$PWD/$$work SCRIBODO_SHOT_DIR=$$PWD/build/ui/$$name \
-	    ./$(APP) 2>build/ui/$$name/stderr.log || fail=1; \
+	    $(WATCHDOG) 120 ui-$$name ./$(APP) 2>build/ui/$$name/stderr.log || fail=1; \
 	  echo; \
+	done; exit $$fail
+
+# --- Local model runtime -------------------------------------------------------
+# llama-server from the pinned submodule, built static so build/llama/bin is
+# self-contained. Uses a system cmake, or uvx's if there is none.
+CMAKE ?= $(shell command -v cmake 2>/dev/null || echo "uvx --from cmake cmake")
+LLAMA_BIN := $(BUILD)/llama/bin/llama-server
+llama: $(LLAMA_BIN)
+$(LLAMA_BIN):
+	$(CMAKE) -S third_party/llama.cpp -B $(BUILD)/llama -DCMAKE_BUILD_TYPE=Release \
+	  -DGGML_METAL=ON -DGGML_NATIVE=ON -DBUILD_SHARED_LIBS=OFF -DLLAMA_CURL=OFF \
+	  -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=ON \
+	  -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$(abspath $(BUILD)/llama/bin)
+	$(CMAKE) --build $(BUILD)/llama --target llama-server -j 10
+
+# The pinned BF16 GGUF (docs/MODEL-001). The app also finds an existing copy
+# in the Hugging Face cache, so this only downloads when neither exists.
+MODEL_DIR    := $(HOME)/Library/Application Support/Scribodo/models
+MODEL_FILE   := $(MODEL_DIR)/LFM3-1.7B-BF16.gguf
+MODEL_URL    := https://huggingface.co/LiquidAI/LFM3-1.7B-GGUF/resolve/cd0c74c575b5c416f3011b5b4c298077f26ca8c2/LFM3-1.7B-BF16.gguf
+MODEL_SHA256 := 39158a79f56edb85e0c4252ce6447b8d7883ef82ffedd02f0cda7c84da5e9f68
+HF_MODEL     := $(HOME)/.cache/huggingface/hub/models--LiquidAI--LFM3-1.7B-GGUF/snapshots/cd0c74c575b5c416f3011b5b4c298077f26ca8c2/LFM3-1.7B-BF16.gguf
+model:
+	@if [ -f "$(HF_MODEL)" ]; then echo "Using the Hugging Face cache copy: $(HF_MODEL)"; \
+	elif [ -f "$(MODEL_FILE)" ]; then echo "Model present: $(MODEL_FILE)"; \
+	else mkdir -p "$(MODEL_DIR)" && curl -fL --progress-bar -o "$(MODEL_FILE).part" "$(MODEL_URL)" && \
+	  echo "$(MODEL_SHA256)  $(MODEL_FILE).part" | shasum -a 256 -c - && mv "$(MODEL_FILE).part" "$(MODEL_FILE)"; fi
+
+llmtest: $(BUILD)/test_llm $(LLAMA_BIN)
+	SCRIBODO_LLAMA_SERVER=$(abspath $(LLAMA_BIN)) $(WATCHDOG) 600 llmtest ./$(BUILD)/test_llm --live
+
+uitest-real: $(APP) $(LLAMA_BIN)
+	@fail=0; for s in $(REAL_UI_SCRIPTS); do \
+	  name=$$(basename $$s .scribo); work=build/ui/$$name/work; rm -rf build/ui/$$name; \
+	  mkdir -p $$work && cp -R tests/ui/fixtures/. $$work/; \
+	  SCRIBODO_LLM=real SCRIBODO_SCRIPT=$$s SCRIBODO_SCRIPT_DIR=$$PWD/$$work SCRIBODO_SHOT_DIR=$$PWD/build/ui/$$name \
+	    $(WATCHDOG) 600 ui-$$name ./$(APP) 2>build/ui/$$name/stderr.log || fail=1; echo; \
 	done; exit $$fail
 
 SAN_FLAGS := -O1 -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined

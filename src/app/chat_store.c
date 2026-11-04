@@ -1,0 +1,198 @@
+#define _DARWIN_C_SOURCE
+#include "chat_store.h"
+
+#include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include "cJSON.h"
+
+bool chat_store_dir(const char *project_dir, char *out, size_t outlen)
+{
+    char base[1024];
+    snprintf(base, sizeof(base), "%s/.scribodo", project_dir);
+    if (mkdir(base, 0755) != 0 && errno != EEXIST) return false;
+    snprintf(out, outlen, "%s/chats", base);
+    if (mkdir(out, 0755) != 0 && errno != EEXIST) return false;
+    return true;
+}
+
+void chat_store_new_id(char *out, size_t outlen)
+{
+    time_t t = time(NULL);
+    struct tm tmv;
+    localtime_r(&t, &tmv);
+    char stamp[32];
+    strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tmv);
+    snprintf(out, outlen, "%s-%04x", stamp, arc4random_uniform(0x10000));
+}
+
+static bool path_for(const char *project_dir, const char *id, char *out, size_t outlen)
+{
+    for (const char *p = id; *p; p++) /* ids are generated, but never trust paths */
+        if (!((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'f') || *p == '-')) return false;
+    char dir[1100];
+    if (!chat_store_dir(project_dir, dir, sizeof(dir))) return false;
+    snprintf(out, outlen, "%s/%s.jsonl", dir, id);
+    return true;
+}
+
+static bool write_line(int fd, cJSON *j)
+{
+    char *s = cJSON_PrintUnformatted(j);
+    if (!s) return false;
+    size_t n = strlen(s);
+    bool ok = write(fd, s, n) == (ssize_t)n && write(fd, "\n", 1) == 1;
+    free(s);
+    return ok;
+}
+
+bool chat_store_append(const char *project_dir, const char *id, const char *title, const ChatMessage *m)
+{
+    char path[1200];
+    if (!path_for(project_dir, id, path, sizeof(path))) return false;
+    struct stat st;
+    bool fresh = stat(path, &st) != 0;
+    int fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd < 0) return false;
+    bool ok = true;
+    if (fresh) {
+        cJSON *meta = cJSON_CreateObject();
+        cJSON_AddStringToObject(meta, "type", "meta");
+        cJSON_AddNumberToObject(meta, "version", 1);
+        cJSON_AddStringToObject(meta, "title", title ? title : "Chat");
+        cJSON_AddNumberToObject(meta, "created", (double)time(NULL));
+        ok = write_line(fd, meta);
+        cJSON_Delete(meta);
+    }
+    cJSON *j = cJSON_CreateObject();
+    cJSON_AddStringToObject(j, "type", "message");
+    cJSON_AddStringToObject(j, "role", m->role == CHAT_USER ? "user" : "assistant");
+    cJSON_AddStringToObject(j, "content", m->content ? m->content : "");
+    cJSON_AddNumberToObject(j, "ts", (double)time(NULL));
+    if (m->error) cJSON_AddBoolToObject(j, "error", true);
+    ok = ok && write_line(fd, j);
+    cJSON_Delete(j);
+    ok = ok && fsync(fd) == 0;
+    close(fd);
+    return ok;
+}
+
+/* Read a whole file (chat logs are small). */
+static char *slurp(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    long n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char *buf = n >= 0 ? malloc((size_t)n + 1) : NULL;
+    if (buf) {
+        size_t got = fread(buf, 1, (size_t)n, f);
+        buf[got] = '\0';
+    }
+    fclose(f);
+    return buf;
+}
+
+static int by_updated_desc(const void *a, const void *b)
+{
+    const ChatSummary *x = a, *y = b;
+    return (y->updated > x->updated) - (y->updated < x->updated);
+}
+
+size_t chat_store_list(const char *project_dir, ChatSummary **out)
+{
+    *out = NULL;
+    char dir[1100];
+    if (!chat_store_dir(project_dir, dir, sizeof(dir))) return 0;
+    DIR *d = opendir(dir);
+    if (!d) return 0;
+    size_t n = 0, cap = 0;
+    ChatSummary *list = NULL;
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL) {
+        size_t len = strlen(ent->d_name);
+        if (len < 7 || strcmp(ent->d_name + len - 6, ".jsonl") != 0 || len - 6 >= sizeof(list->id)) continue;
+        char path[1300];
+        snprintf(path, sizeof(path), "%s/%s", dir, ent->d_name);
+        struct stat st;
+        if (stat(path, &st) != 0) continue;
+        if (n == cap) {
+            cap = cap ? cap * 2 : 16;
+            ChatSummary *l = realloc(list, cap * sizeof(ChatSummary));
+            if (!l) break;
+            list = l;
+        }
+        ChatSummary *c = &list[n];
+        memset(c, 0, sizeof(*c));
+        memcpy(c->id, ent->d_name, len - 6);
+        c->updated = st.st_mtimespec.tv_sec;
+        snprintf(c->title, sizeof(c->title), "Chat %s", c->id);
+        /* Title from the meta line (first line only). */
+        FILE *f = fopen(path, "rb");
+        if (f) {
+            char line[4096];
+            if (fgets(line, sizeof(line), f)) {
+                cJSON *j = cJSON_Parse(line);
+                cJSON *t = j ? cJSON_GetObjectItem(j, "title") : NULL;
+                if (cJSON_IsString(t)) snprintf(c->title, sizeof(c->title), "%s", t->valuestring);
+                cJSON_Delete(j);
+            }
+            fclose(f);
+        }
+        n++;
+    }
+    closedir(d);
+    qsort(list, n, sizeof(ChatSummary), by_updated_desc);
+    *out = list;
+    return n;
+}
+
+bool chat_store_load(const char *project_dir, const char *id, ChatMessage **msgs, size_t *n)
+{
+    *msgs = NULL;
+    *n = 0;
+    char path[1200];
+    if (!path_for(project_dir, id, path, sizeof(path))) return false;
+    char *text = slurp(path);
+    if (!text) return false;
+    size_t cap = 0;
+    for (char *line = strtok(text, "\n"); line; line = strtok(NULL, "\n")) {
+        cJSON *j = cJSON_Parse(line);
+        if (!j) continue; /* a torn final line after a crash is skipped */
+        cJSON *type = cJSON_GetObjectItem(j, "type");
+        if (cJSON_IsString(type) && !strcmp(type->valuestring, "message")) {
+            cJSON *role = cJSON_GetObjectItem(j, "role"), *content = cJSON_GetObjectItem(j, "content");
+            if (cJSON_IsString(role) && cJSON_IsString(content)) {
+                if (*n == cap) {
+                    cap = cap ? cap * 2 : 16;
+                    ChatMessage *m = realloc(*msgs, cap * sizeof(ChatMessage));
+                    if (!m) {
+                        cJSON_Delete(j);
+                        break;
+                    }
+                    *msgs = m;
+                }
+                (*msgs)[*n] = (ChatMessage){ strcmp(role->valuestring, "user") ? CHAT_ASSISTANT : CHAT_USER,
+                                             strdup(content->valuestring),
+                                             cJSON_IsTrue(cJSON_GetObjectItem(j, "error")), false };
+                (*n)++;
+            }
+        }
+        cJSON_Delete(j);
+    }
+    free(text);
+    return true;
+}
+
+void chat_store_free_messages(ChatMessage *msgs, size_t n)
+{
+    for (size_t i = 0; i < n; i++) free(msgs[i].content);
+    free(msgs);
+}

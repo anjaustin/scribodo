@@ -5,6 +5,9 @@
 #include "script.h"
 
 #include <dirent.h>
+#include <pthread.h>
+#include <stdatomic.h>
+#include <unistd.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -48,12 +51,46 @@ struct Script {
     Batch batches[MAX_BATCHES];
     int qhead, qcount;
     int wait;
+    int wait_chat;      /* frames left to wait for the chat to go idle */
+    int wait_ready;     /* frames left to wait for the model */
     char shot[1100];
     bool shot_pending;
     int passed, failed;
     bool expect_exit; /* saw "expect running no" */
     int expect_exit_line;
+    /* Heartbeat watchdog: the main loop bumps `frames`; if it stops moving
+     * for STALL_LIMIT_S, the watchdog reports the script line and aborts. */
+    atomic_ulong frames;
+    atomic_int line;
+    atomic_bool stop_watchdog;
+    pthread_t watchdog;
+    bool watchdog_running;
 };
+
+#define STALL_LIMIT_S 15
+
+static void *watchdog_main(void *arg)
+{
+    Script *s = arg;
+    unsigned long last = atomic_load(&s->frames);
+    int stalled = 0;
+    while (!atomic_load(&s->stop_watchdog)) {
+        sleep(1);
+        unsigned long now = atomic_load(&s->frames);
+        stalled = now == last ? stalled + 1 : 0;
+        last = now;
+        if (stalled >= STALL_LIMIT_S) {
+            int ln = atomic_load(&s->line);
+            fprintf(stderr, "SCRIPT WATCHDOG: no frame for %d s; main loop stuck while executing line %d: %s\n",
+                    STALL_LIMIT_S, ln + 1, ln >= 0 && ln < s->nlines ? s->lines[ln] : "?");
+            printf("  FAIL %3d  main loop hung (no frame for %d s)\n", ln + 1, STALL_LIMIT_S);
+            fflush(stdout);
+            fflush(stderr);
+            abort(); /* leaves a crash report with every thread's stack */
+        }
+    }
+    return NULL;
+}
 
 /* ---- parsing --------------------------------------------------------------- */
 
@@ -137,12 +174,20 @@ Script *script_load(const char *path, const char *dir, const char *shot_dir, cha
         s->lines[s->nlines++] = strdup(line);
     }
     fclose(f);
+    atomic_init(&s->frames, 0);
+    atomic_init(&s->line, -1);
+    atomic_init(&s->stop_watchdog, false);
+    s->watchdog_running = pthread_create(&s->watchdog, NULL, watchdog_main, s) == 0;
     return s;
 }
 
 void script_free(Script *s)
 {
     if (!s) return;
+    if (s->watchdog_running) {
+        atomic_store(&s->stop_watchdog, true);
+        pthread_join(s->watchdog, NULL);
+    }
     for (int i = 0; i < s->nlines; i++) free(s->lines[i]);
     free(s->lines);
     for (int i = 0; i < s->qcount; i++) free(s->batches[(s->qhead + i) % MAX_BATCHES].chars);
@@ -312,6 +357,32 @@ static void run_expect(Script *s, ScriptHost *h, Tokens *t)
         size_t n = editor_length(e);
         ok = n >= strtoul(t->tok[2], NULL, 10) && n <= strtoul(t->tok[3], NULL, 10);
         snprintf(detail, sizeof(detail), "got length %zu", n);
+    } else if (!strcmp(what, "chat_count") && t->n == 3 && h->chat) {
+        chat_lock(h->chat);
+        size_t n = chat_count(h->chat);
+        chat_unlock(h->chat);
+        ok = n == strtoul(t->tok[2], NULL, 10);
+        snprintf(detail, sizeof(detail), "got %zu", n);
+    } else if (!strcmp(what, "chat_last") && t->n == 3 && h->chat) {
+        chat_lock(h->chat);
+        size_t n = chat_count(h->chat);
+        const ChatMessage *m = n ? chat_message(h->chat, n - 1) : NULL;
+        ok = m && strstr(m->content, t->tok[2]);
+        show(detail, sizeof(detail), "last", m ? m->content : "(none)");
+        chat_unlock(h->chat);
+    } else if (!strcmp(what, "chat_last_not") && t->n == 3 && h->chat) {
+        chat_lock(h->chat);
+        size_t n = chat_count(h->chat);
+        const ChatMessage *m = n ? chat_message(h->chat, n - 1) : NULL;
+        ok = m && !strstr(m->content, t->tok[2]);
+        show(detail, sizeof(detail), "last", m ? m->content : "(none)");
+        chat_unlock(h->chat);
+    } else if (!strcmp(what, "element_w") && t->n == 5 && h->element) {
+        Rectangle r = h->element(h->ctx, t->tok[2]);
+        ok = r.width >= strtof(t->tok[3], NULL) && r.width <= strtof(t->tok[4], NULL);
+        snprintf(detail, sizeof(detail), "got %.1f", r.width);
+    } else if (!strcmp(what, "chat_busy") && t->n == 3 && h->chat) {
+        ok = chat_busy(h->chat) == yes(t->tok[2]);
     } else if (!strcmp(what, "dirty") && t->n == 3) {
         ok = editor_is_dirty(e) == yes(t->tok[2]);
     } else if (!strcmp(what, "readonly") && t->n == 3) {
@@ -450,6 +521,25 @@ static bool run_line(Script *s, ScriptHost *h)
         return true;
     }
     if (!strcmp(cmd, "wait") && t.n == 2) { s->wait = atoi(t.tok[1]); return true; }
+    if (!strcmp(cmd, "wait_ready")) {
+        s->wait_ready = t.n >= 2 ? atoi(t.tok[1]) : 60 * 180;
+        s->pc--; /* stay on this line so it reports pass/fail when done */
+        return true;
+    }
+    if (!strcmp(cmd, "wait_chat") && h->chat) {
+        s->wait_chat = t.n >= 2 ? atoi(t.tok[1]) : 1200;
+        return true;
+    }
+    if (!strcmp(cmd, "click_element") && t.n >= 2 && h->element) {
+        Rectangle r = h->element(h->ctx, t.tok[1]);
+        if (r.width <= 0) {
+            report(s, false, "no such element");
+            return false;
+        }
+        int count = t.n >= 3 ? atoi(t.tok[2]) : 1;
+        queue_click(s, (int)(r.x + r.width / 2), (int)(r.y + r.height / 2), count > 0 ? count : 1, false);
+        return true;
+    }
     if (!strcmp(cmd, "resize") && t.n == 3) {
         add_ev(new_batch(s), EV_WINDOW_RESIZE, atoi(t.tok[1]), atoi(t.tok[2]));
         for (int i = 0; i < 3; i++) new_batch(s); /* let the resize propagate */
@@ -487,6 +577,8 @@ static bool run_line(Script *s, ScriptHost *h)
 
 bool script_frame(Script *s, ScriptHost *h)
 {
+    atomic_fetch_add(&s->frames, 1);
+    atomic_store(&s->line, s->pc > 0 ? s->pc - 1 : 0);
     for (;;) {
         if (s->qcount) {
             play_next_batch(s);
@@ -495,6 +587,27 @@ bool script_frame(Script *s, ScriptHost *h)
         if (s->wait > 0) {
             s->wait--;
             return true;
+        }
+        if (s->wait_ready > 0) {
+            if (h->model_ready && h->model_ready(h->ctx)) {
+                s->wait_ready = 0;
+                report(s, true, NULL);
+                s->pc++;
+                continue;
+            }
+            if (--s->wait_ready == 0) {
+                report(s, false, "model did not become ready");
+                s->pc++;
+                continue;
+            }
+            return true;
+        }
+        if (s->wait_chat > 0) {
+            s->wait_chat--;
+            if (chat_busy(h->chat) || s->wait_chat % 1000 == 999) return true;
+            s->wait_chat = 0;
+            new_batch(s); /* one more frame so chat_poll publishes completion */
+            continue;
         }
         if (s->pc >= s->nlines) return false;
         bool yielded = run_line(s, h);

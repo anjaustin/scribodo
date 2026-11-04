@@ -1,3 +1,7 @@
+.scribodo/
 build/
 *.scribodo-tmp
+*.scribodo-??????
 .DS_Store
+__pycache__/
+*.pyc

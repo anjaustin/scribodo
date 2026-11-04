@@ -57,6 +57,13 @@ struct Editor {
     double armed_time;
     size_t max_chars;
     char notice[256];       /* one-shot message for the status bar */
+
+    /* Layout (defaults are the prose column; the chat input uses tighter ones). */
+    float side_pad, top_pad, max_col;
+    bool scratch;           /* editable buffer with no file (chat input) */
+    bool submit_on_enter;   /* Enter submits, Shift+Enter inserts a newline */
+    bool submit_pending;
+    char placeholder[128];
     uint64_t saved_id;      /* undo state id at last load/save */
     uint64_t version; /* bumps on every content change */
 
@@ -547,6 +554,9 @@ Editor *editor_create(SFont *font)
     e->layout_dirty = true;
     e->stats_version = UINT64_MAX;
     e->max_chars = EDITOR_MAX_CHARS;
+    e->side_pad = MIN_SIDE_PADDING;
+    e->top_pad = TOP_PADDING;
+    e->max_col = MAX_COLUMN_WIDTH;
     /* Nothing is editable until a document with a usable path is open, so
      * text can never be typed into a buffer that has nowhere to be saved. */
     e->read_only = true;
@@ -701,14 +711,14 @@ bool editor_save(Editor *e, char *err, size_t errlen)
 
 static void update_geometry(Editor *e, Rectangle b)
 {
-    float side = MIN_SIDE_PADDING;
+    float side = e->side_pad;
     float w = b.width - 2.0f * side;
-    if (w > MAX_COLUMN_WIDTH) w = MAX_COLUMN_WIDTH;
+    if (w > e->max_col) w = e->max_col;
     if (w < 40.0f) w = 40.0f;
     e->text_w = floorf(w);
     e->text_x = floorf(b.x + (b.width - e->text_w) * 0.5f);
-    e->text_y = b.y + TOP_PADDING;
-    e->view_h = b.height - TOP_PADDING;
+    e->text_y = b.y + e->top_pad;
+    e->view_h = b.height - e->top_pad;
     ensure_layout(e);
 }
 
@@ -891,13 +901,17 @@ static void handle_keyboard(Editor *e)
         DeleteUnit unit = word ? UNIT_WORD : primary ? UNIT_LINE : UNIT_CHAR;
         if (pressed(KEY_BACKSPACE)) erase(e, true, unit);
         if (pressed(KEY_DELETE)) erase(e, false, unit);
-        if (pressed(KEY_ENTER) || pressed(KEY_KP_ENTER)) type_char(e, '\n');
+        if (pressed(KEY_ENTER) || pressed(KEY_KP_ENTER)) {
+            if (e->submit_on_enter && !shift) e->submit_pending = true;
+            else type_char(e, '\n');
+        }
         if (pressed(KEY_TAB)) type_char(e, '\t');
     }
 
     /* Text input. Characters arrive already composed (dead keys, ⌥-symbols). */
     int cp;
     while ((cp = input_get_char()) > 0) {
+        if (getenv("SCRIBODO_INPUT_TRACE")) fprintf(stderr, "trace: char U+%04X primary=%d rw=%d\n", cp, primary, rw);
         if (primary || !rw) continue;
         if (cp < 0x20 || cp == 0x7F) continue;
         if (cp >= 0xF700 && cp <= 0xF8FF) continue; /* macOS function-key codes */
@@ -909,13 +923,11 @@ void editor_update(Editor *e, Rectangle bounds, bool focused)
 {
     update_geometry(e, bounds);
     handle_mouse(e, bounds);
-    if (focused) {
-        handle_keyboard(e);
-    } else {
-        /* Discard keystrokes typed while unfocused so they are not inserted
-         * later when focus returns. */
-        while (input_get_char() > 0) {}
-    }
+    /* Unfocused editors leave the typed-character queue alone: several text
+     * views share it, and the app drains it once per frame when no view has
+     * focus (see input_discard_chars), so keystrokes typed while nothing is
+     * focused are never inserted later. */
+    if (focused) handle_keyboard(e);
     ensure_layout(e);
     if (e->want_cursor_visible) {
         scroll_to_cursor(e);
@@ -940,7 +952,7 @@ void editor_draw(Editor *e, Rectangle b, bool focused)
     BeginScissorMode((int)b.x, (int)b.y, (int)b.width, (int)b.height);
 
     size_t first = (size_t)(e->scroll_y / lh);
-    size_t last = (size_t)((e->scroll_y + e->view_h + TOP_PADDING) / lh) + 1;
+    size_t last = (size_t)((e->scroll_y + e->view_h + e->top_pad) / lh) + 1;
     if (last > e->layout.count) last = e->layout.count;
 
     int sel_lo, sel_hi;
@@ -969,6 +981,11 @@ void editor_draw(Editor *e, Rectangle b, bool focused)
             sfont_draw(f, c, x, y, COL_TEXT);
             x += sfont_advance(f, c);
         }
+    }
+
+    if (tb_len(&e->buf) == 0 && e->placeholder[0]) {
+        sfont_draw_utf8(f, e->placeholder, (int)strlen(e->placeholder), e->text_x, e->text_y - e->scroll_y,
+                        (Color){ 0x6E, 0x6E, 0x6E, 0xFF });
     }
 
     if (focused && fmod(GetTime() - e->blink_t0, 1.0) < 0.6) {
@@ -1130,7 +1147,7 @@ bool editor_index_visible(Editor *e, size_t idx)
 {
     float x, y;
     if (!editor_index_screen_pos(e, idx, &x, &y)) return false;
-    return y >= e->text_y - TOP_PADDING && y <= e->text_y + e->view_h;
+    return y >= e->text_y - e->top_pad && y <= e->text_y + e->view_h;
 }
 
 float editor_scroll_y(const Editor *e) { return e->scroll_y; }
@@ -1169,4 +1186,51 @@ EditorStats editor_stats(Editor *e)
     sel_range(e, &lo, &hi);
     e->stats.selected = (size_t)(hi - lo);
     return e->stats;
+}
+
+/* ---- scratch buffers (chat input) ---------------------------------------- */
+
+void editor_set_scratch(Editor *e, const char *placeholder)
+{
+    free(e->path);
+    e->path = NULL;
+    e->scratch = true;
+    e->read_only = false;
+    e->read_only_reason[0] = '\0';
+    snprintf(e->placeholder, sizeof(e->placeholder), "%s", placeholder ? placeholder : "");
+    editor_clear(e);
+}
+
+void editor_clear(Editor *e)
+{
+    tb_set(&e->buf, NULL, 0);
+    undo_free(&e->undo);
+    undo_init(&e->undo);
+    stb_textedit_initialize_state(&e->st, 0);
+    e->saved_id = undo_state_id(&e->undo);
+    e->scroll_y = 0;
+    mark_changed(e);
+}
+
+void editor_set_layout(Editor *e, float side_pad, float top_pad, float max_col)
+{
+    e->side_pad = side_pad;
+    e->top_pad = top_pad;
+    e->max_col = max_col;
+    e->layout_dirty = true;
+}
+
+void editor_set_submit_on_enter(Editor *e, bool on) { e->submit_on_enter = on; }
+
+bool editor_take_submit(Editor *e)
+{
+    bool v = e->submit_pending;
+    e->submit_pending = false;
+    return v;
+}
+
+float editor_content_height(Editor *e)
+{
+    ensure_layout(e);
+    return (float)e->layout.count * e->font->line_height + e->top_pad;
 }

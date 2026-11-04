@@ -9,6 +9,8 @@
 #ifndef SCRIBODO_CLAY_RENDER_H
 #define SCRIBODO_CLAY_RENDER_H
 
+#include <stdbool.h>
+
 #include "clay.h"
 #include "ui/font.h"
 
@@ -17,6 +19,10 @@
 Clay_Dimensions clay_measure_text(Clay_StringSlice text, Clay_TextElementConfig *config, void *user_data);
 
 void clay_render(Clay_RenderCommandArray commands, SFont *const *fonts);
+
+/* True only if the element was declared in the most recent layout. Use it
+ * before trusting Clay_GetElementData(), which also returns stale boxes. */
+bool clay_element_current(Clay_ElementId id);
 
 static inline Rectangle clay_to_rect(Clay_BoundingBox b)
 {

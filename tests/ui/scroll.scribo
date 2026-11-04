@@ -14,6 +14,6 @@ shot scrolled-end
 key UP cmd
 # Drag from the top to below the editor and hold: the view auto-scrolls and
 # the selection grows past what was initially visible.
-drag 300 80 300 805 90
+drag 300 80 300 845 90
 expect cursor_range 3000 16200
 expect scrolled yes

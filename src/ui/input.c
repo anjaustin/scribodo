@@ -71,3 +71,8 @@ void input_set_clipboard(const char *utf8)
     free(g_private_clipboard);
     g_private_clipboard = utf8 ? strdup(utf8) : NULL;
 }
+
+void input_discard_chars(void)
+{
+    while (input_get_char() > 0) {}
+}

@@ -1,0 +1,30 @@
+# The real LFM3 model through the real UI (make uitest-real). Slow: loads the model.
+open "$DIR/chapter.md"
+wait_ready
+expect status ""
+click_element ChatInput
+type "Answer in one short sentence: who stands at the top of the lighthouse stairs in my document?"
+key ENTER
+expect chat_busy yes
+wait_chat 3600
+expect chat_count 2
+expect chat_last "Zo"
+expect chat_last_not "<think"
+expect chat_last_not "<|"
+expect files "$DIR/.scribodo/chats" ".jsonl" 1
+# Multi-turn: the follow-up only works if history is sent.
+type "What is her surname? Reply with just the surname."
+key ENTER
+wait_chat 3600
+expect chat_count 4
+expect chat_last "Ångström"
+shot real-chat
+# Stop a long reply mid-stream.
+type "Write a 600-word scene about the fog rolling over the fjord at night."
+key ENTER
+wait 90
+expect chat_busy yes
+click_element SendButton
+wait_chat 600
+expect chat_busy no
+expect chat_count 6

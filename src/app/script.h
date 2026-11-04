@@ -19,6 +19,9 @@
  *                                click at the caret position of index N
  *   drag X1 Y1 X2 Y2 [HOLD]      press, move, hold HOLD frames, release
  *   drag_index A B               drag from index A to index B
+ *   click_element NAME [COUNT]   click the centre of a named UI element
+ *   wait_chat [MAX_FRAMES]       wait until no chat reply is streaming
+ *   wait_ready [MAX_FRAMES]      wait until the model is ready (fails on timeout)
  *   move X Y | wheel DY | wait FRAMES | resize W H | close
  *   shot NAME                    save a screenshot after this frame draws
  *   clipboard "text"             set the (private) clipboard
@@ -32,6 +35,9 @@
  *   expect clipboard "..."       expect visible N yes|no
  *   expect scrolled yes|no       expect explorer_w MIN MAX
  *   expect observer_w MIN MAX    expect editor_w MIN MAX
+ *   expect chat_count N          expect chat_last "substring"
+ *   expect chat_busy yes|no       expect chat_last_not "substring"
+ *   expect element_w NAME MIN MAX (width of a named element; 0 if absent)
  *   expect running no            (only valid as the last command, after close)
  */
 #ifndef SCRIBODO_SCRIPT_H
@@ -40,6 +46,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "llm/chat.h"
 #include "raylib.h"
 #include "ui/editor.h"
 
@@ -52,6 +59,11 @@ typedef struct {
     void (*open)(void *ctx, const char *path);
     void (*drop)(void *ctx, const char *path);
     void *ctx;
+    ChatSession *chat;
+    /* Screen rect of a named UI element ("ChatInput", "ChatItem0", ...). */
+    Rectangle (*element)(void *ctx, const char *name);
+    /* True once the model can take requests (always true for the fake). */
+    bool (*model_ready)(void *ctx);
 } ScriptHost;
 
 typedef struct Script Script;
