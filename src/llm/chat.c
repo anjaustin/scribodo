@@ -46,6 +46,7 @@ struct ChatSession {
     bool has_doc;
     char notice[256];
     char notice_out[256];
+    char build_error[256]; /* why the worker could not build the request */
     bool last_truncated;
     size_t target;           /* index of the assistant message being written */
     bool finished_pending;   /* worker finished; UI fires the done callback */
@@ -436,6 +437,7 @@ static void finish(ChatSession *s, bool error, const char *errmsg)
     ChatMessage *m = &s->msgs[s->target];
     m->streaming = false;
     m->truncated = s->last_truncated;
+    m->stopped = !error && atomic_load(&s->cancel);
     if (error) {
         m->error = true;
         if (!m->content || !m->content[0]) {
@@ -494,6 +496,16 @@ static bool build_in_worker(ChatSession *s)
      * (red-team 003: a mismatch overflowed the context despite trimming). */
     int slot_ctx = s->server ? llm_server_slot_ctx(s->server) : SLOT_CTX_TOKENS;
     char *req = NULL;
+    s->build_error[0] = '\0';
+    if (ok && s->edit_passage) {
+        /* The passage and its rewrite must both fit in one request. */
+        long pt = count_tokens(s->server ? server_count : NULL, s, s->edit_passage);
+        if (pt * 3 > slot_ctx - 512) {
+            snprintf(s->build_error, sizeof(s->build_error),
+                     "The selection is too long to edit in one go (about %ld tokens). Select a shorter passage.", pt);
+            ok = false;
+        }
+    }
     if (ok && s->edit_passage)
         req = chat_build_edit_request(s->edit_instruction, s->edit_passage, s->has_doc ? &ctx : NULL, slot_ctx,
                                       s->server ? server_count : NULL, s, &truncated);
@@ -515,7 +527,7 @@ static void *fake_worker(void *arg)
 {
     ChatSession *s = arg;
     if (!build_in_worker(s)) {
-        finish(s, true, "Out of memory");
+        finish(s, true, s->build_error[0] ? s->build_error : "Out of memory");
         return NULL;
     }
     /* Echo the last user message; mention the document if one was sent. */
@@ -552,7 +564,7 @@ static void *server_worker(void *arg)
 {
     ChatSession *s = arg;
     if (!build_in_worker(s)) {
-        finish(s, true, atomic_load(&s->cancel) ? "" : "Could not prepare the request");
+        finish(s, true, atomic_load(&s->cancel) ? "" : s->build_error[0] ? s->build_error : "Could not prepare the request");
         return NULL;
     }
     StreamCtx c = { .s = s, .rc = 1 };

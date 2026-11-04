@@ -296,6 +296,23 @@ static void test_clean_edit(void)
         { "<think>plan</think>The fog rolled in.", "x", "The fog rolled in." },
         { "The fog rolled in.", "The fog came in.\n", "The fog rolled in.\n" }, /* keep paragraph break */
         { "Here is: a list of things", "x", "Here is: a list of things" }, /* not a preamble line */
+        /* Red-team 004: the passage's own surrounding whitespace is kept
+         * exactly, so a selection starting at a blank line isn't merged. */
+        { "She climbed the stairs slowly.", "\n\nShe climed the stares slowly.", "\n\nShe climbed the stairs slowly." },
+        { "\n  Tight.  \n", "  Loose words.\n\n", "  Tight.\n\n" },
+        { "   \n ", "Some passage", "" }, /* nothing: no proposal */
+        { "<think>only reasoning</think>", "Some passage", "" },
+        /* Red-team 004: preamble words must be whole words, and a passage
+         * that itself opens that way is not a preamble. */
+        { "Surely he knew:\nthe door was locked.", "x", "Surely he knew:\nthe door was locked." },
+        { "Hereafter:\nnothing.", "x", "Hereafter:\nnothing." },
+        { "Sure, here it is:\nThe fog rolled in.", "The fog came in.", "The fog rolled in." },
+        { "Okay:\nThe fog rolled in.", "The fog came in.", "The fog rolled in." },
+        { "Here is the list:\nbread, milk", "Here is the list:\nbread", "Here is the list:\nbread, milk" },
+        /* Dialogue is not a wrapped reply: quotes inside mean keep them all. */
+        { "\"Run,\" she said. \"Now.\"", "Run, she said. Now.", "\"Run,\" she said. \"Now.\"" },
+        { "\xE2\x80\x9CRun,\xE2\x80\x9D she said. \xE2\x80\x9CNow.\xE2\x80\x9D", "Run, she said.",
+          "\xE2\x80\x9CRun,\xE2\x80\x9D she said. \xE2\x80\x9CNow.\xE2\x80\x9D" },
     };
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         char *out = llm_clean_edit(cases[i].reply, cases[i].passage);
@@ -333,6 +350,28 @@ static void test_edit_request(void)
     free(req);
     free(passage);
     free(doc);
+}
+
+static void test_edit_too_long(void)
+{
+    /* A passage that cannot fit with its rewrite gets a clear refusal, not a
+     * misleading "conversation too long" from the server. */
+    ChatSession *s = chat_create(NULL);
+    DoneCtx d = { 0 };
+    chat_on_message_done(s, on_done, &d);
+    size_t n = 200000;
+    char *p = malloc(n + 1);
+    memset(p, 'w', n);
+    p[n] = 0;
+    char err[160];
+    CHECK(chat_send_edit(s, "tighten", p, NULL, err, sizeof(err)));
+    wait_idle(s, &d, 2);
+    chat_lock(s);
+    const ChatMessage *m = chat_message(s, 1);
+    CHECK(m && m->error && strstr(m->content, "too long to edit in one go"));
+    chat_unlock(s);
+    chat_destroy(s);
+    free(p);
 }
 
 static void test_fake_edit(void)
@@ -776,6 +815,7 @@ int main(int argc, char **argv)
         { "clean_edit", test_clean_edit },
         { "edit_request", test_edit_request },
         { "fake_edit", test_fake_edit },
+        { "edit_too_long", test_edit_too_long },
         { "revisions", test_revisions },
         { "truncated_stream_is_an_error", test_truncated_stream_is_an_error },
         { "ok_stream_and_context_error", test_ok_stream_and_context_error },

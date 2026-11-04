@@ -62,11 +62,38 @@ static void append(char **buf, size_t *len, size_t *cap, const char *s, size_t n
     (*buf)[*len] = '\0';
 }
 
-static bool starts_ci(const char *s, const char *prefix)
+/* `s` starts with the word `w` (case-insensitive), not just its letters:
+ * "Sure," matches "sure" but "Surely" does not. */
+static bool starts_word_ci(const char *s, const char *w)
 {
-    for (; *prefix; s++, prefix++)
-        if ((*s | 0x20) != (*prefix | 0x20)) return false;
-    return true;
+    for (; *w; s++, w++)
+        if ((*s | 0x20) != (*w | 0x20)) return false;
+    unsigned char c = (unsigned char)*s;
+    return !((c | 0x20) >= 'a' && (c | 0x20) <= 'z') && c != '\'' && c < 0x80;
+}
+
+/* A model preamble such as "Here is the revised passage:" or "Sure:" —
+ * a short first line ending in ':' that opens with a stock word, and that
+ * is not the start of the passage itself (red-team 004: "Surely he knew:"
+ * and "Hereafter:" were stripped as preambles). */
+static bool is_preamble(const char *line, size_t len, const char *passage)
+{
+    if (len < 2 || len > 90 || line[len - 1] != ':') return false;
+    static const char *const words[] = { "here", "sure", "certainly", "okay", "ok", "revised", "rewritten", "edited" };
+    bool stock = false;
+    for (size_t i = 0; i < sizeof(words) / sizeof(words[0]) && !stock; i++) stock = starts_word_ci(line, words[i]);
+    if (!stock) return false;
+    while (passage && (*passage == ' ' || *passage == '\n' || *passage == '\r' || *passage == '\t')) passage++;
+    return !(passage && !strncmp(passage, line, len));
+}
+
+/* `q` occurs in s[from, to). */
+static bool contains(const char *s, size_t from, size_t to, const char *q)
+{
+    size_t ql = strlen(q);
+    for (size_t i = from; i + ql <= to; i++)
+        if (!memcmp(s + i, q, ql)) return true;
+    return false;
 }
 
 char *llm_clean_edit(const char *reply, const char *passage)
@@ -77,10 +104,7 @@ char *llm_clean_edit(const char *reply, const char *passage)
     char *p = visible;
     /* A leading preamble line ending in ':' (e.g. "Here is the revised passage:"). */
     char *nl = strchr(p, '\n');
-    if (nl && nl > p && nl[-1] == ':' && (starts_ci(p, "here") || starts_ci(p, "sure") || starts_ci(p, "revised") ||
-                                          starts_ci(p, "rewritten") || starts_ci(p, "certainly") || starts_ci(p, "okay"))) {
-        p = nl + 1;
-    }
+    if (nl && nl > p && is_preamble(p, (size_t)(nl - p), passage)) p = nl + 1;
     while (*p == '\n' || *p == ' ' || *p == '\r' || *p == '\t') p++;
     /* A wrapping code fence. */
     if (!strncmp(p, "```", 3)) {
@@ -93,25 +117,39 @@ char *llm_clean_edit(const char *reply, const char *passage)
     }
     size_t n = strlen(p);
     while (n && (p[n - 1] == '\n' || p[n - 1] == ' ' || p[n - 1] == '\r' || p[n - 1] == '\t')) p[--n] = '\0';
-    /* Wrapping quotes the passage didn't have. */
+    /* Quotes wrapping the whole reply that the passage didn't have, and only
+     * when no quote mark occurs inside: "Run," she said. "Now." is dialogue,
+     * not a wrapped reply (red-team 004). */
     static const char *const quotes[][2] = { { "\"", "\"" }, { "\xE2\x80\x9C", "\xE2\x80\x9D" } };
     for (size_t q = 0; q < 2; q++) {
         size_t lo = strlen(quotes[q][0]), lc = strlen(quotes[q][1]);
         bool had = passage && !strncmp(passage, quotes[q][0], lo);
-        if (!had && n >= lo + lc && !strncmp(p, quotes[q][0], lo) && !strcmp(p + n - lc, quotes[q][1])) {
+        if (!had && n >= lo + lc && !strncmp(p, quotes[q][0], lo) && !strcmp(p + n - lc, quotes[q][1]) &&
+            !contains(p, lo, n - lc, quotes[q][0]) && !contains(p, lo, n - lc, quotes[q][1])) {
             p[n - lc] = '\0';
             p += lo;
             n -= lo + lc;
         }
     }
-    /* Keep the passage's trailing newline, if it had one, so paragraph
-     * breaks around the selection survive the replacement. */
-    size_t pl = passage ? strlen(passage) : 0;
-    bool trailing_nl = pl && passage[pl - 1] == '\n';
-    char *out = malloc(strlen(p) + 2);
+    /* Keep the passage's own leading and trailing whitespace exactly, so the
+     * paragraph breaks around a selection survive the replacement (red-team
+     * 004: a selection starting at a blank line was merged into the
+     * previous paragraph, an invisible change in the diff). */
+    const char *pp = passage ? passage : "";
+    size_t pl = strlen(pp), lead = 0, trail = 0;
+    while (lead < pl && (pp[lead] == ' ' || pp[lead] == '\n' || pp[lead] == '\r' || pp[lead] == '\t')) lead++;
+    while (trail < pl - lead && (pp[pl - 1 - trail] == ' ' || pp[pl - 1 - trail] == '\n' ||
+                                 pp[pl - 1 - trail] == '\r' || pp[pl - 1 - trail] == '\t'))
+        trail++;
+    size_t body = strlen(p);
+    char *out = malloc(lead + body + trail + 1);
     if (out) {
-        strcpy(out, p);
-        if (trailing_nl) strcat(out, "\n");
+        memcpy(out, pp, lead);
+        memcpy(out + lead, p, body);
+        memcpy(out + lead + body, pp + pl - trail, trail);
+        out[lead + body + trail] = '\0';
+        /* A reply that is only whitespace is no proposal at all. */
+        if (body == 0) out[0] = '\0';
     }
     free(visible);
     return out;

@@ -26,6 +26,7 @@ struct ReviewView {
     float scroll;
     int removed, added;
     char header[256];
+    char warning[200];
 };
 
 static float adv(uint32_t cp, void *ctx) { return sfont_advance((const SFont *)ctx, cp); }
@@ -94,7 +95,9 @@ static bool add_span(ReviewView *v, const char *p, size_t n, unsigned char st)
     return ok;
 }
 
-bool review_set(ReviewView *v, const char *original, const char *replacement, const char *note)
+const char *review_warning(const ReviewView *v) { return v->warning; }
+
+bool review_set(ReviewView *v, const char *original, const char *replacement, const char *note, bool truncated)
 {
     Diff d;
     if (!diff_words(original, replacement, 0, &d)) return false;
@@ -119,6 +122,20 @@ bool review_set(ReviewView *v, const char *original, const char *replacement, co
     else
         snprintf(v->header, sizeof(v->header), "Proposed edit \xC2\xB7 %d word%s removed, %d added%s%s", v->removed,
                  v->removed == 1 ? "" : "s", v->added, note && note[0] ? " \xC2\xB7 " : "", note ? note : "");
+    /* Warn about proposals that are probably not what the author asked for
+     * (red-team 004: a long passage came back 95% shorter, cut mid-sentence;
+     * a question came back as the passage plus commentary). */
+    int orig_words = count_words(original, strlen(original));
+    int new_words = count_words(replacement, strlen(replacement));
+    v->warning[0] = '\0';
+    if (truncated)
+        snprintf(v->warning, sizeof(v->warning), "\xE2\x9A\xA0 The reply is incomplete (stopped, or at the length limit) \xE2\x80\x94 the end may be missing.");
+    else if (orig_words >= 12 && new_words * 100 < orig_words * 50)
+        snprintf(v->warning, sizeof(v->warning), "\xE2\x9A\xA0 The proposal is much shorter than the passage (%d of %d words). Check before accepting.",
+                 new_words, orig_words);
+    else if (orig_words >= 4 && new_words * 100 > orig_words * 250)
+        snprintf(v->warning, sizeof(v->warning), "\xE2\x9A\xA0 The proposal is much longer than the passage (%d vs %d words) \xE2\x80\x94 it may include commentary.",
+                 new_words, orig_words);
     v->active = true;
     return true;
 }
@@ -133,7 +150,7 @@ static void relayout(ReviewView *v, float width)
 float review_height(ReviewView *v, float width, float max_h)
 {
     relayout(v, width - 2 * PAD);
-    float h = HEADER_H + (float)v->layout.count * v->text->line_height + PAD;
+    float h = HEADER_H + (v->warning[0] ? 22.0f : 0.0f) + (float)v->layout.count * v->text->line_height + PAD;
     return h < max_h ? h : max_h;
 }
 
@@ -178,8 +195,14 @@ void review_draw(ReviewView *v, Rectangle r)
         sfont_draw_utf8(v->label, v->header, len, r.x + PAD, r.y + 11, HEAD);
     }
 
+    float warn_h = 0;
+    if (v->warning[0]) {
+        static const Color WARN = { 0xE6, 0xB4, 0x50, 0xFF };
+        sfont_draw_utf8(v->label, v->warning, (int)strlen(v->warning), r.x + PAD, r.y + HEADER_H - 4, WARN);
+        warn_h = 22.0f;
+    }
     relayout(v, r.width - 2 * PAD);
-    Rectangle body = { r.x, r.y + HEADER_H, r.width, r.height - HEADER_H };
+    Rectangle body = { r.x, r.y + HEADER_H + warn_h, r.width, r.height - HEADER_H - warn_h };
     BeginScissorMode((int)body.x, (int)body.y, (int)body.width, (int)body.height);
     float lh = v->text->line_height;
     for (size_t row = 0; row < v->layout.count; row++) {
@@ -192,8 +215,14 @@ void review_draw(ReviewView *v, Rectangle r)
             float a = sfont_advance(v->text, cp);
             unsigned char st = v->style[i];
             if (st == ST_INS) DrawRectangleRec((Rectangle){ x, y + 2, a, lh - 4 }, INS_BG);
-            sfont_draw(v->text, cp, x, y, st == ST_DEL ? DEL : st == ST_INS ? INS : TEXT);
-            if (st == ST_DEL && cp != '\n') DrawRectangleRec((Rectangle){ x, y + lh * 0.52f, a, 1.5f }, DEL);
+            if (cp == '\n' && st != ST_EQUAL) {
+                /* A changed line break is otherwise invisible: show a pilcrow. */
+                sfont_draw(v->text, 0x00B6, x, y, st == ST_DEL ? DEL : INS);
+                if (st == ST_DEL) DrawRectangleRec((Rectangle){ x, y + lh * 0.52f, sfont_advance(v->text, 0x00B6), 1.5f }, DEL);
+            } else {
+                sfont_draw(v->text, cp, x, y, st == ST_DEL ? DEL : st == ST_INS ? INS : TEXT);
+                if (st == ST_DEL) DrawRectangleRec((Rectangle){ x, y + lh * 0.52f, a, 1.5f }, DEL);
+            }
             x += a;
         }
     }

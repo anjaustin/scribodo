@@ -16,8 +16,12 @@ typedef struct ReviewView ReviewView;
 ReviewView *review_create(SFont *text_font, SFont *label_font);
 void review_destroy(ReviewView *v);
 
-/* Show a proposal (copies both strings). `note` is shown in the header. */
-bool review_set(ReviewView *v, const char *original, const char *replacement, const char *note);
+/* Show a proposal (copies both strings). `note` is shown in the header;
+ * `truncated` marks an incomplete reply (length limit, or stopped). */
+bool review_set(ReviewView *v, const char *original, const char *replacement, const char *note, bool truncated);
+/* Warning shown above the diff ("" if none), e.g. a proposal far shorter
+ * than the passage. */
+const char *review_warning(const ReviewView *v);
 void review_clear(ReviewView *v);
 bool review_active(const ReviewView *v);
 

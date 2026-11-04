@@ -35,6 +35,7 @@ struct ChatView {
     uint64_t seen_version;
     bool copied;
     long apply_index;
+    Rectangle last_apply; /* the newest reply's Apply link, as last drawn */
     char *submitted;
 };
 
@@ -225,6 +226,8 @@ void chat_view_clear_input(ChatView *v)
     v->stick_to_end = true;
 }
 
+Rectangle chat_view_last_apply_rect(const ChatView *v) { return v->last_apply; }
+
 long chat_view_take_apply(ChatView *v)
 {
     long i = v->apply_index;
@@ -276,6 +279,7 @@ void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_foc
     }
     float y = list.y + PAD - v->scroll;
     bool blink = fmod(GetTime(), 1.0) < 0.6;
+    v->last_apply = (Rectangle){ 0 };
     for (size_t i = 0; i < n; i++) {
         const ChatMessage *m = chat_message(v->chat, i);
         refresh(v, i, m->content, width);
@@ -300,8 +304,9 @@ void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_foc
             sfont_draw_utf8(v->label, "Copy", 4, list.x + PAD, y + 2, COL_LINK);
             const char *apply = "Apply to document";
             sfont_draw_utf8(v->label, apply, (int)strlen(apply), list.x + PAD + 52, y + 2, COL_LINK);
-            if (m->truncated) {
-                const char *note = "Reply stopped at the length limit";
+            v->last_apply = (Rectangle){ list.x + PAD + 52, y + 2, 120, LABEL_H };
+            if (m->truncated || m->stopped) {
+                const char *note = m->stopped ? "Stopped before the end" : "Reply stopped at the length limit";
                 sfont_draw_utf8(v->label, note, (int)strlen(note), list.x + PAD + 190, y + 2, COL_LABEL);
             }
             y += LABEL_H;

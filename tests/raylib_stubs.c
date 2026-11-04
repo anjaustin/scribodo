@@ -41,3 +41,6 @@ void sfont_draw_utf8(const SFont *f, const char *s, int len, float x, float y, C
 {
     (void)f; (void)s; (void)len; (void)x; (void)y; (void)c;
 }
+/* Used by the review panel (test_editor: review_warnings). */
+void DrawRectangleLinesEx(Rectangle r, float t, Color c) { (void)r; (void)t; (void)c; }
+float sfont_measure_utf8(const SFont *f, const char *s, int len) { (void)f; (void)s; return (float)len * 8.0f; }

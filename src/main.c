@@ -58,6 +58,9 @@ static const Clay_Color COL_ERR     = RGB(0xE5, 0x73, 0x73);
 #define SPLITTER_W 5
 #define MAX_DOCS 200
 
+/* Revisions listed in History (newest first). */
+#define REV_SHOW 100
+
 typedef struct {
     Editor *editor;
     SFont fonts[FONT_COUNT];
@@ -87,25 +90,22 @@ typedef struct {
     /* Reviewed AI edits */
     ReviewView *review;
     bool edit_mode;              /* next chat message is an edit instruction */
-    size_t edit_start, edit_len; /* the selected passage (codepoints) */
-    char *edit_text;
+    char *edit_text;             /* the selected passage (its position is the editor's anchor) */
     char edit_banner[240];
     struct {
         bool active;             /* an edit request is streaming */
         size_t index;            /* its assistant message */
-        size_t start, len;
         char *original, *instruction;
     } pending;
     struct {
         bool active;
-        size_t start, len;
         char *original, *replacement, *note;
         char doc[PATH_MAX];
     } proposal;
     Rectangle review_rect;
     Revision *revs;
     size_t nrevs;
-    char rev_labels[16][64];
+    char rev_labels[REV_SHOW][64];
 
     /* Project (the folder holding the open document) */
     char project_dir[PATH_MAX];
@@ -169,7 +169,7 @@ static void refresh_lists(App *app)
         { "save", "Saved" }, { "ai-edit", "AI edit" }, { "before-ai-edit", "Before AI edit" },
         { "restore", "Restored" }, { "before-restore", "Before restore" },
     };
-    for (size_t i = 0; i < app->nrevs && i < 16; i++) {
+    for (size_t i = 0; i < app->nrevs && i < REV_SHOW; i++) {
         const char *lbl = app->revs[i].origin;
         for (size_t k = 0; k < sizeof(names) / sizeof(names[0]); k++)
             if (!strcmp(names[k].origin, app->revs[i].origin)) lbl = names[k].label;
@@ -208,7 +208,7 @@ static void clear_proposal(App *app)
     free(app->proposal.note);
     memset(&app->proposal, 0, sizeof(app->proposal));
     review_clear(app->review);
-    editor_set_highlight(app->editor, 0, 0);
+    editor_anchor_clear(app->editor);
 }
 
 static void clear_pending(App *app)
@@ -226,35 +226,41 @@ static void leave_edit_mode(App *app)
 }
 
 /* Show a proposal for review. Takes ownership of nothing; copies. */
-static void propose(App *app, size_t start, size_t len, const char *original, const char *replacement, const char *note)
+static void propose(App *app, size_t start, size_t len, const char *original, const char *replacement, const char *note,
+                    bool truncated)
 {
     clear_proposal(app);
     if (!editor_path(app->editor)) return;
+    if (!editor_anchor_set(app->editor, start, len)) return;
+    if (!replacement[0]) {
+        editor_anchor_clear(app->editor);
+        /* An empty reply is not a proposal to delete the passage. */
+        set_status(app, "The model returned no text for this edit; nothing was proposed");
+        return;
+    }
     app->proposal.active = true;
-    app->proposal.start = start;
-    app->proposal.len = len;
     app->proposal.original = strdup(original);
     app->proposal.replacement = strdup(replacement);
     app->proposal.note = strdup(note ? note : "");
     snprintf(app->proposal.doc, sizeof(app->proposal.doc), "%s", editor_path(app->editor));
-    if (!app->proposal.original || !app->proposal.replacement || !review_set(app->review, original, replacement, note)) {
+    if (!app->proposal.original || !app->proposal.replacement || !review_set(app->review, original, replacement, note, truncated)) {
         clear_proposal(app);
         set_status(app, "Could not show the proposed edit");
         return;
     }
-    editor_set_highlight(app->editor, start, len);
     editor_reveal(app->editor, start);
 }
 
-static void record_revision(App *app, const char *origin, const char *note)
+/* Returns false (and says so) if the revision could not be written. */
+static bool record_revision(App *app, const char *origin, const char *note)
 {
-    if (!app->project_dir[0] || !editor_path(app->editor)) return;
+    if (!app->project_dir[0] || !editor_path(app->editor)) return true; /* no history to keep */
     char *text = editor_text_utf8(app->editor);
-    if (!text) return;
-    if (!revisions_record(app->project_dir, editor_path(app->editor), text, origin, note, NULL))
-        set_status(app, "Could not record a revision in .scribodo/revisions");
+    bool ok = text && revisions_record(app->project_dir, editor_path(app->editor), text, origin, note, NULL);
     free(text);
+    if (!ok) set_status(app, "Could not record a revision in .scribodo/revisions");
     app->lists_dirty = true;
+    return ok;
 }
 
 static void accept_proposal(App *app)
@@ -269,33 +275,37 @@ static void accept_proposal(App *app)
         set_status(app, "This document is read-only; the edit can't be applied");
         return;
     }
-    /* Never apply over text that changed since the proposal was made: the
-     * passage must still be there, exactly (re-anchored if text moved). */
-    size_t start = app->proposal.start, len = app->proposal.len;
-    char *now = editor_range_utf8(app->editor, start, len);
-    bool same = now && !strcmp(now, app->proposal.original);
-    free(now);
-    if (!same && len > 0) {
-        size_t first = 0;
-        size_t hits = editor_find_utf8(app->editor, app->proposal.original, &first);
-        if (hits == 1) {
-            start = first;
-            same = true;
-        }
+    /* Never apply over text that changed since the proposal was made. The
+     * editor tracks the passage through every edit (red-team 004: matching by
+     * offset or by text could land on a different copy of the same words, or
+     * insert mid-word after earlier text changed). */
+    size_t start = 0, len = 0;
+    bool same = editor_anchor_get(app->editor, &start, &len);
+    if (same) {
+        char *now = editor_range_utf8(app->editor, start, len);
+        same = now && !strcmp(now, app->proposal.original);
+        free(now);
     }
     if (!same) {
         clear_proposal(app);
         set_status(app, "The passage changed since this edit was proposed. Select it again and request a new edit.");
         return;
     }
-    record_revision(app, "before-ai-edit", app->proposal.note);
+    /* The text before the edit must be safely in History before it changes. */
+    if (!record_revision(app, "before-ai-edit", app->proposal.note)) {
+        set_status(app, "The edit was not applied: could not save the current text to History (.scribodo/revisions)");
+        return;
+    }
     if (!editor_replace_range_utf8(app->editor, start, len, app->proposal.replacement)) {
         set_status(app, "Could not apply the edit");
         return;
     }
-    record_revision(app, "ai-edit", app->proposal.note);
+    bool after = record_revision(app, "ai-edit", app->proposal.note);
     clear_proposal(app);
-    set_status(app, "Edit applied \xC2\xB7 \xE2\x8C\x98Z undoes it \xC2\xB7 the file isn't saved until you press \xE2\x8C\x98S");
+    if (after)
+        set_status(app, "Edit applied \xC2\xB7 \xE2\x8C\x98Z undoes it \xC2\xB7 the file isn't saved until you press \xE2\x8C\x98S");
+    else
+        set_status(app, "Edit applied, but it could not be recorded in History \xC2\xB7 \xE2\x8C\x98Z undoes it");
     app->focus = FOCUS_DOC;
 }
 
@@ -319,12 +329,15 @@ static void begin_edit(App *app)
         set_status(app, "Select the passage you want edited, then press \xE2\x8C\x98K");
         return;
     }
+    if (app->pending.active) {
+        set_status(app, "Wait for the current edit to finish (or stop it) before requesting another");
+        return;
+    }
     leave_edit_mode(app);
+    clear_proposal(app); /* one passage at a time: a new request replaces the open proposal */
     app->edit_text = editor_range_utf8(app->editor, lo, hi - lo);
     if (!app->edit_text) return;
     app->edit_mode = true;
-    app->edit_start = lo;
-    app->edit_len = hi - lo;
     /* Banner: the first words of the passage. */
     char first[80];
     snprintf(first, sizeof(first), "%.60s", app->edit_text);
@@ -337,7 +350,7 @@ static void begin_edit(App *app)
     first[fl] = '\0';
     snprintf(app->edit_banner, sizeof(app->edit_banner), "\xE2\x9C\x8E Editing \xE2\x80\x9C%s%s\xE2\x80\x9D \xE2\x80\x94 describe the change",
              first, strlen(app->edit_text) > fl ? "\xE2\x80\xA6" : "");
-    editor_set_highlight(app->editor, lo, hi - lo);
+    editor_anchor_set(app->editor, lo, hi - lo);
     app->focus = FOCUS_CHAT;
 }
 
@@ -357,11 +370,13 @@ static void restore_revision(App *app, const Revision *r)
     if (now && !strcmp(now, text)) {
         set_status(app, "That revision is already the current text");
     } else {
-        record_revision(app, "before-restore", r->file);
-        clear_proposal(app);
-        if (editor_replace_range_utf8(app->editor, 0, editor_length(app->editor), text)) {
-            record_revision(app, "restore", r->file);
-            set_status(app, "Revision restored \xC2\xB7 \xE2\x8C\x98Z undoes it \xC2\xB7 not saved to the file yet");
+        if (!record_revision(app, "before-restore", r->file)) {
+            set_status(app, "Not restored: could not save the current text to History (.scribodo/revisions)");
+        } else if (clear_proposal(app), editor_replace_range_utf8(app->editor, 0, editor_length(app->editor), text)) {
+            if (record_revision(app, "restore", r->file))
+                set_status(app, "Revision restored \xC2\xB7 \xE2\x8C\x98Z undoes it \xC2\xB7 not saved to the file yet");
+            else
+                set_status(app, "Revision restored, but it could not be recorded in History \xC2\xB7 \xE2\x8C\x98Z undoes it");
         } else {
             set_status(app, "Could not restore that revision");
         }
@@ -418,13 +433,23 @@ static void on_message_done(ChatSession *s, size_t index, void *ctx)
     chat_unlock(s);
     if (!m || !copy.content) return;
     if (app->pending.active && index == app->pending.index) {
-        if (!copy.error && copy.content[0]) {
-            char *clean = llm_clean_edit(copy.content, app->pending.original);
-            if (clean) propose(app, app->pending.start, app->pending.len, app->pending.original, clean,
-                               app->pending.instruction);
-            free(clean);
+        size_t start = 0, len = 0;
+        bool intact = editor_anchor_get(app->editor, &start, &len);
+        if (copy.error || !copy.content[0]) {
+            editor_anchor_clear(app->editor);
+        } else if (copy.stopped) {
+            /* A reply stopped part-way is not a replacement for the whole
+             * passage (red-team 004). */
+            editor_anchor_clear(app->editor);
+            set_status(app, "Edit stopped \xE2\x80\x94 nothing was proposed");
+        } else if (!intact) {
+            editor_anchor_clear(app->editor);
+            set_status(app, "The passage changed while the edit was being written; nothing was proposed");
         } else {
-            editor_set_highlight(app->editor, 0, 0);
+            char *clean = llm_clean_edit(copy.content, app->pending.original);
+            if (clean) propose(app, start, len, app->pending.original, clean, app->pending.instruction, copy.truncated);
+            else editor_anchor_clear(app->editor);
+            free(clean);
         }
         clear_pending(app);
     }
@@ -511,7 +536,14 @@ static void send_chat(App *app, char *text)
     }
     char err[256] = "";
     bool sent;
-    if (app->edit_mode && app->edit_text) {
+    size_t a_start = 0, a_len = 0;
+    if (app->edit_mode && app->edit_text && !editor_anchor_get(app->editor, &a_start, &a_len)) {
+        /* The passage was changed after ⌘K: the request would describe stale text. */
+        leave_edit_mode(app);
+        editor_anchor_clear(app->editor);
+        sent = false;
+        snprintf(err, sizeof(err), "The selected passage changed. Select it again and press \xE2\x8C\x98K.");
+    } else if (app->edit_mode && app->edit_text) {
         sent = chat_send_edit(app->chat, text, app->edit_text, &ctx, err, sizeof(err));
         if (sent) {
             clear_proposal(app);
@@ -520,11 +552,9 @@ static void send_chat(App *app, char *text)
             chat_lock(app->chat);
             app->pending.index = chat_count(app->chat) - 1;
             chat_unlock(app->chat);
-            app->pending.start = app->edit_start;
-            app->pending.len = app->edit_len;
             app->pending.original = strdup(app->edit_text);
             app->pending.instruction = strdup(text);
-            editor_set_highlight(app->editor, app->edit_start, app->edit_len);
+            editor_anchor_set(app->editor, a_start, a_len); /* clear_proposal dropped it */
             leave_edit_mode(app);
         }
     } else {
@@ -664,7 +694,7 @@ static Clay_RenderCommandArray build_layout(App *app)
                    .layout = { .sizing = { CLAY_SIZING_FIXED(app->explorer_w), CLAY_SIZING_GROW(0) },
                                .padding = CLAY_PADDING_ALL(12), .childGap = 2,
                                .layoutDirection = CLAY_TOP_TO_BOTTOM },
-                   .backgroundColor = COL_PANEL, .clip = { .vertical = true } }) {
+                   .backgroundColor = COL_PANEL, .clip = { .vertical = true, .childOffset = Clay_GetScrollOffset() } }) {
                 section_header("DOCUMENTS");
                 const char *cur = editor_path(app->editor) ? base_name(editor_path(app->editor)) : "";
                 if (app->ndocs == 0) coming_soon("No .md or .txt files here");
@@ -677,8 +707,9 @@ static Clay_RenderCommandArray build_layout(App *app)
                 if (!app->project_dir[0]) coming_soon("Open a document to save chats");
                 section_header("HISTORY");
                 if (app->nrevs == 0) coming_soon(editor_path(app->editor) ? "No revisions yet" : "Open a document");
-                for (size_t i = 0; i < app->nrevs && i < 16; i++)
+                for (size_t i = 0; i < app->nrevs && i < REV_SHOW; i++)
                     list_item(CLAY_IDI("RevItem", (uint32_t)i), app->rev_labels[i], false);
+                if (app->nrevs > REV_SHOW) coming_soon("Older revisions are in .scribodo/revisions");
                 section_header("NOTES");
                 coming_soon("Coming soon");
                 section_header("CANON");
@@ -781,6 +812,7 @@ static Rectangle host_element(void *ctx, const char *name)
     App *app = ctx;
     if (!strcmp(name, "ReviewPanel")) return review_active(app->review) ? app->review_rect : (Rectangle){ 0 };
     if (!strcmp(name, "AcceptEdit")) return review_active(app->review) ? review_accept_rect(app->review_rect) : (Rectangle){ 0 };
+    if (!strcmp(name, "ApplyLast")) return chat_view_last_apply_rect(app->chat_view);
     if (!strcmp(name, "RejectEdit")) return review_active(app->review) ? review_reject_rect(app->review_rect) : (Rectangle){ 0 };
     size_t n = strlen(name), k = n;
     while (k > 0 && name[k - 1] >= '0' && name[k - 1] <= '9') k--;
@@ -1004,6 +1036,9 @@ int main(int argc, char **argv)
         Vector2 mouse = GetMousePosition();
         bool mouse_down = IsMouseButtonDown(MOUSE_BUTTON_LEFT);
         Clay_SetPointerState((Clay_Vector2){ mouse.x, mouse.y }, mouse_down);
+        /* The Explorer scrolls (long History / chat lists). */
+        Vector2 wheel = GetMouseWheelMoveV();
+        Clay_UpdateScrollContainers(false, (Clay_Vector2){ wheel.x * 30.0f, wheel.y * 30.0f }, GetFrameTime());
         Clay_SetLayoutDimensions((Clay_Dimensions){ (float)GetScreenWidth(), (float)GetScreenHeight() });
 
         /* Clicks (pointer state reflects last frame's layout). */
@@ -1031,7 +1066,7 @@ int main(int argc, char **argv)
                         app.focus = FOCUS_CHAT;
                         break;
                     }
-                for (size_t i = 0; i < app.nrevs && i < 16; i++)
+                for (size_t i = 0; i < app.nrevs && i < REV_SHOW; i++)
                     if (Clay_PointerOver(CLAY_IDI("RevItem", (uint32_t)i))) {
                         Revision r = app.revs[i];
                         restore_revision(&app, &r);
@@ -1067,12 +1102,15 @@ int main(int argc, char **argv)
         if (primary && shortcut_pressed('s')) save(&app);
         if (primary && shortcut_pressed('l')) app.focus = FOCUS_CHAT;
         if (primary && shortcut_pressed('k')) begin_edit(&app);
-        if (primary && review_active(app.review) && (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER)))
+        /* Cmd+Enter accepts only outside the chat box, where it also sends the
+         * message being typed (red-team 004: one key did both). */
+        if (primary && review_active(app.review) && app.focus != FOCUS_CHAT &&
+            (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER)))
             accept_proposal(&app);
         if (app.focus == FOCUS_CHAT && IsKeyPressed(KEY_ESCAPE)) {
             if (app.edit_mode) {
                 leave_edit_mode(&app);
-                if (!app.pending.active) editor_set_highlight(app.editor, 0, 0);
+                if (!app.pending.active) editor_anchor_clear(app.editor);
             }
             app.focus = FOCUS_DOC;
         }
@@ -1111,11 +1149,13 @@ int main(int argc, char **argv)
         input_discard_chars(); /* after both views: nothing typed now may appear later */
         long apply = chat_view_take_apply(app.chat_view);
         if (apply >= 0) {
-            /* "Apply to document": propose a reply for the selection (or an
-             * insertion at the cursor); an edit reply re-opens its review. */
+            /* "Apply to document": propose a reply as a replacement for the
+             * selection, or as an insertion at the cursor. */
             chat_lock(app.chat);
             const ChatMessage *m = chat_message(app.chat, (size_t)apply);
             char *reply = m ? strdup(m->content) : NULL;
+            bool reply_cut = m && (m->truncated || m->stopped);
+            bool reply_edit = m && m->is_edit;
             chat_unlock(app.chat);
             size_t a, c;
             editor_get_selection(app.editor, &a, &c);
@@ -1123,10 +1163,19 @@ int main(int argc, char **argv)
             if (!reply) {
             } else if (!editor_path(app.editor) || editor_is_read_only(app.editor)) {
                 set_status(&app, "Open an editable document to apply a reply");
+            } else if (app.pending.active) {
+                set_status(&app, "Wait for the current edit to finish (or stop it) before applying a reply");
+            } else if (reply_edit && hi == lo) {
+                /* An edit reply rewrites a passage; inserting it would duplicate the text. */
+                set_status(&app, "Select the passage this rewrite replaces, then Apply");
             } else {
+                leave_edit_mode(&app);
                 char *orig = editor_range_utf8(app.editor, lo, hi - lo);
                 char *clean = llm_clean_edit(reply, orig ? orig : "");
-                if (orig && clean) propose(&app, lo, hi - lo, orig, clean, hi > lo ? "replace selection" : "insert at cursor");
+                char where[64];
+                if (hi > lo) snprintf(where, sizeof(where), "replace selection");
+                else snprintf(where, sizeof(where), "insert at line %d", editor_stats(app.editor).line);
+                if (orig && clean) propose(&app, lo, hi - lo, orig, clean, where, reply_cut);
                 free(orig);
                 free(clean);
             }
@@ -1174,7 +1223,7 @@ int main(int argc, char **argv)
         if (app.edit_mode) {
             if (GuiButton(ELEMENT_RECT("CancelEdit"), "Cancel")) {
                 leave_edit_mode(&app);
-                editor_set_highlight(app.editor, 0, 0);
+                editor_anchor_clear(app.editor);
             }
         } else {
             GuiCheckBox(inc_rect, NULL, &app.include_doc);

@@ -64,7 +64,11 @@ struct Editor {
     bool submit_on_enter;   /* Enter submits, Shift+Enter inserts a newline */
     bool submit_pending;
     char placeholder[128];
-    size_t hl_start, hl_len; /* highlighted range (proposal target) */
+    /* Tracked anchor: the passage an edit request/proposal targets. Its
+     * position follows every insert/delete (including undo/redo); any change
+     * inside it (or at an insertion point) marks it touched. */
+    bool anc_active, anc_touched;
+    size_t anc_start, anc_len;
     uint64_t saved_id;      /* undo state id at last load/save */
     uint64_t version; /* bumps on every content change */
 
@@ -98,6 +102,29 @@ static void ensure_layout(Editor *e)
     wrap_compute(&e->layout, &e->buf, w, adv_cb, e->font);
     e->layout_dirty = false;
     e->layout_width = w;
+}
+
+static void anchor_op(void *ctx, bool insert, size_t pos, size_t n)
+{
+    Editor *e = ctx;
+    if (!e->anc_active || e->anc_touched || n == 0) return;
+    size_t s = e->anc_start, end = s + e->anc_len;
+    if (insert) {
+        if (e->anc_len == 0 ? pos < s : pos <= s) e->anc_start += n;
+        else if (e->anc_len == 0 ? pos == s : pos < end) e->anc_touched = true;
+    } else {
+        if (pos + n <= s) e->anc_start -= n;
+        else if (e->anc_len == 0 ? pos < s : pos < end) e->anc_touched = true;
+    }
+}
+
+static void reset_undo(Editor *e)
+{
+    undo_free(&e->undo);
+    undo_init(&e->undo);
+    e->undo.on_op = anchor_op;
+    e->undo.on_op_ctx = e;
+    e->anc_active = false;
 }
 
 static void mark_changed(Editor *e)
@@ -143,6 +170,7 @@ static int insert_chars(Editor *e, int pos, const uint32_t *cps, int n)
 {
     if (n < 0 || tb_len(&e->buf) + (size_t)n > e->max_chars) return 0;
     if (!tb_insert(&e->buf, (size_t)pos, cps, (size_t)n)) return 0;
+    anchor_op(e, true, (size_t)pos, (size_t)n);
     if (!undo_record_insert(&e->undo, (size_t)pos, cps, (size_t)n)) undo_lost(e);
     mark_changed(e);
     return 1;
@@ -161,6 +189,7 @@ static void delete_chars(Editor *e, int pos, int n)
     }
     if (!recorded) undo_lost(e);
     tb_delete(&e->buf, (size_t)pos, (size_t)n);
+    anchor_op(e, false, (size_t)pos, (size_t)n);
     mark_changed(e);
 }
 
@@ -551,6 +580,7 @@ Editor *editor_create(SFont *font)
     e->font = font;
     tb_init(&e->buf);
     undo_init(&e->undo);
+    reset_undo(e);
     stb_textedit_initialize_state(&e->st, 0);
     e->layout_dirty = true;
     e->stats_version = UINT64_MAX;
@@ -591,8 +621,7 @@ bool editor_load_file(Editor *e, const char *path, char *err, size_t errlen)
         return false;
     }
 
-    undo_free(&e->undo);
-    undo_init(&e->undo);
+    reset_undo(e);
     stb_textedit_initialize_state(&e->st, 0);
     free(e->path);
     e->path = path_copy;
@@ -904,7 +933,7 @@ static void handle_keyboard(Editor *e)
         if (pressed(KEY_DELETE)) erase(e, false, unit);
         if (pressed(KEY_ENTER) || pressed(KEY_KP_ENTER)) {
             if (e->submit_on_enter && !shift) e->submit_pending = true;
-            else type_char(e, '\n');
+            else if (!primary) type_char(e, '\n'); /* ⌘↩ is a command (accept edit) */
         }
         if (pressed(KEY_TAB)) type_char(e, '\t');
     }
@@ -965,9 +994,10 @@ void editor_draw(Editor *e, Rectangle b, bool focused)
         float y = e->text_y + (float)r * lh - e->scroll_y;
         size_t end = row->start + row->len;
 
-        if (e->hl_len && e->hl_start < end + (row->len == 0) && e->hl_start + e->hl_len > row->start) {
-            size_t a = e->hl_start > row->start ? e->hl_start : row->start;
-            size_t z = e->hl_start + e->hl_len < end ? e->hl_start + e->hl_len : end;
+        bool hl = e->anc_active && !e->anc_touched && e->anc_len;
+        if (hl && e->anc_start < end + (row->len == 0) && e->anc_start + e->anc_len > row->start) {
+            size_t a = e->anc_start > row->start ? e->anc_start : row->start;
+            size_t z = e->anc_start + e->anc_len < end ? e->anc_start + e->anc_len : end;
             float x0 = row_x(e, row, a), x1 = row_x(e, row, z);
             DrawRectangleRec((Rectangle){ e->text_x + x0, y, x1 - x0, lh }, (Color){ 0x3A, 0x34, 0x1A, 0xFF });
         }
@@ -993,6 +1023,13 @@ void editor_draw(Editor *e, Rectangle b, bool focused)
     if (tb_len(&e->buf) == 0 && e->placeholder[0]) {
         sfont_draw_utf8(f, e->placeholder, (int)strlen(e->placeholder), e->text_x, e->text_y - e->scroll_y,
                         (Color){ 0x6E, 0x6E, 0x6E, 0xFF });
+    }
+
+    if (e->anc_active && !e->anc_touched && e->anc_len == 0 && e->anc_start <= tb_len(&e->buf)) {
+        size_t r = wrap_row_for_index(&e->layout, e->anc_start);
+        float mx = e->text_x + row_x(e, &e->layout.rows[r], e->anc_start);
+        float my = e->text_y + (float)r * lh - e->scroll_y;
+        DrawRectangleRec((Rectangle){ floorf(mx) - 2.0f, my + 2, 4.0f, lh - 4 }, (Color){ 0xE6, 0xB4, 0x50, 0xFF });
     }
 
     if (focused && fmod(GetTime() - e->blink_t0, 1.0) < 0.6) {
@@ -1211,8 +1248,7 @@ void editor_set_scratch(Editor *e, const char *placeholder)
 void editor_clear(Editor *e)
 {
     tb_set(&e->buf, NULL, 0);
-    undo_free(&e->undo);
-    undo_init(&e->undo);
+    reset_undo(e);
     stb_textedit_initialize_state(&e->st, 0);
     e->saved_id = undo_state_id(&e->undo);
     e->scroll_y = 0;
@@ -1277,7 +1313,7 @@ bool editor_replace_range_utf8(Editor *e, size_t start, size_t len, const char *
     n = sanitize_text(cps, n);
     bool ok = editor_replace_range(e, start, len, cps, n);
     free(cps);
-    if (ok) e->hl_len = 0;
+    if (ok) e->anc_active = false;
     return ok;
 }
 
@@ -1301,11 +1337,27 @@ size_t editor_find_utf8(const Editor *e, const char *utf8, size_t *first)
     return count;
 }
 
-void editor_set_highlight(Editor *e, size_t start, size_t len)
+bool editor_anchor_set(Editor *e, size_t start, size_t len)
 {
-    e->hl_start = start;
-    e->hl_len = len;
+    size_t total = tb_len(&e->buf);
+    if (start > total || len > total - start) return false;
+    e->anc_active = true;
+    e->anc_touched = false;
+    e->anc_start = start;
+    e->anc_len = len;
+    return true;
 }
+
+bool editor_anchor_get(const Editor *e, size_t *start, size_t *len)
+{
+    if (!e->anc_active || e->anc_touched) return false;
+    *start = e->anc_start;
+    *len = e->anc_len;
+    return true;
+}
+
+bool editor_anchor_active(const Editor *e) { return e->anc_active; }
+void editor_anchor_clear(Editor *e) { e->anc_active = false; }
 
 void editor_reveal(Editor *e, size_t index)
 {

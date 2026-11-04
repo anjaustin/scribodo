@@ -60,6 +60,10 @@ typedef struct {
     UndoMergeKind pending_kind;
     uint64_t base_id; /* state id when no group is applied */
     uint64_t next_id;
+    /* Called for every primitive change undo/redo makes to the buffer, so
+     * callers can keep positions (e.g. a proposal's anchor) up to date. */
+    void (*on_op)(void *ctx, bool insert, size_t pos, size_t len);
+    void *on_op_ctx;
 } UndoLog;
 
 void undo_init(UndoLog *log);

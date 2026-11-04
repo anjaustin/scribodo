@@ -95,7 +95,7 @@ $(BUILD)/test_llm: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_llm.o
 	$(CC) $(CFLAGS) $^ -o $@ -lpthread
 
 # The real editor, linked against headless raylib stubs.
-$(BUILD)/test_editor: $(CORE_OBJS) $(BUILD)/src/ui/editor.o $(BUILD)/src/ui/input.o $(BUILD)/tests/raylib_stubs.o $(BUILD)/tests/test_editor.o
+$(BUILD)/test_editor: $(CORE_OBJS) $(BUILD)/src/ui/editor.o $(BUILD)/src/ui/input.o $(BUILD)/src/ui/review_view.o $(BUILD)/tests/raylib_stubs.o $(BUILD)/tests/test_editor.o
 	$(CC) $(CFLAGS) $^ -o $@ -lm
 
 # Every test runs under tools/watchdog.sh: a hang is killed after a time limit

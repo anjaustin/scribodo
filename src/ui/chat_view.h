@@ -43,5 +43,7 @@ bool chat_view_take_copied(ChatView *v);
 /* Index of the reply whose "Apply" link was clicked (propose it as a
  * document edit), or -1. */
 long chat_view_take_apply(ChatView *v);
+/* Where the newest reply's Apply link was drawn (for UI scripts). */
+Rectangle chat_view_last_apply_rect(const ChatView *v);
 
 #endif

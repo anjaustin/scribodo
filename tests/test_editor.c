@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include "../src/ui/editor.h"
+#include "../src/ui/review_view.h"
 #include "test_util.h"
 
 extern double g_stub_time;
@@ -419,6 +420,95 @@ static void test_ranges(void)
     editor_destroy(e);
 }
 
+/* Red-team 004: the passage an AI edit targets is tracked through every
+ * change (including undo/redo), never re-found by offset or by text. */
+static bool anchor_is(Editor *e, size_t start, size_t len)
+{
+    size_t s = 0, l = 0;
+    return editor_anchor_get(e, &s, &l) && s == start && l == len;
+}
+
+static void test_anchor(void)
+{
+    Editor *e = new_editor("Ab cd. Ab cd.");
+    CHECK(editor_anchor_set(e, 7, 5));          /* the second "Ab cd" */
+    CHECK(!editor_anchor_set(e, 10, 50));       /* out of range: refused */
+    CHECK(anchor_is(e, 7, 5));                  /* ...and the old anchor kept */
+    editor_set_selection(e, 0, 0);
+    type(e, "X");                               /* before: shifts */
+    CHECK(anchor_is(e, 8, 5));
+    editor_undo(e);
+    CHECK(anchor_is(e, 7, 5));
+    editor_redo(e);
+    CHECK(anchor_is(e, 8, 5));
+    editor_undo(e);
+    /* Delete the first copy entirely: the anchor follows the second, so a
+     * text search can't pick the wrong one. */
+    editor_set_selection(e, 0, 7);
+    editor_input_key(e, EDITOR_KEY_BACKSPACE, false);
+    CHECK(text_is(e, "Ab cd."));
+    CHECK(anchor_is(e, 0, 5));
+    editor_undo(e);
+    CHECK(anchor_is(e, 7, 5));
+    editor_set_selection(e, 12, 12);
+    type(e, "!");                               /* right after the passage: untouched */
+    CHECK(anchor_is(e, 7, 5));
+    editor_set_selection(e, 7, 7);
+    type(e, "Q");                               /* at its start: shifts */
+    CHECK(anchor_is(e, 8, 5));
+    editor_set_selection(e, 10, 10);
+    type(e, "z");                               /* inside: invalid */
+    CHECK(!anchor_is(e, 8, 5) && editor_anchor_active(e));
+    editor_undo(e);                             /* stays invalid: never guess */
+    CHECK(!anchor_is(e, 8, 5));
+
+    /* An insertion point: typing exactly there invalidates it; deleting
+     * across it too; text before shifts it. */
+    CHECK(editor_anchor_set(e, 3, 0));
+    editor_set_selection(e, 0, 0);
+    type(e, "Y");
+    CHECK(anchor_is(e, 4, 0));
+    editor_set_selection(e, 4, 4);
+    type(e, "w");
+    CHECK(!anchor_is(e, 4, 0));
+    CHECK(editor_anchor_set(e, 3, 0));
+    editor_set_selection(e, 2, 5);
+    editor_input_key(e, EDITOR_KEY_BACKSPACE, false);
+    CHECK(!anchor_is(e, 2, 0) && !anchor_is(e, 3, 0));
+    CHECK(editor_anchor_set(e, 3, 0));
+    editor_set_selection(e, 3, 6);              /* deleting after it: untouched */
+    editor_input_key(e, EDITOR_KEY_BACKSPACE, false);
+    CHECK(anchor_is(e, 3, 0));
+
+    /* Applying through the range API, and loading, drop it. */
+    CHECK(editor_anchor_set(e, 0, 2));
+    CHECK(editor_replace_range_utf8(e, 0, 2, "Hi"));
+    CHECK(!editor_anchor_active(e));
+    editor_destroy(e);
+}
+
+/* Red-team 004: proposals that probably aren't what the author asked for
+ * carry a warning in the review panel. */
+static void test_review_warnings(void)
+{
+    ReviewView *v = review_create(&g_font, &g_font);
+    const char *passage = "The fog came in off the fjord the way it always did in late October, quietly and completely.";
+    CHECK(review_set(v, passage, "The fog rolled in off the fjord the way it always did in late October, quietly.", NULL, false));
+    CHECK(review_warning(v)[0] == '\0');
+    int removed = 0, added = 0;
+    review_counts(v, &removed, &added);
+    CHECK(removed >= 1 && added == 1);
+    CHECK(review_set(v, passage, "The fog came in.", NULL, false)); /* cut mid-way */
+    CHECK(strstr(review_warning(v), "much shorter") != NULL);
+    CHECK(review_set(v, "Is she cold now?", "Is she cold now? Yes. The passage suggests she is very cold, given the fjord and the wind.", NULL, false));
+    CHECK(strstr(review_warning(v), "much longer") != NULL);
+    CHECK(review_set(v, passage, passage, NULL, true));
+    CHECK(strstr(review_warning(v), "incomplete") != NULL);
+    CHECK(review_set(v, "Hi.", "Hello.", NULL, false)); /* short passages: no ratio warnings */
+    CHECK(review_warning(v)[0] == '\0');
+    review_destroy(v);
+}
+
 /* ---- fuzz ------------------------------------------------------------------ */
 
 /* Maps content id -> text seen with that id. Equal ids must mean equal text,
@@ -583,6 +673,8 @@ int main(void)
         { "visual_line_motion", test_visual_line_motion },
         { "size_limit_keeps_selection", test_size_limit_keeps_selection },
         { "ranges", test_ranges },
+        { "anchor", test_anchor },
+        { "review_warnings", test_review_warnings },
         { "fuzz_editor", test_fuzz_editor },
     };
     int rc = run_tests(tests, sizeof(tests) / sizeof(tests[0]));

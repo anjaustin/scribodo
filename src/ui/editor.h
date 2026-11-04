@@ -102,8 +102,15 @@ char *editor_range_utf8(const Editor *e, size_t start, size_t len);
 bool editor_replace_range_utf8(Editor *e, size_t start, size_t len, const char *utf8);
 /* Number of occurrences of `utf8` in the document; *first gets the first. */
 size_t editor_find_utf8(const Editor *e, const char *utf8, size_t *first);
-/* Highlight a range (e.g. the passage a proposal targets); len 0 clears. */
-void editor_set_highlight(Editor *e, size_t start, size_t len);
+/* Tracked anchor for the passage an AI edit targets (len 0: an insertion
+ * point). It is highlighted (or marked) and its position follows every
+ * change, including undo/redo; a change inside it (or typing at an insertion
+ * point) invalidates it. Loading or clearing the document drops it. */
+bool editor_anchor_set(Editor *e, size_t start, size_t len);
+/* Current position, or false if no anchor or the passage was changed. */
+bool editor_anchor_get(const Editor *e, size_t *start, size_t *len);
+bool editor_anchor_active(const Editor *e);
+void editor_anchor_clear(Editor *e);
 /* Scroll so that `index` is visible. */
 void editor_reveal(Editor *e, size_t index);
 

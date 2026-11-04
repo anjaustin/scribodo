@@ -86,3 +86,121 @@ drop "$DIR/invalid.md"
 click_index 1 2
 key K cmd
 expect status "editable document"
+# --- red-team 004 ---
+# Cmd+Enter in the chat box sends the message; it must not also accept a proposal.
+open "$DIR/chapter.md"
+wait 30
+click_index 9 2
+key K cmd
+type "quieter"
+key ENTER
+wait_chat
+expect element_w ReviewPanel 100 3000
+click_element ChatInput
+type "a question while reviewing"
+key ENTER cmd
+wait_chat
+expect element_w ReviewPanel 100 3000
+click_element RejectEdit
+# --- red-team 004, independent review ---
+# Cmd+Enter in the document accepts the proposal and types nothing.
+write "$DIR/rt.md" "The fog came in.\n"
+open "$DIR/rt.md"
+wait 30
+click_index 5 2
+expect selection 4 7
+key K cmd
+type "loud"
+key ENTER
+wait_chat
+expect element_w ReviewPanel 100 3000
+click_index 12
+key ENTER cmd
+expect text "The FOG came in.\n"
+# Text typed before the passage moves it: the edit follows the passage, not
+# its old offset (where an identical "The" now sits).
+write "$DIR/rt2.md" "The cat sat. The dog ran.\n"
+open "$DIR/rt2.md"
+wait 30
+click_index 14 2
+expect selection 13 16
+key K cmd
+type "caps"
+key ENTER
+wait_chat
+expect element_w ReviewPanel 100 3000
+click_index 0
+type "Then. Hello. "
+click_element AcceptEdit
+expect status "applied"
+expect text "Then. Hello. The cat sat. THE dog ran.\n"
+# A change inside the passage invalidates the proposal.
+click_index 31 2
+expect selection 30 33
+key K cmd
+type "caps"
+key ENTER
+wait_chat
+expect element_w ReviewPanel 100 3000
+click_index 32
+type "x"
+click_element AcceptEdit
+expect status "passage changed"
+expect text "Then. Hello. The cat sat. THE doxg ran.\n"
+expect element_w ReviewPanel 0 0
+# An edit reply rewrites a passage: applying it with nothing selected would
+# duplicate text, so it asks for the selection instead.
+click_index 0
+click_element ApplyLast
+expect status "Select the passage"
+expect element_w ReviewPanel 0 0
+# An insertion follows earlier edits, and typing at its point invalidates it.
+write "$DIR/rt3.md" "One two three. Four five six.\n"
+open "$DIR/rt3.md"
+wait 30
+click_element ChatInput
+type "hello"
+key ENTER
+wait_chat
+click_index 15
+click_element ApplyLast
+expect element_w ReviewPanel 100 3000
+click_index 0
+type "Hi. "
+click_element AcceptEdit
+expect status "applied"
+expect text "Hi. One two three. (fake model, with document) You said: helloFour five six.\n"
+click_index 4
+click_element ApplyLast
+expect element_w ReviewPanel 100 3000
+type "Z"
+click_element AcceptEdit
+expect status "passage changed"
+# A stopped edit reply is not proposed as a replacement for the passage.
+open "$DIR/chapter.md"
+wait 30
+click_index 5 3
+key K cmd
+type "loud"
+key ENTER
+wait 12
+click_element SendButton
+wait_chat
+expect element_w ReviewPanel 0 0
+expect status "Edit stopped"
+# If the text before the edit can't be saved to History, nothing is applied.
+write "$DIR/rt5.md" "The fog came in.\n"
+mkdir "$DIR/.scribodo/revisions/rt5.md"
+chmod "$DIR/.scribodo/revisions/rt5.md" 555
+open "$DIR/rt5.md"
+wait 30
+click_index 5 2
+key K cmd
+type "loud"
+key ENTER
+wait_chat
+click_element AcceptEdit
+expect status "not applied"
+expect text "The fog came in.\n"
+expect files "$DIR/.scribodo/revisions/rt5.md" ".md" 0
+chmod "$DIR/.scribodo/revisions/rt5.md" 755

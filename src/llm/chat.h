@@ -29,6 +29,7 @@ typedef struct {
     bool error;      /* assistant message that failed */
     bool streaming;  /* still being generated */
     bool truncated;  /* reply stopped at the length limit */
+    bool stopped;    /* reply stopped by the author part-way (incomplete) */
     bool is_edit;    /* user: an edit request; assistant: a proposed replacement */
 } ChatMessage;
 

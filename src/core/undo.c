@@ -166,8 +166,12 @@ void undo_end(UndoLog *log, UndoCursor after, double now)
 void undo_clear(UndoLog *log)
 {
     uint64_t next = log->next_id;
+    void (*hook)(void *, bool, size_t, size_t) = log->on_op;
+    void *hook_ctx = log->on_op_ctx;
     undo_free(log);
     undo_init(log);
+    log->on_op = hook;
+    log->on_op_ctx = hook_ctx;
     /* Never reuse ids: the cleared log describes content that is not the
      * same as any earlier state, including the original base state. */
     log->base_id = next;
@@ -199,6 +203,7 @@ bool undo_undo(UndoLog *log, TextBuffer *tb, UndoCursor *cursor)
         UndoOp *op = &g->ops[i];
         if (op->insert) tb_delete(tb, op->pos, op->len);
         else tb_insert(tb, op->pos, g->text + op->text_off, op->len);
+        if (log->on_op) log->on_op(log->on_op_ctx, !op->insert, op->pos, op->len);
     }
     g->sealed = true;
     log->top--;
@@ -215,6 +220,7 @@ bool undo_redo(UndoLog *log, TextBuffer *tb, UndoCursor *cursor)
         UndoOp *op = &g->ops[i];
         if (!op->insert) tb_delete(tb, op->pos, op->len);
         else tb_insert(tb, op->pos, g->text + op->text_off, op->len);
+        if (log->on_op) log->on_op(log->on_op_ctx, op->insert, op->pos, op->len);
     }
     g->sealed = true;
     log->top++;

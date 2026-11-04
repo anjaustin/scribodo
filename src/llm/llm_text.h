@@ -34,7 +34,8 @@ void llm_split_thinking(const char *s, char **visible, char **reasoning);
 /* Clean a model reply meant to be a drop-in replacement for `passage`:
  * strip surrounding whitespace, a wrapping ``` fence, a one-line preamble
  * ("Here is the rewritten passage:") and wrapping quotes the passage itself
- * did not have. Returns malloc'd text. */
+ * did not have, then restore the passage's exact leading/trailing
+ * whitespace. Returns malloc'd text; "" if the reply had no content. */
 char *llm_clean_edit(const char *reply, const char *passage);
 
 #endif
