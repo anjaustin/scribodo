@@ -16,3 +16,6 @@
 [submodule "third_party/llama.cpp"]
 	path = third_party/llama.cpp
 	url = https://github.com/ggml-org/llama.cpp.git
+[submodule "third_party/mariadb-connector-c"]
+	path = third_party/mariadb-connector-c
+	url = https://github.com/mariadb-corporation/mariadb-connector-c
