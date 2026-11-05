@@ -17,8 +17,8 @@
 
 #include "llm/server.h"
 
-/* Memory that can be handed out now: free, inactive and speculative
- * pages. $SCRIBODO_MEM_AVAILABLE_MB overrides it (tests). */
+/* Memory that can be handed out now: all but wired, compressed and apps'
+ * own memory (cached files count as available). $SCRIBODO_MEM_AVAILABLE_MB overrides it (tests). */
 long long sysmem_available(void);
 long long sysmem_total(void);
 
