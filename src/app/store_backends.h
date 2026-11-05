@@ -1,7 +1,6 @@
-/* Database implementations behind the file-based modules (revisions.c,
- * records.c, chat_store.c, the observer's state). Each module asks
- * store_mode() first and calls these for projects in the store; the module
- * APIs (and their callers) stay the same.
+/* Database implementations behind the backend-neutral module APIs. Routing
+ * is moving into project_store.c one operation family at a time; transition
+ * code and modules not yet migrated may still resolve store_mode() directly.
  *
  * Sources in the store point at ids. For callers they are presented the
  * same way as the file store's: SourceRef.doc is the document's *current*

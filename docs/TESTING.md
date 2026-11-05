@@ -5,6 +5,8 @@
 | `make test` | Unit and headless suites: core modules, real-filesystem file I/O, and the editor driven through raylib stand-ins (including a 200,000-operation fuzz run) | No |
 | `make sanitize` | The same suites under AddressSanitizer and UndefinedBehaviorSanitizer | No |
 | `make uitest` | Scripted UI tests: the **real app**, real input handling, real rendering, with a fake model | Yes |
+| `make tsan` | ThreadSanitizer over the chat, observer, supervisor and storage code | No |
+| `make dbtest` | MariaDB/Qdrant integration in throwaway databases (`tools/services.sh up` first) | No |
 | `make llmtest` | The model adapter end to end against the real `llama-server`: verification, stale-socket start-up, auth, streaming, injection neutralization, crash and restart | No |
 | `make uitest-real` | `tests/ui/real-*.scribo`: the real model through the real UI | Yes |
 
@@ -169,7 +171,7 @@ UI scripts start with the observer **off**, so other scripts' file expectations 
 
 ## Project store
 
-**`make dbtest`** (324 checks) runs against the local MariaDB in throwaway databases. It covers:
+**`make dbtest`** runs against the local MariaDB in throwaway databases. It covers:
 - migrations, including 003 applied to a database that already has data;
 - prepared statements, with hostile text and a 3 MB value;
 - NULLs, foreign keys, rollback and cascades;
@@ -183,12 +185,13 @@ UI scripts start with the observer **off**, so other scripts' file expectations 
 
 It's also clean under ASan/UBSan.
 
-**`make uitest-db`** runs the app six times on one database (run 6 backs up from the app and restores into a new folder):
+**`make uitest-db`** runs the app six times on one database (`tools/services.sh up` first):
 1. A project with existing files is moved into the store, then notes, canon, a chat, a rename and the observer are used.
 2. After a restart everything comes back, the chat resumes (SOW acceptance 1), and the observer reads nothing twice.
-3. The entity graph (`5_entities.scribo`): the fake observer's relationship finding ("Zoë is Mara's sister.") becomes two entities and a link. "›" goes to the other entity, and the relationship opens its passage.
-4. A copy of the folder (`cp -R`) is recognised as a copy and paused (chat refuses). "Make it its own project" brings over the original's documents, chats and canon under a new project.
-5. With the database unreachable, documents stay editable and saveable. Chat, rename and New pause, and nothing falls back to files.
+3. The project is backed up and restored into a separate folder; records, chats, attachments and History survive.
+4. The entity graph (`5_entities.scribo`): the fake observer's relationship finding ("Zoë is Mara's sister.") becomes two entities and a link. "›" goes to the other entity, and the relationship opens its passage.
+5. A copy of the folder (`cp -R`) is recognised as a copy and paused (chat refuses). "Make it its own project" brings over the original's documents, chats and canon under a new project.
+6. With the database unreachable, documents stay editable and saveable. Chat, rename and New pause, and nothing falls back to files.
 
 ## Findings from the chat work
 

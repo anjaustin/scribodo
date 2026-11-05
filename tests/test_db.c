@@ -1,6 +1,7 @@
 /* The MariaDB layer against the local service (make dbtest; needs
  * tools/services.sh up). Uses a throwaway database, dropped at the end. */
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -477,7 +478,8 @@ static void test_import(void)
     /* With the database down, a moved project pauses instead of using files. */
     store_stop();
     CHECK(store_mode(proj, NULL, 0, NULL) == STORE_PAUSED);
-    CHECK(!records_append(proj, REC_NOTE, nid, "active", "while paused", NULL, 0, NULL));
+    int paused_ver = 99;
+    CHECK(!records_append(proj, REC_NOTE, nid, "active", "while paused", NULL, 0, &paused_ver) && paused_ver == 0);
     CHECK(records_list(proj, REC_NOTE, &notes) == 0);
     char cmd[700];
     snprintf(cmd, sizeof(cmd), "rm -rf '%s'", proj);
@@ -502,6 +504,24 @@ static size_t note_count(const char *proj)
     size_t n = records_list(proj, REC_NOTE, &r);
     records_free(r, n);
     return n;
+}
+
+typedef struct {
+    const char *project_dir;
+    char why[256];
+    bool ok;
+    atomic_bool started;
+    atomic_bool done;
+} ImportCall;
+
+static void *run_import(void *arg)
+{
+    ImportCall *call = arg;
+    atomic_store(&call->started, true);
+    call->ok = store_import(call->project_dir, call->why, sizeof(call->why));
+    store_thread_done();
+    atomic_store(&call->done, true);
+    return NULL;
 }
 
 static void test_import_safety(void)
@@ -529,13 +549,12 @@ static void test_import_safety(void)
     snprintf(cmd, sizeof(cmd), "rm -rf '%s' && cp -R '%s' '%s'", d0, a, d0);
     CHECK(system(cmd) == 0);
 
-    /* Another importer holds the lock: refused, and writers see it paused. */
-    char lockp[700];
-    snprintf(lockp, sizeof(lockp), "%s/.scribodo/import.lock", a);
-    int fd = open(lockp, O_RDWR | O_CREAT, 0644);
+    /* Importer election is separate from the transition lock: another elected
+     * importer is refused without mistaking an ordinary reader for one. */
+    char ownerp[700], lockp[700];
+    snprintf(ownerp, sizeof(ownerp), "%s/.scribodo/import.owner.lock", a);
+    int fd = open(ownerp, O_RDWR | O_CREAT, 0644);
     CHECK(fd >= 0 && flock(fd, LOCK_EX | LOCK_NB) == 0);
-    CHECK(store_mode(a, NULL, 0, NULL) == STORE_PAUSED);
-    CHECK(!records_append(a, REC_NOTE, nid, "active", "lost?", NULL, 0, NULL));
     CHECK(!store_import(a, why, sizeof(why)) && strstr(why, "another window"));
     flock(fd, LOCK_UN);
     close(fd);
@@ -545,7 +564,27 @@ static void test_import_safety(void)
      * superseded, not reused. */
     char stale[40], pa[40];
     CHECK(store_project_id(a, true, stale, sizeof(stale)));
-    CHECK(store_import(a, why, sizeof(why)));
+
+    /* An elected importer waits for an in-flight shared file operation rather
+     * than failing it as a competing importer. Once it drains, import wins. */
+    snprintf(lockp, sizeof(lockp), "%s/.scribodo/import.lock", a);
+    fd = open(lockp, O_RDWR | O_CREAT, 0644);
+    CHECK(fd >= 0 && flock(fd, LOCK_SH | LOCK_NB) == 0);
+    ImportCall call = { .project_dir = a };
+    atomic_init(&call.started, false);
+    atomic_init(&call.done, false);
+    pthread_t importer;
+    int import_rc = pthread_create(&importer, NULL, run_import, &call);
+    CHECK(import_rc == 0);
+    for (int i = 0; import_rc == 0 && !atomic_load(&call.started) && i < 100; i++) usleep(1000);
+    CHECK(import_rc == 0 && atomic_load(&call.started));
+    usleep(50000);
+    CHECK(import_rc == 0 && !atomic_load(&call.done));
+    CHECK(store_mode(a, NULL, 0, NULL) == STORE_FILES);
+    flock(fd, LOCK_UN);
+    close(fd);
+    if (import_rc == 0) pthread_join(importer, NULL);
+    CHECK(import_rc == 0 && call.ok);
     CHECK(store_mode(a, pa, sizeof(pa), NULL) == STORE_DB && strcmp(pa, stale) != 0);
     CHECK(note_count(a) == 1);
     CHECK(store_import(d0, why, sizeof(why)));

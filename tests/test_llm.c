@@ -3,7 +3,9 @@
  * llama-server end to end. */
 #define _DARWIN_C_SOURCE
 #include <dirent.h>
+#include <sched.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -11,6 +13,7 @@
 #include <unistd.h>
 
 #include "../src/app/backup.h"
+#include "../src/app/backup_job.h"
 #include "../src/app/chat_store.h"
 #include "../src/app/recent.h"
 #include "../src/app/records.h"
@@ -24,6 +27,21 @@
 #include "test_util.h"
 
 static char g_dir[512];
+
+typedef struct {
+    BackupJob *job;
+    const char *tools, *project;
+    atomic_bool *go;
+    bool started;
+} BackupStarter;
+
+static void *start_backup_together(void *arg)
+{
+    BackupStarter *s = arg;
+    while (!atomic_load(s->go)) sched_yield();
+    s->started = backup_job_start(s->job, s->tools, s->project);
+    return NULL;
+}
 
 static void test_neutralize(void)
 {
@@ -169,6 +187,64 @@ static void test_backup_pipes(void)
     char dest[1000] = "", why[400] = "";
     CHECK(backup_project(tools, project, dest, sizeof(dest), why, sizeof(why)));
     CHECK(!strcmp(dest, expected));
+
+    /* The async wrapper owns copied inputs, rejects overlapping starts, and
+     * delivers each joined result once. */
+    BackupJob job;
+    CHECK(backup_job_init(&job));
+    atomic_bool go = false;
+    BackupStarter starters[2] = {
+        { .job = &job, .tools = tools, .project = project, .go = &go },
+        { .job = &job, .tools = tools, .project = project, .go = &go },
+    };
+    pthread_t starters_t[2];
+    int start_rc[2] = {
+        pthread_create(&starters_t[0], NULL, start_backup_together, &starters[0]),
+        pthread_create(&starters_t[1], NULL, start_backup_together, &starters[1]),
+    };
+    CHECK(start_rc[0] == 0 && start_rc[1] == 0);
+    atomic_store(&go, true);
+    if (start_rc[0] == 0) pthread_join(starters_t[0], NULL);
+    if (start_rc[1] == 0) pthread_join(starters_t[1], NULL);
+    CHECK(start_rc[0] == 0 && start_rc[1] == 0 && starters[0].started != starters[1].started);
+    CHECK(backup_job_busy(&job) && !backup_job_start(&job, tools, project));
+    bool job_ok = false;
+    dest[0] = why[0] = '\0';
+    bool delivered = false;
+    for (int i = 0; !delivered && i < 100; i++) {
+        delivered = backup_job_poll(&job, &job_ok, dest, sizeof(dest), why, sizeof(why));
+        if (!delivered) usleep(20000);
+    }
+    CHECK(delivered);
+    CHECK(job_ok && !strcmp(dest, expected) && !backup_job_busy(&job));
+    CHECK(!backup_job_poll(&job, &job_ok, dest, sizeof(dest), why, sizeof(why)));
+    CHECK(backup_job_destroy(&job));
+
+    /* Oversized paths are rejected rather than silently targeting a prefix. */
+    char too_long[PATH_MAX + 1];
+    memset(too_long, 'x', sizeof(too_long) - 1);
+    too_long[sizeof(too_long) - 1] = '\0';
+    CHECK(backup_job_init(&job));
+    CHECK(!backup_job_start(&job, too_long, project) && !backup_job_busy(&job));
+    CHECK(backup_job_destroy(&job));
+
+    /* Destruction owns shutdown: a running helper finishes before return. */
+    f = fopen(script, "wb");
+    CHECK(f != NULL);
+    if (f) {
+        fprintf(f, "#!/bin/bash\nsleep 0.2\necho '%s'\n", expected);
+        fclose(f);
+        chmod(script, 0700);
+    }
+    CHECK(backup_job_init(&job));
+    CHECK(backup_job_start(&job, tools, project));
+    struct timespec destroy_before, destroy_after;
+    clock_gettime(CLOCK_MONOTONIC, &destroy_before);
+    CHECK(backup_job_destroy(&job));
+    clock_gettime(CLOCK_MONOTONIC, &destroy_after);
+    double destroy_elapsed = (double)(destroy_after.tv_sec - destroy_before.tv_sec) +
+                             (double)(destroy_after.tv_nsec - destroy_before.tv_nsec) / 1e9;
+    CHECK(destroy_elapsed >= 0.1 && destroy_elapsed < 5.0);
 
     /* Closing both pipes must not bypass the helper deadline. */
     f = fopen(script, "wb");
@@ -540,7 +616,8 @@ static void test_records(void)
     CHECK(records_append(proj, REC_CANON, cid, "committed", "Zoë's great-grandmother wrote the letter.", &chat, 1, &ver) && ver == 2);
     CHECK(records_append(proj, REC_CANON, cid, "retracted", "Zoë's great-grandmother wrote the letter.", &chat, 1, &ver) && ver == 3);
     /* Ids are never paths. */
-    CHECK(!records_append(proj, REC_NOTE, "../x", "active", "x", NULL, 0, NULL));
+    ver = 99;
+    CHECK(!records_append(proj, REC_NOTE, "../x", "active", "x", NULL, 0, &ver) && ver == 0);
     CHECK(!records_append(proj, REC_NOTE, "", "active", "x", NULL, 0, NULL));
 
     Record *notes = NULL, *canon = NULL;

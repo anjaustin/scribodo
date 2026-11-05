@@ -11,7 +11,9 @@
 #include <unistd.h>
 
 #include "cJSON.h"
-#include "app/store_backends.h"
+#include "app/project_store.h"
+#include "app/records_internal.h"
+#include "app/store.h"
 
 static bool log_path(const char *project_dir, RecordKind kind, bool create, char *out, size_t outlen)
 {
@@ -157,15 +159,7 @@ static uint64_t id_hash(const char *s)
 
 size_t records_list(const char *project_dir, RecordKind kind, Record **out)
 {
-    char pid_[64];
-    Db *db_;
-    StoreMode mode_ = store_mode(project_dir, pid_, sizeof(pid_), &db_);
-    if (mode_ == STORE_DB) return sdb_record_list(db_, pid_, kind, out);
-    if (mode_ == STORE_PAUSED) {
-        *out = NULL;
-        return 0;
-    }
-    return records_list_files(project_dir, kind, out);
+    return project_store_records_list(project_dir, kind, out);
 }
 
 size_t records_list_files(const char *project_dir, RecordKind kind, Record **out)
@@ -311,15 +305,16 @@ bool records_create_ex(const char *project_dir, RecordKind kind, const char *id,
 }
 
 static bool append_impl(const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
-                        const SourceRef *sources, size_t nsources, const FindingInfo *finding, int *ver_out, bool fresh)
+                         const SourceRef *sources, size_t nsources, const FindingInfo *finding, int *ver_out, bool fresh)
 {
+    if (ver_out) *ver_out = 0;
     if (!valid_id(id)) return false;
-    char pid_[64];
-    Db *db_;
-    StoreMode mode_ = store_mode(project_dir, pid_, sizeof(pid_), &db_);
-    if (mode_ == STORE_DB)
-        return sdb_record_append(db_, pid_, kind, id, status, content, sources, nsources, finding, fresh, ver_out);
-    if (mode_ == STORE_PAUSED) return false;
+    return project_store_records_append(project_dir, kind, id, status, content, sources, nsources, finding, fresh, ver_out);
+}
+
+bool records_append_files(const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
+                          const SourceRef *sources, size_t nsources, const FindingInfo *finding, bool fresh, int *ver_out)
+{
     char path[1200];
     if (!log_path(project_dir, kind, true, path, sizeof(path))) return false;
 

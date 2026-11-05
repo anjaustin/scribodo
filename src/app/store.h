@@ -5,10 +5,11 @@
  * own connection, opened on first use: a MariaDB connection must not be
  * shared between threads.
  *
- * When the database can't be reached the app keeps working on the local
- * files under <project>/.scribodo/, and store_import() merges them into the
- * database once it is back. Every record has a stable id, so the merge never
- * duplicates.
+ * A project not yet imported keeps using local files under
+ * <project>/.scribodo/. Once imported, MariaDB is its only structured-data
+ * authority: if the database is unreachable, chats, records, revisions and
+ * observer work pause rather than writing a second history to merge later.
+ * Manuscript files remain directly editable in either state.
  */
 #ifndef SCRIBODO_STORE_H
 #define SCRIBODO_STORE_H

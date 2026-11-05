@@ -534,17 +534,30 @@ bool store_import(const char *project_dir, char *why, size_t whylen)
         snprintf(why, whylen, "The project store is offline");
         return false;
     }
-    /* One import at a time, across windows: while it runs, the project
-     * counts as paused for every writer (store_mode), so nothing is written
-     * to files that are about to be set aside (red-team 008). */
-    char dir[PATH_MAX + 32], lockp[PATH_MAX + 64];
+    /* Elect one importer without confusing ordinary readers for a competing
+     * importer. The elected importer then waits for shared file operations to
+     * drain before taking transition authority and pausing new operations. */
+    char dir[PATH_MAX + 32], ownerp[PATH_MAX + 64], lockp[PATH_MAX + 64];
     snprintf(dir, sizeof(dir), "%s/.scribodo", project_dir);
     mkdir(dir, 0755);
+    snprintf(ownerp, sizeof(ownerp), "%s/import.owner.lock", dir);
+    int ownerfd = open(ownerp, O_RDWR | O_CREAT, 0644);
+    if (ownerfd < 0 || flock(ownerfd, LOCK_EX | LOCK_NB) != 0) {
+        if (ownerfd >= 0) close(ownerfd);
+        snprintf(why, whylen, "This project is being moved into the store by another window");
+        return false;
+    }
     snprintf(lockp, sizeof(lockp), "%s/import.lock", dir);
     int lfd = open(lockp, O_RDWR | O_CREAT, 0644);
-    if (lfd < 0 || flock(lfd, LOCK_EX | LOCK_NB) != 0) {
+    int lockrc = -1;
+    if (lfd >= 0) {
+        do lockrc = flock(lfd, LOCK_EX); while (lockrc != 0 && errno == EINTR);
+    }
+    if (lockrc != 0) {
         if (lfd >= 0) close(lfd);
-        snprintf(why, whylen, "This project is being moved into the store by another window");
+        flock(ownerfd, LOCK_UN);
+        close(ownerfd);
+        snprintf(why, whylen, "Couldn't lock the project's files for import");
         return false;
     }
     store_set_importing(project_dir);
@@ -576,6 +589,8 @@ bool store_import(const char *project_dir, char *why, size_t whylen)
     store_set_importing(NULL);
     flock(lfd, LOCK_UN);
     close(lfd);
+    flock(ownerfd, LOCK_UN);
+    close(ownerfd);
     return ok;
 }
 

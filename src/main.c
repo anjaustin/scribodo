@@ -41,6 +41,7 @@
 #include "app/store_backends.h"
 #include "app/store_entities.h"
 #include "app/backup.h"
+#include "app/backup_job.h"
 #include "app/profile.h"
 #include "app/model_settings.h"
 #include "llm/memfit.h"
@@ -204,12 +205,7 @@ typedef struct {
     char store_why[256];          /* why it's offline */
     pthread_t services_thread;
     /* A backup running in the background (Explorer: PROJECT). */
-    pthread_t backup_thread;
-    atomic_int backup_state; /* 0 idle, 1 running, 2 finished */
-    char backup_dir[PATH_MAX];
-    char backup_dest[PATH_MAX + 64];
-    char backup_why[400];
-    bool backup_ok;
+    BackupJob backup;
     char backup_label[160];
     atomic_int services_state;    /* 0 idle, 1 working (services up / probing), 2 finished */
     atomic_bool store_reachable;  /* the last probe reached the database */
@@ -586,25 +582,13 @@ static void open_project(App *app, const char *dir);
 
 static void tools_dir(char *out, size_t outlen) { snprintf(out, outlen, "%s../tools", GetApplicationDirectory()); }
 
-static void *backup_main(void *arg)
-{
-    App *app = arg;
-    char tools[PATH_MAX];
-    tools_dir(tools, sizeof(tools));
-    app->backup_ok = backup_project(tools, app->backup_dir, app->backup_dest, sizeof(app->backup_dest), app->backup_why,
-                                    sizeof(app->backup_why));
-    store_thread_done(); /* its own store connection */
-    atomic_store(&app->backup_state, 2);
-    return NULL;
-}
-
 static void begin_backup(App *app)
 {
     if (!app->project_dir[0]) {
         set_status(app, "Open a project to back it up");
         return;
     }
-    if (atomic_load(&app->backup_state) != 0) {
+    if (backup_job_busy(&app->backup)) {
         set_status(app, "A backup is already running");
         return;
     }
@@ -612,10 +596,9 @@ static void begin_backup(App *app)
         set_status(app, "Save the document first: a backup takes what's on disk");
         return;
     }
-    snprintf(app->backup_dir, sizeof(app->backup_dir), "%s", app->project_dir);
-    atomic_store(&app->backup_state, 1);
-    if (pthread_create(&app->backup_thread, NULL, backup_main, app) != 0) {
-        atomic_store(&app->backup_state, 0);
+    char tools[PATH_MAX];
+    tools_dir(tools, sizeof(tools));
+    if (!backup_job_start(&app->backup, tools, app->project_dir)) {
         set_status(app, "Couldn't start the backup");
         return;
     }
@@ -624,12 +607,12 @@ static void begin_backup(App *app)
 
 static void backup_poll(App *app)
 {
-    if (atomic_load(&app->backup_state) != 2) return;
-    pthread_join(app->backup_thread, NULL);
-    atomic_store(&app->backup_state, 0);
+    bool ok;
+    char dest[PATH_MAX + 64], why[400];
+    if (!backup_job_poll(&app->backup, &ok, dest, sizeof(dest), why, sizeof(why))) return;
     char msg[800];
-    if (app->backup_ok) {
-        snprintf(msg, sizeof(msg), "Backed up to %s", app->backup_dest);
+    if (ok) {
+        snprintf(msg, sizeof(msg), "Backed up to %s", dest);
         time_t t = time(NULL);
         struct tm tmv;
         localtime_r(&t, &tmv);
@@ -637,7 +620,7 @@ static void backup_poll(App *app)
         strftime(when, sizeof(when), "%H:%M", &tmv);
         snprintf(app->backup_label, sizeof(app->backup_label), "Last backup: today %s", when);
     } else {
-        snprintf(msg, sizeof(msg), "%s", app->backup_why[0] ? app->backup_why : "The backup failed");
+        snprintf(msg, sizeof(msg), "%s", why[0] ? why : "The backup failed");
     }
     set_status(app, msg);
 }
@@ -2704,7 +2687,7 @@ static Clay_RenderCommandArray build_layout(App *app)
                     list_item(CLAY_IDI("CanonItem", (uint32_t)i), app->canon_labels[i], !strcmp(open_id, app->canon[i].id));
                 if (app->project_dir[0]) {
                     section_header("PROJECT");
-                    list_item(CLAY_ID("BackupItem"), atomic_load(&app->backup_state) ? "Backing up\xE2\x80\xA6" : "Back up now", false);
+                    list_item(CLAY_ID("BackupItem"), backup_job_busy(&app->backup) ? "Backing up\xE2\x80\xA6" : "Back up now", false);
                     list_item(CLAY_ID("RestoreItem"), "Restore from a backup\xE2\x80\xA6", false);
                     list_item(CLAY_ID("NamesItem"), "Names\xE2\x80\xA6", false);
                     if (app->backup_label[0]) coming_soon(app->backup_label);
@@ -3054,6 +3037,11 @@ int main(int argc, char **argv)
     SetTargetFPS(60);
 
     static App app;
+    if (!backup_job_init(&app.backup)) {
+        fprintf(stderr, "scribodo: couldn't initialise the backup worker\n");
+        CloseWindow();
+        return 1;
+    }
     app.explorer_w = 210;
     app.observer_w = 260;
     app.chat_w = 420;
@@ -3802,7 +3790,7 @@ int main(int argc, char **argv)
     records_free(app.notes, app.nnotes);
     records_free(app.canon, app.ncanon);
     free(app.revs);
-    if (atomic_load(&app.backup_state) != 0) pthread_join(app.backup_thread, NULL); /* a backup finishes, never cut off */
+    (void)backup_job_destroy(&app.backup); /* a backup finishes, never cut off */
     if (atomic_load(&app.graph_state) != 0) pthread_join(app.graph_thread, NULL);
     if (atomic_load(&app.names_state) != 0) pthread_join(app.names_thread, NULL);
     observer_destroy(app.observer);  /* cancels its request before the server stops */
