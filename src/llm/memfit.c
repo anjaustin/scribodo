@@ -45,6 +45,7 @@ MemFit memfit_context(long long avail, long long other, const LlmServerConfig *c
     f.avail = avail;
     f.need_wanted = llm_server_mem_need(cfg, wanted * slots);
     long long budget = avail - other - MEMFIT_HEADROOM;
+    f.room = budget > 0 ? budget : 0;
     for (int c = wanted;; c = c - step > min ? c - step : min) {
         long long need = llm_server_mem_need(cfg, c * slots);
         if (need <= budget) {

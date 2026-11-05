@@ -1858,6 +1858,7 @@ static void test_memfit(void)
     /* Plenty: the author's context. */
     MemFit m = memfit_context(16000 * MiB, other, &cfg, 32768, 8192, 8192);
     CHECK(m.slot_ctx == 32768 && !m.reduced && !m.short_even_min && m.need == at32);
+    CHECK(m.room == 16000 * MiB - other - MEMFIT_HEADROOM);
     /* Exactly enough (the headroom included): still 32K; a byte less: 24K. */
     m = memfit_context(at32 + other + MEMFIT_HEADROOM, other, &cfg, 32768, 8192, 8192);
     CHECK(m.slot_ctx == 32768 && !m.reduced);

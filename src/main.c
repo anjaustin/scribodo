@@ -1102,17 +1102,17 @@ static long long memory_for_model(App *app)
 static void memfit_message(const MemFit *f, int wanted, char *out, size_t outlen)
 {
     char need[32], free_gb[32];
-    memfit_gb(f->avail - MEMFIT_HEADROOM > 0 ? f->avail - MEMFIT_HEADROOM : 0, free_gb, sizeof(free_gb));
+    memfit_gb(f->room, free_gb, sizeof(free_gb)); /* after the embedding server and the headroom */
     if (f->short_even_min) {
         memfit_gb(f->need, need, sizeof(need));
         snprintf(out, outlen,
-                 "Low memory: the model needs about %s and %s is free. It's starting with a %dK context anyway; "
+                 "Low memory: the model needs about %s and %s is free for it. It's starting with a %dK context anyway; "
                  "replies may be slow until other apps are closed",
                  need, free_gb, f->slot_ctx / 1024);
     } else if (f->reduced) {
         memfit_gb(f->need_wanted, need, sizeof(need));
         snprintf(out, outlen,
-                 "Low memory: a %dK context needs about %s and %s is free, so the model runs with %dK for now. "
+                 "Low memory: a %dK context needs about %s and %s is free for it, so the model runs with %dK for now. "
                  "Close other apps, then Apply in Model settings to try again",
                  wanted / 1024, need, free_gb, f->slot_ctx / 1024);
     } else {

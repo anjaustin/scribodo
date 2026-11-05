@@ -22,8 +22,9 @@
 long long sysmem_available(void);
 long long sysmem_total(void);
 
-/* Kept free for macOS, the app and its window. */
-#define MEMFIT_HEADROOM (1024LL * 1024 * 1024)
+/* Kept free for the app itself (about 0.3 GB) and its growth; macOS's
+ * own memory is already counted as used. */
+#define MEMFIT_HEADROOM (512LL * 1024 * 1024)
 
 typedef struct {
     int slot_ctx;        /* the context to start with */
@@ -32,6 +33,7 @@ typedef struct {
     long long need;      /* bytes at slot_ctx */
     long long need_wanted; /* bytes at the wanted context */
     long long avail;     /* bytes free (as passed in) */
+    long long room;      /* of that, what the model can have: less the other server and the headroom */
 } MemFit;
 
 /* The largest context per slot, from `wanted` down to `min` in `step`s,
