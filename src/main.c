@@ -40,6 +40,8 @@
 #include "app/store_backends.h"
 #include "app/store_entities.h"
 #include "app/backup.h"
+#include "app/profile.h"
+#include "llm/names.h"
 #include "app/revisions.h"
 #include "llm/llm_text.h"
 #include "app/script.h"
@@ -66,7 +68,7 @@ void glfwSetWindowShouldClose(void *window, int value);
 enum { FONT_UI = 0, FONT_PROSE = 1, FONT_CHAT = 2, FONT_COUNT };
 enum { FOCUS_NONE, FOCUS_DOC, FOCUS_CHAT, FOCUS_RECORD };
 enum { DRAG_NONE, DRAG_EXPLORER, DRAG_OBSERVER, DRAG_CHAT };
-enum { PT_NEW_DOC = 1, PT_RENAME_DOC, PT_RENAME_CHAT, PT_ATTACH_NAME };  /* what the name prompt is for */
+enum { PT_NEW_DOC = 1, PT_RENAME_DOC, PT_RENAME_CHAT, PT_ATTACH_NAME, PT_NAME_AUTHOR, PT_NAME_ASSISTANT };  /* what the name prompt is for */
 enum { MT_DOC = 1, MT_CHAT, MT_ATTACH, MT_MODEL };  /* what a context menu is for */
 #define MAX_ATTACH 8
 
@@ -218,7 +220,20 @@ typedef struct {
     char project_dir[PATH_MAX];
     char *docs[MAX_DOCS];
     size_t ndocs;
+    /* Who is who (stored names) and the two-step "Names..." prompt. */
+    Profile profile;
+    int names_step;         /* 0 none, 1 author prompt, 2 assistant prompt to open, 3 assistant prompt */
+    char names_author[64];  /* the author step's answer */
+    /* Names noticed in chat, offered for confirmation (never saved unasked). */
+    pthread_t names_thread;
+    atomic_int names_state;  /* 0 idle, 1 checking, 2 finished */
+    char *names_prev, *names_msg;
+    NameGuess names_guess;
+    char suggest_author[64], suggest_assistant[64];
+    char declined_author[64], declined_assistant[64];
+    char suggest_text[300];
     ChatSummary *chats;
+    char (*chat_labels)[200]; /* the CHATS rows (title, and whether the observer reads it) */
     size_t nchats;
     double lists_refreshed;
     bool lists_dirty; /* refreshed between click handling and layout (stable hit-testing) */
@@ -306,6 +321,11 @@ static void refresh_lists(App *app)
         qsort(app->docs, app->ndocs, sizeof(char *), cmp_str);
     }
     app->nchats = chat_store_list(app->project_dir, &app->chats);
+    free(app->chat_labels);
+    app->chat_labels = app->nchats ? calloc(app->nchats, sizeof(*app->chat_labels)) : NULL;
+    for (size_t i = 0; app->chat_labels && i < app->nchats; i++)
+        snprintf(app->chat_labels[i], sizeof(app->chat_labels[i]), "%s%s", app->chats[i].title,
+                 app->chats[i].observer_ignore ? " \xC2\xB7 not observed" : "");
     free(app->revs);
     app->revs = NULL;
     app->nrevs = editor_path(app->editor) ? revisions_list(app->project_dir, editor_path(app->editor), &app->revs) : 0;
@@ -639,6 +659,32 @@ static void begin_restore(App *app)
     char msg[900];
     snprintf(msg, sizeof(msg), "Restored as \xE2\x80\x9C%s\xE2\x80\x9D, a separate project (the original is unchanged)", base_name(restored));
     set_status(app, msg);
+}
+
+/* ---- which chats the observer reads ----------------------------------------------- */
+
+static const ChatSummary *find_chat(const App *app, const char *id)
+{
+    for (size_t i = 0; id && id[0] && i < app->nchats; i++)
+        if (!strcmp(app->chats[i].id, id)) return &app->chats[i];
+    return NULL;
+}
+
+/* The open chat has been saved (the setting belongs to a stored chat). */
+static bool open_chat_stored(const App *app) { return app->project_dir[0] && find_chat(app, app->chat_id) != NULL; }
+
+static void set_chat_observer(App *app, const char *id, bool read)
+{
+    char cid[40];
+    snprintf(cid, sizeof(cid), "%s", id); /* the list is refreshed below */
+    if (!chat_store_set_observer(app->project_dir, cid, read)) {
+        set_status(app, store_says(app, "Couldn't save that setting for the chat"));
+        return;
+    }
+    set_status(app, read ? "The observer reads this chat again (from where it left off)"
+                         : "The observer won't read this chat (findings it already made stay; dismiss them if you like)");
+    app->lists_dirty = true; /* refreshed after this frame is drawn (rows point into the lists) */
+    if (read && app->observer) observer_poke(app->observer);
 }
 
 static void set_project_from(App *app, const char *doc_path)
@@ -1033,6 +1079,37 @@ static bool set_aside_history(App *app, const char *name)
 }
 
 /* Returns true when the prompt can close. */
+/* The stored names go everywhere they're used: chat requests, the chat's
+ * labels, and the observer's rules. */
+static void apply_profile(App *app)
+{
+    if (app->chat) chat_set_names(app->chat, app->profile.author, app->profile.assistant);
+    if (app->chat_view) chat_view_set_assistant_name(app->chat_view, profile_assistant_name(&app->profile));
+    if (app->observer) observer_set_names(app->observer, app->profile.author, app->profile.assistant);
+}
+
+static void begin_names(App *app)
+{
+    app->names_step = 1;
+    prompt_open(app->prompt, PT_NAME_AUTHOR, "Your name (the assistant calls you this)", app->profile.author, "Next");
+}
+
+/* Each frame: the second step opens after the first closes; a cancelled
+ * first-launch question isn't asked again. */
+static void names_tick(App *app)
+{
+    if (app->names_step == 2 && !prompt_active(app->prompt)) {
+        app->names_step = 3;
+        prompt_open(app->prompt, PT_NAME_ASSISTANT, "What should the assistant be called?", app->profile.assistant, "Save");
+    } else if ((app->names_step == 1 || app->names_step == 3) && !prompt_active(app->prompt)) {
+        app->names_step = 0;
+        if (!app->profile.asked) {
+            app->profile.asked = true;
+            profile_save(&app->profile);
+        }
+    }
+}
+
 static bool finish_prompt(App *app, const char *typed)
 {
     if (prompt_tag(app->prompt) == PT_ATTACH_NAME) {
@@ -1043,6 +1120,29 @@ static bool finish_prompt(App *app, const char *typed)
         }
         attach(app, typed);
         app->attach_touched = true;
+        return true;
+    }
+    if (prompt_tag(app->prompt) == PT_NAME_AUTHOR) {
+        profile_clean_name(typed, app->names_author, sizeof(app->names_author));
+        app->names_step = 2; /* the assistant's name next (opened after this prompt closes) */
+        return true;
+    }
+    if (prompt_tag(app->prompt) == PT_NAME_ASSISTANT) {
+        Profile p = app->profile;
+        snprintf(p.author, sizeof(p.author), "%s", app->names_author);
+        profile_clean_name(typed, p.assistant, sizeof(p.assistant));
+        p.asked = true;
+        if (!profile_save(&p)) {
+            prompt_set_error(app->prompt, "Couldn't save the names");
+            return false;
+        }
+        app->profile = p;
+        apply_profile(app);
+        app->names_step = 0;
+        char msg[200];
+        snprintf(msg, sizeof(msg), "Names saved: you are %s; the assistant is %s", p.author[0] ? p.author : "(not set)",
+                 profile_assistant_name(&p));
+        set_status(app, msg);
         return true;
     }
     if (prompt_tag(app->prompt) == PT_RENAME_CHAT) {
@@ -1254,6 +1354,81 @@ static void save(App *app)
 
 /* ---- chat ---------------------------------------------------------------------- */
 
+/* ---- names noticed in chat ----------------------------------------------------------- */
+
+static void *names_main(void *arg)
+{
+    App *app = arg;
+    names_detect(app->llm, app->names_prev, app->names_msg, &app->names_guess);
+    atomic_store(&app->names_state, 2);
+    return NULL;
+}
+
+/* After a reply: did the author's message before it say a name? Checked in
+ * the background (the local model, structured output, verified against the
+ * author's words). */
+static void names_check(App *app, size_t reply_index)
+{
+    if (atomic_load(&app->names_state) != 0) return;
+    chat_lock(app->chat);
+    const ChatMessage *um = chat_message(app->chat, reply_index - 1);
+    const ChatMessage *pm = reply_index >= 2 ? chat_message(app->chat, reply_index - 2) : NULL;
+    bool go = um && um->role == CHAT_USER && !um->is_edit && names_worth_checking(um->content);
+    if (go) {
+        free(app->names_msg);
+        free(app->names_prev);
+        app->names_msg = strdup(um->content);
+        app->names_prev = pm && pm->role == CHAT_ASSISTANT ? strdup(pm->content) : NULL;
+    }
+    chat_unlock(app->chat);
+    if (!go || !app->names_msg) return;
+    atomic_store(&app->names_state, 1);
+    if (pthread_create(&app->names_thread, NULL, names_main, app) != 0) atomic_store(&app->names_state, 0);
+}
+
+static void names_poll(App *app)
+{
+    if (atomic_load(&app->names_state) != 2) return;
+    pthread_join(app->names_thread, NULL);
+    atomic_store(&app->names_state, 0);
+    const NameGuess *g = &app->names_guess;
+    /* Offered only if new: not what's stored, not what the author declined. */
+    if (g->author[0] && strcasecmp(g->author, app->profile.author) && strcasecmp(g->author, app->declined_author))
+        snprintf(app->suggest_author, sizeof(app->suggest_author), "%s", g->author);
+    if (g->assistant[0] && strcasecmp(g->assistant, app->profile.assistant) && strcasecmp(g->assistant, app->declined_assistant))
+        snprintf(app->suggest_assistant, sizeof(app->suggest_assistant), "%s", g->assistant);
+    if (app->suggest_author[0] && app->suggest_assistant[0])
+        snprintf(app->suggest_text, sizeof(app->suggest_text),
+                 "Save these names? You: \xE2\x80\x9C%s\xE2\x80\x9D, the assistant: \xE2\x80\x9C%s\xE2\x80\x9D",
+                 app->suggest_author, app->suggest_assistant);
+    else if (app->suggest_author[0])
+        snprintf(app->suggest_text, sizeof(app->suggest_text), "Save \xE2\x80\x9C%s\xE2\x80\x9D as your name?", app->suggest_author);
+    else if (app->suggest_assistant[0])
+        snprintf(app->suggest_text, sizeof(app->suggest_text), "Save \xE2\x80\x9C%s\xE2\x80\x9D as the assistant's name?",
+                 app->suggest_assistant);
+}
+
+static void names_answer(App *app, bool save)
+{
+    if (save) {
+        Profile p = app->profile;
+        if (app->suggest_author[0]) snprintf(p.author, sizeof(p.author), "%s", app->suggest_author);
+        if (app->suggest_assistant[0]) snprintf(p.assistant, sizeof(p.assistant), "%s", app->suggest_assistant);
+        p.asked = true;
+        if (profile_save(&p)) {
+            app->profile = p;
+            apply_profile(app);
+            set_status(app, "Names saved (change them any time: Explorer \xE2\x86\x92 PROJECT \xE2\x86\x92 Names\xE2\x80\xA6)");
+        } else {
+            set_status(app, "Couldn't save the names");
+        }
+    } else {
+        snprintf(app->declined_author, sizeof(app->declined_author), "%s", app->suggest_author);
+        snprintf(app->declined_assistant, sizeof(app->declined_assistant), "%s", app->suggest_assistant);
+    }
+    app->suggest_author[0] = app->suggest_assistant[0] = app->suggest_text[0] = '\0';
+}
+
 static void on_message_done(ChatSession *s, size_t index, void *ctx)
 {
     App *app = ctx;
@@ -1287,6 +1462,7 @@ static void on_message_done(ChatSession *s, size_t index, void *ctx)
         }
         clear_pending(app);
     }
+    if (copy.role == CHAT_ASSISTANT && !copy.error && !copy.is_edit && index >= 1) names_check(app, index);
     if (!app->chat_project[0]) { free(copy.content); return; }
     if (!chat_store_append(app->chat_project, app->chat_id, app->chat_title, &copy))
         set_status(app, store_says(app, "Could not save the chat to .scribodo/chats"));
@@ -2351,7 +2527,8 @@ static Clay_RenderCommandArray build_layout(App *app)
                 section_header("CHATS");
                 list_item(CLAY_ID("NewChatItem"), "+ New chat", false);
                 for (size_t i = 0; i < app->nchats; i++)
-                    list_item(CLAY_IDI("ChatItem", (uint32_t)i), app->chats[i].title, !strcmp(app->chat_id, app->chats[i].id));
+                    list_item(CLAY_IDI("ChatItem", (uint32_t)i), app->chat_labels ? app->chat_labels[i] : app->chats[i].title,
+                              !strcmp(app->chat_id, app->chats[i].id));
                 if (!app->project_dir[0]) coming_soon("Open a project to save chats");
                 section_header("HISTORY");
                 if (app->nrevs == 0) coming_soon(editor_path(app->editor) ? "No revisions yet" : "Open a document");
@@ -2373,6 +2550,7 @@ static Clay_RenderCommandArray build_layout(App *app)
                     section_header("PROJECT");
                     list_item(CLAY_ID("BackupItem"), atomic_load(&app->backup_state) ? "Backing up\xE2\x80\xA6" : "Back up now", false);
                     list_item(CLAY_ID("RestoreItem"), "Restore from a backup\xE2\x80\xA6", false);
+                    list_item(CLAY_ID("NamesItem"), "Names\xE2\x80\xA6", false);
                     if (app->backup_label[0]) coming_soon(app->backup_label);
                 }
                 memset(app->drawn_ent, 0, sizeof(app->drawn_ent));
@@ -2435,10 +2613,26 @@ static Clay_RenderCommandArray build_layout(App *app)
                     label(app->chat_header, FONT_UI, COL_TEXT);
                     if (app->remote_badge[0]) label(app->remote_badge, FONT_UI, COL_WARN);
                     grow();
+                    if (open_chat_stored(app)) slot(CLAY_ID("ObserverReads"), 190, 24);
                     slot(CLAY_ID("NewChatButton"), 80, 24);
                 }
                 CLAY({ .id = CLAY_ID("ChatMessages"),
                        .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } } }) {}
+                if (app->suggest_text[0]) { /* a name noticed in chat, to confirm */
+                    CLAY({ .id = CLAY_ID("NameSuggest"),
+                           .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(34) },
+                                       .padding = { 12, 10, 0, 0 }, .childGap = 8,
+                                       .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
+                           .backgroundColor = COL_PANEL, .border = { .color = COL_BORDER, .width = { .top = 1 } } }) {
+                        CLAY({ .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
+                                           .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
+                               .clip = { .horizontal = true } }) {
+                            label(app->suggest_text, FONT_UI, COL_TEXT);
+                        }
+                        slot(CLAY_ID("NameSave"), 64, 24);
+                        slot(CLAY_ID("NameSkip"), 72, 24);
+                    }
+                }
                 CLAY({ .id = CLAY_ID("ChatFooter"),
                        .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(30) },
                                    .padding = { 12, 10, 0, 0 }, .childGap = 8,
@@ -2591,13 +2785,13 @@ static char *host_explorer_text(void *ctx)
     App *app = ctx;
     size_t cap = 2;
     for (size_t i = 0; i < app->ndocs; i++) cap += strlen(app->docs[i]) + 1;
-    for (size_t i = 0; i < app->nchats; i++) cap += strlen(app->chats[i].title) + 1;
+    for (size_t i = 0; i < app->nchats; i++) cap += sizeof(app->chat_labels[0]) + 1;
     cap += (sizeof(app->ent_labels[0]) + 1) * ENT_SHOW + (sizeof(app->ent_row_labels[0]) + 1) * ENT_ROWS;
     char *s = malloc(cap);
     if (!s) return NULL;
     s[0] = '\0';
     for (size_t i = 0; i < app->ndocs; i++) strcat(strcat(s, app->docs[i]), "\n");
-    for (size_t i = 0; i < app->nchats; i++) strcat(strcat(s, app->chats[i].title), "\n");
+    for (size_t i = 0; i < app->nchats; i++) strcat(strcat(s, app->chat_labels ? app->chat_labels[i] : app->chats[i].title), "\n");
     /* Entities, and the open one's rows (without their indent). */
     for (size_t i = 0; i < app->nents && i < ENT_SHOW; i++) strcat(strcat(s, app->ent_labels[i]), "\n");
     for (size_t i = 0; app->ent_open[0] && i < app->ent.nrows && i < ENT_ROWS; i++)
@@ -2763,6 +2957,15 @@ int main(int argc, char **argv)
         return 1;
     }
     chat_on_message_done(app.chat, on_message_done, &app);
+    /* Who is who. UI scripts keep their own profile, never the author's. */
+    if (script_path && !getenv("SCRIBODO_PROFILE")) {
+        char pp[PATH_MAX];
+        snprintf(pp, sizeof(pp), "%s/profile.json", getenv("SCRIBODO_SCRIPT_DIR") ? getenv("SCRIBODO_SCRIPT_DIR") : ".");
+        setenv("SCRIBODO_PROFILE", pp, 1);
+    }
+    profile_load(&app.profile);
+    apply_profile(&app);
+    if (!app.profile.asked && !script_path) begin_names(&app); /* asked once, on first launch */
 
     /* Default to the bundled sample, located relative to the executable
      * (build/scribodo) rather than the working directory, which is "/" when
@@ -2855,6 +3058,8 @@ int main(int argc, char **argv)
             }
         }
         backup_poll(&app);
+        names_tick(&app);
+        names_poll(&app);
         if (atomic_load(&app.graph_state) == 2) { /* the graph is built: show it */
             pthread_join(app.graph_thread, NULL);
             atomic_store(&app.graph_state, 0);
@@ -2948,6 +3153,7 @@ int main(int argc, char **argv)
             else if (Clay_PointerOver(CLAY_ID("NewDocItem"))) begin_new_document(&app);
             else if (Clay_PointerOver(CLAY_ID("BackupItem"))) begin_backup(&app);
             else if (Clay_PointerOver(CLAY_ID("RestoreItem"))) begin_restore(&app);
+            else if (Clay_PointerOver(CLAY_ID("NamesItem"))) begin_names(&app);
             else if (Clay_PointerOver(CLAY_ID("ImportItem"))) import_documents(&app);
             else if (Clay_PointerOver(CLAY_ID("NewNoteItem"))) {
                 if (close_record(&app, false) && record_view_open(app.record, REC_NOTE, NULL, "", NULL, 0))
@@ -3030,9 +3236,12 @@ int main(int argc, char **argv)
         if (!modal && IsMouseButtonPressed(MOUSE_BUTTON_RIGHT) && Clay_PointerOver(CLAY_ID("Explorer"))) {
             for (size_t i = 0; i < app.nchats; i++)
                 if (Clay_PointerOver(CLAY_IDI("ChatItem", (uint32_t)i))) {
-                    static const char *const items[] = { "Rename\xE2\x80\xA6" };
+                    static char reads_item[64];
+                    snprintf(reads_item, sizeof(reads_item), "%s Observer reads this chat",
+                             app.chats[i].observer_ignore ? "  " : "\xE2\x9C\x93");
+                    const char *items[] = { "Rename\xE2\x80\xA6", reads_item };
                     snprintf(app.menu_chat, sizeof(app.menu_chat), "%s", app.chats[i].id);
-                    menu_open(&app.menu, MT_CHAT, (int)i, mouse, items, 1);
+                    menu_open(&app.menu, MT_CHAT, (int)i, mouse, items, 2);
                     break;
                 }
             for (size_t i = 0; i < app.ndocs; i++)
@@ -3142,6 +3351,7 @@ int main(int argc, char **argv)
         }
         bool idle = app.dragging == DRAG_NONE && !modal;
         editor_update(app.editor, app.editor_rect, idle && app.focus == FOCUS_DOC);
+        chat_view_set_can_apply(app.chat_view, editor_path(app.editor) != NULL && !editor_is_read_only(app.editor));
         chat_view_update(app.chat_view, app.chat_list_rect, app.chat_input_rect, idle && app.focus == FOCUS_CHAT);
         if (review_active(app.review) && !modal) review_update(app.review, app.review_rect);
         if (record_view_active(app.record)) record_view_update(app.record, app.record_rect, idle && app.focus == FOCUS_RECORD);
@@ -3230,6 +3440,18 @@ int main(int argc, char **argv)
         /* raygui draws with the primary face only (no fallback), so ASCII. */
         if (GuiButton(obs_rect, app.observer_open ? "Hide observer" : app.observer_button[0] ? app.observer_button : "Observer"))
             app.observer_open = !app.observer_open;
+        /* Whether the observer reads the open chat (the author's choice). */
+        if (open_chat_stored(&app)) {
+            Rectangle orr = ELEMENT_RECT("ObserverReads");
+            const ChatSummary *cs = find_chat(&app, app.chat_id);
+            bool reads = cs && !cs->observer_ignore, was = reads;
+            GuiCheckBox((Rectangle){ orr.x, orr.y + 4, 16, 16 }, "Observer reads this chat", &reads);
+            if (reads != was) set_chat_observer(&app, app.chat_id, reads);
+        }
+        if (app.suggest_text[0]) {
+            if (GuiButton(ELEMENT_RECT("NameSave"), "Save")) names_answer(&app, true);
+            else if (GuiButton(ELEMENT_RECT("NameSkip"), "Not now")) names_answer(&app, false);
+        }
         if (chat_busy(app.chat)) GuiDisable();
         if (GuiButton(new_rect, "New chat")) new_chat(&app);
         GuiEnable();
@@ -3318,7 +3540,10 @@ int main(int argc, char **argv)
                     set_status(&app, msg);
                 }
             }
-            if (pick >= 0 && app.menu.tag == MT_CHAT) {
+            if (pick == 1 && app.menu.tag == MT_CHAT) {
+                const ChatSummary *cs = find_chat(&app, app.menu_chat);
+                if (cs) set_chat_observer(&app, app.menu_chat, cs->observer_ignore);
+            } else if (pick >= 0 && app.menu.tag == MT_CHAT) {
                 const char *title = "";
                 for (size_t i = 0; i < app.nchats; i++)
                     if (!strcmp(app.chats[i].id, app.menu_chat)) title = app.chats[i].title;
@@ -3373,6 +3598,7 @@ int main(int argc, char **argv)
     free(app.revs);
     if (atomic_load(&app.backup_state) != 0) pthread_join(app.backup_thread, NULL); /* a backup finishes, never cut off */
     if (atomic_load(&app.graph_state) != 0) pthread_join(app.graph_thread, NULL);
+    if (atomic_load(&app.names_state) != 0) pthread_join(app.names_thread, NULL);
     observer_destroy(app.observer);  /* cancels its request before the server stops */
     if (atomic_load(&app.services_state) == 1) pthread_detach(app.services_thread);
     store_stop();

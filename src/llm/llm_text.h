@@ -42,4 +42,10 @@ char *llm_clean_edit(const char *reply, const char *passage);
  * llm_clean_edit when the passage is written with curly quotes. */
 char *llm_curl_quotes(const char *s);
 
+/* A model reply's Markdown as plain display text (the chat view): heading
+ * marks, emphasis and code markers dropped, list bullets as "•", code
+ * fences removed, [text](url) as "text (url)". Malloc'd. The stored reply
+ * keeps its Markdown (it's right in a .md document). */
+char *llm_markdown_display(const char *md);
+
 #endif

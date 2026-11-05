@@ -35,6 +35,7 @@ bool sdb_chat_append(Db *db, const char *project_id, const char *id, const char 
 size_t sdb_chat_list(Db *db, const char *project_id, ChatSummary **out);
 bool sdb_chat_load(Db *db, const char *project_id, const char *id, ChatMessage **msgs, size_t *n);
 bool sdb_chat_rename(Db *db, const char *project_id, const char *id, const char *title);
+bool sdb_chat_set_observer(Db *db, const char *project_id, const char *id, bool read);
 
 /* Move a project's .scribodo/ files into the store (see store_import.c).
  * True if it is in the store afterwards (or already was). */

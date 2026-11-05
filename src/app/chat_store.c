@@ -146,6 +146,31 @@ bool chat_store_rename(const char *project_dir, const char *id, const char *titl
     return ok;
 }
 
+bool chat_store_set_observer(const char *project_dir, const char *id, bool read)
+{
+    char pid_[64];
+    Db *db_;
+    StoreMode mode_ = store_mode(project_dir, pid_, sizeof(pid_), &db_);
+    if (mode_ == STORE_DB) return sdb_chat_set_observer(db_, pid_, id, read);
+    if (mode_ == STORE_PAUSED) return false;
+    char path[1200];
+    if (!path_for(project_dir, id, path, sizeof(path))) return false;
+    struct stat st;
+    if (stat(path, &st) != 0) return false; /* only stored chats */
+    int fd = open(path, O_RDWR | O_APPEND);
+    if (fd < 0) return false;
+    bool ok = ensure_trailing_newline(fd);
+    cJSON *j = cJSON_CreateObject();
+    cJSON_AddStringToObject(j, "type", "observer");
+    cJSON_AddBoolToObject(j, "read", read);
+    cJSON_AddNumberToObject(j, "ts", (double)time(NULL));
+    ok = ok && write_line(fd, j);
+    cJSON_Delete(j);
+    ok = ok && fsync(fd) == 0;
+    close(fd);
+    return ok;
+}
+
 /* Read a whole file (chat logs are small). */
 static char *slurp(const char *path)
 {
@@ -223,6 +248,11 @@ size_t chat_store_list_files(const char *project_dir, ChatSummary **out)
                     cJSON *j = cJSON_Parse(line);
                     cJSON *t = j ? cJSON_GetObjectItem(j, "title") : NULL;
                     if (cJSON_IsString(t)) snprintf(c->title, sizeof(c->title), "%s", t->valuestring);
+                    cJSON_Delete(j);
+                } else if (strstr(line, "\"type\":\"observer\"")) { /* the latest one counts */
+                    cJSON *j = cJSON_Parse(line);
+                    cJSON *rd = j ? cJSON_GetObjectItem(j, "read") : NULL;
+                    if (cJSON_IsBool(rd)) c->observer_ignore = !cJSON_IsTrue(rd);
                     cJSON_Delete(j);
                 }
                 first = false;

@@ -75,7 +75,7 @@ size_t sdb_chat_list(Db *db, const char *project_id, ChatSummary **out)
 {
     *out = NULL;
     DbRows r;
-    if (!db_query(db, "SELECT id, title, updated_at FROM conversations WHERE project_id = ? ORDER BY updated_at DESC",
+    if (!db_query(db, "SELECT id, title, updated_at, observer_ignore FROM conversations WHERE project_id = ? ORDER BY updated_at DESC",
                   (DbArg[1]){ DB_S(project_id) }, 1, &r))
         return 0;
     ChatSummary *list = r.nrows ? calloc(r.nrows, sizeof(ChatSummary)) : NULL;
@@ -85,6 +85,7 @@ size_t sdb_chat_list(Db *db, const char *project_id, ChatSummary **out)
         snprintf(c->id, sizeof(c->id), "%s", db_cell(&r, i, 0));
         snprintf(c->title, sizeof(c->title), "%s", db_cell(&r, i, 1) ? db_cell(&r, i, 1) : "Chat");
         c->updated = (time_t)atof(db_cell(&r, i, 2) ? db_cell(&r, i, 2) : "0");
+        c->observer_ignore = db_cell(&r, i, 3) && atoi(db_cell(&r, i, 3)) == 1;
     }
     db_rows_free(&r);
     *out = list;
@@ -141,6 +142,13 @@ bool sdb_chat_load(Db *db, const char *project_id, const char *id, ChatMessage *
     db_rows_free(&d);
     *msgs = list;
     return ok;
+}
+
+bool sdb_chat_set_observer(Db *db, const char *project_id, const char *id, bool read)
+{
+    uint64_t changed = 0;
+    DbArg a[3] = { DB_I(read ? 0 : 1), DB_S(id), DB_S(project_id) };
+    return db_run(db, "UPDATE conversations SET observer_ignore = ? WHERE id = ? AND project_id = ?", a, 3, &changed);
 }
 
 bool sdb_chat_rename(Db *db, const char *project_id, const char *id, const char *title)

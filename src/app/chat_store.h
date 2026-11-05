@@ -23,6 +23,7 @@ typedef struct {
     char title[160];
     time_t updated;
     long updated_nsec; /* orders chats changed within one second */
+    bool observer_ignore; /* the author told the observer not to read it */
 } ChatSummary;
 
 /* Directory for a project rooted at `project_dir` (created on demand). */
@@ -37,6 +38,9 @@ bool chat_store_append(const char *project_dir, const char *id, const char *titl
 
 /* Rename a stored conversation (a title line is appended). */
 bool chat_store_rename(const char *project_dir, const char *id, const char *title);
+/* Whether the observer reads this chat (the author's choice; a line is
+ * appended to the chat's file, or the store updated). */
+bool chat_store_set_observer(const char *project_dir, const char *id, bool read);
 
 /* List conversations, newest first. Caller frees *out. */
 size_t chat_store_list(const char *project_dir, ChatSummary **out);

@@ -112,7 +112,8 @@ void findings_view_set(FindingsView *v, const Record *f, size_t n, const Record 
         for (size_t oi = 0; oi < n; oi++) {
             size_t i = order[oi];
             const RecordVersion *cur = record_current(&f[i]);
-            if (!strcmp(cur->status, "dismissed")) continue;
+            /* dismissed by the author, or filtered by the observer's rules */
+            if (!strcmp(cur->status, "dismissed") || !strcmp(cur->status, "filtered")) continue;
             bool stale = !strcmp(cur->finding.type, "conflict") && !conflict_current(cur, canon, ncanon);
             bool first = !strcmp(cur->finding.type, "conflict") && !strcmp(cur->status, "new") && !stale;
             if ((pass == 0) != first) continue;

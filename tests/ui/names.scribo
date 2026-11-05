@@ -1,0 +1,34 @@
+# Who is who (user testing): names are stored settings (Explorer → PROJECT
+# → Names…), a name said in chat is offered for confirmation, and the
+# author is never a finding in chats.
+open "$DIR/chapter.md"
+click_element NamesItem
+key A cmd
+type "Tripp"
+key ENTER
+wait 3
+key A cmd
+type "Maz"
+key ENTER
+expect status "Names saved: you are Tripp; the assistant is Maz"
+# Noticed in chat, saved only when the author confirms.
+click_element ChatInput
+type "I'll call you Nova from now on."
+key ENTER
+wait_chat
+wait 10
+expect element_w NameSave 30 200
+click_element NameSave
+expect status "Names saved"
+expect element_w NameSave 0 0
+expect file "$DIR/profile.json" "{\"author\":\"Tripp\",\"assistant\":\"Nova\",\"asked\":true}"
+# The author is never a story finding in a chat; the story's people are.
+click_element ChatInput
+type "Tripp says Ingrid rows across the fjord."
+key ENTER
+wait_chat
+observer on
+click_element ObserverToggle
+wait_observer
+expect findings_has "Ingrid is mentioned."
+expect findings_not "Tripp is mentioned."

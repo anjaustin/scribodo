@@ -473,8 +473,14 @@ static const char *const k_migration_006[] = {
     NULL,
 };
 
+/* 007: chats the author told the observer not to read (user testing). */
+static const char *const k_migration_007[] = {
+    "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS observer_ignore TINYINT(1) NOT NULL DEFAULT 0",
+    NULL,
+};
+
 static const char *const *const k_migrations[] = { k_migration_001, k_migration_002, k_migration_003, k_migration_004,
-                                                   k_migration_005, k_migration_006 };
+                                                   k_migration_005, k_migration_006, k_migration_007 };
 
 int db_schema_version(Db *db)
 {

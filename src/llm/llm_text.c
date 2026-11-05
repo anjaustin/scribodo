@@ -271,3 +271,110 @@ void llm_split_thinking(const char *s, char **visible, char **reasoning)
     if (visible) *visible = v; else free(v);
     if (reasoning) *reasoning = r; else free(r);
 }
+
+/* Inline markers within one line: **x** __x__ *x* `x` [t](u). */
+static void md_inline(const char *p, size_t n, char *out, size_t *k)
+{
+    for (size_t i = 0; i < n;) {
+        /* bold: ** or __ (the pair is dropped wherever it appears) */
+        if (i + 1 < n && ((p[i] == '*' && p[i + 1] == '*') || (p[i] == '_' && p[i + 1] == '_'))) {
+            i += 2;
+            continue;
+        }
+        /* italic *x*: an opening * before a non-space with a closing * on the line */
+        if (p[i] == '*' && i + 1 < n && p[i + 1] != ' ' && p[i + 1] != '*') {
+            const char *close = memchr(p + i + 1, '*', n - i - 1);
+            if (close && close[-1] != ' ') {
+                size_t len = (size_t)(close - (p + i + 1));
+                md_inline(p + i + 1, len, out, k);
+                i += len + 2;
+                continue;
+            }
+        }
+        /* code `x` */
+        if (p[i] == '`') {
+            const char *close = memchr(p + i + 1, '`', n - i - 1);
+            if (close) {
+                size_t len = (size_t)(close - (p + i + 1));
+                memcpy(out + *k, p + i + 1, len);
+                *k += len;
+                i += len + 2;
+                continue;
+            }
+        }
+        /* link [text](url) */
+        if (p[i] == '[') {
+            const char *mid = memchr(p + i, ']', n - i);
+            if (mid && (size_t)(mid - p) + 1 < n && mid[1] == '(') {
+                const char *end = memchr(mid, ')', n - (size_t)(mid - p));
+                if (end) {
+                    md_inline(p + i + 1, (size_t)(mid - (p + i + 1)), out, k);
+                    size_t ul = (size_t)(end - (mid + 2));
+                    if (ul) {
+                        memcpy(out + *k, " (", 2);
+                        *k += 2;
+                        memcpy(out + *k, mid + 2, ul);
+                        *k += ul;
+                        out[(*k)++] = ')';
+                    }
+                    i = (size_t)(end - p) + 1;
+                    continue;
+                }
+            }
+        }
+        out[(*k)++] = p[i++];
+    }
+}
+
+char *llm_markdown_display(const char *md)
+{
+    size_t n = strlen(md);
+    char *out = malloc(n * 3 + 16); /* worst case: "---" lines become "———" (9 bytes) */
+    if (!out) return NULL;
+    size_t k = 0;
+    bool in_fence = false;
+    for (const char *line = md; *line;) {
+        const char *eol = strchr(line, '\n');
+        size_t len = eol ? (size_t)(eol - line) : strlen(line);
+        const char *p = line;
+        size_t ind = 0;
+        while (ind < len && (p[ind] == ' ' || p[ind] == '\t')) ind++;
+        bool fence = len - ind >= 3 && !strncmp(p + ind, "```", 3);
+        if (fence) {
+            in_fence = !in_fence; /* the fence line itself isn't shown */
+        } else if (in_fence) {
+            memcpy(out + k, p, len); /* code as written */
+            k += len;
+            out[k++] = '\n';
+        } else {
+            memcpy(out + k, p, ind);
+            k += ind;
+            const char *rest = p + ind;
+            size_t rl = len - ind;
+            size_t h = 0;
+            while (h < rl && h < 6 && rest[h] == '#') h++;
+            if (h && h < rl && rest[h] == ' ') { /* heading */
+                rest += h + 1;
+                rl -= h + 1;
+            } else if (rl >= 2 && (rest[0] == '-' || rest[0] == '*' || rest[0] == '+') && rest[1] == ' ') {
+                memcpy(out + k, "\xE2\x80\xA2 ", 4); /* bullet */
+                k += 4;
+                rest += 2;
+                rl -= 2;
+            } else if (rl >= 3 && (!strncmp(rest, "---", 3) || !strncmp(rest, "***", 3) || !strncmp(rest, "___", 3))) {
+                bool rule = true;
+                for (size_t q = 0; q < rl; q++) rule = rule && (rest[q] == rest[0] || rest[q] == ' ');
+                if (rule) {
+                    memcpy(out + k, "\xE2\x80\x94\xE2\x80\x94\xE2\x80\x94", 9);
+                    k += 9;
+                    rl = 0;
+                }
+            }
+            md_inline(rest, rl, out, &k);
+            if (eol) out[k++] = '\n';
+        }
+        line = eol ? eol + 1 : line + len;
+    }
+    out[k] = '\0';
+    return out;
+}

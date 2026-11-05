@@ -57,8 +57,8 @@ static void test_db(void)
     }
     bool migrated = db_migrate(db, err, sizeof(err));
     if (!migrated) fprintf(stderr, "    %s\n", err);
-    CHECK(migrated && db_schema_version(db) == 6);
-    CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 6); /* idempotent */
+    CHECK(migrated && db_schema_version(db) == 7);
+    CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 7); /* idempotent */
 
     /* Author text with quotes, backslashes, SQL and Unicode goes through
      * prepared statements untouched. */
@@ -153,7 +153,7 @@ static void test_migration(void)
                      NULL, 0, NULL));
         bool migrated = db_migrate(db, err, sizeof(err));
         if (!migrated) fprintf(stderr, "    %s\n", err);
-        CHECK(migrated && db_schema_version(db) == 6);
+        CHECK(migrated && db_schema_version(db) == 7);
         DbRows r;
         CHECK(db_query(db, "SELECT id FROM revisions ORDER BY seq", NULL, 0, &r) && r.nrows == 2 &&
               !strcmp(db_cell(&r, 0, 0), "r-a") && !strcmp(db_cell(&r, 1, 0), "r-b"));
@@ -331,6 +331,18 @@ static void test_backends(void)
     CHECK(nm == 2 && !msgs[0].via && msgs[1].via && !strcmp(msgs[1].via, "Frontier \xC2\xB7 api.example.com"));
     chat_store_free_messages(msgs, nm);
     CHECK(sdb_chat_rename(db, pid, "20261104-150000-abcd", "Comparing chapters"));
+    /* The author's "don't observe this chat" is kept with it. */
+    {
+        CHECK(sdb_chat_set_observer(db, pid, "20261104-150000-abcd", false));
+        ChatSummary *ol = NULL;
+        size_t on = sdb_chat_list(db, pid, &ol);
+        CHECK(on >= 1 && ol[0].observer_ignore);
+        free(ol);
+        CHECK(sdb_chat_set_observer(db, pid, "20261104-150000-abcd", true));
+        on = sdb_chat_list(db, pid, &ol);
+        CHECK(on >= 1 && !ol[0].observer_ignore);
+        free(ol);
+    }
     ChatSummary *cs = NULL;
     size_t nc = sdb_chat_list(db, pid, &cs);
     CHECK(nc == 1 && !strcmp(cs[0].title, "Comparing chapters"));
@@ -388,6 +400,7 @@ static void test_import(void)
     snprintf(rv_new, sizeof(rv_new), "%s/.scribodo/revisions/Chapter One.md", proj);
     CHECK(rename(rv_old, rv_new) == 0);
     CHECK(renames_record(proj, "ch1.md", "Chapter One.md"));
+    CHECK(chat_store_set_observer(proj, "20261104-160000-abcd", false)); /* carried into the store */
 
     why[0] = '\0';
     CHECK(store_import(proj, why, sizeof(why)));
@@ -414,6 +427,12 @@ static void test_import(void)
     CHECK(chat_store_load(proj, "20261104-160000-abcd", &msgs, &nm) && nm == 2 && msgs[0].docs &&
           !strcmp(msgs[0].docs, "Chapter One.md"));
     chat_store_free_messages(msgs, nm);
+    {
+        ChatSummary *il = NULL;
+        size_t in = chat_store_list(proj, &il);
+        CHECK(in == 1 && il[0].observer_ignore); /* the setting came along */
+        free(il);
+    }
     /* Exported as files (what an in-app backup carries): original times,
      * and sources that point at the exported snapshots. */
     {

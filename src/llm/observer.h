@@ -84,4 +84,16 @@ size_t obs_paragraphs(const char *text, size_t *starts, size_t *lens, size_t max
 char *obs_fake_extract(const char *chunk);
 char *obs_fake_judge(const char *canon, const char *statement);
 
+/* Exposed for tests: a chat finding that describes the conversation
+ * itself rather than the story world (dropped). */
+bool obs_about_the_conversation(const char *subject, const char *desc);
+
+/* Who is who (stored names): the author and the assistant are never
+ * findings in chats. Changing them re-checks the project's chat findings. */
+void observer_set_names(Observer *o, const char *author, const char *assistant);
+/* Exposed for tests: whether a chat finding is about the story world (not
+ * the conversation or the two people in it), and the re-check of a
+ * project's chat findings under the current rules. */
+bool obs_chat_finding_allowed(const FindingInfo *f, const char *desc, const char *author, const char *assistant);
+size_t obs_refilter(const char *project, const char *author, const char *assistant);
 #endif

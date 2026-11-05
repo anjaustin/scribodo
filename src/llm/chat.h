@@ -105,6 +105,15 @@ typedef long (*ChatTokenCount)(const char *text, void *ctx);
  * to use the estimate only. */
 char *chat_build_request(const ChatMessage *msgs, size_t n, const ChatContext *ctx, int ctx_tokens,
                          ChatTokenCount count, void *count_ctx, bool *doc_truncated);
+/* Who is who, as stored facts (the author's settings). */
+typedef struct {
+    const char *author;    /* NULL/"" = unknown */
+    const char *assistant; /* NULL/"" = unknown */
+} ChatNames;
+/* With the names stated as facts in the system message. Attached
+ * documents go into the newest user message, before the author's words. */
+char *chat_build_request_ex(const ChatMessage *msgs, size_t n, const ChatContext *ctx, const ChatNames *names, int ctx_tokens,
+                            ChatTokenCount count, void *count_ctx, bool *doc_truncated);
 
 /* The request for an edit: an editor persona, the document as context, and
  * the instruction plus passage. No chat history (keeps a small model on
@@ -126,5 +135,9 @@ int chat_parse_sse_line(const char *line, char **acc, size_t *acc_len, char *err
  * False while a reply is being written. */
 bool chat_select_remote(ChatSession *s, const RemoteConfig *remote);
 bool chat_remote_selected(ChatSession *s);
+
+/* The author's name and the assistant's name, as stored facts (stated in
+ * every request). Either may be "". */
+void chat_set_names(ChatSession *s, const char *author, const char *assistant);
 
 #endif

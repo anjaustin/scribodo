@@ -1,0 +1,22 @@
+# Per-chat "Observer reads this chat" (user testing): an unchecked chat is
+# never read; re-enabling it from the chat's menu reads it from where it was.
+open "$DIR/chapter.md"
+click_element ChatInput
+type "Ingrid rows across the fjord."
+key ENTER
+wait_chat
+expect element_w ObserverReads 100 400
+click_element ObserverReads
+expect status "The observer won't read this chat"
+expect explorer_has "Ingrid rows across the fjord. · not observed"
+observer on
+click_element ObserverToggle
+wait_observer
+expect findings_not "Ingrid"
+# Back on, from the chat's right-click menu.
+right_click_element ChatItem0
+click_element MenuItem1
+expect status "The observer reads this chat again"
+expect explorer_has "Ingrid rows across the fjord."
+wait_observer
+expect findings_has "Ingrid is mentioned."

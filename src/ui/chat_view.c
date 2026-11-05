@@ -8,6 +8,7 @@
 #include "core/text_buffer.h"
 #include "core/utf8.h"
 #include "core/wrap.h"
+#include "llm/llm_text.h"
 #include "ui/input.h"
 
 #define PAD 14.0f
@@ -42,6 +43,8 @@ struct ChatView {
     double flash_t;
     int record_kind;     /* 0 note, 1 canon */
     Rectangle last_apply; /* the newest reply's links, as last drawn */
+    bool can_apply;       /* a document is open to apply a reply to */
+    char assistant_name[64]; /* the label on replies */
     Rectangle last_note, last_canon;
     char *submitted;
 };
@@ -57,6 +60,8 @@ ChatView *chat_view_create(SFont *text_font, SFont *label_font, ChatSession *cha
     v->chat = chat;
     v->stick_to_end = true;
     v->apply_index = -1;
+    v->can_apply = true;
+    snprintf(v->assistant_name, sizeof(v->assistant_name), "Scribodo");
     v->record_index = -1;
     v->reveal_index = -1;
     v->flash_index = -1;
@@ -106,7 +111,8 @@ static uint64_t hash_str(const char *s, size_t n)
 }
 
 /* Rebuild the wrap cache for message i if its text or width changed. */
-static void refresh(ChatView *v, size_t i, const char *content, float width)
+/* `markdown`: a model reply, shown without its Markdown markers. */
+static void refresh(ChatView *v, size_t i, const char *content, bool markdown, float width)
 {
     if (i >= v->ncache) {
         MsgCache *c = realloc(v->cache, (i + 1) * sizeof(MsgCache));
@@ -122,9 +128,16 @@ static void refresh(ChatView *v, size_t i, const char *content, float width)
     size_t len = strlen(content);
     uint64_t h = hash_str(content, len);
     if (c->src_len == len && c->src_hash == h && c->width == width && c->layout.count) return;
-    uint32_t *cps = malloc((len + 1) * sizeof(uint32_t));
-    if (!cps) return;
-    size_t n = utf8_decode((const uint8_t *)content, len, cps, NULL);
+    char *shown = markdown ? llm_markdown_display(content) : NULL;
+    const char *text = shown ? shown : content;
+    size_t tlen = strlen(text);
+    uint32_t *cps = malloc((tlen + 1) * sizeof(uint32_t));
+    if (!cps) {
+        free(shown);
+        return;
+    }
+    size_t n = utf8_decode((const uint8_t *)text, tlen, cps, NULL);
+    free(shown);
     tb_set(&c->buf, cps, n);
     free(cps);
     wrap_compute(&c->layout, &c->buf, width > 20 ? width : 20, adv, v->text);
@@ -143,7 +156,7 @@ static float total_height(ChatView *v, float width)
     size_t n = chat_count(v->chat);
     for (size_t i = 0; i < n; i++) {
         const ChatMessage *m = chat_message(v->chat, i);
-        refresh(v, i, m->content, width);
+        refresh(v, i, m->content, m->role == CHAT_ASSISTANT && !m->is_edit, width);
         y += LABEL_H + v->cache[i].height + 2 * BUBBLE_PAD + GAP;
         if (m->role == CHAT_ASSISTANT && !m->streaming && !m->error && m->content[0]) y += LABEL_H;
     }
@@ -174,9 +187,10 @@ void chat_view_update(ChatView *v, Rectangle list, Rectangle input, bool input_f
                 bool copyable = msg->role == CHAT_ASSISTANT && !msg->streaming && !msg->error && msg->content[0];
                 if (copyable) {
                     Rectangle copy = { list.x + PAD, y + 2, 40, LABEL_H };
-                    Rectangle apply = { list.x + PAD + 52, y + 2, 120, LABEL_H };
-                    Rectangle note = { list.x + PAD + 184, y + 2, 40, LABEL_H };
-                    Rectangle canon = { list.x + PAD + 234, y + 2, 50, LABEL_H };
+                    float nx = v->can_apply ? 184 : 52;
+                    Rectangle apply = v->can_apply ? (Rectangle){ list.x + PAD + 52, y + 2, 120, LABEL_H } : (Rectangle){ 0 };
+                    Rectangle note = { list.x + PAD + nx, y + 2, 40, LABEL_H };
+                    Rectangle canon = { list.x + PAD + nx + 50, y + 2, 50, LABEL_H };
                     if (CheckCollisionPointRec(m, copy)) {
                         input_set_clipboard(msg->content);
                         v->copied = true;
@@ -342,14 +356,14 @@ void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_foc
     v->last_apply = v->last_note = v->last_canon = (Rectangle){ 0 };
     for (size_t i = 0; i < n; i++) {
         const ChatMessage *m = chat_message(v->chat, i);
-        refresh(v, i, m->content, width);
+        refresh(v, i, m->content, m->role == CHAT_ASSISTANT && !m->is_edit, width);
         const MsgCache *c = &v->cache[i];
         /* A message that went to (or came from) a remote model says so,
          * also when the chat is reopened later. */
         char who[480];
         if (m->via && m->via[0])
             snprintf(who, sizeof(who), m->role == CHAT_USER ? "You \xC2\xB7 sent to %s" : "%s", m->via);
-        else snprintf(who, sizeof(who), "%s", m->role == CHAT_USER ? "You" : "Scribodo");
+        else snprintf(who, sizeof(who), "%s", m->role == CHAT_USER ? "You" : v->assistant_name);
         sfont_draw_utf8(v->label, who, (int)strlen(who), list.x + PAD, y, m->via && m->via[0] ? (Color){ 0xE6, 0xB4, 0x50, 0xFF } : COL_LABEL);
         y += LABEL_H;
         float bh = c->height + 2 * BUBBLE_PAD;
@@ -370,13 +384,17 @@ void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_foc
         y += bh;
         if (m->role == CHAT_ASSISTANT && !m->streaming && !m->error && m->content[0]) {
             sfont_draw_utf8(v->label, "Copy", 4, list.x + PAD, y + 2, COL_LINK);
-            const char *apply = "Apply to document";
-            sfont_draw_utf8(v->label, apply, (int)strlen(apply), list.x + PAD + 52, y + 2, COL_LINK);
-            v->last_apply = (Rectangle){ list.x + PAD + 52, y + 2, 120, LABEL_H };
-            sfont_draw_utf8(v->label, "Note", 4, list.x + PAD + 184, y + 2, COL_LINK);
-            sfont_draw_utf8(v->label, "Canon", 5, list.x + PAD + 234, y + 2, COL_LINK);
-            v->last_note = (Rectangle){ list.x + PAD + 184, y + 2, 40, LABEL_H };
-            v->last_canon = (Rectangle){ list.x + PAD + 234, y + 2, 50, LABEL_H };
+            /* "Apply to document" only with a document to apply it to. */
+            float nx = v->can_apply ? 184 : 52;
+            if (v->can_apply) {
+                const char *apply = "Apply to document";
+                sfont_draw_utf8(v->label, apply, (int)strlen(apply), list.x + PAD + 52, y + 2, COL_LINK);
+                v->last_apply = (Rectangle){ list.x + PAD + 52, y + 2, 120, LABEL_H };
+            }
+            sfont_draw_utf8(v->label, "Note", 4, list.x + PAD + nx, y + 2, COL_LINK);
+            sfont_draw_utf8(v->label, "Canon", 5, list.x + PAD + nx + 50, y + 2, COL_LINK);
+            v->last_note = (Rectangle){ list.x + PAD + nx, y + 2, 40, LABEL_H };
+            v->last_canon = (Rectangle){ list.x + PAD + nx + 50, y + 2, 50, LABEL_H };
             if (m->truncated || m->stopped) {
                 const char *note = m->stopped ? "Stopped before the end" : "Reply stopped at the length limit";
                 sfont_draw_utf8(v->label, note, (int)strlen(note), list.x + PAD + 296, y + 2, COL_LABEL);
@@ -391,4 +409,11 @@ void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_foc
     DrawRectangleRec(input, COL_INPUT_BG);
     DrawRectangleLinesEx(input, 1.0f, input_focused ? COL_FOCUS : COL_INPUT_BORDER);
     editor_draw(v->input, input, input_focused);
+}
+
+void chat_view_set_can_apply(ChatView *v, bool can) { v->can_apply = can; }
+
+void chat_view_set_assistant_name(ChatView *v, const char *name)
+{
+    snprintf(v->assistant_name, sizeof(v->assistant_name), "%s", name && name[0] ? name : "Scribodo");
 }

@@ -3,6 +3,8 @@
 
 #include "core/utf8.h"
 
+#include <ctype.h>
+#include <sys/time.h>
 #include <dirent.h>
 #include <errno.h>
 #include <limits.h>
@@ -19,6 +21,7 @@
 
 #include "app/chat_store.h"
 #include "app/store.h"
+#include "app/store_entities.h"
 #include "llm/semantic.h"
 #include "app/revisions.h"
 #include "cJSON.h"
@@ -55,6 +58,7 @@ struct Observer {
     atomic_bool cancel;
     atomic_bool chat_active;
     char status[200];
+    char author_name[64], assistant_name[64]; /* who is who: never findings in chats */
     uint64_t version;
     unsigned jobs_done;
     unsigned attempts;      /* jobs started, including failed ones (tests) */
@@ -594,7 +598,17 @@ static char *complete(Observer *o, const char *system, const char *user, cJSON *
     return content;
 }
 
-static char *backend_extract(Observer *o, const char *chunk)
+/* A chat is a conversation about the story, not the story: only the
+ * story-world facts in it are findings (the author's decision, user
+ * testing 2026-11-04). */
+static const char *k_extract_chat =
+    "\nThis passage is a conversation between the author (AUTHOR) and their writing assistant (ASSISTANT). Extract "
+    "only facts about the author's story world: its characters, places, objects, events and open questions. Ignore "
+    "the conversation itself: greetings, the names the author and the assistant use for themselves or each other, "
+    "what the assistant offers, asks or suggests, and talk about the writing process. If the conversation says "
+    "nothing about the story world, return no findings.";
+
+static char *backend_extract(Observer *o, const char *chunk, bool is_chat)
 {
     if (!o->server) {
         usleep(20000);
@@ -604,7 +618,9 @@ static char *backend_extract(Observer *o, const char *chunk)
     char *user = malloc(n);
     if (!user) return NULL;
     snprintf(user, n, "PASSAGE:\n%s", chunk);
-    char *out = complete(o, k_extract_system, user, extract_schema(), 1400);
+    char sys[2400];
+    snprintf(sys, sizeof(sys), "%s%s", k_extract_system, is_chat ? k_extract_chat : "");
+    char *out = complete(o, sys, user, extract_schema(), 1400);
     free(user);
     return out;
 }
@@ -899,6 +915,7 @@ typedef struct {
     uint64_t *hashes;     /* document pieces read by this job */
     cJSON *current;       /* every piece of the document now (hex hashes), for pruning the index */
     size_t nhashes, cap_hashes;
+    char author[64], assistant[64]; /* who is who, when the job started */
 } Job;
 
 static void job_free(Job *j)
@@ -1134,6 +1151,7 @@ static bool find_job(const char *project, cJSON *st, Job *j)
         if (!present) cJSON_DeleteItemFromObject(chats, it->string);
     }
     for (size_t i = 0; i < nc && !found; i++) {
+        if (list[i].observer_ignore) continue; /* the author said not to read it */
         ChatMessage *msgs = NULL;
         size_t n = 0;
         if (!chat_store_load(project, list[i].id, &msgs, &n)) continue;
@@ -1246,6 +1264,192 @@ static bool strong_evidence(const char *type, const char *subject, const char *q
     return !strcmp(type, "entity") && strlen(subject) >= 3 && strcasestr(quote, subject) != NULL;
 }
 
+/* ---- the observer's rules for chats, versioned ------------------------------------
+ * Bump OBS_RULES_VERSION whenever what counts as a chat finding changes:
+ * existing findings are then re-checked automatically (obs_refilter), so
+ * the software repairs what it recorded under older rules (user testing). */
+#define OBS_RULES_VERSION 2
+
+static bool same_name(const char *text, const char *name)
+{
+    if (!text || !name || !name[0]) return false;
+    char a[256], b[256];
+    entity_norm(text, a, sizeof(a));
+    entity_norm(name, b, sizeof(b));
+    if (!a[0] || !b[0]) return false;
+    if (!strcmp(a, b)) return true;
+    size_t fw = strcspn(a, " "); /* "Tripp Flynn" vs "Tripp" */
+    return strlen(b) == fw && !strncmp(a, b, fw);
+}
+
+/* "tripp" in "Tripp proposes 'Scribe'..." as a whole word. */
+static bool mentions_name(const char *text, const char *name)
+{
+    if (!text || !name || !name[0]) return false;
+    size_t n = strlen(name);
+    for (const char *p = text; (p = strcasestr(p, name)) != NULL; p += n) {
+        bool start = p == text || !(isalnum((unsigned char)p[-1]) || ((unsigned char)p[-1] & 0x80));
+        bool end = !(isalnum((unsigned char)p[n]) || ((unsigned char)p[n] & 0x80));
+        if (start && end) return true;
+    }
+    return false;
+}
+
+/* A subject that looks like a name: capitalised, one to four words. */
+static bool named_subject(const char *subject)
+{
+    while (*subject == ' ') subject++;
+    if (!is_upper_start((const unsigned char *)subject) || strlen(subject) < 2) return false;
+    int words = 0;
+    for (const char *p = subject; *p;) {
+        while (*p == ' ') p++;
+        if (!*p) break;
+        words++;
+        while (*p && *p != ' ') p++;
+    }
+    return words <= 4;
+}
+
+/* A capitalised word that isn't the first: "Should Ingrid know…" names
+ * someone; "What happens next?" doesn't. */
+static bool names_someone(const char *text)
+{
+    const unsigned char *p = (const unsigned char *)(text ? text : "");
+    bool first = true;
+    while (*p) {
+        while (*p && (*p == ' ' || ispunct(*p))) p++;
+        if (!*p) break;
+        if (!first && is_upper_start(p)) return true;
+        first = false;
+        while (*p && *p != ' ') p++;
+    }
+    return false;
+}
+
+bool obs_chat_finding_allowed(const FindingInfo *f, const char *desc, const char *author, const char *assistant)
+{
+    const char *subject = f ? f->subject : "";
+    if (obs_about_the_conversation(subject, desc)) return false;
+    /* In a chat, a finding is about something named in the story (a
+     * character, place, object): talk about the work ("drafts, notes, and
+     * chats") or the session ("first scene / character notes") isn't. */
+    if (!named_subject(subject) && !(f && !strcmp(f->type, "question") && names_someone(desc))) return false;
+    /* The two people in the conversation are never story findings. */
+    const char *names[2] = { author, assistant };
+    for (int k = 0; k < 2; k++) {
+        if (!names[k] || !names[k][0]) continue;
+        if (same_name(subject, names[k]) || (f && same_name(f->object, names[k]))) return false;
+        if (mentions_name(desc, names[k])) return false;
+    }
+    return true;
+}
+
+static void rules_signature(const char *author, const char *assistant, char out[17])
+{
+    char a[256], b[256], key[600];
+    entity_norm(author ? author : "", a, sizeof(a));
+    entity_norm(assistant ? assistant : "", b, sizeof(b));
+    snprintf(key, sizeof(key), "rules=%d|%s|%s", OBS_RULES_VERSION, a, b);
+    uint64_t h = 1469598103934665603ull;
+    for (const char *p = key; *p; p++) h = (h ^ (unsigned char)*p) * 1099511628211ull;
+    snprintf(out, 17, "%016llx", (unsigned long long)h);
+}
+
+static bool rules_get(const char *project, char out[17])
+{
+    out[0] = '\0';
+    char pid[64];
+    Db *db = NULL;
+    StoreMode mode = store_mode(project, pid, sizeof(pid), &db);
+    if (mode == STORE_PAUSED) return false;
+    if (mode == STORE_DB) {
+        char id[80];
+        snprintf(id, sizeof(id), "rules-%s", pid);
+        DbRows r;
+        if (!db_query(db, "SELECT state FROM jobs WHERE id = ?", (DbArg[1]){ DB_S(id) }, 1, &r)) return false;
+        if (r.nrows && db_cell(&r, 0, 0)) snprintf(out, 17, "%s", db_cell(&r, 0, 0));
+        db_rows_free(&r);
+        return true;
+    }
+    char path[PATH_MAX + 64];
+    snprintf(path, sizeof(path), "%s/.scribodo/observer-rules", project);
+    FILE *f = fopen(path, "rb");
+    if (f) {
+        size_t n = fread(out, 1, 16, f);
+        out[n] = '\0';
+        fclose(f);
+    }
+    return true;
+}
+
+static void rules_set(const char *project, const char *sig)
+{
+    char pid[64];
+    Db *db = NULL;
+    StoreMode mode = store_mode(project, pid, sizeof(pid), &db);
+    if (mode == STORE_DB) {
+        char id[80];
+        snprintf(id, sizeof(id), "rules-%s", pid);
+        struct timeval tv;
+        gettimeofday(&tv, NULL);
+        DbArg a[4] = { DB_S(id), DB_S(pid), DB_S(sig), DB_D((double)tv.tv_sec) };
+        db_run(db,
+               "INSERT INTO jobs (id, project_id, kind, state, updated_at) VALUES (?,?,'observer_rules',?,?)"
+               " ON DUPLICATE KEY UPDATE state = VALUES(state), updated_at = VALUES(updated_at)",
+               a, 4, NULL);
+    } else if (mode == STORE_FILES) {
+        char dir[PATH_MAX + 32], path[PATH_MAX + 64];
+        snprintf(dir, sizeof(dir), "%s/.scribodo", project);
+        mkdir(dir, 0755);
+        snprintf(path, sizeof(path), "%s/observer-rules", dir);
+        FILE *f = fopen(path, "wb");
+        if (f) {
+            fputs(sig, f);
+            fclose(f);
+        }
+    }
+}
+
+/* Re-check every chat finding against the current rules: ones that no
+ * longer qualify are marked "filtered" (kept, hidden, out of the graph);
+ * filtered ones that qualify again are restored. Decisions the author made
+ * (saved, committed, dismissed) are never touched. Returns how many
+ * changed. */
+size_t obs_refilter(const char *project, const char *author, const char *assistant)
+{
+    Record *recs = NULL;
+    size_t n = records_list(project, REC_FINDING, &recs), changed = 0;
+    for (size_t i = 0; i < n; i++) {
+        const RecordVersion *v = record_current(&recs[i]);
+        bool from_chat = v->nsources && v->sources[0].kind == SRC_CHAT;
+        if (!from_chat) continue;
+        bool is_new = !strcmp(v->status, "new"), is_filtered = !strcmp(v->status, "filtered");
+        if (!is_new && !is_filtered) continue;
+        bool allowed = obs_chat_finding_allowed(&v->finding, v->content, author, assistant);
+        const char *to = is_new && !allowed ? "filtered" : is_filtered && allowed ? "new" : NULL;
+        if (!to) continue;
+        if (records_append_ex(project, REC_FINDING, recs[i].id, to, v->content, v->sources, v->nsources, &v->finding, NULL))
+            changed++;
+    }
+    records_free(recs, n);
+    return changed;
+}
+
+/* Does a chat finding describe the conversation rather than the story
+ * ("Tripp asks the assistant…", "the name 'Maz' is…", "a greeting…")? */
+bool obs_about_the_conversation(const char *subject, const char *desc)
+{
+    static const char *const marks[] = { "assistant", "the author", "the user", "scribodo", "writing partner",
+                                         "conversation", "greeting", "the name '", "the name \"", "the name \xE2\x80\x98",
+                                         "the name \xE2\x80\x9C", "chatbot", "the ai " };
+    const char *fields[2] = { subject ? subject : "", desc ? desc : "" };
+    for (int f = 0; f < 2; f++)
+        for (size_t k = 0; k < sizeof(marks) / sizeof(marks[0]); k++)
+            if (strcasestr(fields[f], marks[k])) return true;
+    return false;
+}
+#define about_the_conversation obs_about_the_conversation
+
 /* Turn the model's JSON into located candidates. */
 static size_t parse_candidates(const Job *j, const char *json, const char *revision, Cand *out, size_t max)
 {
@@ -1316,6 +1520,9 @@ static size_t parse_candidates(const Job *j, const char *json, const char *revis
         c->src.len = cp_count(base + byte_start, len);
         c->src.quote = dupn(base + byte_start, len);
         c->keep = c->desc && c->src.quote && strong_evidence(t, c->info.subject, c->src.quote);
+        /* In a chat, a finding about the conversation itself is dropped,
+         * whatever the model says. */
+        if (c->keep && !j->is_doc && !obs_chat_finding_allowed(&c->info, c->desc, j->author, j->assistant)) c->keep = false;
         if (c->keep) k++;
         else {
             free(c->desc);
@@ -1373,7 +1580,7 @@ static void plain_check(const char *check, char *out, size_t outlen)
 static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSON *st, bool *io_out)
 {
     bool io_failed = false;
-    char *json = backend_extract(o, j->chunk);
+    char *json = backend_extract(o, j->chunk, !j->is_doc);
     if (!json) return false;
     Cand cands[16];
     size_t nc = parse_candidates(j, json, "", cands, 16);
@@ -1690,7 +1897,25 @@ static void *worker(void *arg)
             }
         }
         o->nrenames = keep;
+        char author[64], assistant[64];
+        snprintf(author, sizeof(author), "%s", o->author_name);
+        snprintf(assistant, sizeof(assistant), "%s", o->assistant_name);
         pthread_mutex_unlock(&o->mu);
+        /* The rules (or the names) changed since this project's findings were
+         * made: re-check them, so the software repairs what it recorded. */
+        char sig[17], had[17];
+        rules_signature(author, assistant, sig);
+        if (rules_get(project, had) && strcmp(had, sig) != 0) {
+            pthread_mutex_lock(&g_findings_mu);
+            size_t changed = obs_refilter(project, author, assistant);
+            pthread_mutex_unlock(&g_findings_mu);
+            rules_set(project, sig);
+            if (changed) {
+                pthread_mutex_lock(&o->mu);
+                o->version++; /* the findings list and the graph refresh */
+                pthread_mutex_unlock(&o->mu);
+            }
+        }
         Job j;
         if (!find_job(project, st, &j)) {
             bool saved = state_save(project, st); /* pruned state; blank text marked read */
@@ -1701,6 +1926,8 @@ static void *worker(void *arg)
             pthread_mutex_unlock(&o->mu);
             continue;
         }
+        snprintf(j.author, sizeof(j.author), "%s", author);
+        snprintf(j.assistant, sizeof(j.assistant), "%s", assistant);
         char msg[300];
         snprintf(msg, sizeof(msg), "Reading %s\xE2\x80\xA6", j.is_doc ? j.name : "the chat");
         set_status(o, msg);
@@ -1909,4 +2136,14 @@ bool observer_set_finding_status(Observer *o, const char *project_dir, const cha
         pthread_mutex_unlock(&o->mu);
     }
     return ok;
+}
+
+void observer_set_names(Observer *o, const char *author, const char *assistant)
+{
+    pthread_mutex_lock(&o->mu);
+    snprintf(o->author_name, sizeof(o->author_name), "%s", author ? author : "");
+    snprintf(o->assistant_name, sizeof(o->assistant_name), "%s", assistant ? assistant : "");
+    o->poked = true; /* the rules' signature changed: re-check */
+    pthread_cond_signal(&o->cv);
+    pthread_mutex_unlock(&o->mu);
 }

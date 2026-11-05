@@ -282,7 +282,7 @@ bool sdb_entities_built(Db *db, const char *pid)
 
 /* A finding's current status, as a join condition: dismissed findings
  * neither count as mentions nor support links. */
-#define LIVE_FINDING(alias) " (SELECT q.current_status FROM records q WHERE q.id = " alias ") <> 'dismissed'"
+#define LIVE_FINDING(alias) " (SELECT q.current_status FROM records q WHERE q.id = " alias ") NOT IN ('dismissed', 'filtered')"
 
 void entity_list_free(EntityRow *e, size_t n)
 {
@@ -299,12 +299,12 @@ size_t sdb_entity_list(Db *db, const char *pid, EntityRow **out)
     if (!db_query(db,
                   "SELECT e.id, e.name, COALESCE(mc.n, 0), COALESCE(lc.n, 0) FROM entities e"
                   " LEFT JOIN (SELECT m.entity_id, COUNT(*) AS n FROM entity_mentions m JOIN records r ON r.id = m.finding_id"
-                  "            WHERE r.project_id = ? AND r.current_status <> 'dismissed' GROUP BY m.entity_id) mc ON mc.entity_id = e.id"
+                  "            WHERE r.project_id = ? AND r.current_status NOT IN ('dismissed', 'filtered') GROUP BY m.entity_id) mc ON mc.entity_id = e.id"
                   " LEFT JOIN (SELECT x.eid, COUNT(*) AS n FROM"
                   "             (SELECT l.from_entity AS eid FROM links l JOIN records r ON r.id = l.finding_id"
-                  "              WHERE l.project_id = ? AND r.current_status <> 'dismissed'"
+                  "              WHERE l.project_id = ? AND r.current_status NOT IN ('dismissed', 'filtered')"
                   "              UNION ALL SELECT l.to_entity FROM links l JOIN records r ON r.id = l.finding_id"
-                  "              WHERE l.project_id = ? AND r.current_status <> 'dismissed') x"
+                  "              WHERE l.project_id = ? AND r.current_status NOT IN ('dismissed', 'filtered')) x"
                   "            GROUP BY x.eid) lc ON lc.eid = e.id"
                   " WHERE e.project_id = ? AND COALESCE(mc.n, 0) + COALESCE(lc.n, 0) > 0"
                   " ORDER BY COALESCE(lc.n, 0) + COALESCE(mc.n, 0) DESC, e.name",

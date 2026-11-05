@@ -230,6 +230,7 @@ static bool import_chats(Db *db, const char *project_dir, const char *pid, IdMap
                         c2, 5, NULL);
         }
         if (ok && strcmp(cid, list[i].id)) map_add(chats_map, list[i].id, cid);
+        if (ok && list[i].observer_ignore) ok = sdb_chat_set_observer(db, pid, cid, false);
         for (size_t k = 0; ok && k < n; k++) {
             uint64_t added = 0;
             DbArg a[9] = { DB_S(cid), DB_I(k), DB_S(msgs[k].role == CHAT_USER ? "user" : "assistant"),
@@ -653,6 +654,7 @@ static bool export_files(Db *db, const char *pid, const char *project_dir)
             store_set_write_time(m[k].ts);
             ok = chat_store_append(project_dir, cs[i].id, cs[i].title, &m[k]);
         }
+        if (ok && n && cs[i].observer_ignore) ok = chat_store_set_observer(project_dir, cs[i].id, false);
         chat_store_free_messages(m, n);
     }
     free(cs);
