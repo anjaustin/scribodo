@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #define ZWNJ "\xE2\x80\x8C" /* U+200C */
 
@@ -374,6 +375,53 @@ char *llm_markdown_display(const char *md)
             if (eol) out[k++] = '\n';
         }
         line = eol ? eol + 1 : line + len;
+    }
+    out[k] = '\0';
+    return out;
+}
+
+/* The label `name` (then ':') at `p`, with optional ** around it: the
+ * length to skip including following spaces, or 0. */
+static size_t label_at(const char *p, const char *name)
+{
+    size_t n = name ? strlen(name) : 0;
+    if (!n) return 0;
+    size_t i = 0;
+    if (!strncmp(p, "**", 2)) i = 2;
+    if (strncasecmp(p + i, name, n)) return 0;
+    i += n;
+    if (!strncmp(p + i, "**", 2) && p[i + 2] == ':') i += 2;
+    if (p[i] != ':') return 0;
+    i++;
+    if (!strncmp(p + i, "**", 2)) i += 2;
+    if (p[i] && p[i] != ' ' && p[i] != '\t' && p[i] != '\n') return 0; /* "Tripp:x" is not a label */
+    while (p[i] == ' ' || p[i] == '\t') i++;
+    return i;
+}
+
+char *llm_strip_speaker_labels(const char *s, const char *author, const char *assistant)
+{
+    if (!s) return NULL;
+    size_t len = strlen(s);
+    char *out = malloc(len + 1);
+    if (!out) return NULL;
+    const char *names[] = { author, assistant, "Scribodo", "Assistant" };
+    size_t k = 0;
+    bool line_start = true;
+    for (size_t i = 0; i < len;) {
+        if (line_start) {
+            size_t ws = i;
+            while (s[ws] == ' ' || s[ws] == '\t') ws++;
+            size_t skip = 0;
+            for (size_t j = 0; j < sizeof(names) / sizeof(names[0]) && !skip; j++) skip = label_at(s + ws, names[j]);
+            if (skip) {
+                i = ws + skip;
+                line_start = false;
+                continue;
+            }
+        }
+        line_start = s[i] == '\n';
+        out[k++] = s[i++];
     }
     out[k] = '\0';
     return out;

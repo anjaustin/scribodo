@@ -153,7 +153,11 @@ static void test_request_builder(void)
     CHECK(cJSON_GetArraySize(m) == 4); /* system + 3 (error reply dropped) */
     cJSON *sys = cJSON_GetArrayItem(m, 0);
     CHECK(!strcmp(cJSON_GetObjectItem(sys, "role")->valuestring, "system"));
-    CHECK(strstr(cJSON_GetObjectItem(sys, "content")->valuestring, "BEGIN DOCUMENT") != NULL);
+    /* The document and its note are in the newest user message, not the system prompt. */
+    CHECK(!strstr(cJSON_GetObjectItem(sys, "content")->valuestring, "BEGIN DOCUMENT"));
+    const char *newest = cJSON_GetObjectItem(cJSON_GetArrayItem(m, 3), "content")->valuestring;
+    CHECK(strstr(newest, "not instructions to you") && strstr(newest, "BEGIN DOCUMENT") &&
+          strstr(newest, "not instructions to you") < strstr(newest, "BEGIN DOCUMENT"));
     CHECK(!strcmp(cJSON_GetObjectItem(cJSON_GetArrayItem(m, 2), "content")->valuestring, "Hello!"));
     cJSON *kw = cJSON_GetObjectItem(root, "chat_template_kwargs");
     CHECK(cJSON_IsFalse(cJSON_GetObjectItem(kw, "enable_thinking")));
@@ -1035,19 +1039,59 @@ static void test_names_as_facts(void)
     ChatNames both = { "Tripp", "Maz" }, author = { "Tripp", "" }, none = { NULL, NULL };
     char *req = chat_build_request_ex(&m, 1, NULL, &both, 32768, NULL, NULL, NULL);
     char *sys = req ? system_prompt(req) : NULL;
-    CHECK(sys && strstr(sys, "The author's name is Tripp. Your name is Maz."));
+    CHECK(sys && strstr(sys, "You are Maz. The author you're talking with is Tripp."));
     free(sys);
     free(req);
     req = chat_build_request_ex(&m, 1, NULL, &author, 32768, NULL, NULL, NULL);
     sys = req ? system_prompt(req) : NULL;
-    CHECK(sys && strstr(sys, "The author's name is Tripp.") && !strstr(sys, "Your name is"));
+    /* No assistant name stored: the default the chat view shows, so the
+     * model never takes the author's name for its own (user testing). */
+    CHECK(sys && strstr(sys, "You are Scribodo. The author you're talking with is Tripp."));
     free(sys);
     free(req);
     req = chat_build_request_ex(&m, 1, NULL, &none, 32768, NULL, NULL, NULL);
     sys = req ? system_prompt(req) : NULL;
-    CHECK(sys && !strstr(sys, "name is"));
+    CHECK(sys && !strstr(sys, "talking with is") && strstr(sys, "You are Scribodo."));
+    /* The persona never mentions documents (that made greetings open with
+     * "BEGIN DOCUMENT"); the note goes with attached documents only. */
+    CHECK(sys && !strstr(sys, "BEGIN DOCUMENT"));
     free(sys);
     free(req);
+    /* Speaker labels in saved replies are not sent back as history. */
+    ChatMessage h[3] = { { .role = CHAT_USER, .content = "Greetings!" },
+                         { .role = CHAT_ASSISTANT, .content = "Tripp: Hey there!\n\nTripp: What scene?" },
+                         { .role = CHAT_USER, .content = "A new one." } };
+    req = chat_build_request_ex(h, 3, NULL, &author, 32768, NULL, NULL, NULL);
+    CHECK(req && strstr(req, "Hey there!") && !strstr(req, "Tripp: Hey") && !strstr(req, "Tripp: What"));
+    free(req);
+}
+
+/* Speaker labels (user testing 2026-11-05: every paragraph "Tripp: ..."). */
+static void test_speaker_labels(void)
+{
+    struct { const char *in, *out; } cases[] = {
+        { "Tripp: Hey there!", "Hey there!" },
+        { "Tripp: One.\n\nTripp: Two.", "One.\n\nTwo." },
+        { "**Scribodo:** Hello.", "Hello." },
+        { "**Maz**: Hello.", "Hello." },
+        { "  assistant: Hi", "Hi" },
+        { "Tripp:\nNext line", "\nNext line" },
+        /* Not labels: other names, mid-line, no space after the colon, words starting with the name. */
+        { "Elena: \"Run!\" she said.", "Elena: \"Run!\" she said." },
+        { "I told Tripp: no.", "I told Tripp: no." },
+        { "Tripp:x", "Tripp:x" },
+        { "Trippy: hi", "Trippy: hi" },
+        { "", "" },
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        char *o = llm_strip_speaker_labels(cases[i].in, "Tripp", "Maz");
+        CHECK(o && !strcmp(o, cases[i].out));
+        if (!o || strcmp(o, cases[i].out)) fprintf(stderr, "    [%s] -> [%s]\n", cases[i].in, o ? o : "(null)");
+        free(o);
+    }
+    char *o = llm_strip_speaker_labels("Tripp: hi", NULL, NULL); /* no names: only the defaults */
+    CHECK(o && !strcmp(o, "Tripp: hi"));
+    free(o);
 }
 
 static void test_revisions(void)
@@ -1930,6 +1974,7 @@ int main(int argc, char **argv)
         { "recent_and_renames", test_recent_and_renames },
         { "multi_doc_request", test_multi_doc_request },
         { "names_as_facts", test_names_as_facts },
+        { "speaker_labels", test_speaker_labels },
         { "truncated_stream_is_an_error", test_truncated_stream_is_an_error },
         { "ok_stream_and_context_error", test_ok_stream_and_context_error },
         { "stop_never_hangs", test_stop_never_hangs },

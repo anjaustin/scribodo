@@ -1237,7 +1237,10 @@ static void draw_model_settings(App *app, Rectangle screen)
 static void apply_profile(App *app)
 {
     if (app->chat) chat_set_names(app->chat, app->profile.author, app->profile.assistant);
-    if (app->chat_view) chat_view_set_assistant_name(app->chat_view, profile_assistant_name(&app->profile));
+    if (app->chat_view) {
+        chat_view_set_assistant_name(app->chat_view, profile_assistant_name(&app->profile));
+        chat_view_set_author_name(app->chat_view, app->profile.author);
+    }
     if (app->observer) observer_set_names(app->observer, app->profile.author, app->profile.assistant);
 }
 

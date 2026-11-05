@@ -45,6 +45,7 @@ struct ChatView {
     Rectangle last_apply; /* the newest reply's links, as last drawn */
     bool can_apply;       /* a document is open to apply a reply to */
     char assistant_name[64]; /* the label on replies */
+    char author_name[64];    /* speaker labels with this name are not shown */
     Rectangle last_note, last_canon;
     char *submitted;
 };
@@ -128,7 +129,10 @@ static void refresh(ChatView *v, size_t i, const char *content, bool markdown, f
     size_t len = strlen(content);
     uint64_t h = hash_str(content, len);
     if (c->src_len == len && c->src_hash == h && c->width == width && c->layout.count) return;
-    char *shown = markdown ? llm_markdown_display(content) : NULL;
+    /* Replies saved with speaker labels ("Tripp: ") are shown without them. */
+    char *unlabelled = markdown ? llm_strip_speaker_labels(content, v->author_name, v->assistant_name) : NULL;
+    char *shown = markdown ? llm_markdown_display(unlabelled ? unlabelled : content) : NULL;
+    free(unlabelled);
     const char *text = shown ? shown : content;
     size_t tlen = strlen(text);
     uint32_t *cps = malloc((tlen + 1) * sizeof(uint32_t));
@@ -416,4 +420,11 @@ void chat_view_set_can_apply(ChatView *v, bool can) { v->can_apply = can; }
 void chat_view_set_assistant_name(ChatView *v, const char *name)
 {
     snprintf(v->assistant_name, sizeof(v->assistant_name), "%s", name && name[0] ? name : "Scribodo");
+    for (size_t i = 0; i < v->ncache; i++) v->cache[i].src_len = (size_t)-1; /* re-lay out */
+}
+
+void chat_view_set_author_name(ChatView *v, const char *name)
+{
+    snprintf(v->author_name, sizeof(v->author_name), "%s", name ? name : "");
+    for (size_t i = 0; i < v->ncache; i++) v->cache[i].src_len = (size_t)-1;
 }

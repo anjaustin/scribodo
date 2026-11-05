@@ -49,6 +49,8 @@ Rectangle chat_view_last_apply_rect(const ChatView *v);
 void chat_view_set_can_apply(ChatView *v, bool can);
 /* The label on the assistant's replies (the stored name). */
 void chat_view_set_assistant_name(ChatView *v, const char *name);
+/* The author's name: replies' speaker labels with it are hidden. */
+void chat_view_set_author_name(ChatView *v, const char *name);
 /* Scroll to a message and outline it briefly (a finding's source). */
 void chat_view_reveal(ChatView *v, long index);
 /* A reply's "Note" or "Canon" link was clicked: its index (and which), or -1. */

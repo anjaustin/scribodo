@@ -48,4 +48,13 @@ char *llm_curl_quotes(const char *s);
  * keeps its Markdown (it's right in a .md document). */
 char *llm_markdown_display(const char *md);
 
+/* A chat reply without speaker labels: "Tripp: ...", "**Scribodo:** ..."
+ * at the start of a paragraph, where the label is the author's name, the
+ * assistant's, "Scribodo" or "Assistant" (user testing 2026-11-05: told
+ * only the author's name, the model began every paragraph "Tripp:"). The
+ * chat view shows who is speaking; a label in the text is never wanted,
+ * and left in the history it teaches the model to keep writing it.
+ * Malloc'd. `author`/`assistant` may be NULL or "". */
+char *llm_strip_speaker_labels(const char *s, const char *author, const char *assistant);
+
 #endif
