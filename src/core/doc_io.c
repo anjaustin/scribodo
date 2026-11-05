@@ -304,6 +304,7 @@ DocStatus doc_save(const char *path, const uint32_t *cps, size_t n, bool bom, bo
     snprintf(tmp, tlen, "%s.scribodo-XXXXXX", target);
     int fd = mkstemp(tmp);
     bool ok = fd >= 0;
+    bool changed = false, became_read_only = false;
     int saved_errno = ok ? 0 : errno;
 
     if (ok && existed) ok = fchmod(fd, st.st_mode & 07777) == 0;
@@ -314,6 +315,19 @@ DocStatus doc_save(const char *path, const uint32_t *cps, size_t n, bool bom, bo
         ok = false;
         saved_errno = errno;
     }
+    /* Encoding, writing and fsync can take long enough for another program
+     * to save after our first check. Revalidate at the last possible point
+     * before the atomic replacement. This cannot make an uncooperative
+     * cross-process check-and-rename indivisible, but it closes the material
+     * write window and reduces the residual race to the rename syscall. */
+    if (ok && expected && !doc_file_id_equal(doc_file_id(target), *expected)) {
+        ok = false;
+        changed = true;
+    }
+    if (ok && existed && access(target, W_OK) != 0) {
+        ok = false;
+        became_read_only = true;
+    }
     if (ok && rename(tmp, target) != 0) {
         ok = false;
         saved_errno = errno;
@@ -321,7 +335,9 @@ DocStatus doc_save(const char *path, const uint32_t *cps, size_t n, bool bom, bo
 
     if (!ok) {
         if (fd >= 0) unlink(tmp);
-        snprintf(err, errlen, "Save failed: %s", strerror(saved_errno ? saved_errno : EIO));
+        if (changed) snprintf(err, errlen, "%s changed on disk while it was being saved", path);
+        else if (became_read_only) snprintf(err, errlen, "%s became write-protected while it was being saved", path);
+        else snprintf(err, errlen, "Save failed: %s", strerror(saved_errno ? saved_errno : EIO));
     } else {
         fsync_parent_dir(target);
         if (new_id) *new_id = doc_file_id(target);
@@ -329,5 +345,5 @@ DocStatus doc_save(const char *path, const uint32_t *cps, size_t n, bool bom, bo
     free(tmp);
     free(data);
     free(target);
-    return ok ? DOC_OK : DOC_ERR_IO;
+    return ok ? DOC_OK : changed ? DOC_ERR_CHANGED_ON_DISK : became_read_only ? DOC_ERR_READ_ONLY : DOC_ERR_IO;
 }

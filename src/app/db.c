@@ -260,8 +260,12 @@ bool db_query(Db *db, const char *sql, const DbArg *args, size_t nargs, DbRows *
             out->cells = cells;
         }
         char **row = out->cells + out->nrows * ncols;
+        /* A failed allocation/fetch below leaves the whole query failed.
+         * Keep every cell owned by the row either NULL or malloc'd so the
+         * common cleanup path never reads or frees uninitialised memory. */
+        memset(row, 0, ncols * sizeof(*row));
+        bool row_ok = true;
         for (size_t c = 0; c < ncols; c++) {
-            row[c] = NULL;
             if (nulls[c]) continue;
             /* Numeric columns report no length until converted: always fetch
              * into a real buffer, and again if the value is longer. */
@@ -288,11 +292,18 @@ bool db_query(Db *db, const char *sql, const DbArg *args, size_t nargs, DbRows *
                 v = nv;
             }
             if (!v) {
-                ok = false;
+                row_ok = false;
                 break;
             }
             v[got <= size ? got : size] = '\0';
             row[c] = v;
+        }
+        if (!row_ok) {
+            /* It never becomes an output row; release only its known-owned
+             * cells, then let the common path clean completed rows. */
+            for (size_t c = 0; c < ncols; c++) free(row[c]);
+            ok = false;
+            break;
         }
         out->nrows++;
     }

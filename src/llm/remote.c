@@ -4,6 +4,7 @@
 #include "remote.h"
 
 #include <curl/curl.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -159,9 +160,15 @@ typedef struct {
     size_t len, cap;
     char *body;
     size_t blen, bcap;
+    size_t total;
     bool stopped;
+    bool too_large;
     atomic_bool *cancel;
 } Sink;
+
+static pthread_once_t curl_once = PTHREAD_ONCE_INIT;
+static CURLcode curl_init_result = CURLE_FAILED_INIT;
+static void init_curl(void) { curl_init_result = curl_global_init(CURL_GLOBAL_DEFAULT); }
 
 static bool grow(char **buf, size_t *cap, size_t need)
 {
@@ -178,7 +185,13 @@ static bool grow(char **buf, size_t *cap, size_t need)
 static size_t on_data(char *data, size_t size, size_t nmemb, void *arg)
 {
     Sink *s = arg;
+    if (size && nmemb > SIZE_MAX / size) return 0;
     size_t n = size * nmemb;
+    if (s->total > REMOTE_MAX_RESPONSE_BYTES || n > REMOTE_MAX_RESPONSE_BYTES - s->total) {
+        s->too_large = true;
+        return 0;
+    }
+    s->total += n;
     if (!s->on_line) {
         if (!grow(&s->body, &s->bcap, s->blen + n + 1)) return 0;
         memcpy(s->body + s->blen, data, n);
@@ -217,8 +230,10 @@ bool remote_request(const RemoteConfig *c, const char *path, const char *body, H
                     atomic_bool *cancel, int timeout_ms, HttpResult *r)
 {
     memset(r, 0, sizeof(*r));
-    static atomic_bool inited;
-    if (!atomic_exchange(&inited, true)) curl_global_init(CURL_GLOBAL_DEFAULT);
+    if (pthread_once(&curl_once, init_curl) != 0 || curl_init_result != CURLE_OK) {
+        snprintf(r->error, sizeof(r->error), "Couldn't initialise network support");
+        return false;
+    }
     CURL *h = curl_easy_init();
     if (!h) {
         snprintf(r->error, sizeof(r->error), "Couldn't start the connection");
@@ -260,8 +275,11 @@ bool remote_request(const RemoteConfig *c, const char *path, const char *body, H
         s.line[s.len] = '\0';
         on_line(s.line, s.len, ctx);
     }
-    bool ok = rc == CURLE_OK || (s.stopped && rc == CURLE_WRITE_ERROR);
-    if (!ok) snprintf(r->error, sizeof(r->error), "%s", rc == CURLE_ABORTED_BY_CALLBACK ? "cancelled" : curl_easy_strerror(rc));
+    bool ok = rc == CURLE_OK || (s.stopped && !s.too_large && rc == CURLE_WRITE_ERROR);
+    if (!ok)
+        snprintf(r->error, sizeof(r->error), "%s",
+                 s.too_large ? "response exceeded the 16 MB safety limit" :
+                 rc == CURLE_ABORTED_BY_CALLBACK ? "cancelled" : curl_easy_strerror(rc));
     r->body = s.body;
     r->len = s.blen;
     free(s.line);

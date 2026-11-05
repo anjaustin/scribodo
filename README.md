@@ -142,7 +142,7 @@ On first launch the app checks the model file against its pinned hash (once), th
 - **Attached documents:** the chips under the chat show which project documents the assistant sees. A new chat starts with the open document attached; **+ Attach** adds others, and × removes one. Documents are read when you send (the open one including unsaved edits), never copied. Each message remembers what it was sent with, and reopening a chat restores its attachments.
 - **Rename a chat:** right-click it in the Explorer.
 - **Copy:** under any reply, puts its text on the clipboard for pasting into the document.
-- **Saving chats:** each message is saved to the project folder's `.scribodo/chats/`, and past chats reopen from the Explorer.
+- **Saving chats:** each message is saved to the local MariaDB project store, and past chats reopen from the Explorer. Before a project is moved into the store—or when running explicitly with `SCRIBODO_STORE=off`—the file backend uses `.scribodo/chats/` instead.
 
 **Reviewed AI edits** (the assistant never changes your document by itself):
 - **Ask for an edit:** select a passage and press ⌘K, then describe the change in the chat ("tighten this", "make Dvořák colder") and press Enter. Esc cancels.
@@ -151,9 +151,9 @@ On first launch the app checks the model file against its pinned hash (once), th
 - **Warnings:** the review warns when a proposal is much shorter or longer than the passage, or the reply was cut off. A reply you stop part-way is never proposed.
 - **Stale proposals:** the passage is tracked through your edits (and undo/redo). Text you add or remove around it moves it. If you change the passage itself, or type at an insertion point, Accept refuses rather than overwrite your newer text.
 - **Apply to document**, under any chat reply, proposes that reply for the current selection (or inserts it at the cursor), through the same review. A rewrite from ⌘K needs the passage selected.
-- **History** in the Explorer lists the document's 100 newest revisions (each save, AI edit and restore) from `.scribodo/revisions/`; the Explorer scrolls. Clicking one restores it, undoably, after first recording the current text.
+- **History** in the Explorer lists the document's 100 newest revisions (each save, AI edit and restore) from the project store; the Explorer scrolls. Clicking one restores it, undoably, after first recording the current text. The file backend keeps equivalent revisions under `.scribodo/revisions/`.
 
-**Notes and canon** (kept in the project's `.scribodo/notes.jsonl` and `canon.jsonl`):
+**Notes and canon** (kept in the local project store; the file backend uses `.scribodo/notes.jsonl` and `canon.jsonl`):
 - **Save as note:** select a passage and press ⌘⇧N, or click **Note** under a chat reply. It's saved at once with its source; edit it in the panel under the document (⌘S saves, and closing saves too). **+ New note** in the Explorer starts a blank one.
 - **Commit to canon:** select the passage that establishes a fact and press ⌘⇧C, click **Canon** under a reply, or press **To canon** on a note. It opens as a draft: state the fact, then press **Commit**. Nothing is canon until you do, and uncommitted text needs a second Close to discard.
 - **Revise, Retract, Recommit:** each stores a new version. Every earlier version stays listed under the entry, and clicking one loads its wording.
@@ -168,7 +168,7 @@ On first launch the app checks the model file against its pinned hash (once), th
   - **Commit to canon** opens a canon draft; nothing is canon until you press Commit.
   - **Dismiss** hides it.
   - **Source** selects the passage.
-- Findings are kept in `.scribodo/findings.jsonl`. See [`docs/OBSERVER-001-design.md`](docs/OBSERVER-001-design.md).
+- Findings are kept in the local project store. The file backend uses `.scribodo/findings.jsonl`. See [`docs/OBSERVER-001-design.md`](docs/OBSERVER-001-design.md).
 
 ```sh
 make sanitize  # run the same tests under AddressSanitizer + UBSan

@@ -716,7 +716,8 @@ static bool pieces_batch(Db *db, bool insert, const char *did, const char *const
     bool ok = true;
     for (size_t at = 0; ok && at < n; at += 200) {
         size_t k = n - at < 200 ? n - at : 200;
-        char *sql = malloc(160 + k * 8);
+        size_t sqlcap = 160 + k * 8;
+        char *sql = malloc(sqlcap);
         DbArg *args = malloc((1 + 2 * k) * sizeof(DbArg));
         if (!sql || !args) {
             free(sql);
@@ -725,20 +726,20 @@ static bool pieces_batch(Db *db, bool insert, const char *did, const char *const
         }
         size_t na = 0, len = 0;
         if (insert) {
-            len = (size_t)sprintf(sql, "INSERT IGNORE INTO observer_pieces (document_id, piece_hash) VALUES ");
+            len = (size_t)snprintf(sql, sqlcap, "INSERT IGNORE INTO observer_pieces (document_id, piece_hash) VALUES ");
             for (size_t q = 0; q < k; q++) {
-                len += (size_t)sprintf(sql + len, "%s(?,?)", q ? "," : "");
+                len += (size_t)snprintf(sql + len, sqlcap - len, "%s(?,?)", q ? "," : "");
                 args[na++] = DB_S(did);
                 args[na++] = DB_S(hashes[at + q]);
             }
         } else {
-            len = (size_t)sprintf(sql, "DELETE FROM observer_pieces WHERE document_id = ? AND piece_hash IN (");
+            len = (size_t)snprintf(sql, sqlcap, "DELETE FROM observer_pieces WHERE document_id = ? AND piece_hash IN (");
             args[na++] = DB_S(did);
             for (size_t q = 0; q < k; q++) {
-                len += (size_t)sprintf(sql + len, "%s?", q ? "," : "");
+                len += (size_t)snprintf(sql + len, sqlcap - len, "%s?", q ? "," : "");
                 args[na++] = DB_S(hashes[at + q]);
             }
-            sprintf(sql + len, ")");
+            snprintf(sql + len, sqlcap - len, ")");
         }
         ok = db_run(db, sql, args, na, NULL);
         free(sql);

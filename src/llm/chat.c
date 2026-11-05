@@ -293,8 +293,9 @@ char *chat_build_request_ex(const ChatMessage *msgs, size_t n, const ChatContext
         snprintf(facts, sizeof(facts), "\n\nYou are %s. The author you're talking with is %s.", self, names->author);
     else
         snprintf(facts, sizeof(facts), "\n\nYou are %s.", self);
-    char *sys = ok ? malloc(strlen(k_persona) + strlen(facts) + 1) : NULL;
-    if (sys) sprintf(sys, "%s%s", k_persona, facts);
+    size_t syscap = strlen(k_persona) + strlen(facts) + 1;
+    char *sys = ok ? malloc(syscap) : NULL;
+    if (sys) snprintf(sys, syscap, "%s%s", k_persona, facts);
     /* The attached documents go into the author's newest message, right
      * before their words: they are what the author is talking about, not
      * background (user testing: framed as background, the model asked the
@@ -482,15 +483,17 @@ fail:
 
 /* ---- streaming ---------------------------------------------------------------- */
 
-static bool append(char **acc, size_t *len, const char *s)
+/* 1: appended, 0: allocation failed, -1: safety limit. */
+static int append(char **acc, size_t *len, const char *s)
 {
     size_t n = strlen(s);
+    if (*len > CHAT_MAX_RESPONSE_BYTES || n > CHAT_MAX_RESPONSE_BYTES - *len) return -1;
     char *b = realloc(*acc, *len + n + 1);
-    if (!b) return false;
+    if (!b) return 0;
     memcpy(b + *len, s, n + 1);
     *acc = b;
     *len += n;
-    return true;
+    return 1;
 }
 
 int chat_parse_sse_line(const char *line, char **acc, size_t *acc_len, char *err, size_t errlen)
@@ -526,7 +529,14 @@ int chat_parse_sse_line(const char *line, char **acc, size_t *acc_len, char *err
         cJSON *delta = ch ? cJSON_GetObjectItem(ch, "delta") : NULL;
         cJSON *content = delta ? cJSON_GetObjectItem(delta, "content") : NULL;
         /* reasoning_content deltas are deliberately ignored */
-        if (cJSON_IsString(content) && !append(acc, acc_len, content->valuestring)) rc = -1;
+        if (cJSON_IsString(content)) {
+            int appended = append(acc, acc_len, content->valuestring);
+            if (appended <= 0) {
+                snprintf(err, errlen, "%s", appended < 0 ? "Model response exceeded the 16 MB safety limit" :
+                                                           "Out of memory receiving the model response");
+                rc = -1;
+            }
+        }
         cJSON *fin = ch ? cJSON_GetObjectItem(ch, "finish_reason") : NULL;
         if (rc == 1 && cJSON_IsString(fin)) rc = strcmp(fin->valuestring, "length") ? 0 : 2;
     }

@@ -54,6 +54,9 @@ typedef struct {
 
 typedef struct ChatSession ChatSession;
 
+/* Defence in depth behind the transport's wire limit. */
+#define CHAT_MAX_RESPONSE_BYTES REMOTE_MAX_RESPONSE_BYTES
+
 /* Called on the UI thread from chat_poll() when a message is final. */
 typedef void (*ChatMessageDone)(ChatSession *s, size_t index, void *ctx);
 

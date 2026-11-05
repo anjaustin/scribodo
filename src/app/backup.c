@@ -3,8 +3,11 @@
 #include "backup.h"
 
 #include <dirent.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <poll.h>
+#include <signal.h>
 #include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,6 +23,16 @@
 
 extern char **environ;
 
+enum { RUN_TIMEOUT_SECONDS = 60 * 60 };
+
+static time_t run_timeout_seconds(void)
+{
+    const char *s = getenv("SCRIBODO_BACKUP_TIMEOUT_SECONDS"); /* tests; may only shorten */
+    char *end = NULL;
+    long n = s ? strtol(s, &end, 10) : 0;
+    return s && end && !*end && n >= 1 && n <= RUN_TIMEOUT_SECONDS ? (time_t)n : RUN_TIMEOUT_SECONDS;
+}
+
 void backup_default_dir(char *out, size_t outlen)
 {
     const char *env = getenv("SCRIBODO_BACKUPS"); /* tests */
@@ -27,8 +40,44 @@ void backup_default_dir(char *out, size_t outlen)
     else snprintf(out, outlen, "%s/Library/Application Support/Scribodo/backups", getenv("HOME") ? getenv("HOME") : "");
 }
 
-/* Run argv (no shell: paths are never interpreted). The last line of its
- * standard output goes to `last`, its last error line to `err`. */
+/* Retain the tail: callers only surface the final line, and bounded capture
+ * must not let a verbose child consume unbounded memory. */
+static void capture_tail(char *buf, size_t *len, size_t cap, const char *data, size_t n)
+{
+    if (!cap) return;
+    if (n >= cap) {
+        memcpy(buf, data + n - cap, cap);
+        *len = cap;
+        return;
+    }
+    if (*len > cap - n) {
+        size_t drop = *len - (cap - n);
+        memmove(buf, buf + drop, *len - drop);
+        *len -= drop;
+    }
+    memcpy(buf + *len, data, n);
+    *len += n;
+}
+
+static void final_line(const char *buf, size_t n, char *out, size_t outlen)
+{
+    if (!out || !outlen) return;
+    while (n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == '\r')) n--;
+    size_t at = n;
+    while (at > 0 && buf[at - 1] != '\n') at--;
+    snprintf(out, outlen, "%.*s", (int)(n - at), buf + at);
+}
+
+static time_t monotonic_seconds(void)
+{
+    struct timespec ts;
+    return clock_gettime(CLOCK_MONOTONIC, &ts) == 0 ? ts.tv_sec : time(NULL);
+}
+
+/* Run argv (no shell: paths are never interpreted). Drain stdout and stderr
+ * together: reading one pipe to EOF first can deadlock when the child fills
+ * the other. A stuck helper is terminated after a generous hard limit. The
+ * last output/error lines go to `last` and `err`. */
 static int run(char *const argv[], char *last, size_t lastlen, char *err, size_t errlen)
 {
     int out[2], er[2];
@@ -39,15 +88,27 @@ static int run(char *const argv[], char *last, size_t lastlen, char *err, size_t
         return -1;
     }
     posix_spawn_file_actions_t fa;
-    posix_spawn_file_actions_init(&fa);
-    posix_spawn_file_actions_adddup2(&fa, out[1], STDOUT_FILENO);
-    posix_spawn_file_actions_adddup2(&fa, er[1], STDERR_FILENO);
-    posix_spawn_file_actions_addclose(&fa, out[0]);
-    posix_spawn_file_actions_addclose(&fa, er[0]);
-    posix_spawn_file_actions_addopen(&fa, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
-    pid_t pid;
-    int rc = posix_spawn(&pid, argv[0], &fa, NULL, argv, environ);
-    posix_spawn_file_actions_destroy(&fa);
+    posix_spawnattr_t attr;
+    bool fa_init = posix_spawn_file_actions_init(&fa) == 0;
+    bool attr_init = posix_spawnattr_init(&attr) == 0;
+    int setup = fa_init && attr_init ? 0 : -1;
+    if (!setup) setup = posix_spawn_file_actions_adddup2(&fa, out[1], STDOUT_FILENO);
+    if (!setup) setup = posix_spawn_file_actions_adddup2(&fa, er[1], STDERR_FILENO);
+    if (!setup && out[0] > STDERR_FILENO) setup = posix_spawn_file_actions_addclose(&fa, out[0]);
+    if (!setup && er[0] > STDERR_FILENO) setup = posix_spawn_file_actions_addclose(&fa, er[0]);
+    if (!setup && out[1] != STDOUT_FILENO && out[1] != STDERR_FILENO)
+        setup = posix_spawn_file_actions_addclose(&fa, out[1]);
+    if (!setup && er[1] != STDOUT_FILENO && er[1] != STDERR_FILENO)
+        setup = posix_spawn_file_actions_addclose(&fa, er[1]);
+    if (!setup) setup = posix_spawn_file_actions_addopen(&fa, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+    /* A private process group lets timeout cleanup include docker/gzip and
+     * any other descendants that still hold a pipe open. */
+    if (!setup) setup = posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);
+    if (!setup) setup = posix_spawnattr_setpgroup(&attr, 0);
+    pid_t pid = -1;
+    int rc = setup ? setup : posix_spawn(&pid, argv[0], &fa, &attr, argv, environ);
+    if (attr_init) posix_spawnattr_destroy(&attr);
+    if (fa_init) posix_spawn_file_actions_destroy(&fa);
     close(out[1]);
     close(er[1]);
     if (rc != 0) {
@@ -55,28 +116,80 @@ static int run(char *const argv[], char *last, size_t lastlen, char *err, size_t
         close(er[0]);
         return -1;
     }
-    /* Both pipes are small in practice (a path, a message); read the output
-     * then the errors. */
-    char buf[8192];
-    size_t n = 0;
-    ssize_t r;
-    while ((r = read(out[0], buf + n, sizeof(buf) - 1 - n)) > 0 && n < sizeof(buf) - 1) n += (size_t)r;
-    buf[n] = '\0';
-    while (n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == '\r')) buf[--n] = '\0';
-    const char *l = strrchr(buf, '\n');
-    if (last && lastlen) snprintf(last, lastlen, "%s", l ? l + 1 : buf);
-    n = 0;
-    while ((r = read(er[0], buf + n, sizeof(buf) - 1 - n)) > 0 && n < sizeof(buf) - 1) n += (size_t)r;
-    buf[n] = '\0';
-    while (n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == '\r')) buf[--n] = '\0';
-    l = strrchr(buf, '\n');
-    if (err && errlen) snprintf(err, errlen, "%s", l ? l + 1 : buf);
-    close(out[0]);
-    close(er[0]);
+    char obuf[8192], ebuf[8192], chunk[4096];
+    size_t on = 0, en = 0;
+    bool open_out = true, open_err = true, child_done = false, timed_out = false, io_failed = false;
+    time_t deadline = monotonic_seconds() + run_timeout_seconds();
     int st = 0;
-    while (waitpid(pid, &st, 0) < 0) {
+    pid_t waited = 0;
+    while (open_out || open_err || !child_done) {
+        struct pollfd pfd[2] = {
+            { .fd = open_out ? out[0] : -1, .events = POLLIN },
+            { .fd = open_err ? er[0] : -1, .events = POLLIN },
+        };
+        int pr;
+        do pr = poll(pfd, 2, 250); while (pr < 0 && errno == EINTR);
+        if (pr < 0) {
+            io_failed = true;
+            kill(-pid, SIGTERM);
+            break;
+        }
+        for (int i = 0; i < 2; i++) {
+            if (pfd[i].fd < 0 || !(pfd[i].revents & (POLLIN | POLLHUP | POLLERR))) continue;
+            ssize_t n;
+            do n = read(pfd[i].fd, chunk, sizeof(chunk)); while (n < 0 && errno == EINTR);
+            if (n > 0) {
+                if (i == 0) capture_tail(obuf, &on, sizeof(obuf), chunk, (size_t)n);
+                else capture_tail(ebuf, &en, sizeof(ebuf), chunk, (size_t)n);
+            } else if (n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
+                close(pfd[i].fd);
+                if (i == 0) open_out = false;
+                else open_err = false;
+            }
+        }
+        /* Reap only after both channels close. Until then the unreaped
+         * leader reserves its pid/process-group id while descendants may
+         * still hold inherited pipe descriptors. */
+        if (!child_done && !open_out && !open_err) {
+            do waited = waitpid(pid, &st, WNOHANG); while (waited < 0 && errno == EINTR);
+            if (waited == pid) child_done = true;
+            else if (waited < 0) {
+                io_failed = true;
+                kill(-pid, SIGTERM);
+                break;
+            }
+        }
+        if (monotonic_seconds() >= deadline) {
+            timed_out = true;
+            kill(-pid, SIGTERM);
+            break;
+        }
     }
-    return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+    if (open_out) close(out[0]);
+    if (open_err) close(er[0]);
+    final_line(obuf, on, last, lastlen);
+    final_line(ebuf, en, err, errlen);
+    if (timed_out || io_failed) {
+        /* Do not reap the leader between TERM and KILL: its reserved pid
+         * keeps the process-group id from being reused for an unrelated
+         * process while cleanup is in progress. */
+        if (!child_done) usleep(1000000);
+        kill(-pid, SIGKILL);
+        if (!child_done) {
+            kill(pid, SIGKILL); /* fallback if process-group creation failed */
+            do waited = waitpid(pid, &st, 0); while (waited < 0 && errno == EINTR);
+            child_done = waited == pid;
+        }
+    }
+    if (timed_out) {
+        if (err && errlen) snprintf(err, errlen, "backup helper exceeded the one-hour safety limit");
+        return -1;
+    }
+    if (io_failed) {
+        if (err && errlen) snprintf(err, errlen, "couldn't read backup helper output");
+        return -1;
+    }
+    return child_done && WIFEXITED(st) ? WEXITSTATUS(st) : -1;
 }
 
 static void remove_tree(const char *path)

@@ -7,8 +7,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
+#include "../src/app/backup.h"
 #include "../src/app/chat_store.h"
 #include "../src/app/recent.h"
 #include "../src/app/records.h"
@@ -20,6 +22,8 @@
 #include "../src/llm/server.h"
 #include "cJSON.h"
 #include "test_util.h"
+
+static char g_dir[512];
 
 static void test_neutralize(void)
 {
@@ -129,6 +133,62 @@ static void test_sse_parsing(void)
     CHECK(chat_parse_sse_line("data: [DONE]", &acc, &n, err, sizeof(err)) == 0);
     CHECK(chat_parse_sse_line("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}", &acc, &n, err, sizeof(err)) == 2);
     free(acc);
+
+    /* A provider need not honour max_tokens. Refuse aggregate growth before
+     * reallocating or copying beyond the transport's safety ceiling. */
+    acc = malloc(CHAT_MAX_RESPONSE_BYTES);
+    n = CHAT_MAX_RESPONSE_BYTES;
+    err[0] = '\0';
+    CHECK(acc != NULL);
+    CHECK(chat_parse_sse_line("data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}", &acc, &n, err, sizeof(err)) == -1);
+    CHECK(strstr(err, "safety limit") != NULL && n == CHAT_MAX_RESPONSE_BYTES);
+    free(acc);
+}
+
+/* Regression: a helper that fills stderr before writing stdout used to
+ * deadlock backup.c, which drained the two pipes serially. */
+static void test_backup_pipes(void)
+{
+    char tools[700], project[700], backups[700], script[800], expected[800];
+    snprintf(tools, sizeof(tools), "%s/backup-tools", g_dir);
+    snprintf(project, sizeof(project), "%s/backup-project", g_dir);
+    snprintf(backups, sizeof(backups), "%s/backups", g_dir);
+    mkdir(tools, 0700);
+    mkdir(project, 0700);
+    mkdir(backups, 0700);
+    snprintf(script, sizeof(script), "%s/backup.sh", tools);
+    snprintf(expected, sizeof(expected), "%s/result", backups);
+    FILE *f = fopen(script, "wb");
+    CHECK(f != NULL);
+    if (f) {
+        fprintf(f, "#!/bin/bash\ni=0\nwhile [ $i -lt 6000 ]; do echo 'verbose helper diagnostic 0123456789' >&2; i=$((i+1)); done\necho '%s'\n", expected);
+        fclose(f);
+        chmod(script, 0700);
+    }
+    setenv("SCRIBODO_BACKUPS", backups, 1);
+    char dest[1000] = "", why[400] = "";
+    CHECK(backup_project(tools, project, dest, sizeof(dest), why, sizeof(why)));
+    CHECK(!strcmp(dest, expected));
+
+    /* Closing both pipes must not bypass the helper deadline. */
+    f = fopen(script, "wb");
+    CHECK(f != NULL);
+    if (f) {
+        /* Closing both pipes must not bypass the deadline; ignored TERM
+         * exercises the process-group KILL escalation too. */
+        fputs("#!/bin/bash\nexec 1>&-\nexec 2>&-\ntrap '' TERM\nsleep 30\n", f);
+        fclose(f);
+        chmod(script, 0700);
+    }
+    setenv("SCRIBODO_BACKUP_TIMEOUT_SECONDS", "1", 1);
+    struct timespec before, after;
+    clock_gettime(CLOCK_MONOTONIC, &before);
+    CHECK(!backup_project(tools, project, dest, sizeof(dest), why, sizeof(why)));
+    clock_gettime(CLOCK_MONOTONIC, &after);
+    double elapsed = (double)(after.tv_sec - before.tv_sec) + (double)(after.tv_nsec - before.tv_nsec) / 1e9;
+    CHECK(elapsed < 5.0 && strstr(why, "failed"));
+    unsetenv("SCRIBODO_BACKUP_TIMEOUT_SECONDS");
+    unsetenv("SCRIBODO_BACKUPS");
 }
 
 static long dense_count(const char *text, void *ctx) { (void)ctx; return (long)strlen(text); }
@@ -211,8 +271,6 @@ static void test_request_builder(void)
     CHECK(!strcmp(cJSON_GetObjectItem(cJSON_GetArrayItem(mm, count - 1), "content")->valuestring, "latest question"));
     free(req);
 }
-
-static char g_dir[512];
 
 static void test_chat_store(void)
 {
@@ -1506,7 +1564,7 @@ static void test_live(void)
 #include "../src/llm/memfit.h"
 #include <math.h>
 
-typedef enum { RSTUB_OK, RSTUB_401, RSTUB_REDIRECT } RStubMode;
+typedef enum { RSTUB_OK, RSTUB_401, RSTUB_REDIRECT, RSTUB_BIG } RStubMode;
 typedef struct {
     int lfd, port;
     RStubMode mode;
@@ -1522,6 +1580,8 @@ static void *rstub_main(void *arg)
         if (poll(&pfd, 1, 50) <= 0) continue;
         int c = accept(st->lfd, NULL, NULL);
         if (c < 0) continue;
+        int one = 1;
+        setsockopt(c, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
         /* Read headers and the whole body (Content-Length). */
         size_t got = 0;
         long need = -1;
@@ -1538,6 +1598,20 @@ static void *rstub_main(void *arg)
             if (need >= 0 && (long)got >= need) break;
         }
         atomic_fetch_add(&st->requests, 1);
+        if (st->mode == RSTUB_BIG) {
+            const char *head = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n";
+            send(c, head, strlen(head), 0);
+            char block[65536];
+            memset(block, 'x', sizeof(block));
+            size_t sent = 0, want = REMOTE_MAX_RESPONSE_BYTES + sizeof(block);
+            while (sent < want) {
+                ssize_t n = send(c, block, sizeof(block), 0);
+                if (n <= 0) break;
+                sent += (size_t)n;
+            }
+            close(c);
+            continue;
+        }
         const char *r;
         if (st->mode == RSTUB_401) r = "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: 27\r\nConnection: close\r\n\r\n{\"error\":\"invalid api key\"}";
         else if (st->mode == RSTUB_REDIRECT) r = "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:9/steal\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
@@ -1723,6 +1797,15 @@ static void test_remote(void)
     HttpResult r;
     remote_request(&c, "/chat/completions", "{}", NULL, NULL, NULL, 5000, &r);
     CHECK(r.status == 302 && atomic_load(&st.requests) == 1);
+    http_result_free(&r);
+    rstub_stop(&st, th);
+
+    /* The wire-level cap protects non-streamed error/JSON responses too. */
+    CHECK(rstub_start(&st, RSTUB_BIG, &th));
+    snprintf(url, sizeof(url), "http://127.0.0.1:%d/v1", st.port);
+    CHECK(remote_cfg(&c, url, "sk-test", 0600, err, sizeof(err)));
+    CHECK(!remote_request(&c, "/chat/completions", "{}", NULL, NULL, NULL, 5000, &r));
+    CHECK(strstr(r.error, "safety limit") && r.len <= REMOTE_MAX_RESPONSE_BYTES);
     http_result_free(&r);
     rstub_stop(&st, th);
 }
@@ -1957,6 +2040,7 @@ int main(int argc, char **argv)
         { "observer_rules_refilter", test_observer_rules_and_refilter },
         { "http_decoder", test_http_decoder },
         { "sse_parsing", test_sse_parsing },
+        { "backup_pipes", test_backup_pipes },
         { "request_builder", test_request_builder },
         { "chat_store", test_chat_store },
         { "fake_backend", test_fake_backend },

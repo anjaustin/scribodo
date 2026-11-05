@@ -23,6 +23,10 @@
 
 #include "llm/http.h"
 
+/* A provider is outside the trust boundary and is not required to honour
+ * max_tokens. Bound both streamed wire data and non-streamed response bodies. */
+#define REMOTE_MAX_RESPONSE_BYTES (16u * 1024u * 1024u)
+
 typedef struct {
     char name[64];
     char base_url[512]; /* without a trailing slash */
