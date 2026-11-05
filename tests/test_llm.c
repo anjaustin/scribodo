@@ -380,7 +380,9 @@ static void on_done(ChatSession *s, size_t i, void *ctx) { (void)s; (void)i; ((D
 
 static void wait_idle(ChatSession *s, DoneCtx *d, int want)
 {
-    for (int i = 0; i < 2000 && (chat_busy(s) || d->done < want); i++) {
+    /* TSan on hosted macOS can make even the local Unix-socket stubs take
+     * longer than ten seconds. The target-level watchdog still catches hangs. */
+    for (int i = 0; i < 6000 && (chat_busy(s) || d->done < want); i++) {
         chat_poll(s);
         usleep(5000);
     }

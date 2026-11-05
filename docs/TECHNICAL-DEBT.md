@@ -133,7 +133,7 @@ several are optional developer actions rather than merge gates.
 - [x] Build.
 - [x] Unit/headless tests.
 - [x] ASan/UBSan.
-- [ ] TSan (configured; awaiting its first green remote run).
+- [x] TSan.
 - [ ] MariaDB/Qdrant integration (`make dbtest`).
 - [ ] Scripted UI (`make uitest`).
 - [ ] Store UI (`make uitest-db`).
@@ -149,7 +149,7 @@ never pass.
 ### Migration plan
 
 - [x] Make `make tsan` self-contained on a clean checkout.
-- [ ] Run TSan in CI (workflow configured; awaiting its first green remote run).
+- [x] Run TSan in CI.
 - [ ] Canary `make uitest` on hosted macOS; upload `build/ui` and `build/hangs`
       on failure, then make it required after proving stable.
 - [ ] Provision a trusted, serialized bare-metal macOS runner with Docker for
