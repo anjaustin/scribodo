@@ -124,21 +124,32 @@ bool semantic_embed(const char *const *texts, size_t n, bool query, float *out, 
     }
     cJSON *root = cJSON_CreateObject();
     cJSON *arr = cJSON_AddArrayToObject(root, "input");
+    /* Every input within the embedding server's context (its size is set
+     * to fit this): long notes or canon entries are embedded by their
+     * first SEM_MAX_INPUT_BYTES, on a character boundary. */
+    char *clip = malloc(SEM_MAX_INPUT_BYTES + 1);
+    if (!clip) {
+        cJSON_Delete(root);
+        return false;
+    }
     for (size_t i = 0; i < n; i++) {
+        utf8_clip(clip, SEM_MAX_INPUT_BYTES + 1, texts[i] ? texts[i] : "", SEM_MAX_INPUT_BYTES);
         if (query) {
-            size_t len = strlen(k_query_instruction) + strlen(texts[i]) + 1;
+            size_t len = strlen(k_query_instruction) + strlen(clip) + 1;
             char *q = malloc(len);
             if (!q) {
+                free(clip);
                 cJSON_Delete(root);
                 return false;
             }
-            snprintf(q, len, "%s%s", k_query_instruction, texts[i]);
+            snprintf(q, len, "%s%s", k_query_instruction, clip);
             cJSON_AddItemToArray(arr, cJSON_CreateString(q));
             free(q);
         } else {
-            cJSON_AddItemToArray(arr, cJSON_CreateString(texts[i]));
+            cJSON_AddItemToArray(arr, cJSON_CreateString(clip));
         }
     }
+    free(clip);
     char *body = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     HttpResult r;

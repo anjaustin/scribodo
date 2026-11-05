@@ -99,9 +99,14 @@ void llm_server_embed_config(LlmServerConfig *c, const char *app_dir)
         snprintf(c->log_path, sizeof(c->log_path), "%s/Library/Logs/Scribodo/embed-server.log", home);
         snprintf(c->cache_path, sizeof(c->cache_path), "%s/Library/Application Support/Scribodo/embed-verified.txt", home);
     }
-    c->ctx_total = 8192;
+    /* Sized to the largest input (semantic_embed caps texts at
+     * SEM_MAX_INPUT_BYTES; a token is at least one byte, plus the query
+     * prefix). With flash attention off the compute buffer grows with
+     * micro-batch x context: 8192 x 8192 reserved 4.7 GB of Metal memory
+     * (measured 2026-11-04); 2304 x 2304 needs a sixteenth of that. */
+    c->ctx_total = 2304;
     c->slots = 1;
-    c->batch = 8192;
+    c->batch = 2304;
     c->embedding = true;
 }
 

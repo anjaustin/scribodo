@@ -22,6 +22,9 @@
 #include "llm/server.h"
 
 #define SEM_DIM 1024
+/* The longest text embedded, in bytes (longer ones by their start). The
+ * embedding server's context is sized from it (llm_server_embed_config). */
+#define SEM_MAX_INPUT_BYTES 2000
 
 /* The embedding server (NULL: the fake embedder). */
 void semantic_set_embedder(LlmServer *embed);
