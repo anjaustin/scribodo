@@ -140,7 +140,8 @@ char *remote_adapt_request(const RemoteConfig *c, const char *local_request)
 {
     cJSON *j = cJSON_Parse(local_request);
     if (!j) return NULL;
-    static const char *const local_only[] = { "repeat_penalty", "id_slot", "cache_prompt", "chat_template_kwargs", "seed" };
+    static const char *const local_only[] = { "repeat_penalty", "id_slot", "cache_prompt", "chat_template_kwargs", "seed",
+                                              "top_k", "min_p" };
     for (size_t i = 0; i < sizeof(local_only) / sizeof(local_only[0]); i++) cJSON_DeleteItemFromObject(j, local_only[i]);
     cJSON_DeleteItemFromObject(j, "model");
     cJSON_AddStringToObject(j, "model", c->model);

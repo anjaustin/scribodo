@@ -140,4 +140,16 @@ bool chat_remote_selected(ChatSession *s);
  * every request). Either may be "". */
 void chat_set_names(ChatSession *s, const char *author, const char *assistant);
 
+/* The author's model settings for chat requests (sampling and reply
+ * length); NULL: the built-in defaults. */
+typedef struct {
+    int max_reply;
+    double temperature, top_p;
+    int top_k;
+    double min_p, repeat_penalty, edit_temperature;
+} ChatSampling;
+void chat_set_sampling(ChatSession *s, const ChatSampling *sampling);
+/* Exposed for tests: a request with the settings applied (malloc'd). */
+char *chat_apply_sampling(const char *request, const ChatSampling *sampling, bool edit);
+
 #endif

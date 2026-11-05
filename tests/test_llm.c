@@ -1458,6 +1458,8 @@ static void test_live(void)
 #include <sys/stat.h>
 #include "../src/llm/remote.h"
 #include "../src/llm/names.h"
+#include "../src/app/model_settings.h"
+#include <math.h>
 
 typedef enum { RSTUB_OK, RSTUB_401, RSTUB_REDIRECT } RStubMode;
 typedef struct {
@@ -1800,6 +1802,38 @@ static void test_observer_rules_and_refilter(void)
     CHECK(obs_refilter(proj, "", "") == 1);
 }
 
+/* The author's model settings (user testing): ranges, steps, and the
+ * request they produce. */
+static void test_model_settings(void)
+{
+    ModelSettings m;
+    model_settings_defaults(&m);
+    CHECK(m.max_reply == 2048 && m.context == 32768 && m.temperature == 0.7);
+    model_setting_set(&m, 1, 0.7 + 0.05 * 3); /* steps land on the grid */
+    CHECK(m.temperature == 0.85);
+    model_setting_set(&m, 1, 9.0);
+    CHECK(m.temperature == 1.5);                  /* clamped */
+    model_setting_set(&m, 0, 100);
+    CHECK(m.max_reply == 256);
+    model_setting_set(&m, 7, 10000);              /* context: 8K steps */
+    CHECK(m.context == 8192);
+    m.max_reply = 8192;
+    model_settings_clamp(&m);
+    CHECK(m.max_reply == 4096);                   /* at most half the context */
+    model_setting_set(&m, 1, NAN);
+    CHECK(m.temperature == 0.0);
+
+    ChatSampling sp = { 3000, 0.9, 0.8, 20, 0.1, 1.2, 0.3 };
+    char *r = chat_apply_sampling("{\"messages\":[],\"max_tokens\":1024,\"temperature\":0.7,\"top_p\":0.95}", &sp, false);
+    CHECK(r && strstr(r, "\"max_tokens\":3000") && strstr(r, "\"temperature\":0.9") && strstr(r, "\"top_p\":0.8") &&
+          strstr(r, "\"top_k\":20") && strstr(r, "\"min_p\":0.1") && strstr(r, "\"repeat_penalty\":1.2"));
+    free(r);
+    /* An edit uses the edit temperature and keeps a longer passage-sized length. */
+    r = chat_apply_sampling("{\"messages\":[],\"max_tokens\":5000}", &sp, true);
+    CHECK(r && strstr(r, "\"max_tokens\":5000") && strstr(r, "\"temperature\":0.3"));
+    free(r);
+}
+
 int main(int argc, char **argv)
 {
     const char *base = getenv("TMPDIR");
@@ -1812,6 +1846,7 @@ int main(int argc, char **argv)
         { "markdown_display", test_markdown_display },
         { "observer_chat_filter", test_observer_chat_filter },
         { "names_detect", test_names_detect },
+        { "model_settings", test_model_settings },
         { "observer_rules_refilter", test_observer_rules_and_refilter },
         { "http_decoder", test_http_decoder },
         { "sse_parsing", test_sse_parsing },

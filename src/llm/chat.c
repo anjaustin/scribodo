@@ -39,6 +39,8 @@ struct ChatSession {
     RemoteConfig remote;
     bool remote_selected;
     char author_name[64], assistant_name[64]; /* who is who (stored facts; chat_set_names) */
+    ChatSampling sampling;                    /* the author's model settings (chat_set_sampling) */
+    bool has_sampling;
     bool via_remote;
     pthread_mutex_t mu;
     ChatMessage *msgs;
@@ -626,6 +628,11 @@ static bool build_in_worker(ChatSession *s)
     /* Budget from the server's real per-slot context, not an assumption
      * (red-team 003: a mismatch overflowed the context despite trimming). */
     int slot_ctx = s->via_remote ? s->remote.context_tokens : s->server ? llm_server_slot_ctx(s->server) : SLOT_CTX_TOKENS;
+    /* The reply's room in the budget follows the author's max reply length
+     * (the builders reserve MAX_REPLY_TOKENS). */
+    ChatSampling samp = s->sampling;
+    bool use_samp = s->has_sampling;
+    if (use_samp) slot_ctx -= samp.max_reply - MAX_REPLY_TOKENS;
     /* The local tokenizer counts only for the local model; remote budgets are estimated. */
     ChatTokenCount counter = !s->via_remote && s->server ? server_count : NULL;
     char *req = NULL;
@@ -644,6 +651,11 @@ static bool build_in_worker(ChatSession *s)
                                       counter, s, &truncated);
     else if (ok)
         req = chat_build_request_ex(copy, n, s->has_doc ? &ctx : NULL, &names, slot_ctx, counter, s, &truncated);
+    if (req && use_samp) {
+        char *tuned = chat_apply_sampling(req, &samp, s->edit_passage != NULL);
+        free(req);
+        req = tuned;
+    }
     if (req && s->via_remote) {
         char *adapted = remote_adapt_request(&s->remote, req);
         free(req);
@@ -921,5 +933,32 @@ void chat_set_names(ChatSession *s, const char *author, const char *assistant)
     pthread_mutex_lock(&s->mu);
     snprintf(s->author_name, sizeof(s->author_name), "%s", author ? author : "");
     snprintf(s->assistant_name, sizeof(s->assistant_name), "%s", assistant ? assistant : "");
+    pthread_mutex_unlock(&s->mu);
+}
+
+char *chat_apply_sampling(const char *request, const ChatSampling *sp, bool edit)
+{
+    cJSON *j = cJSON_Parse(request);
+    if (!j) return NULL;
+    /* An edit's own length (sized to the passage) is kept if it's larger. */
+    cJSON *mt = cJSON_GetObjectItem(j, "max_tokens");
+    double want = sp->max_reply;
+    if (edit && cJSON_IsNumber(mt) && mt->valuedouble > want) want = mt->valuedouble;
+    static const char *const keys[] = { "max_tokens", "temperature", "top_p", "top_k", "min_p", "repeat_penalty" };
+    double vals[] = { want, edit ? sp->edit_temperature : sp->temperature, sp->top_p, sp->top_k, sp->min_p, sp->repeat_penalty };
+    for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
+        cJSON_DeleteItemFromObject(j, keys[i]);
+        cJSON_AddNumberToObject(j, keys[i], vals[i]);
+    }
+    char *out = cJSON_PrintUnformatted(j);
+    cJSON_Delete(j);
+    return out;
+}
+
+void chat_set_sampling(ChatSession *s, const ChatSampling *sp)
+{
+    pthread_mutex_lock(&s->mu);
+    if (sp) s->sampling = *sp;
+    s->has_sampling = sp != NULL;
     pthread_mutex_unlock(&s->mu);
 }

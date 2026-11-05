@@ -1,0 +1,42 @@
+# The model settings panel (user testing): opened from the model in the
+# toolbar, values change in steps within their ranges, Apply saves, Cancel
+# doesn't, and a smaller context caps the reply length.
+open "$DIR/chapter.md"
+click_element ModelPicker
+click_element MenuItem0
+expect element_w SetApply 50 200
+click_element SetPlus0
+click_element SetPlus0
+click_element SetPlus1
+click_element SetApply
+expect status "Model settings saved"
+expect element_w SetApply 0 0
+expect file "$DIR/model-settings.json" "{\"max_reply\":2560,\"temperature\":0.75,\"top_p\":0.95,\"top_k\":40,\"min_p\":0.05,\"repeat_penalty\":1.05,\"edit_temperature\":0.4,\"context\":32768}"
+# Cancel keeps what was saved.
+click_element ModelPicker
+click_element MenuItem0
+click_element SetDefaults
+click_element SetCancel
+expect file "$DIR/model-settings.json" "{\"max_reply\":2560,\"temperature\":0.75,\"top_p\":0.95,\"top_k\":40,\"min_p\":0.05,\"repeat_penalty\":1.05,\"edit_temperature\":0.4,\"context\":32768}"
+# 8K of context leaves at most 4K for a reply.
+click_element ModelPicker
+click_element MenuItem0
+click_element SetMinus7
+click_element SetMinus7
+click_element SetMinus7
+click_element SetPlus0
+click_element SetPlus0
+click_element SetPlus0
+click_element SetPlus0
+click_element SetPlus0
+click_element SetPlus0
+click_element SetPlus0
+click_element SetPlus0
+click_element SetApply
+expect file "$DIR/model-settings.json" "{\"max_reply\":4096,\"temperature\":0.75,\"top_p\":0.95,\"top_k\":40,\"min_p\":0.05,\"repeat_penalty\":1.05,\"edit_temperature\":0.4,\"context\":8192}"
+# A message still goes through with the new settings.
+click_element ChatInput
+type "hello"
+key ENTER
+wait_chat
+expect chat_last "You said: hello"

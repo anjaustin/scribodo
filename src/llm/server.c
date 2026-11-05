@@ -511,6 +511,17 @@ LlmState llm_server_state(LlmServer *s, char *msg, size_t msglen)
 
 const char *llm_server_socket(LlmServer *s) { return s->sock; }
 
+bool llm_server_set_slot_ctx(LlmServer *s, int slot_ctx)
+{
+    int slots = s->cfg.slots > 0 ? s->cfg.slots : 1;
+    if (slot_ctx < 2048 || slot_ctx > 32768) return false; /* the model's trained context */
+    if (s->cfg.ctx_total == slot_ctx * slots) return true;
+    llm_server_stop(s);
+    s->cfg.ctx_total = slot_ctx * slots;
+    llm_server_start(s);
+    return true;
+}
+
 int llm_server_slot_ctx(LlmServer *s)
 {
     int slots = s->cfg.slots > 0 ? s->cfg.slots : 1;

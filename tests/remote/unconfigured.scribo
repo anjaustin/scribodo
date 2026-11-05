@@ -1,5 +1,6 @@
-# No remote configured: the picker only explains; the model stays local.
+# No remote configured: the model menu offers only the model settings.
 wait 5
 click_element ModelPicker
-expect status "Only the local model is configured"
-expect element_w MenuItem0 0 0
+expect element_w MenuItem0 100 600
+expect element_w MenuItem1 0 0
+key ESC

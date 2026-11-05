@@ -41,6 +41,7 @@
 #include "app/store_entities.h"
 #include "app/backup.h"
 #include "app/profile.h"
+#include "app/model_settings.h"
 #include "llm/names.h"
 #include "app/revisions.h"
 #include "llm/llm_text.h"
@@ -220,6 +221,11 @@ typedef struct {
     char project_dir[PATH_MAX];
     char *docs[MAX_DOCS];
     size_t ndocs;
+    /* The chat model's settings, and the panel that edits them. */
+    ModelSettings model, model_edit;
+    bool settings_open;
+    Rectangle set_minus[MODEL_SETTING_COUNT], set_plus[MODEL_SETTING_COUNT], set_apply, set_cancel, set_defaults;
+    int model_menu_settings; /* which item of the model menu opens the panel */
     /* Who is who (stored names) and the two-step "Names..." prompt. */
     Profile profile;
     int names_step;         /* 0 none, 1 author prompt, 2 assistant prompt to open, 3 assistant prompt */
@@ -1079,6 +1085,75 @@ static bool set_aside_history(App *app, const char *name)
 }
 
 /* Returns true when the prompt can close. */
+/* The model settings go into every chat request; a new context size
+ * restarts the model (only when nothing is being written). */
+static void apply_model_settings(App *app, bool announce)
+{
+    ChatSampling sp = { app->model.max_reply, app->model.temperature, app->model.top_p, app->model.top_k,
+                        app->model.min_p, app->model.repeat_penalty, app->model.edit_temperature };
+    if (app->chat) chat_set_sampling(app->chat, &sp);
+    if (app->llm && llm_server_slot_ctx(app->llm) != app->model.context) {
+        if (app->chat && chat_busy(app->chat)) {
+            if (announce) set_status(app, "Saved. The new context size applies after the reply finishes and the model restarts");
+            return;
+        }
+        llm_server_set_slot_ctx(app->llm, app->model.context);
+        if (announce) set_status(app, "Model settings saved; the model is restarting with the new context size");
+        return;
+    }
+    if (announce) set_status(app, "Model settings saved (they apply to the next message)");
+}
+
+static void open_model_settings(App *app)
+{
+    app->model_edit = app->model;
+    app->settings_open = true;
+}
+
+/* The panel (drawn over everything; raygui draws ASCII only). */
+static void draw_model_settings(App *app, Rectangle screen)
+{
+    DrawRectangleRec(screen, (Color){ 0, 0, 0, 140 });
+    float w = 620, rowh = 44, h = 110 + rowh * MODEL_SETTING_COUNT + 56;
+    Rectangle p = { (screen.width - w) / 2, (screen.height - h) / 2, w, h };
+    DrawRectangleRounded(p, 0.03f, 6, (Color){ 0x26, 0x27, 0x2B, 0xFF });
+    DrawRectangleRoundedLinesEx(p, 0.03f, 6, 1.0f, (Color){ 0x45, 0x47, 0x4D, 0xFF });
+    GuiLabel((Rectangle){ p.x + 24, p.y + 16, w - 48, 24 }, "Model settings (chat)");
+    GuiLabel((Rectangle){ p.x + 24, p.y + 44, w - 48, 20 },
+             "The observer always uses temperature 0, so its findings stay reproducible.");
+    for (int i = 0; i < MODEL_SETTING_COUNT; i++) {
+        const ModelSettingInfo *in = model_setting_info(i);
+        float y = p.y + 80 + rowh * (float)i;
+        GuiLabel((Rectangle){ p.x + 24, y, 230, 20 }, in->label);
+        GuiLabel((Rectangle){ p.x + 24, y + 18, 330, 18 }, in->hint);
+        double v = model_setting_get(&app->model_edit, i);
+        char val[32];
+        if (in->integer) snprintf(val, sizeof(val), "%d", (int)v);
+        else snprintf(val, sizeof(val), "%.2f", v);
+        app->set_minus[i] = (Rectangle){ p.x + w - 200, y + 4, 36, 28 };
+        app->set_plus[i] = (Rectangle){ p.x + w - 60, y + 4, 36, 28 };
+        if (GuiButton(app->set_minus[i], "-")) model_setting_set(&app->model_edit, i, v - in->step);
+        GuiLabel((Rectangle){ p.x + w - 156, y + 4, 92, 28 }, val);
+        if (GuiButton(app->set_plus[i], "+")) model_setting_set(&app->model_edit, i, v + in->step);
+    }
+    model_settings_clamp(&app->model_edit);
+    float by = p.y + h - 48;
+    app->set_defaults = (Rectangle){ p.x + 24, by, 100, 30 };
+    app->set_cancel = (Rectangle){ p.x + w - 228, by, 96, 30 };
+    app->set_apply = (Rectangle){ p.x + w - 120, by, 96, 30 };
+    if (GuiButton(app->set_defaults, "Defaults")) model_settings_defaults(&app->model_edit);
+    if (GuiButton(app->set_cancel, "Cancel") || IsKeyPressed(KEY_ESCAPE)) app->settings_open = false;
+    if (GuiButton(app->set_apply, "Apply")) {
+        if (model_settings_save(&app->model_edit)) {
+            app->model = app->model_edit;
+            app->settings_open = false;
+            apply_model_settings(app, true);
+        } else {
+            set_status(app, "Couldn't save the model settings");
+        }
+    }
+}
+
 /* The stored names go everywhere they're used: chat requests, the chat's
  * labels, and the observer's rules. */
 static void apply_profile(App *app)
@@ -2711,6 +2786,14 @@ static Rectangle host_element(void *ctx, const char *name)
     if (!strncmp(name, "Record", 6)) return record_view_element(app->record, name);
     if (!strncmp(name, "Prompt", 6)) return prompt_element(app->prompt, name);
     if (!strcmp(name, "AttachAdd")) return app->attach_add;
+    if (!strncmp(name, "Set", 3) && app->settings_open) { /* the model settings panel */
+        if (!strcmp(name, "SetApply")) return app->set_apply;
+        if (!strcmp(name, "SetCancel")) return app->set_cancel;
+        if (!strcmp(name, "SetDefaults")) return app->set_defaults;
+        bool plus = !strncmp(name, "SetPlus", 7), minus = !strncmp(name, "SetMinus", 8);
+        int i = atoi(name + (plus ? 7 : 8));
+        if ((plus || minus) && i >= 0 && i < MODEL_SETTING_COUNT) return plus ? app->set_plus[i] : app->set_minus[i];
+    }
     if (!strncmp(name, "AttachChip", 10) || !strncmp(name, "AttachRemove", 12)) {
         bool rm = name[6] == 'R';
         int i = atoi(name + (rm ? 12 : 10));
@@ -2916,11 +2999,19 @@ int main(int argc, char **argv)
     Clay_SetMeasureTextFunction(clay_measure_text, app.font_ptrs);
 
     /* The local model. UI scripts use a fake model unless SCRIBODO_LLM=real. */
+    /* The author's model settings (UI scripts keep their own). */
+    if (script_path && !getenv("SCRIBODO_MODEL_SETTINGS")) {
+        char mp[PATH_MAX];
+        snprintf(mp, sizeof(mp), "%s/model-settings.json", getenv("SCRIBODO_SCRIPT_DIR") ? getenv("SCRIBODO_SCRIPT_DIR") : ".");
+        setenv("SCRIBODO_MODEL_SETTINGS", mp, 1);
+    }
+    model_settings_load(&app.model);
     const char *llm_mode = getenv("SCRIBODO_LLM");
     bool fake = (llm_mode && !strcmp(llm_mode, "fake")) || (script_path && !(llm_mode && !strcmp(llm_mode, "real")));
     if (!fake) {
         LlmServerConfig cfg;
         llm_server_default_config(&cfg, GetApplicationDirectory());
+        cfg.ctx_total = app.model.context * (cfg.slots > 0 ? cfg.slots : 1); /* the author's context per conversation */
         app.llm = llm_server_create(&cfg);
         if (app.llm) llm_server_start(app.llm);
         /* Embeddings for the semantic index (a second, small server). */
@@ -2965,6 +3056,7 @@ int main(int argc, char **argv)
     }
     profile_load(&app.profile);
     apply_profile(&app);
+    apply_model_settings(&app, false);
     if (!app.profile.asked && !script_path) begin_names(&app); /* asked once, on first launch */
 
     /* Default to the bundled sample, located relative to the executable
@@ -3060,6 +3152,9 @@ int main(int argc, char **argv)
         backup_poll(&app);
         names_tick(&app);
         names_poll(&app);
+        /* A context size chosen while a reply was being written: now. */
+        if (app.llm && llm_server_slot_ctx(app.llm) != app.model.context && !chat_busy(app.chat))
+            llm_server_set_slot_ctx(app.llm, app.model.context);
         if (atomic_load(&app.graph_state) == 2) { /* the graph is built: show it */
             pthread_join(app.graph_thread, NULL);
             atomic_store(&app.graph_state, 0);
@@ -3130,7 +3225,7 @@ int main(int argc, char **argv)
         Clay_SetLayoutDimensions((Clay_Dimensions){ (float)GetScreenWidth(), (float)GetScreenHeight() });
 
         /* A prompt or menu takes all input until it closes. */
-        bool modal = prompt_active(app.prompt) || app.menu.active;
+        bool modal = prompt_active(app.prompt) || app.menu.active || app.settings_open;
         input_block_mouse(modal);
         /* Clicks (pointer state reflects last frame's layout). */
         if (!modal && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
@@ -3219,19 +3314,25 @@ int main(int argc, char **argv)
             /* Toolbar, chat header/footer and message list keep the focus. */
         }
         if (!modal && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && Clay_PointerOver(CLAY_ID("ModelPicker"))) {
-            if (!app.remote_ok) {
-                set_status(&app, app.remote_why[0] ? app.remote_why
-                                                   : "Only the local model is configured (a remote one can be set up in remote.json; see README)");
-            } else {
-                static char items[2][240];
+            static char items[3][240];
+            const char *list[3];
+            int n = 0;
+            if (app.remote_ok) {
                 snprintf(items[0], sizeof(items[0]), "%s Local \xC2\xB7 LFM3-1.7B BF16 (nothing leaves this Mac)",
                          chat_remote_selected(app.chat) ? "  " : "\xE2\x9C\x93");
                 snprintf(items[1], sizeof(items[1]), "%s Remote \xC2\xB7 %s (sends chat and attached documents to %s)",
                          chat_remote_selected(app.chat) ? "\xE2\x9C\x93" : "  ", app.remote.name, app.remote.host);
-                const char *list[2] = { items[0], items[1] };
-                Rectangle pr = ELEMENT_RECT("ModelPicker");
-                menu_open(&app.menu, MT_MODEL, 0, (Vector2){ pr.x, pr.y + pr.height + 4 }, list, 2);
+                list[0] = items[0];
+                list[1] = items[1];
+                n = 2;
+            } else if (app.remote_why[0]) {
+                set_status(&app, app.remote_why); /* a remote is configured but unusable: say why */
             }
+            snprintf(items[2], sizeof(items[2]), "   Model settings\xE2\x80\xA6");
+            app.model_menu_settings = n;
+            list[n++] = items[2];
+            Rectangle pr = ELEMENT_RECT("ModelPicker");
+            menu_open(&app.menu, MT_MODEL, 0, (Vector2){ pr.x, pr.y + pr.height + 4 }, list, n);
         }
         if (!modal && IsMouseButtonPressed(MOUSE_BUTTON_RIGHT) && Clay_PointerOver(CLAY_ID("Explorer"))) {
             for (size_t i = 0; i < app.nchats; i++)
@@ -3526,7 +3627,9 @@ int main(int argc, char **argv)
                 if (!found) attach(&app, nm);
                 app.attach_touched = true;
             }
-            if (pick >= 0 && app.menu.tag == MT_MODEL) {
+            if (pick >= 0 && app.menu.tag == MT_MODEL && pick == app.model_menu_settings) {
+                open_model_settings(&app);
+            } else if (pick >= 0 && app.menu.tag == MT_MODEL) {
                 bool remote = pick == 1;
                 if (remote == chat_remote_selected(app.chat)) {
                 } else if (!chat_select_remote(app.chat, remote ? &app.remote : NULL)) {
@@ -3555,6 +3658,7 @@ int main(int argc, char **argv)
                 else if (pick == 0) begin_rename(&app, app.menu_doc); /* a dirty open document is refused on OK */
                 else reveal_document(&app, app.menu_doc);
             }
+            if (app.settings_open) draw_model_settings(&app, screen);
             if (prompt_active(app.prompt)) {
                 PromptResult pr = prompt_draw(app.prompt, screen);
                 if (pr == PR_CANCEL) prompt_close(app.prompt);

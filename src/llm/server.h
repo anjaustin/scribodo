@@ -62,6 +62,10 @@ LlmState llm_server_state(LlmServer *s, char *msg, size_t msglen);
 
 /* Context available to one request: -c is split evenly across slots. */
 int llm_server_slot_ctx(LlmServer *s);
+/* Change the context per conversation (each slot), restarting the server
+ * (same object: chat and observer keep their pointer). False if out of
+ * range. Callers make sure nothing is in flight. */
+bool llm_server_set_slot_ctx(LlmServer *s, int slot_ctx);
 
 /* Valid while the server is READY. */
 const char *llm_server_socket(LlmServer *s);
