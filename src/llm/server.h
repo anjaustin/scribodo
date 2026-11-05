@@ -37,6 +37,10 @@ typedef struct {
     int slots;              /* -np */
     int batch;              /* -b and -ub */
     bool embedding;         /* an embedding server (Qwen3-Embedding), not the chat model */
+    /* Memory beyond the model file, measured from llama-server's own
+     * breakdown (see llm_server_mem_need): */
+    long long mem_fixed;    /* bytes, whatever the context */
+    int mem_per_token;      /* bytes per token of ctx_total (KV cache + compute buffers) */
 } LlmServerConfig;
 
 typedef struct LlmServer LlmServer;
@@ -66,6 +70,11 @@ int llm_server_slot_ctx(LlmServer *s);
  * (same object: chat and observer keep their pointer). False if out of
  * range. Callers make sure nothing is in flight. */
 bool llm_server_set_slot_ctx(LlmServer *s, int slot_ctx);
+
+/* The estimated memory for `cfg` at `ctx_total` tokens: the model file
+ * (memory-mapped weights) plus mem_fixed plus mem_per_token x ctx_total. */
+long long llm_server_mem_need(const LlmServerConfig *cfg, int ctx_total);
+const LlmServerConfig *llm_server_config(LlmServer *s);
 
 /* Valid while the server is READY. */
 const char *llm_server_socket(LlmServer *s);

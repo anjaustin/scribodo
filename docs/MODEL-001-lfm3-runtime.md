@@ -155,7 +155,20 @@ Recommended flags (`-fa off`, `-np 2`, `--cache-ram 0`), with both slots holding
 | `-c 131072` (64K × 2), `-b/-ub 512` | 1.55 GB | 2.20 GB | **4.1 GB** |
 | `-c 131072` (64K × 2), `-b/-ub 128` | 1.55 GB | 0.55 GB | **3.05 GB** |
 
-**With flash attention off, the compute buffer scales with micro-batch × per-slot context.** At full 256K context with `-ub 512` it would be ~8.8 GB, so the pure-BF16 path caps practical context on a 16 GB machine. Free memory fell to 0.08 GB during the `-ub 512` run, because this Mac had only ~4.2 GB free beforehand. **Proposed defaults:** 32K per slot (`-np 2 -c 65536 -b/-ub 256`). That's *estimated* at 3.8 GB of weights plus ~1.4 GB (0.77 GB KV + ~0.54 GB compute buffer), not yet measured. 64K or more becomes an opt-in setting. Long context needs a memory check before starting.
+**With flash attention off, the compute buffer scales with micro-batch × per-slot context.** At full 256K context with `-ub 512` it would be ~8.8 GB, so the pure-BF16 path caps practical context on a 16 GB machine. Free memory fell to 0.08 GB during the `-ub 512` run, because this Mac had only ~4.2 GB free beforehand. **Proposed defaults:** 32K per slot (`-np 2 -c 65536 -b/-ub 256`). That was estimated at 3.8 GB of weights plus ~1.4 GB, and the measurements below confirm it. The settings panel caps context at 32K per conversation.
+
+**Measured 2026-11-04** (llama-server's own memory breakdown, `-np 2 -b/-ub 256`, BF16 KV, `-fa off`):
+
+| `-c` (total) | KV | Metal compute | CPU compute |
+|---|---|---|---|
+| 4096 | 58 MiB | 47 MiB | 25 MiB |
+| 16384 | 203 MiB | 149 MiB | 37 MiB |
+| 32768 | 395 MiB | 285 MiB | 53 MiB |
+| 65536 (default, 32K × 2) | 779 MiB | 557 MiB | 85 MiB |
+
+That works out to about 21.5 KiB per token of `-c`: 12 KiB of KV (6 attention layers), 8.5 KiB of Metal compute and 1 KiB of CPU compute. Weights are 3.3 GB Metal-mapped plus 0.5 GB CPU-mapped from a 3.47 GB file. The embedding server (Qwen3-Embedding-0.6B, fixed at 2,304 tokens) needs about 2.2 GB in all.
+
+**Memory check before starting (`src/llm/memfit.c`).** The estimate is the model file, plus a fixed cost, plus 22 KiB per token (`llm_server_mem_need`). This is compared with free + inactive + speculative pages, keeping 1 GiB of headroom. If the author's context doesn't fit, the model starts with the largest context, in 8K steps, that does, and the status bar says so. The saved setting is kept, and Apply in Model settings checks again. If not even 8K fits, the model starts anyway with a warning. The same check runs before a restart for a new context size, counting the running model's memory as returned. The Model settings panel shows the estimate for the context being chosen against what's free.
 
 The server's own defaults are **4 slots and an 8 GB host prompt cache**, so `-np` and `--cache-ram` must always be set explicitly.
 

@@ -108,6 +108,10 @@ void llm_server_embed_config(LlmServerConfig *c, const char *app_dir)
     c->slots = 1;
     c->batch = 2304;
     c->embedding = true;
+    /* Measured at this size: KV 252 MiB, Metal compute 443 MiB, CPU
+     * compute 148 MiB, plus the process and Metal's own (about 150 MiB). */
+    c->mem_fixed = 1024LL * 1024 * 1024;
+    c->mem_per_token = 0; /* the context is fixed */
 }
 
 void llm_server_default_config(LlmServerConfig *c, const char *app_dir)
@@ -140,6 +144,14 @@ void llm_server_default_config(LlmServerConfig *c, const char *app_dir)
     c->ctx_total = 65536;
     c->slots = 2;
     c->batch = 256;
+    /* llama-server's memory breakdown at -c 4096/16384/32768/65536
+     * (2026-11-04): KV 12 KiB per token (6 attention layers, BF16), Metal
+     * compute 8.5 KiB and CPU compute 1 KiB per token (flash attention
+     * off: micro-batch x context); fixed about 45 MiB (the short KV of the
+     * convolution layers, compute intercepts) plus the process and Metal's
+     * own. Rounded up. */
+    c->mem_fixed = 384LL * 1024 * 1024;
+    c->mem_per_token = 22 * 1024;
 }
 
 LlmServer *llm_server_create(const LlmServerConfig *cfg)
@@ -526,6 +538,15 @@ bool llm_server_set_slot_ctx(LlmServer *s, int slot_ctx)
     llm_server_start(s);
     return true;
 }
+
+long long llm_server_mem_need(const LlmServerConfig *cfg, int ctx_total)
+{
+    struct stat st;
+    long long file = stat(cfg->model_path, &st) == 0 ? (long long)st.st_size : 0;
+    return file + cfg->mem_fixed + (long long)cfg->mem_per_token * (ctx_total > 0 ? ctx_total : 0);
+}
+
+const LlmServerConfig *llm_server_config(LlmServer *s) { return &s->cfg; }
 
 int llm_server_slot_ctx(LlmServer *s)
 {

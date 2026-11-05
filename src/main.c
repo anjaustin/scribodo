@@ -42,6 +42,7 @@
 #include "app/backup.h"
 #include "app/profile.h"
 #include "app/model_settings.h"
+#include "llm/memfit.h"
 #include "llm/names.h"
 #include "app/revisions.h"
 #include "llm/llm_text.h"
@@ -226,6 +227,9 @@ typedef struct {
     bool settings_open;
     Rectangle set_minus[MODEL_SETTING_COUNT], set_plus[MODEL_SETTING_COUNT], set_apply, set_cancel, set_defaults;
     int model_menu_settings; /* which item of the model menu opens the panel */
+    bool ctx_pending;        /* a context change waiting for the reply to finish */
+    long long mem_for_model; /* the panel's readout: memory the model could have (bytes) */
+    char mem_msg[400];       /* startup: the context was reduced for memory */
     /* Who is who (stored names) and the two-step "Names..." prompt. */
     Profile profile;
     int names_step;         /* 0 none, 1 author prompt, 2 assistant prompt to open, 3 assistant prompt */
@@ -1084,37 +1088,90 @@ static bool set_aside_history(App *app, const char *name)
     return rename(rev, aside) == 0;
 }
 
-/* Returns true when the prompt can close. */
+/* The memory the chat model could have now: what's free, plus what the
+ * running model holds (a restart hands it back). */
+static long long memory_for_model(App *app)
+{
+    long long avail = sysmem_available();
+    LlmState st = llm_server_state(app->llm, NULL, 0);
+    if (st == LLM_READY || st == LLM_STARTING) avail += llm_server_mem_need(llm_server_config(app->llm), llm_server_config(app->llm)->ctx_total);
+    return avail;
+}
+
+/* What the author is told when memory decides the context (memfit.h). */
+static void memfit_message(const MemFit *f, int wanted, char *out, size_t outlen)
+{
+    char need[32], free_gb[32];
+    memfit_gb(f->avail - MEMFIT_HEADROOM > 0 ? f->avail - MEMFIT_HEADROOM : 0, free_gb, sizeof(free_gb));
+    if (f->short_even_min) {
+        memfit_gb(f->need, need, sizeof(need));
+        snprintf(out, outlen,
+                 "Low memory: the model needs about %s and %s is free. It's starting with a %dK context anyway; "
+                 "replies may be slow until other apps are closed",
+                 need, free_gb, f->slot_ctx / 1024);
+    } else if (f->reduced) {
+        memfit_gb(f->need_wanted, need, sizeof(need));
+        snprintf(out, outlen,
+                 "Low memory: a %dK context needs about %s and %s is free, so the model runs with %dK for now. "
+                 "Close other apps, then Apply in Model settings to try again",
+                 wanted / 1024, need, free_gb, f->slot_ctx / 1024);
+    } else {
+        out[0] = '\0';
+    }
+}
+
+/* The author's context per conversation, or the largest that fits in
+ * memory now; restarts the model if that differs from what it runs with.
+ * Only when nothing is being written. */
+static void fit_context(App *app, bool announce)
+{
+    const ModelSettingInfo *in = model_setting_info(7);
+    int running = llm_server_slot_ctx(app->llm);
+    MemFit f = memfit_context(memory_for_model(app), 0, llm_server_config(app->llm), app->model.context, (int)in->min,
+                              (int)in->step);
+    char msg[400];
+    memfit_message(&f, app->model.context, msg, sizeof(msg));
+    if (msg[0]) fprintf(stderr, "scribodo: %s\n", msg);
+    if (f.slot_ctx != running) llm_server_set_slot_ctx(app->llm, f.slot_ctx);
+    if (msg[0]) set_status(app, msg);
+    else if (announce && f.slot_ctx != running) set_status(app, "Model settings saved; the model is restarting with the new context size");
+    else if (announce) set_status(app, "Model settings saved (they apply to the next message)");
+}
+
 /* The model settings go into every chat request; a new context size
- * restarts the model (only when nothing is being written). */
-static void apply_model_settings(App *app, bool announce)
+ * restarts the model (only when nothing is being written, and only as far
+ * as memory allows). `context`: false at startup, where the context was
+ * already chosen. */
+static void apply_model_settings(App *app, bool context)
 {
     ChatSampling sp = { app->model.max_reply, app->model.temperature, app->model.top_p, app->model.top_k,
                         app->model.min_p, app->model.repeat_penalty, app->model.edit_temperature };
     if (app->chat) chat_set_sampling(app->chat, &sp);
+    if (!context) return;
     if (app->llm && llm_server_slot_ctx(app->llm) != app->model.context) {
         if (app->chat && chat_busy(app->chat)) {
-            if (announce) set_status(app, "Saved. The new context size applies after the reply finishes and the model restarts");
+            app->ctx_pending = true;
+            set_status(app, "Saved. The new context size applies after the reply finishes and the model restarts");
             return;
         }
-        llm_server_set_slot_ctx(app->llm, app->model.context);
-        if (announce) set_status(app, "Model settings saved; the model is restarting with the new context size");
+        fit_context(app, true);
         return;
     }
-    if (announce) set_status(app, "Model settings saved (they apply to the next message)");
+    set_status(app, "Model settings saved (they apply to the next message)");
 }
 
 static void open_model_settings(App *app)
 {
     app->model_edit = app->model;
     app->settings_open = true;
+    app->mem_for_model = app->llm ? memory_for_model(app) : 0;
 }
 
 /* The panel (drawn over everything; raygui draws ASCII only). */
 static void draw_model_settings(App *app, Rectangle screen)
 {
     DrawRectangleRec(screen, (Color){ 0, 0, 0, 140 });
-    float w = 620, rowh = 44, h = 110 + rowh * MODEL_SETTING_COUNT + 56;
+    float w = 620, rowh = 44, h = 110 + rowh * MODEL_SETTING_COUNT + 56 + (app->llm ? 26 : 0);
     Rectangle p = { (screen.width - w) / 2, (screen.height - h) / 2, w, h };
     DrawRectangleRounded(p, 0.03f, 6, (Color){ 0x26, 0x27, 0x2B, 0xFF });
     DrawRectangleRoundedLinesEx(p, 0.03f, 6, 1.0f, (Color){ 0x45, 0x47, 0x4D, 0xFF });
@@ -1138,6 +1195,23 @@ static void draw_model_settings(App *app, Rectangle screen)
     }
     model_settings_clamp(&app->model_edit);
     float by = p.y + h - 48;
+    if (app->llm) { /* the memory readout for the context being chosen */
+        const LlmServerConfig *cfg = llm_server_config(app->llm);
+        int slots = cfg->slots > 0 ? cfg->slots : 1;
+        long long need = llm_server_mem_need(cfg, app->model_edit.context * slots);
+        long long room = app->mem_for_model - MEMFIT_HEADROOM;
+        char a[32], b[32], line[200];
+        memfit_gb(need, a, sizeof(a));
+        memfit_gb(room > 0 ? room : 0, b, sizeof(b));
+        int running = llm_server_slot_ctx(app->llm);
+        if (need > room)
+            snprintf(line, sizeof(line), "Memory: about %s at this context, %s free: it would start smaller", a, b);
+        else if (running != app->model.context)
+            snprintf(line, sizeof(line), "Memory: about %s at this context, %s free (running with %dK now)", a, b, running / 1024);
+        else
+            snprintf(line, sizeof(line), "Memory: about %s at this context, %s free", a, b);
+        GuiLabel((Rectangle){ p.x + 24, by - 32, w - 48, 20 }, line);
+    }
     app->set_defaults = (Rectangle){ p.x + 24, by, 100, 30 };
     app->set_cancel = (Rectangle){ p.x + w - 228, by, 96, 30 };
     app->set_apply = (Rectangle){ p.x + w - 120, by, 96, 30 };
@@ -3009,14 +3083,20 @@ int main(int argc, char **argv)
     const char *llm_mode = getenv("SCRIBODO_LLM");
     bool fake = (llm_mode && !strcmp(llm_mode, "fake")) || (script_path && !(llm_mode && !strcmp(llm_mode, "real")));
     if (!fake) {
-        LlmServerConfig cfg;
+        LlmServerConfig cfg, ecfg;
         llm_server_default_config(&cfg, GetApplicationDirectory());
-        cfg.ctx_total = app.model.context * (cfg.slots > 0 ? cfg.slots : 1); /* the author's context per conversation */
+        llm_server_embed_config(&ecfg, GetApplicationDirectory());
+        /* The author's context per conversation, as far as memory allows
+         * (both servers are about to start). */
+        const ModelSettingInfo *ci = model_setting_info(7);
+        MemFit fit = memfit_context(sysmem_available(), llm_server_mem_need(&ecfg, ecfg.ctx_total), &cfg, app.model.context,
+                                    (int)ci->min, (int)ci->step);
+        memfit_message(&fit, app.model.context, app.mem_msg, sizeof(app.mem_msg));
+        if (app.mem_msg[0]) fprintf(stderr, "scribodo: %s\n", app.mem_msg);
+        cfg.ctx_total = fit.slot_ctx * (cfg.slots > 0 ? cfg.slots : 1);
         app.llm = llm_server_create(&cfg);
         if (app.llm) llm_server_start(app.llm);
         /* Embeddings for the semantic index (a second, small server). */
-        LlmServerConfig ecfg;
-        llm_server_embed_config(&ecfg, GetApplicationDirectory());
         app.embed = llm_server_create(&ecfg);
         if (app.embed) llm_server_start(app.embed);
         semantic_set_embedder(app.embed);
@@ -3057,6 +3137,7 @@ int main(int argc, char **argv)
     profile_load(&app.profile);
     apply_profile(&app);
     apply_model_settings(&app, false);
+    if (app.mem_msg[0]) set_status(&app, app.mem_msg);
     if (!app.profile.asked && !script_path) begin_names(&app); /* asked once, on first launch */
 
     /* Default to the bundled sample, located relative to the executable
@@ -3153,8 +3234,10 @@ int main(int argc, char **argv)
         names_tick(&app);
         names_poll(&app);
         /* A context size chosen while a reply was being written: now. */
-        if (app.llm && llm_server_slot_ctx(app.llm) != app.model.context && !chat_busy(app.chat))
-            llm_server_set_slot_ctx(app.llm, app.model.context);
+        if (app.llm && app.ctx_pending && !chat_busy(app.chat)) {
+            app.ctx_pending = false;
+            fit_context(&app, false);
+        }
         if (atomic_load(&app.graph_state) == 2) { /* the graph is built: show it */
             pthread_join(app.graph_thread, NULL);
             atomic_store(&app.graph_state, 0);

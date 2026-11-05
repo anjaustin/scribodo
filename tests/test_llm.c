@@ -1459,6 +1459,7 @@ static void test_live(void)
 #include "../src/llm/remote.h"
 #include "../src/llm/names.h"
 #include "../src/app/model_settings.h"
+#include "../src/llm/memfit.h"
 #include <math.h>
 
 typedef enum { RSTUB_OK, RSTUB_401, RSTUB_REDIRECT } RStubMode;
@@ -1834,6 +1835,66 @@ static void test_model_settings(void)
     free(r);
 }
 
+/* The memory check before the model starts (user request): the
+ * estimate, and the context chosen when memory is short. */
+static void test_memfit(void)
+{
+    const long long MiB = 1024LL * 1024;
+    char path[600];
+    snprintf(path, sizeof(path), "%s/fake-model.gguf", g_dir);
+    FILE *f = fopen(path, "wb");
+    CHECK(f && ftruncate(fileno(f), 3000 * MiB) == 0); /* sparse: no disk used */
+    if (f) fclose(f);
+    LlmServerConfig cfg;
+    llm_server_default_config(&cfg, "");
+    snprintf(cfg.model_path, sizeof(cfg.model_path), "%s", path);
+    /* file + fixed + per token x ctx_total (two slots of 32K) */
+    long long at32 = llm_server_mem_need(&cfg, 65536);
+    CHECK(at32 == 3000 * MiB + cfg.mem_fixed + (long long)cfg.mem_per_token * 65536);
+    /* The measured LFM3 numbers (KV + compute at 64K total: 779 + 557 + 85
+     * MiB) are covered by the per-token cost. */
+    CHECK((long long)cfg.mem_per_token * 65536 >= (779 + 557 + 85 - 60) * MiB);
+    long long other = 2000 * MiB;
+    /* Plenty: the author's context. */
+    MemFit m = memfit_context(16000 * MiB, other, &cfg, 32768, 8192, 8192);
+    CHECK(m.slot_ctx == 32768 && !m.reduced && !m.short_even_min && m.need == at32);
+    /* Exactly enough (the headroom included): still 32K; a byte less: 24K. */
+    m = memfit_context(at32 + other + MEMFIT_HEADROOM, other, &cfg, 32768, 8192, 8192);
+    CHECK(m.slot_ctx == 32768 && !m.reduced);
+    m = memfit_context(at32 + other + MEMFIT_HEADROOM - 1, other, &cfg, 32768, 8192, 8192);
+    CHECK(m.slot_ctx == 24576 && m.reduced && !m.short_even_min && m.need_wanted == at32);
+    /* Only the smallest fits. */
+    long long at8 = llm_server_mem_need(&cfg, 16384);
+    m = memfit_context(at8 + other + MEMFIT_HEADROOM, other, &cfg, 32768, 8192, 8192);
+    CHECK(m.slot_ctx == 8192 && m.reduced && !m.short_even_min);
+    /* Not even that: the smallest, flagged. */
+    m = memfit_context(at8 + other, other, &cfg, 32768, 8192, 8192);
+    CHECK(m.slot_ctx == 8192 && m.short_even_min);
+    m = memfit_context(0, 0, &cfg, 16384, 8192, 8192);
+    CHECK(m.slot_ctx == 8192 && m.short_even_min && m.reduced);
+    /* A minimum off the step grid is still tried. */
+    m = memfit_context(llm_server_mem_need(&cfg, 2 * 5000) + MEMFIT_HEADROOM, 0, &cfg, 32768, 5000, 8192);
+    CHECK(m.slot_ctx == 5000 && !m.short_even_min);
+    /* The embedding server: a fixed context, so a fixed cost. */
+    LlmServerConfig e;
+    llm_server_embed_config(&e, "");
+    snprintf(e.model_path, sizeof(e.model_path), "%s", path);
+    CHECK(llm_server_mem_need(&e, e.ctx_total) == 3000 * MiB + e.mem_fixed);
+    /* A missing model file: the fixed costs only. */
+    snprintf(cfg.model_path, sizeof(cfg.model_path), "%s/none.gguf", g_dir);
+    CHECK(llm_server_mem_need(&cfg, 0) == cfg.mem_fixed);
+    unlink(path);
+    /* The machine's own numbers, and the override for tests. */
+    long long total = sysmem_total(), avail = sysmem_available();
+    CHECK(total > 0 && avail > 0 && avail <= total);
+    setenv("SCRIBODO_MEM_AVAILABLE_MB", "1234", 1);
+    CHECK(sysmem_available() == 1234 * MiB);
+    unsetenv("SCRIBODO_MEM_AVAILABLE_MB");
+    char gb[32];
+    memfit_gb(5400000000LL, gb, sizeof(gb));
+    CHECK(!strcmp(gb, "5.4 GB"));
+}
+
 int main(int argc, char **argv)
 {
     const char *base = getenv("TMPDIR");
@@ -1847,6 +1908,7 @@ int main(int argc, char **argv)
         { "observer_chat_filter", test_observer_chat_filter },
         { "names_detect", test_names_detect },
         { "model_settings", test_model_settings },
+        { "memfit", test_memfit },
         { "observer_rules_refilter", test_observer_rules_and_refilter },
         { "http_decoder", test_http_decoder },
         { "sse_parsing", test_sse_parsing },
