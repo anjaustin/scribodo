@@ -8,6 +8,7 @@
  * chat; Esc returns to the document.
  */
 #define _DARWIN_C_SOURCE
+#include <signal.h>
 #include <dirent.h>
 #include <sys/wait.h>
 #include <spawn.h>
@@ -1087,6 +1088,9 @@ static bool set_aside_history(App *app, const char *name)
     snprintf(aside, sizeof(aside), "%s.earlier-%ld", rev, (long)time(NULL));
     return rename(rev, aside) == 0;
 }
+
+static volatile sig_atomic_t g_quit_signal;
+static void on_quit_signal(int sig) { g_quit_signal = sig; }
 
 /* The memory the chat model could have now: what's free, plus what the
  * running model holds (a restart hands it back). */
@@ -3203,8 +3207,20 @@ int main(int argc, char **argv)
     bool trace = getenv("SCRIBODO_INPUT_TRACE") != NULL;
 
     int cursor_shape = MOUSE_CURSOR_DEFAULT;
+    /* Asked to quit by a signal (kill, logout, a terminal's ^C): leave the
+     * loop so the model servers are stopped below, not left running. */
+    struct sigaction sa = { 0 };
+    sa.sa_handler = on_quit_signal;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGTERM, &sa, NULL);
+    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGHUP, &sa, NULL);
     bool running = true;
     while (running) {
+        if (g_quit_signal) {
+            fprintf(stderr, "scribodo: quitting (signal %d)\n", (int)g_quit_signal);
+            break;
+        }
         /* Scripted input is injected before anything reads input state. */
         if (script && !script_frame(script, &host)) break;
 
