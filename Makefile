@@ -56,7 +56,7 @@ $(RAYLIB_LIB): $(RAYLIB_OBJS)
 	ar rcs $@ $^
 
 # --- Scribodo ----------------------------------------------------------------
-CORE_SRCS := src/core/utf8.c src/core/text_buffer.c src/core/undo.c src/core/wrap.c src/core/doc_io.c src/core/diff.c src/app/frame_view_model.c
+CORE_SRCS := src/core/utf8.c src/core/text_buffer.c src/core/undo.c src/core/wrap.c src/core/doc_io.c src/core/diff.c src/core/file_text.c src/app/frame_view_model.c
 STORE_SRCS := src/app/db.c src/app/store.c src/app/project_store.c src/app/observer_store.c src/app/store_revisions.c src/app/store_records.c src/app/store_chats.c src/app/store_import.c src/app/store_entities.c src/app/backup.c src/app/backup_job.c src/app/service_supervisor.c src/app/entity_backfill_job.c src/app/name_detection_job.c src/app/project_session.c src/app/explorer_snapshot.c src/app/profile.c src/app/model_settings.c
 LLM_SRCS  := src/core/json.c src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/app/recent.c src/app/renames.c src/llm/observer.c src/llm/observer_text.c src/llm/observer_fake.c src/llm/observer_model.c src/llm/observer_job.c src/llm/semantic.c src/llm/remote.c src/llm/names.c src/llm/memfit.c $(STORE_SRCS)
 LLM_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(LLM_SRCS)) $(BUILD)/third_party/cJSON/cJSON.o
@@ -67,7 +67,7 @@ APP_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(APP_SRCS))
 # Native dialogs (Objective-C on macOS).
 APP_OBJS  += $(BUILD)/src/platform/dialogs_mac.o
 APP   := $(BUILD)/scribodo
-TESTS := $(BUILD)/test_core $(BUILD)/test_doc_io $(BUILD)/test_editor $(BUILD)/test_db_rows $(BUILD)/test_observer_text $(BUILD)/test_observer_fake $(BUILD)/test_components $(BUILD)/test_remote $(BUILD)/test_llm
+TESTS := $(BUILD)/test_core $(BUILD)/test_doc_io $(BUILD)/test_editor $(BUILD)/test_db_rows $(BUILD)/test_observer_text $(BUILD)/test_observer_fake $(BUILD)/test_components $(BUILD)/test_remote $(BUILD)/test_llm $(BUILD)/test_persistence_faults
 
 .PHONY: all run test uitest uitest-real sanitize tsan cstest dbtest uitest-db backuptest remotetest offlinetest dependency-report clean distclean llama model llmtest
 
@@ -78,7 +78,7 @@ $(APP): $(CORE_OBJS) $(LLM_OBJS) $(APP_OBJS) $(RAYLIB_LIB)
 
 
 # cJSON is vendored; compile it without our warning flags.
-$(BUILD)/third_party/cJSON/cJSON.o: third_party/cJSON/cJSON.c
+$(BUILD)/third_party/cJSON/cJSON.o: src/core/json_vendor.c third_party/cJSON/cJSON.c third_party/cJSON/cJSON.h
 	@mkdir -p $(dir $@)
 	$(CC) $(CSTD) $(OPT) $(ARCH_FLAGS) -g -w -c $< -o $@
 
@@ -127,6 +127,11 @@ $(BUILD)/test_editor: $(CORE_OBJS) $(BUILD)/src/ui/editor.o $(BUILD)/src/ui/inpu
 WATCHDOG := tools/watchdog.sh
 TEST_TIMEOUT ?= 300
 
+# Separate binary: deterministic allocation faults never affect other suites.
+FAULT_SRCS := $(CORE_SRCS) $(LLM_SRCS) src/core/json_vendor.c tests/test_state_fixture.c tests/test_persistence_faults.c
+$(BUILD)/test_persistence_faults: $(FAULT_SRCS) $(wildcard src/core/*.h src/app/*.h src/llm/*.h) tests/fault_alloc.h tests/test_state_fixture.h $(BUILD)/tests/fault_alloc.o third_party/cJSON/cJSON.c third_party/cJSON/cJSON.h
+	$(CC) $(CFLAGS) $(INCLUDES) -include tests/fault_alloc.h $(FAULT_SRCS) $(BUILD)/tests/fault_alloc.o -o $@ $(MARIADB_LIBS) -lpthread
+
 test: $(TESTS)
 	@set -e; for t in $(TESTS); do echo "== $$t"; $(WATCHDOG) $(TEST_TIMEOUT) $$(basename $$t) ./$$t; echo; done
 	$(WATCHDOG) $(TEST_TIMEOUT) test_backup python3 tests/test_backup.py
@@ -161,6 +166,7 @@ MARIADB_LIB := build/mariadb-cc/libmariadb/libmariadbclient.a
 MARIADB_LIBS := $(MARIADB_LIB) $(OPENSSL_DIR)/lib/libssl.a $(OPENSSL_DIR)/lib/libcrypto.a -lz -liconv -lcurl # the system libcurl, for the optional remote model
 # Everything that may include <mysql.h> needs the client built first.
 $(LLM_OBJS) $(APP_OBJS) $(BUILD)/tests/test_llm.o $(BUILD)/tests/test_db.o: | $(MARIADB_LIB)
+$(BUILD)/test_persistence_faults: | $(MARIADB_LIB)
 $(MARIADB_LIB):
 	@mkdir -p $(dir $@)
 	$(CMAKE) -S third_party/mariadb-connector-c -B build/mariadb-cc -DCMAKE_BUILD_TYPE=Release \
@@ -223,6 +229,7 @@ llama: $(LLAMA_BIN)
 $(LLAMA_BIN):
 	$(CMAKE) -S third_party/llama.cpp -B $(BUILD)/llama -DCMAKE_BUILD_TYPE=Release \
 	  -DGGML_METAL=ON -DGGML_NATIVE=ON -DBUILD_SHARED_LIBS=OFF -DLLAMA_CURL=OFF \
+	  -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF \
 	  -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=ON \
 	  -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$(abspath $(BUILD)/llama/bin)
 	$(CMAKE) --build $(BUILD)/llama --target llama-server -j 10
@@ -258,11 +265,11 @@ sanitize:
 # ThreadSanitizer over the threaded code (chat worker, observer, supervisor).
 tsan: $(MARIADB_LIB)
 	@mkdir -p build/tsan
-	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) $(CORE_SRCS) $(LLM_SRCS) third_party/cJSON/cJSON.c \
+	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) $(CORE_SRCS) $(LLM_SRCS) src/core/json_vendor.c \
 	  tests/test_state_fixture.c tests/test_llm.c -o build/tsan/test_llm $(MARIADB_LIBS) -lpthread
-	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) $(CORE_SRCS) $(LLM_SRCS) third_party/cJSON/cJSON.c \
+	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) $(CORE_SRCS) $(LLM_SRCS) src/core/json_vendor.c \
 	  tests/test_state_fixture.c tests/test_components.c -o build/tsan/test_components $(MARIADB_LIBS) -lpthread
-	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) $(CORE_SRCS) $(LLM_SRCS) third_party/cJSON/cJSON.c \
+	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) $(CORE_SRCS) $(LLM_SRCS) src/core/json_vendor.c \
 	  tests/test_state_fixture.c tests/test_remote.c -o build/tsan/test_remote $(MARIADB_LIBS) -lpthread
 	@set -e; for t in test_llm test_components test_remote; do \
 	  TSAN_OPTIONS=halt_on_error=1 $(WATCHDOG) 300 tsan-$$t ./build/tsan/$$t; echo; \

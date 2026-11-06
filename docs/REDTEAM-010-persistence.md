@@ -5,6 +5,11 @@ remediation. Scope: the remediation diff, concurrent file parsing, migration
 error handling, explicit exports, and backup creation/verification. This is a
 scoped review, not a proof that the entire application is defect-free.
 
+Follow-up: [`REDTEAM-011-legacy-fork.md`](REDTEAM-011-legacy-fork.md) covers the
+remaining legacy import/fork concerns and the subsequent real-model/offline run.
+The unavailable-runtime note below describes this report's original review, not
+the later validation.
+
 ## Findings and remediations
 
 | Finding | Remediation | Regression evidence |

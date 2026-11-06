@@ -48,8 +48,7 @@ struct ProjectStoreOps {
 
 static bool file_records_list(ProjectStore *store, RecordKind kind, Record **out, size_t *count)
 {
-    *count = records_list_files(store->project_dir, kind, out);
-    return true;
+    return records_list_files_checked(store->project_dir, kind, out, count);
 }
 
 static bool file_records_append(ProjectStore *store, RecordKind kind, const char *id, const char *status,
@@ -88,8 +87,7 @@ static bool paused_records_append(ProjectStore *store, RecordKind kind, const ch
 
 static bool file_revisions_list(ProjectStore *store, const char *doc_path, Revision **out, size_t *count)
 {
-    *count = revisions_list_files(store->project_dir, doc_path, out);
-    return true;
+    return revisions_list_files_checked(store->project_dir, doc_path, out, count);
 }
 
 static bool file_revisions_record(ProjectStore *store, const char *doc_path, const char *text, const char *origin,

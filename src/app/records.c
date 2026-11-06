@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include "core/json.h"
+#include "core/file_text.h"
 #include "app/project_store.h"
 #include "app/records_internal.h"
 #include "app/store.h"
@@ -40,19 +41,6 @@ void records_new_id(RecordKind kind, char *out, size_t outlen)
     char stamp[32];
     strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tmv);
     snprintf(out, outlen, "%c-%s-%04x", kind == REC_NOTE ? 'n' : kind == REC_CANON ? 'c' : 'f', stamp, arc4random_uniform(0x10000));
-}
-
-static char *slurp(const char *path)
-{
-    FILE *f = fopen(path, "rb");
-    if (!f) return NULL;
-    fseek(f, 0, SEEK_END);
-    long n = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char *buf = n >= 0 ? malloc((size_t)n + 1) : NULL;
-    if (buf) buf[fread(buf, 1, (size_t)n, f)] = '\0';
-    fclose(f);
-    return buf;
 }
 
 void records_free_sources(SourceRef *s, size_t n)
@@ -105,21 +93,19 @@ static double num(cJSON *j, const char *key)
 static cJSON *source_json(const SourceRef *s)
 {
     cJSON *j = cJSON_CreateObject();
-    cJSON_AddStringToObject(j, "kind", s->kind == SRC_DOC ? "doc" : "chat");
+    bool ok = j && cJSON_AddStringToObject(j, "kind", s->kind == SRC_DOC ? "doc" : "chat");
     if (s->kind == SRC_DOC) {
-        cJSON_AddStringToObject(j, "doc", s->doc);
-        cJSON_AddStringToObject(j, "revision", s->revision);
+        ok = ok && cJSON_AddStringToObject(j, "doc", s->doc) && cJSON_AddStringToObject(j, "revision", s->revision);
     } else {
-        cJSON_AddStringToObject(j, "chat", s->chat);
-        cJSON_AddNumberToObject(j, "message", (double)s->message);
+        ok = ok && cJSON_AddStringToObject(j, "chat", s->chat) && cJSON_AddNumberToObject(j, "message", (double)s->message);
     }
-    cJSON_AddNumberToObject(j, "start", (double)s->start);
-    cJSON_AddNumberToObject(j, "len", (double)s->len);
-    cJSON_AddStringToObject(j, "quote", s->quote ? s->quote : "");
+    ok = ok && cJSON_AddNumberToObject(j, "start", (double)s->start) && cJSON_AddNumberToObject(j, "len", (double)s->len) &&
+         cJSON_AddStringToObject(j, "quote", s->quote ? s->quote : "");
+    if (!ok) { cJSON_Delete(j); return NULL; }
     return j;
 }
 
-static bool parse_source(cJSON *j, SourceRef *s)
+static bool parse_source(cJSON *j, SourceRef *s, bool *allocation_error)
 {
     memset(s, 0, sizeof(*s));
     cJSON *kind = cJSON_GetObjectItem(j, "kind"), *quote = cJSON_GetObjectItem(j, "quote");
@@ -136,6 +122,7 @@ static bool parse_source(cJSON *j, SourceRef *s)
     s->start = (size_t)num(j, "start");
     s->len = (size_t)num(j, "len");
     s->quote = strdup(quote->valuestring);
+    if (!s->quote) *allocation_error = true;
     return s->quote != NULL;
 }
 
@@ -167,22 +154,28 @@ bool records_list_checked(StoreManager *manager, const char *project_dir, Record
     return project_store_records_list_checked(manager, project_dir, kind, out, count);
 }
 
-size_t records_list_files(const char *project_dir, RecordKind kind, Record **out)
+bool records_list_files_checked(const char *project_dir, RecordKind kind, Record **out, size_t *count)
 {
     /* Open-addressing index from id to slot (red-team 005: a linear search
      * made listing quadratic: 0.64 s for 20k findings on the UI thread). */
     size_t *index = NULL, index_cap = 0;
     *out = NULL;
+    *count = 0;
     char path[1200];
-    if (!log_path(project_dir, kind, false, path, sizeof(path))) return 0;
-    char *text = slurp(path);
-    if (!text) return 0;
+    if (!log_path(project_dir, kind, false, path, sizeof(path))) return false;
+    char *text = NULL;
+    FileTextStatus read_status = file_text_read(path, &text);
+    if (read_status != FILE_TEXT_OK) return read_status == FILE_TEXT_MISSING;
+    if (json_has_nul_escape(text, strlen(text))) { free(text); return false; }
     Slot *slots = NULL;
     size_t n = 0, cap = 0, line_no = 0;
     char *save = NULL;
-    for (char *line = strtok_r(text, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
+    bool ok = true;
+    for (char *line = strtok_r(text, "\n", &save); ok && line; line = strtok_r(NULL, "\n", &save)) {
         line_no++;
-        cJSON *j = json_parse(line);
+        bool allocation_error;
+        cJSON *j = json_parse_checked(line, &allocation_error);
+        if (allocation_error) { cJSON_Delete(j); ok = false; break; }
         if (!j) continue; /* torn line after a crash */
         cJSON *id = cJSON_GetObjectItem(j, "id"), *content = cJSON_GetObjectItem(j, "content"),
               *status = cJSON_GetObjectItem(j, "status");
@@ -191,10 +184,12 @@ size_t records_list_files(const char *project_dir, RecordKind kind, Record **out
             continue;
         }
         if ((n + 1) * 2 > index_cap) { /* grow and rehash */
+            if (index_cap > SIZE_MAX / 2 / sizeof(size_t)) { cJSON_Delete(j); ok = false; break; }
             size_t ncap = index_cap ? index_cap * 2 : 64;
             size_t *ni = malloc(ncap * sizeof(size_t));
             if (!ni) {
                 cJSON_Delete(j);
+                ok = false;
                 break;
             }
             for (size_t q = 0; q < ncap; q++) ni[q] = SIZE_MAX;
@@ -217,10 +212,12 @@ size_t records_list_files(const char *project_dir, RecordKind kind, Record **out
         }
         if (k == n) {
             if (n == cap) {
+                if (cap > SIZE_MAX / 2 / sizeof(Slot)) { cJSON_Delete(j); ok = false; break; }
                 cap = cap ? cap * 2 : 16;
                 Slot *s = realloc(slots, cap * sizeof(Slot));
                 if (!s) {
                     cJSON_Delete(j);
+                    ok = false;
                     break;
                 }
                 slots = s;
@@ -232,19 +229,22 @@ size_t records_list_files(const char *project_dir, RecordKind kind, Record **out
             n++;
         }
         Record *r = &slots[k].r;
+        if (r->nversions == SIZE_MAX / sizeof(RecordVersion)) { cJSON_Delete(j); ok = false; break; }
         RecordVersion *vs = realloc(r->versions, (r->nversions + 1) * sizeof(RecordVersion));
         if (!vs) {
             cJSON_Delete(j);
+            ok = false;
             break;
         }
         r->versions = vs;
-        RecordVersion *v = &vs[r->nversions];
+        RecordVersion *v = &vs[r->nversions++];
         memset(v, 0, sizeof(*v));
         double ver = num(j, "ver");
         v->ver = ver < 1e9 ? (int)ver : 0;
         v->ts = (time_t)num(j, "ts");
         snprintf(v->status, sizeof(v->status), "%s", status->valuestring);
         v->content = strdup(content->valuestring);
+        if (!v->content) ok = false;
         cJSON *fi = cJSON_GetObjectItem(j, "finding");
         if (cJSON_IsObject(fi)) {
             static const struct { const char *key; size_t off, len; } fields[] = {
@@ -259,17 +259,19 @@ size_t records_list_files(const char *project_dir, RecordKind kind, Record **out
                 if (cJSON_IsString(f)) snprintf((char *)&v->finding + fields[q].off, fields[q].len, "%s", f->valuestring);
             }
             cJSON *rt = cJSON_GetObjectItem(fi, "related_text");
-            if (cJSON_IsString(rt)) v->finding.related_text = strdup(rt->valuestring);
+            if (cJSON_IsString(rt)) {
+                v->finding.related_text = strdup(rt->valuestring);
+                if (!v->finding.related_text) ok = false;
+            }
         }
         cJSON *srcs = cJSON_GetObjectItem(j, "sources");
         int ns = cJSON_IsArray(srcs) ? cJSON_GetArraySize(srcs) : 0;
         if (ns > 0) v->sources = calloc((size_t)ns, sizeof(SourceRef));
-        for (int i = 0; v->sources && i < ns; i++)
-            if (parse_source(cJSON_GetArrayItem(srcs, i), &v->sources[v->nsources])) v->nsources++;
-        if (v->content) r->nversions++;
-        else {
-            records_free_sources(v->sources, v->nsources);
-            free(v->finding.related_text);
+        if (ns > 0 && !v->sources) ok = false;
+        for (int i = 0; ok && i < ns; i++) {
+            bool source_allocation_error = false;
+            if (parse_source(cJSON_GetArrayItem(srcs, i), &v->sources[v->nsources], &source_allocation_error)) v->nsources++;
+            if (source_allocation_error) ok = false;
         }
         slots[k].last_line = line_no;
         cJSON_Delete(j);
@@ -277,15 +279,25 @@ size_t records_list_files(const char *project_dir, RecordKind kind, Record **out
     free(text);
     free(index);
     qsort(slots, n, sizeof(Slot), by_recent);
-    Record *list = n ? malloc(n * sizeof(Record)) : NULL;
+    Record *list = ok && n ? malloc(n * sizeof(Record)) : NULL;
+    if (n && !list) ok = false;
     size_t m = 0;
     for (size_t i = 0; i < n; i++) {
-        if (list && slots[i].r.nversions) list[m++] = slots[i].r;
+        if (ok && slots[i].r.nversions) list[m++] = slots[i].r;
         else free_record(&slots[i].r);
     }
     free(slots);
+    if (!ok) { free(list); return false; }
     *out = list;
-    return m;
+    *count = m;
+    return true;
+}
+
+size_t records_list_files(const char *project_dir, RecordKind kind, Record **out)
+{
+    size_t count = 0;
+    (void)records_list_files_checked(project_dir, kind, out, &count);
+    return count;
 }
 
 bool records_append(StoreManager *manager, const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
@@ -328,30 +340,34 @@ bool records_append_files(StoreManager *manager, const char *project_dir, Record
     int ver = 1;
     if (!fresh) {
         Record *list = NULL;
-        size_t n = records_list_files(project_dir, kind, &list);
+        size_t n = 0;
+        if (!records_list_files_checked(project_dir, kind, &list, &n)) return false;
         for (size_t i = 0; i < n; i++)
             if (!strcmp(list[i].id, id)) ver = record_current(&list[i])->ver + 1;
         records_free(list, n);
     }
 
     cJSON *j = cJSON_CreateObject();
-    cJSON_AddStringToObject(j, "id", id);
-    cJSON_AddNumberToObject(j, "ver", ver);
-    cJSON_AddNumberToObject(j, "ts", (double)(time_t)store_write_time(manager));
-    cJSON_AddStringToObject(j, "status", status);
-    cJSON_AddStringToObject(j, "content", content ? content : "");
-    cJSON *arr = cJSON_AddArrayToObject(j, "sources");
-    for (size_t i = 0; i < nsources; i++) cJSON_AddItemToArray(arr, source_json(&sources[i]));
-    if (finding) {
-        cJSON *fi = cJSON_AddObjectToObject(j, "finding");
-        cJSON_AddStringToObject(fi, "type", finding->type);
-        if (finding->subject[0]) cJSON_AddStringToObject(fi, "subject", finding->subject);
-        if (finding->relation[0]) cJSON_AddStringToObject(fi, "relation", finding->relation);
-        if (finding->object[0]) cJSON_AddStringToObject(fi, "object", finding->object);
-        if (finding->related[0]) cJSON_AddStringToObject(fi, "related", finding->related);
-        if (finding->related_text) cJSON_AddStringToObject(fi, "related_text", finding->related_text);
+    bool built = j && cJSON_AddStringToObject(j, "id", id) && cJSON_AddNumberToObject(j, "ver", ver) &&
+                 cJSON_AddNumberToObject(j, "ts", (double)(time_t)store_write_time(manager)) &&
+                 cJSON_AddStringToObject(j, "status", status) && cJSON_AddStringToObject(j, "content", content ? content : "");
+    cJSON *arr = built ? cJSON_AddArrayToObject(j, "sources") : NULL;
+    built = built && arr;
+    for (size_t i = 0; built && i < nsources; i++) {
+        cJSON *source = source_json(&sources[i]);
+        built = source && cJSON_AddItemToArray(arr, source);
+        if (!built) cJSON_Delete(source);
     }
-    char *s = cJSON_PrintUnformatted(j);
+    if (built && finding) {
+        cJSON *fi = cJSON_AddObjectToObject(j, "finding");
+        built = fi && cJSON_AddStringToObject(fi, "type", finding->type);
+        if (built && finding->subject[0]) built = cJSON_AddStringToObject(fi, "subject", finding->subject);
+        if (built && finding->relation[0]) built = cJSON_AddStringToObject(fi, "relation", finding->relation);
+        if (built && finding->object[0]) built = cJSON_AddStringToObject(fi, "object", finding->object);
+        if (built && finding->related[0]) built = cJSON_AddStringToObject(fi, "related", finding->related);
+        if (built && finding->related_text) built = cJSON_AddStringToObject(fi, "related_text", finding->related_text);
+    }
+    char *s = built ? cJSON_PrintUnformatted(j) : NULL;
     cJSON_Delete(j);
     if (!s) return false;
     size_t len = strlen(s);

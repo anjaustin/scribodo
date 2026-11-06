@@ -130,6 +130,7 @@ On first launch the app checks the model file against its pinned hash (once), th
 **The project store:** chats, notes, canon, findings, History and the observer's progress live in a local MariaDB (SOW §5), run in Docker. `tools/services.sh up` starts it (MariaDB 11.4 and Qdrant, localhost only, with generated credentials). The app starts it too if Docker is running.
 - The first time a project is opened with the store up, its `.scribodo/` files are moved in. The old files are kept in `.scribodo/legacy-…`.
 - Documents stay plain files in the folder, and a rename keeps each document's id, so History and sources follow it.
+- Failed notes/history reads stop migration without switching authority. Making a copied folder its own project uses a private snapshot: retries do not duplicate chats or mix in later changes from the original.
 - If the store is down, documents stay editable; notes, canon, chats and History pause until it's back. A project not yet moved keeps using its files.
 - Set `SCRIBODO_STORE=off` to run without it.
 

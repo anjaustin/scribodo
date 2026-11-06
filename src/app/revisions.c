@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include "core/json.h"
+#include "core/file_text.h"
 #include "app/project_store.h"
 #include "app/revisions_internal.h"
 #include "app/store.h"
@@ -68,15 +69,8 @@ static bool write_atomic(const char *path, const char *data, size_t n)
 
 static char *slurp(const char *path)
 {
-    FILE *f = fopen(path, "rb");
-    if (!f) return NULL;
-    fseek(f, 0, SEEK_END);
-    long n = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char *buf = n >= 0 ? malloc((size_t)n + 1) : NULL;
-    if (buf) buf[fread(buf, 1, (size_t)n, f)] = '\0';
-    fclose(f);
-    return buf;
+    char *text = NULL;
+    return file_text_read(path, &text) == FILE_TEXT_OK ? text : NULL;
 }
 
 /* Missing numbers read as NaN, which must never be cast to an integer. */
@@ -97,6 +91,7 @@ static int revision_lock(const char *project_dir, const char *doc_path, bool cre
      * cannot write that directory either, reading without a lock preserves
      * access without racing one of our writers. */
     if (fd < 0 && !create && (errno == EACCES || errno == EROFS)) return -2;
+    if (fd < 0 && !create && errno == ENOENT) return -3;
     if (fd < 0) return -1;
     if (flock(fd, operation) != 0) {
         close(fd);
@@ -112,27 +107,35 @@ static void revision_unlock(int fd)
     close(fd);
 }
 
-static size_t list_impl(const char *project_dir, const char *doc_path, Revision **out)
+static bool list_impl(const char *project_dir, const char *doc_path, Revision **out, size_t *count)
 {
     *out = NULL;
+    *count = 0;
     char dir[1500], idx[1600];
-    if (!doc_dir(project_dir, doc_path, false, dir, sizeof(dir))) return 0;
+    if (!doc_dir(project_dir, doc_path, false, dir, sizeof(dir))) return false;
     snprintf(idx, sizeof(idx), "%s/index.jsonl", dir);
-    char *text = slurp(idx);
-    if (!text) return 0;
+    char *text = NULL;
+    FileTextStatus read_status = file_text_read(idx, &text);
+    if (read_status != FILE_TEXT_OK) return read_status == FILE_TEXT_MISSING;
+    if (json_has_nul_escape(text, strlen(text))) { free(text); return false; }
     size_t n = 0, cap = 0;
     Revision *list = NULL;
     char *save = NULL;
+    bool ok = true;
     for (char *line = strtok_r(text, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
-        cJSON *j = json_parse(line);
+        bool allocation_error;
+        cJSON *j = json_parse_checked(line, &allocation_error);
+        if (allocation_error) { cJSON_Delete(j); ok = false; break; }
         if (!j) continue; /* torn line after a crash */
         cJSON *file = cJSON_GetObjectItem(j, "file"), *origin = cJSON_GetObjectItem(j, "origin");
         if (cJSON_IsString(file) && cJSON_IsString(origin) && !strchr(file->valuestring, '/')) {
             if (n == cap) {
+                if (cap > SIZE_MAX / 2 / sizeof(Revision)) { cJSON_Delete(j); ok = false; break; }
                 cap = cap ? cap * 2 : 16;
                 Revision *l = realloc(list, cap * sizeof(Revision));
                 if (!l) {
                     cJSON_Delete(j);
+                    ok = false;
                     break;
                 }
                 list = l;
@@ -150,6 +153,7 @@ static size_t list_impl(const char *project_dir, const char *doc_path, Revision 
         cJSON_Delete(j);
     }
     free(text);
+    if (!ok) { free(list); return false; }
     /* Newest first. */
     for (size_t i = 0; i < n / 2; i++) {
         Revision t = list[i];
@@ -157,16 +161,25 @@ static size_t list_impl(const char *project_dir, const char *doc_path, Revision 
         list[n - 1 - i] = t;
     }
     *out = list;
-    return n;
+    *count = n;
+    return true;
+}
+
+bool revisions_list_files_checked(const char *project_dir, const char *doc_path, Revision **out, size_t *count)
+{
+    *out = NULL;
+    *count = 0;
+    int lock = revision_lock(project_dir, doc_path, false, LOCK_SH);
+    if (lock == -1) return false;
+    bool ok = list_impl(project_dir, doc_path, out, count);
+    revision_unlock(lock);
+    return ok;
 }
 
 size_t revisions_list_files(const char *project_dir, const char *doc_path, Revision **out)
 {
-    *out = NULL;
-    int lock = revision_lock(project_dir, doc_path, false, LOCK_SH);
-    if (lock == -1) return 0;
-    size_t count = list_impl(project_dir, doc_path, out);
-    revision_unlock(lock);
+    size_t count = 0;
+    (void)revisions_list_files_checked(project_dir, doc_path, out, &count);
     return count;
 }
 
@@ -180,7 +193,8 @@ static bool record_impl(StoreManager *manager, const char *project_dir, const ch
     hash_text(text, hash);
 
     Revision *list = NULL;
-    size_t n = list_impl(project_dir, doc_path, &list);
+    size_t n = 0;
+    if (!list_impl(project_dir, doc_path, &list, &n)) return false;
     bool same = n > 0 && !strcmp(list[0].hash, hash);
     if (same && file_out) snprintf(file_out, file_len, "%s", list[0].file);
     /* A snapshot for a source may reuse any revision with exactly this text:
@@ -218,13 +232,10 @@ static bool record_impl(StoreManager *manager, const char *project_dir, const ch
     if (!write_atomic(path, text, len)) return false;
 
     cJSON *j = cJSON_CreateObject();
-    cJSON_AddStringToObject(j, "file", file);
-    cJSON_AddStringToObject(j, "origin", origin);
-    cJSON_AddStringToObject(j, "note", note ? note : "");
-    cJSON_AddStringToObject(j, "hash", hash);
-    cJSON_AddNumberToObject(j, "ts", (double)now);
-    cJSON_AddNumberToObject(j, "bytes", (double)len);
-    char *line = cJSON_PrintUnformatted(j);
+    bool built = j && cJSON_AddStringToObject(j, "file", file) && cJSON_AddStringToObject(j, "origin", origin) &&
+                 cJSON_AddStringToObject(j, "note", note ? note : "") && cJSON_AddStringToObject(j, "hash", hash) &&
+                 cJSON_AddNumberToObject(j, "ts", (double)now) && cJSON_AddNumberToObject(j, "bytes", (double)len);
+    char *line = built ? cJSON_PrintUnformatted(j) : NULL;
     cJSON_Delete(j);
     if (!line) return false;
     snprintf(idx, sizeof(idx), "%s/index.jsonl", dir);

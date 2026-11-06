@@ -899,6 +899,53 @@ static void test_records(void)
 }
 
 /* ---- observer ----------------------------------------------------------------------- */
+static void test_file_history_read_failures(void)
+{
+    char project[700], path[1000], doc[800];
+    snprintf(project, sizeof(project), "%s/history-errors", g_dir);
+    CHECK(mkdir(project, 0755) == 0);
+    const RecordKind kinds[] = { REC_NOTE, REC_CANON, REC_FINDING };
+    const char *names[] = { "notes.jsonl", "canon.jsonl", "findings.jsonl" };
+    const char *ids[] = { "n-read", "c-read", "f-read" };
+    for (size_t i = 0; i < 3; i++) {
+        CHECK(records_append(g_store, project, kinds[i], ids[i], "active", "Keep this", NULL, 0, NULL));
+        snprintf(path, sizeof(path), "%s/.scribodo/%s", project, names[i]);
+        CHECK(chmod(path, 0000) == 0);
+        Record *records = NULL;
+        size_t n = 99;
+        CHECK(!records_list_checked(g_store, project, kinds[i], &records, &n) && !records && n == 0);
+        records_free(records, n);
+        int ver = 99;
+        CHECK(!records_append(g_store, project, kinds[i], ids[i], "active", "Must not append", NULL, 0, &ver) && ver == 0);
+        CHECK(chmod(path, 0644) == 0);
+        CHECK(records_list_checked(g_store, project, kinds[i], &records, &n) && n == 1 && records[0].nversions == 1);
+        records_free(records, n);
+        char saved[1100];
+        snprintf(saved, sizeof(saved), "%s.saved", path);
+        CHECK(rename(path, saved) == 0 && mkfifo(path, 0600) == 0);
+        CHECK(!records_list_checked(g_store, project, kinds[i], &records, &n) && !records && n == 0);
+        CHECK(unlink(path) == 0 && rename(saved, path) == 0);
+    }
+    snprintf(doc, sizeof(doc), "%s/chapter.md", project);
+    CHECK(revisions_record(g_store, project, doc, "Keep history", "save", NULL, NULL));
+    snprintf(path, sizeof(path), "%s/.scribodo/revisions/chapter.md/index.jsonl", project);
+    CHECK(chmod(path, 0000) == 0);
+    Revision *revs = NULL;
+    size_t n = 99;
+    CHECK(!revisions_list_checked(g_store, project, doc, &revs, &n) && !revs && n == 0);
+    free(revs);
+    CHECK(!revisions_record(g_store, project, doc, "Must not append", "save", NULL, NULL));
+    CHECK(chmod(path, 0644) == 0);
+    CHECK(revisions_list_checked(g_store, project, doc, &revs, &n) && n == 1);
+    free(revs);
+    char saved[1100];
+    snprintf(saved, sizeof(saved), "%s.saved", path);
+    CHECK(rename(path, saved) == 0 && mkfifo(path, 0600) == 0);
+    CHECK(!revisions_list_checked(g_store, project, doc, &revs, &n) && !revs && n == 0);
+    CHECK(unlink(path) == 0 && rename(saved, path) == 0);
+    CHECK(revisions_list_checked(g_store, project, "new.md", &revs, &n) && !revs && n == 0);
+}
+
 
 static bool wait_jobs(Observer *o, unsigned want, double secs)
 {
@@ -1903,6 +1950,7 @@ int main(int argc, char **argv)
         { "edit_too_long", test_edit_too_long },
         { "revisions", test_revisions },
         { "records", test_records },
+        { "file_history_read_failures", test_file_history_read_failures },
         { "observer_run", test_observer_run },
         { "observer_redteam", test_observer_redteam },
         { "recent_and_renames", test_recent_and_renames },

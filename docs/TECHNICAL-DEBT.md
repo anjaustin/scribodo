@@ -467,3 +467,33 @@ Do not treat these as remediation targets without a changed product decision:
   review and the final mutation rerun found no remaining confirmed defects in the
   reviewed changes. Real-model/offline suites remain unavailable without the
   built local runtime; no claim of their completion is made.
+
+### 2026-11-06 — legacy import, allocation and fork recovery closure
+
+- Reproduced the remaining file-backend empty/error conflation. Added complete
+  regular-file reads and checked record/revision listings, migrated all production
+  consumers, and made reads/writes/import fail without partial results. Imports
+  now reject unreadable or damaged snapshots instead of silently skipping them.
+- Added an isolated allocation-failure binary covering parser and repository
+  allocations plus JSON serialization. A local cJSON compilation wrapper records
+  OOM per thread without changing pinned source or runtime allocator hooks.
+- Replaced in-place fork exports with journaled, consistent source snapshots.
+  Retries preserve one completed snapshot across failures/restarts, never append
+  partial output, and preserve unrecognized staging. Successful snapshots are
+  archived; copied post-commit journals can finish cleanup.
+- Found and reproduced copied pending-state ownership and cross-document snapshot
+  filename identity bugs. Pending IDs now require canonical path ownership, and
+  revision-source mapping includes the document. Registration/journal updates are
+  atomic and synced; authoritative query failures abort rather than select a
+  fallback destination.
+- Seven compiled scratch mutations were caught by assertions. Evidence and limits
+  are in `docs/REDTEAM-011-legacy-fork.md`.
+- Built the pinned local runtime using cached CMake, without downloading weights
+  or web assets. The previously outstanding real-model and network-isolated
+  acceptance suites passed on the first full run and again on final production
+  code. Final build/headless, database, ASan/UBSan (including database), TSan,
+  base/store UI, backup/restore, stand-in remote-provider, offline real-model and
+  embedding acceptance, dependency reporting and diff checks all passed. The
+  expanded one-shot/sustained allocation suite passed 680 checks normally and
+  under ASan/UBSan; all seven final mutations were caught. The three outstanding
+  concerns are closed within this review's documented scope.
