@@ -67,7 +67,7 @@ APP_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(APP_SRCS))
 # Native dialogs (Objective-C on macOS).
 APP_OBJS  += $(BUILD)/src/platform/dialogs_mac.o
 APP   := $(BUILD)/scribodo
-TESTS := $(BUILD)/test_core $(BUILD)/test_doc_io $(BUILD)/test_editor $(BUILD)/test_db_rows $(BUILD)/test_observer_text $(BUILD)/test_observer_fake $(BUILD)/test_components $(BUILD)/test_remote $(BUILD)/test_llm $(BUILD)/test_persistence_faults
+TESTS := $(BUILD)/test_core $(BUILD)/test_doc_io $(BUILD)/test_editor $(BUILD)/test_editor_faults $(BUILD)/test_db_rows $(BUILD)/test_observer_text $(BUILD)/test_observer_fake $(BUILD)/test_components $(BUILD)/test_remote $(BUILD)/test_llm $(BUILD)/test_persistence_faults $(BUILD)/test_semantic_faults
 
 .PHONY: all run test uitest uitest-real sanitize tsan cstest dbtest uitest-db backuptest remotetest offlinetest dependency-report clean distclean llama model llmtest
 
@@ -132,6 +132,14 @@ FAULT_SRCS := $(CORE_SRCS) $(LLM_SRCS) src/core/json_vendor.c tests/test_state_f
 $(BUILD)/test_persistence_faults: $(FAULT_SRCS) $(wildcard src/core/*.h src/app/*.h src/llm/*.h) tests/fault_alloc.h tests/test_state_fixture.h $(BUILD)/tests/fault_alloc.o third_party/cJSON/cJSON.c third_party/cJSON/cJSON.h
 	$(CC) $(CFLAGS) $(INCLUDES) -include tests/fault_alloc.h $(FAULT_SRCS) $(BUILD)/tests/fault_alloc.o -o $@ $(MARIADB_LIBS) -lpthread
 
+EDITOR_FAULT_SRCS := $(CORE_SRCS) src/ui/editor.c src/ui/input.c tests/raylib_stubs.c tests/test_editor_faults.c
+$(BUILD)/test_editor_faults: $(EDITOR_FAULT_SRCS) $(wildcard src/core/*.h src/ui/*.h) src/app/frame_view_model.h tests/fault_alloc.h $(BUILD)/tests/fault_alloc.o third_party/stb/stb_textedit.h
+	$(CC) $(CFLAGS) $(INCLUDES) -include tests/fault_alloc.h $(EDITOR_FAULT_SRCS) $(BUILD)/tests/fault_alloc.o -o $@ -lm
+
+SEMANTIC_FAULT_SRCS := $(CORE_SRCS) $(LLM_SRCS) src/core/json_vendor.c tests/test_state_fixture.c tests/test_semantic_faults.c
+$(BUILD)/test_semantic_faults: $(SEMANTIC_FAULT_SRCS) $(wildcard src/core/*.h src/app/*.h src/llm/*.h) tests/fault_alloc.h tests/test_state_fixture.h $(BUILD)/tests/fault_alloc.o third_party/cJSON/cJSON.c third_party/cJSON/cJSON.h
+	$(CC) $(CFLAGS) $(INCLUDES) -include tests/fault_alloc.h $(SEMANTIC_FAULT_SRCS) $(BUILD)/tests/fault_alloc.o -o $@ $(MARIADB_LIBS) -lpthread
+
 test: $(TESTS)
 	@set -e; for t in $(TESTS); do echo "== $$t"; $(WATCHDOG) $(TEST_TIMEOUT) $$(basename $$t) ./$$t; echo; done
 	$(WATCHDOG) $(TEST_TIMEOUT) test_backup python3 tests/test_backup.py
@@ -166,7 +174,7 @@ MARIADB_LIB := build/mariadb-cc/libmariadb/libmariadbclient.a
 MARIADB_LIBS := $(MARIADB_LIB) $(OPENSSL_DIR)/lib/libssl.a $(OPENSSL_DIR)/lib/libcrypto.a -lz -liconv -lcurl # the system libcurl, for the optional remote model
 # Everything that may include <mysql.h> needs the client built first.
 $(LLM_OBJS) $(APP_OBJS) $(BUILD)/tests/test_llm.o $(BUILD)/tests/test_db.o: | $(MARIADB_LIB)
-$(BUILD)/test_persistence_faults: | $(MARIADB_LIB)
+$(BUILD)/test_persistence_faults $(BUILD)/test_semantic_faults: | $(MARIADB_LIB)
 $(MARIADB_LIB):
 	@mkdir -p $(dir $@)
 	$(CMAKE) -S third_party/mariadb-connector-c -B build/mariadb-cc -DCMAKE_BUILD_TYPE=Release \
@@ -263,7 +271,7 @@ sanitize:
 	$(MAKE) --no-print-directory BUILD=build/asan OPT="$(SAN_FLAGS)" test
 
 # ThreadSanitizer over the threaded code (chat worker, observer, supervisor).
-tsan: $(MARIADB_LIB)
+tsan: $(MARIADB_LIB) $(BUILD)/tests/fault_alloc.o
 	@mkdir -p build/tsan
 	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) $(CORE_SRCS) $(LLM_SRCS) src/core/json_vendor.c \
 	  tests/test_state_fixture.c tests/test_llm.c -o build/tsan/test_llm $(MARIADB_LIBS) -lpthread
@@ -271,7 +279,9 @@ tsan: $(MARIADB_LIB)
 	  tests/test_state_fixture.c tests/test_components.c -o build/tsan/test_components $(MARIADB_LIBS) -lpthread
 	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) $(CORE_SRCS) $(LLM_SRCS) src/core/json_vendor.c \
 	  tests/test_state_fixture.c tests/test_remote.c -o build/tsan/test_remote $(MARIADB_LIBS) -lpthread
-	@set -e; for t in test_llm test_components test_remote; do \
+	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) -include tests/fault_alloc.h $(SEMANTIC_FAULT_SRCS) \
+	  $(BUILD)/tests/fault_alloc.o -o build/tsan/test_semantic_faults $(MARIADB_LIBS) -lpthread
+	@set -e; for t in test_llm test_components test_remote test_semantic_faults; do \
 	  TSAN_OPTIONS=halt_on_error=1 $(WATCHDOG) 300 tsan-$$t ./build/tsan/$$t; echo; \
 	done
 

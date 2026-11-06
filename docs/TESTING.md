@@ -11,6 +11,33 @@
 | `make uitest-real` | `tests/ui/real-*.scribo`: the real model through the real UI | Yes |
 | `make dependency-report` | Verifies committed submodule gitlinks against clean checkouts, container digests and OSV advisories; lists available upstream updates without failing on them | No |
 
+### Editor, embedding and remote-config failure regressions
+
+- `test_editor_faults` injects one-shot and sustained allocation failures into
+  the real headless editor. A refused range replacement or paste must retain the
+  text, selection, content id, dirty state, source anchor and redo branch.
+  Exhausting the gap before typing checks that growth failure preserves history
+  and reports a notice. Capacity is reserved before stb can delete a selection.
+- `test_semantic_faults` drives the real embedding transport against a private
+  Unix-socket stand-in. It fails every allocation on successful document/query
+  paths, including JSON construction, serialization, response parsing and result
+  validation. Failures must report an error without publishing partial vectors
+  or sending an incomplete input list. Malformed numeric values, dimensions,
+  duplicate/missing indices and reordered batches have independent checks.
+- `test_remote: remote_file_reads` bounds FIFO regressions in child processes and
+  checks FIFO symlinks, non-regular files, complete configuration/key reads,
+  embedded NULs, oversized files and key-length/CRLF boundaries. Only genuinely
+  absent configuration is silently treated as unconfigured.
+- Both allocation binaries run in `make test` and `make sanitize`; the threaded
+  embedding stand-in also runs in `make tsan`. Fault injection is not compiled
+  into the application. Dated baseline and mutation evidence is recorded in
+  [`REDTEAM-013-failure-paths.md`](REDTEAM-013-failure-paths.md).
+
+Run native/recovery acceptance serially, for example
+`make uitest uitest-db backuptest remotetest cstest offlinetest`. Do not run
+another Scribodo process during `backuptest`: restore deliberately refuses to
+modify a database while any Scribodo process is running.
+
 ### Persistence safety regressions
 
 - `test_llm: concurrent_file_readers` loads separate chats and revision indexes

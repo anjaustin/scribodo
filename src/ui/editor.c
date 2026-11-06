@@ -329,9 +329,22 @@ static bool would_exceed(Editor *e, size_t n)
     return true;
 }
 
+/* stb deletes the selection before inserting. Reserve the net growth before
+ * changing selection, anchors or undo state so a refused insert changes nothing.
+ * Deletion itself supplies the rest of the required gap. */
+static bool reserve_replacement(Editor *e, size_t n, size_t removed)
+{
+    if (n <= removed || tb_reserve(&e->buf, n - removed)) return true;
+    set_notice(e, "Not enough memory; nothing was inserted");
+    return false;
+}
+
 static void type_char(Editor *e, uint32_t cp)
 {
     if (would_exceed(e, 1)) return;
+    int lo, hi;
+    sel_range(e, &lo, &hi);
+    if (!reserve_replacement(e, 1, (size_t)(hi - lo))) return;
     bool sel = has_selection(e);
     UndoMergeKind kind = (cp == '\n' || sel) ? UNDO_MERGE_NONE : UNDO_MERGE_TYPING;
     /* Start a fresh undo group at the beginning of each word. */
@@ -546,7 +559,9 @@ bool editor_paste_utf8(Editor *e, const char *s)
     uint32_t *cps = malloc(len * sizeof(uint32_t));
     if (!cps) return false;
     size_t n = sanitize_text(cps, utf8_decode((const uint8_t *)s, len, cps, NULL));
-    if (would_exceed(e, n)) {
+    int lo, hi;
+    sel_range(e, &lo, &hi);
+    if (would_exceed(e, n) || !reserve_replacement(e, n, (size_t)(hi - lo))) {
         free(cps);
         return false;
     }
@@ -564,6 +579,7 @@ bool editor_replace_range(Editor *e, size_t pos, size_t len, const uint32_t *cps
     size_t total = tb_len(&e->buf);
     if (e->read_only || pos > total || len > total - pos) return false;
     if (n > e->max_chars || total - len > e->max_chars - n) return false;
+    if (!reserve_replacement(e, n, len)) return false;
     e->st.select_start = (int)pos;
     e->st.select_end = (int)(pos + len);
     e->st.cursor = (int)(pos + len);

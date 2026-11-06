@@ -569,3 +569,25 @@ Do not treat these as remediation targets without a changed product decision:
   network isolation. Final scoped diff review found no further unresolved issue;
   all ten mutation checks passed. Publishing uses required PR checks without
   changing branch protections. The pre-existing sample-document edit is excluded.
+
+### 2026-11-06 — editor, embedding and startup failure-path remediation
+
+- Reproduced three audit findings with failing regressions before remediation:
+  serialization OOM consuming an uninitialized embedding result, failed gap
+  growth deleting a replacement's target, and FIFO configuration blocking startup.
+- Preflighted editor net growth before selection/undo/anchor changes. Embedding
+  request construction now fails closed, and complete batch validation precedes
+  output publication. Remote configuration/key reads validate nonblocking opened
+  regular-file descriptors, permissions, complete reads and size/NUL boundaries.
+- Added isolated one-shot/sustained editor and embedding allocation suites to
+  normal and ASan/UBSan tests; the embedding transport suite also runs under TSan.
+  Nine compiled scratch mutations were caught by assertions, not crashes/timeouts.
+- Final verification passed: fresh application/headless build (22,590 C checks
+  plus 11 Python tests), ASan/UBSan, TSan, normal/sanitized database integration,
+  base/store UI, backup/restore, stand-in remote, case-sensitive rename, offline
+  real-model/embedding acceptance, dependency reporting and diff checks. Clang
+  static analysis of the three changed production modules emitted no diagnostics.
+- Evidence and limits: `docs/REDTEAM-013-failure-paths.md`. A successful edit can
+  still clear undo history if recording that edit runs out of memory; the
+  inconsistent history is deliberately discarded rather than replayed. The
+  pre-existing sample-document edit remains excluded.

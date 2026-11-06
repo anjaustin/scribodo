@@ -9,6 +9,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include "app/chat_store.h"
@@ -134,6 +135,98 @@ static bool remote_cfg(RemoteConfig *c, const char *url, const char *key, int mo
     chmod(kf, (mode_t)mode);
     snprintf(json, sizeof(json), "{\"name\":\"Frontier\",\"base_url\":\"%s\",\"model\":\"m1\",\"api_key_file\":\"%s\"}", url, kf);
     return remote_parse(json, c, err, errlen);
+}
+
+static void test_remote_file_reads(void)
+{
+    char path[700], link[700], cfg[700], key[700], json[1600];
+    snprintf(path, sizeof(path), "%s/config-fifo", g_dir);
+    snprintf(link, sizeof(link), "%s/config-link", g_dir);
+    CHECK(mkfifo(path, 0600) == 0);
+    CHECK(symlink(path, link) == 0);
+    snprintf(cfg, sizeof(cfg), "%s/file-config.json", g_dir);
+    snprintf(key, sizeof(key), "%s/file-key", g_dir);
+    snprintf(json, sizeof(json), "{\"base_url\":\"https://api.example.com/v1\",\"model\":\"m\",\"api_key_file\":\"%s\"}", path);
+    FILE *f = fopen(cfg, "wb");
+    CHECK(f);
+    if (!f) return;
+    fputs(json, f);
+    fclose(f);
+    const char *paths[] = { path, link, g_dir, cfg };
+    /* Bound each regression independently: the old fopen blocks on the FIFO. */
+    for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
+        pid_t pid = fork();
+        CHECK(pid >= 0);
+        if (pid == 0) {
+            alarm(2);
+            setenv("SCRIBODO_REMOTE_CONFIG", paths[i], 1);
+            RemoteConfig c;
+            char err[200] = "";
+            bool ok = remote_load(&c, err, sizeof(err));
+            _exit(!ok && err[0] && !c.key[0] ? 0 : 1);
+        }
+        if (pid > 0) {
+            int status = 0;
+            CHECK(waitpid(pid, &status, 0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+        }
+    }
+    RemoteConfig c;
+    char err[200] = "";
+    snprintf(json, sizeof(json), "{\"base_url\":\"https://api.example.com/v1\",\"model\":\"m\",\"api_key_file\":\"%s\"}", key);
+    f = fopen(key, "wb");
+    CHECK(f);
+    if (!f) return;
+    fputs("sk-test\r\n", f);
+    fclose(f);
+    chmod(key, 0600);
+    f = fopen(cfg, "wb");
+    if (!f) return;
+    fputs(json, f);
+    fclose(f);
+    setenv("SCRIBODO_REMOTE_CONFIG", cfg, 1);
+    CHECK(remote_load(&c, err, sizeof(err)) && !strcmp(c.key, "sk-test"));
+    /* Exact boundaries: an ordinary CRLF is fine, a truncated key isn't. */
+    char long_key[514];
+    memset(long_key, 'k', sizeof(long_key));
+    long_key[511] = '\r';
+    long_key[512] = '\n';
+    f = fopen(key, "wb");
+    if (!f) return;
+    fwrite(long_key, 1, 513, f);
+    fclose(f);
+    CHECK(remote_load(&c, err, sizeof(err)) && strlen(c.key) == 511);
+    long_key[511] = 'k';
+    f = fopen(key, "wb");
+    if (!f) return;
+    fwrite(long_key, 1, 512, f);
+    fclose(f);
+    CHECK(!remote_load(&c, err, sizeof(err)) && err[0] && !c.key[0]);
+    /* Embedded NULs and an extra key line must not be silently ignored. */
+    const char *bad_keys[] = { "sk-test\nsecond-key", "sk-test\0hidden" };
+    const size_t bad_lengths[] = { 18, 14 };
+    for (size_t i = 0; i < 2; i++) {
+        f = fopen(key, "wb");
+        if (!f) return;
+        fwrite(bad_keys[i], 1, bad_lengths[i], f);
+        fclose(f);
+        CHECK(!remote_load(&c, err, sizeof(err)) && err[0] && !c.key[0]);
+    }
+    f = fopen(cfg, "wb");
+    if (!f) return;
+    fputs(json, f);
+    fputc(0, f);
+    fputs("hidden", f);
+    fclose(f);
+    CHECK(!remote_load(&c, err, sizeof(err)) && strstr(err, "completely") && !c.key[0]);
+    f = fopen(cfg, "wb");
+    if (!f) return;
+    fputs(json, f);
+    for (size_t i = strlen(json); i <= 64 * 1024; i++) fputc(' ', f);
+    fclose(f);
+    CHECK(!remote_load(&c, err, sizeof(err)) && strstr(err, "too large") && !c.key[0]);
+    unlink(cfg);
+    CHECK(!remote_load(&c, err, sizeof(err)) && !err[0] && !c.key[0]);
+    unsetenv("SCRIBODO_REMOTE_CONFIG");
 }
 
 static void test_remote(void)
@@ -294,7 +387,7 @@ static void test_remote(void)
 int main(void)
 {
     if (!test_state_fixture_init(g_dir, sizeof(g_dir), &g_store)) return 1;
-    const TestCase tests[] = { { "remote", test_remote } };
+    const TestCase tests[] = { { "remote_file_reads", test_remote_file_reads }, { "remote", test_remote } };
     int result = run_tests(tests, sizeof(tests) / sizeof(tests[0]));
     test_state_fixture_destroy(g_dir, g_store);
     return result;

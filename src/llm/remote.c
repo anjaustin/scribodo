@@ -4,6 +4,9 @@
 #include "remote.h"
 
 #include <curl/curl.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,14 +17,62 @@
 
 #include "core/json.h"
 
-static char *slurp(const char *path, size_t max)
+/* Validate the opened descriptor, not a prior stat of a pathname. O_NONBLOCK
+ * prevents a FIFO from hanging startup; only complete, stable regular files
+ * are accepted. No truncation of configuration or credentials is safe. */
+static char *slurp(const char *path, size_t max, bool key, char *err, size_t errlen)
 {
-    FILE *f = fopen(path, "rb");
-    if (!f) return NULL;
-    char *buf = malloc(max + 1);
-    size_t n = buf ? fread(buf, 1, max, f) : 0;
-    fclose(f);
-    if (buf) buf[n] = '\0';
+    const char *label = key ? "The API key file" : "remote.json";
+    int fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0) {
+        /* An absent config is normal; other failures must be visible. */
+        if (key || errno != ENOENT) snprintf(err, errlen, "Couldn't open %s", label);
+        return NULL;
+    }
+    struct stat before, after;
+    if (fstat(fd, &before) != 0 || !S_ISREG(before.st_mode)) {
+        snprintf(err, errlen, "%s must be a regular file", label);
+        close(fd);
+        return NULL;
+    }
+    if (before.st_uid != getuid() || (before.st_mode & (key ? 077 : 022))) {
+        snprintf(err, errlen, key ? "The API key file must be yours and private (chmod 600)" :
+                                   "remote.json must be yours and not writable by others (chmod 600)");
+        close(fd);
+        return NULL;
+    }
+    if (before.st_size < 0 || (uint64_t)before.st_size > max) {
+        snprintf(err, errlen, "%s is too large", label);
+        close(fd);
+        return NULL;
+    }
+    size_t n = (size_t)before.st_size, off = 0;
+    char *buf = malloc(n + 1);
+    if (!buf) {
+        snprintf(err, errlen, "Not enough memory to read %s", label);
+        close(fd);
+        return NULL;
+    }
+    while (off < n) {
+        ssize_t got = read(fd, buf + off, n - off);
+        if (got < 0 && errno == EINTR) continue;
+        if (got <= 0) break;
+        off += (size_t)got;
+    }
+    char extra;
+    ssize_t tail;
+    do tail = read(fd, &extra, 1); while (tail < 0 && errno == EINTR);
+    bool stable = fstat(fd, &after) == 0 && before.st_size == after.st_size &&
+                  before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec &&
+                  before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec;
+    int closed = close(fd);
+    if (off != n || tail != 0 || !stable || closed != 0 || memchr(buf, 0, n)) {
+        snprintf(err, errlen, "Couldn't read %s completely (changed, damaged or unreadable)", label);
+        if (key) memset(buf, 0, n);
+        free(buf);
+        return NULL;
+    }
+    buf[n] = '\0';
     return buf;
 }
 
@@ -79,35 +130,37 @@ bool remote_parse(const char *json, RemoteConfig *c, char *err, size_t errlen)
         /* The key: from a private file of the author's, never from
          * remote.json itself, and never one of Scribodo's own secrets (which
          * would then go to the provider as the key). */
-        struct stat st;
-        char real[1024] = "", secrets[1024];
+        char real[PATH_MAX] = "", secrets[PATH_MAX];
         snprintf(secrets, sizeof(secrets), "%s/Library/Application Support/Scribodo/services/", getenv("HOME") ? getenv("HOME") : "");
-        if (stat(kf->valuestring, &st) != 0 || !realpath(kf->valuestring, real)) {
+        if (!realpath(kf->valuestring, real)) {
             snprintf(err, errlen, "The API key file doesn't exist");
-            ok = false;
-        } else if (st.st_mode & 077) {
-            snprintf(err, errlen, "The API key file must be private (chmod 600)");
-            ok = false;
-        } else if (st.st_uid != getuid() || !S_ISREG(st.st_mode)) {
-            snprintf(err, errlen, "The API key file must be a file of yours");
             ok = false;
         } else if (!strncmp(real, secrets, strlen(secrets)) || strstr(real, "/Scribodo/services/")) {
             snprintf(err, errlen, "The API key file can't be one of Scribodo's own service secrets");
             ok = false;
         } else {
-            char *k = slurp(kf->valuestring, sizeof(c->key) - 1);
+            /* Permit a maximum-length key plus a conventional CRLF, but never
+             * silently truncate a long credential or ignore extra key lines. */
+            char *k = slurp(real, sizeof(c->key) + 1, true, err, errlen);
+            bool read_ok = k != NULL;
+            if (!read_ok) ok = false;
             if (k) {
-                k[strcspn(k, "\r\n")] = '\0';
-                snprintf(c->key, sizeof(c->key), "%s", k);
-                memset(k, 0, strlen(k));
+                size_t bytes = strlen(k);
+                size_t len = strcspn(k, "\r\n");
+                if (!len || len >= sizeof(c->key)) ok = false;
+                for (size_t i = len; i < bytes; i++)
+                    if (k[i] != '\r' && k[i] != '\n') ok = false;
+                if (ok) {
+                    memcpy(c->key, k, len);
+                    c->key[len] = '\0';
+                }
+                memset(k, 0, bytes);
                 free(k);
             }
             for (const char *p = c->key; ok && *p; p++)
                 if ((unsigned char)*p < 0x21 || (unsigned char)*p > 0x7E) ok = false; /* no header injection */
-            if (!ok || !c->key[0]) {
-                snprintf(err, errlen, "The API key file is empty or not a key");
-                ok = false;
-            }
+            if (ok && !c->key[0]) ok = false;
+            if (!ok && read_ok) snprintf(err, errlen, "The API key file is empty or not a key");
         }
     }
     cJSON_Delete(j);
@@ -123,14 +176,7 @@ bool remote_load(RemoteConfig *c, char *err, size_t errlen)
     const char *env = getenv("SCRIBODO_REMOTE_CONFIG");
     if (env) snprintf(path, sizeof(path), "%s", env);
     else snprintf(path, sizeof(path), "%s/Library/Application Support/Scribodo/remote.json", getenv("HOME") ? getenv("HOME") : "");
-    struct stat st;
-    if (stat(path, &st) != 0) return false; /* not configured: the normal case */
-    /* Others able to change it could point the key, or the content, anywhere. */
-    if (st.st_uid != getuid() || (st.st_mode & 022)) {
-        snprintf(err, errlen, "remote.json must be yours and not writable by others (chmod 600)");
-        return false;
-    }
-    char *json = slurp(path, 64 * 1024);
+    char *json = slurp(path, 64 * 1024, false, err, errlen);
     if (!json) return false;
     bool ok = remote_parse(json, c, err, errlen);
     free(json);

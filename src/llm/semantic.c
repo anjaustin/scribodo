@@ -5,6 +5,7 @@
 
 #include <CommonCrypto/CommonDigest.h>
 #include <limits.h>
+#include <float.h>
 #include <math.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -55,6 +56,7 @@ static bool qdrant(SemanticClient *client, const char *method, const char *path,
     if (out) *out = NULL;
     if (!client || !client->qkey[0]) return false;
     char *js = body ? cJSON_PrintUnformatted(body) : NULL;
+    if (body && !js) return false;
     HttpResult r;
     bool ok = http_request(client->qport, method, path, client->qkey, js, NULL, NULL, NULL, 15000, &r) && r.status >= 200 &&
               r.status < 300;
@@ -123,6 +125,12 @@ static const char *k_query_instruction =
 
 bool semantic_embed(SemanticClient *client, const char *const *texts, size_t n, bool query, float *out, char *err, size_t errlen)
 {
+    if (errlen) err[0] = '\0';
+    if (!n) return true;
+    if (n > SIZE_MAX / SEM_DIM / sizeof(float)) {
+        snprintf(err, errlen, "Too many embedding inputs");
+        return false;
+    }
     if (!client || !client->embed) {
         for (size_t i = 0; i < n; i++) fake_embed(texts[i], out + i * SEM_DIM);
         return true;
@@ -132,16 +140,23 @@ bool semantic_embed(SemanticClient *client, const char *const *texts, size_t n, 
         return false;
     }
     cJSON *root = cJSON_CreateObject();
-    cJSON *arr = cJSON_AddArrayToObject(root, "input");
+    cJSON *arr = root ? cJSON_AddArrayToObject(root, "input") : NULL;
+    if (!arr) {
+        cJSON_Delete(root);
+        snprintf(err, errlen, "Not enough memory to build the embedding request");
+        return false;
+    }
     /* Every input within the embedding server's context (its size is set
      * to fit this): long notes or canon entries are embedded by their
      * first SEM_MAX_INPUT_BYTES, on a character boundary. */
     char *clip = malloc(SEM_MAX_INPUT_BYTES + 1);
     if (!clip) {
         cJSON_Delete(root);
+        snprintf(err, errlen, "Not enough memory to build the embedding request");
         return false;
     }
     for (size_t i = 0; i < n; i++) {
+        cJSON *item = NULL;
         utf8_clip(clip, SEM_MAX_INPUT_BYTES + 1, texts[i] ? texts[i] : "", SEM_MAX_INPUT_BYTES);
         if (query) {
             size_t len = strlen(k_query_instruction) + strlen(clip) + 1;
@@ -149,20 +164,32 @@ bool semantic_embed(SemanticClient *client, const char *const *texts, size_t n, 
             if (!q) {
                 free(clip);
                 cJSON_Delete(root);
+                snprintf(err, errlen, "Not enough memory to build the embedding request");
                 return false;
             }
             snprintf(q, len, "%s%s", k_query_instruction, clip);
-            cJSON_AddItemToArray(arr, cJSON_CreateString(q));
+            item = cJSON_CreateString(q);
             free(q);
         } else {
-            cJSON_AddItemToArray(arr, cJSON_CreateString(clip));
+            item = cJSON_CreateString(clip);
+        }
+        if (!item || !cJSON_AddItemToArray(arr, item)) {
+            cJSON_Delete(item);
+            free(clip);
+            cJSON_Delete(root);
+            snprintf(err, errlen, "Not enough memory to build the embedding request");
+            return false;
         }
     }
     free(clip);
     char *body = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
-    HttpResult r;
-    bool ok = body && http_request(llm_server_socket(client->embed), "POST", "/v1/embeddings", llm_server_key(client->embed), body, NULL,
+    if (!body) {
+        snprintf(err, errlen, "Not enough memory to serialize the embedding request");
+        return false;
+    }
+    HttpResult r = { 0 };
+    bool ok = http_request(llm_server_socket(client->embed), "POST", "/v1/embeddings", llm_server_key(client->embed), body, NULL,
                                    NULL, NULL, 120000, &r) &&
               r.status == 200 && r.body;
     free(body);
@@ -170,24 +197,48 @@ bool semantic_embed(SemanticClient *client, const char *const *texts, size_t n, 
     if (!ok) snprintf(err, errlen, "Embedding request failed (%d %s)", r.status, r.error);
     http_result_free(&r);
     cJSON *data = cJSON_GetObjectItem(j, "data"), *item;
-    size_t got = 0;
+    /* Validate the complete response before publishing any output. A repeated
+     * index must not hide a missing vector, nor may malformed numbers reach an
+     * integer cast or normalization of uninitialized data. */
+    bool *seen = ok ? calloc(n, sizeof(*seen)) : NULL;
+    ok = ok && seen && cJSON_IsArray(data) && (size_t)cJSON_GetArraySize(data) == n;
+    size_t seq = 0;
     cJSON_ArrayForEach(item, data)
     {
+        if (!ok) break;
         cJSON *idx = cJSON_GetObjectItem(item, "index"), *emb = cJSON_GetObjectItem(item, "embedding");
-        size_t i = cJSON_IsNumber(idx) ? (size_t)idx->valuedouble : got;
-        if (i >= n || cJSON_GetArraySize(emb) != SEM_DIM) continue;
-        float *v = out + i * SEM_DIM;
-        int d = 0;
+        double index = idx ? (cJSON_IsNumber(idx) ? idx->valuedouble : -1) : (double)seq;
+        ok = cJSON_IsObject(item) && isfinite(index) && index >= 0 && index < (double)n && floor(index) == index &&
+             cJSON_IsArray(emb) && cJSON_GetArraySize(emb) == SEM_DIM;
+        if (!ok) break;
+        size_t i = (size_t)index;
+        if (seen[i]) { ok = false; break; }
+        seen[i] = true;
         cJSON *x;
-        cJSON_ArrayForEach(x, emb) v[d++] = (float)x->valuedouble;
-        normalise(v);
-        got++;
+        cJSON_ArrayForEach(x, emb) {
+            if (!cJSON_IsNumber(x) || !isfinite(x->valuedouble) || fabs(x->valuedouble) > FLT_MAX) {
+                ok = false;
+                break;
+            }
+        }
+        seq++;
     }
+    if (ok) {
+        seq = 0;
+        cJSON_ArrayForEach(item, data) {
+            cJSON *idx = cJSON_GetObjectItem(item, "index"), *emb = cJSON_GetObjectItem(item, "embedding"), *x;
+            size_t i = idx ? (size_t)idx->valuedouble : seq;
+            float *v = out + i * SEM_DIM;
+            int d = 0;
+            cJSON_ArrayForEach(x, emb) v[d++] = (float)x->valuedouble;
+            normalise(v);
+            seq++;
+        }
+    } else if (errlen && !err[0]) {
+        snprintf(err, errlen, "The embedding response is incomplete, invalid, or couldn't be allocated");
+    }
+    free(seen);
     cJSON_Delete(j);
-    if (ok && got != n) {
-        snprintf(err, errlen, "The embedding model returned %zu of %zu vectors", got, n);
-        ok = false;
-    }
     return ok;
 }
 
