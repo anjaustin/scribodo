@@ -10,7 +10,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "cJSON.h"
+#include "core/json.h"
 #include "app/project_store.h"
 #include "app/records_internal.h"
 #include "app/store.h"
@@ -182,7 +182,7 @@ size_t records_list_files(const char *project_dir, RecordKind kind, Record **out
     char *save = NULL;
     for (char *line = strtok_r(text, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
         line_no++;
-        cJSON *j = cJSON_Parse(line);
+        cJSON *j = json_parse(line);
         if (!j) continue; /* torn line after a crash */
         cJSON *id = cJSON_GetObjectItem(j, "id"), *content = cJSON_GetObjectItem(j, "content"),
               *status = cJSON_GetObjectItem(j, "status");

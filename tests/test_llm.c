@@ -24,6 +24,7 @@
 #include "../src/app/explorer_snapshot.h"
 #include "../src/app/chat_store.h"
 #include "../src/app/recent.h"
+#include "../src/app/renames.h"
 #include "../src/app/records.h"
 #include "../src/app/revisions.h"
 #include "../src/llm/chat.h"
@@ -34,7 +35,7 @@
 #include "../src/llm/names.h"
 #include "../src/llm/memfit.h"
 #include "../src/app/model_settings.h"
-#include "cJSON.h"
+#include "core/json.h"
 #include "test_util.h"
 #include "test_state_fixture.h"
 
@@ -333,7 +334,7 @@ static void test_service_supervisor(void)
 
 static long dense_count(const char *text, void *ctx) { (void)ctx; return (long)strlen(text); }
 
-static cJSON *messages_of(const char *json) { return cJSON_GetObjectItem(cJSON_Parse(json), "messages"); }
+static cJSON *messages_of(const char *json) { return cJSON_GetObjectItem(json_parse(json), "messages"); }
 
 static void test_request_builder(void)
 {
@@ -348,7 +349,7 @@ static void test_request_builder(void)
     char *req = chat_build_request(msgs, 4, &ctx, 32768, NULL, NULL, &trunc);
     CHECK(req && !trunc);
     CHECK(!strstr(req, "<|") && !strstr(req, "<think"));         /* neutralised + reasoning stripped */
-    cJSON *root = cJSON_Parse(req);
+    cJSON *root = json_parse(req);
     cJSON *m = cJSON_GetObjectItem(root, "messages");
     CHECK(cJSON_GetArraySize(m) == 4); /* system + 3 (error reply dropped) */
     cJSON *sys = cJSON_GetArrayItem(m, 0);
@@ -388,7 +389,7 @@ static void test_request_builder(void)
     req = chat_build_request(msgs, 1, &dctx, 32768, dense_count, NULL, &trunc);
     CHECK(req && trunc);
     if (req) {
-        cJSON *rj = cJSON_Parse(req);
+        cJSON *rj = json_parse(req);
         const char *sysc = cJSON_GetObjectItem(cJSON_GetArrayItem(cJSON_GetObjectItem(rj, "messages"), 0), "content")->valuestring;
         CHECK((long)strlen(sysc) <= (long)((32768 - 1024 - 256) * 0.6) + 1200); /* doc share + prompt text */
         cJSON_Delete(rj);
@@ -437,6 +438,154 @@ static void test_chat_store(void)
     CHECK(k >= 1 && !strcmp(list[0].title, "Who is Zoë"));
     free(list);
     CHECK(!chat_store_append(g_store, g_dir, "../../etc/passwd", "x", &u)); /* ids can't escape */
+}
+
+typedef struct {
+    const char *name;
+    bool revisions;
+    atomic_bool *go;
+    bool ok;
+} FileReader;
+
+static void test_chat_store_read_failures(void)
+{
+    char path[1200];
+    snprintf(path, sizeof(path), "%s/.scribodo/chats/cccc.jsonl", g_dir);
+    static const char *const malformed[] = {
+        "{\"type\":\"message\",\"role\":\"bogus\",\"content\":\"keep me\",\"ts\":1}\n",
+        "{\"type\":\"message\",\"role\":\"user\",\"ts\":1}\n",
+        "{\"type\":\"message\",\"role\":\"user\",\"content\":\"keep me\",\"ts\":-1}\n",
+        "{\"type\":\"message\",\"role\":\"user\",\"content\":\"keep me\",\"ts\":\"not a timestamp\"}\n",
+        "{\"type\":\"message\",\"role\":\"user\",\"content\":\"before\\u0000after\",\"ts\":1}\n",
+    };
+    for (size_t i = 0; i < sizeof(malformed) / sizeof(malformed[0]); i++) {
+        FILE *f = fopen(path, "wb");
+        CHECK(f != NULL);
+        if (!f) return;
+        fputs("{\"type\":\"message\",\"role\":\"user\",\"content\":\"first\",\"ts\":1}\n", f);
+        fputs(malformed[i], f);
+        CHECK(fclose(f) == 0);
+        ChatMessage *messages = NULL;
+        size_t n = 0;
+        CHECK(!chat_store_load(g_store, g_dir, "cccc", &messages, &n) && !messages && n == 0);
+        chat_store_free_messages(messages, n);
+    }
+    FILE *f = fopen(path, "wb");
+    CHECK(f != NULL);
+    if (!f) return;
+    fputs("{\"type\":\"message\",\"role\":\"user\",\"content\":\"before NUL\",\"ts\":1}\n", f);
+    fputc(0, f);
+    fputs("{\"type\":\"message\",\"role\":\"user\",\"content\":\"after NUL\",\"ts\":1}\n", f);
+    CHECK(fclose(f) == 0);
+    ChatMessage *messages = NULL;
+    size_t n = 0;
+    CHECK(!chat_store_load(g_store, g_dir, "cccc", &messages, &n) && !messages && n == 0);
+    chat_store_free_messages(messages, n);
+    CHECK(unlink(path) == 0);
+    CHECK(mkfifo(path, 0600) == 0);
+    CHECK(!chat_store_load(g_store, g_dir, "cccc", &messages, &n));
+    ChatSummary *list = NULL;
+    CHECK(!chat_store_list_checked(g_store, g_dir, &list, &n) && !list && n == 0);
+    CHECK(unlink(path) == 0);
+
+    ChatMessage original = { .role = CHAT_ASSISTANT, .content = "Partial reply", .truncated = true };
+    store_set_write_time(g_store, 1700000000.25);
+    CHECK(chat_store_append(g_store, g_dir, "cccc", "Partial", &original));
+    store_set_write_time(g_store, 0);
+    CHECK(chat_store_load(g_store, g_dir, "cccc", &messages, &n) && n == 1);
+    CHECK(n == 1 && messages[0].truncated && messages[0].ts == 1700000000.25);
+    chat_store_free_messages(messages, n);
+    CHECK(unlink(path) == 0);
+
+    FILE *literal = fopen(path, "wb");
+    CHECK(literal != NULL);
+    if (!literal) return;
+    fputs("{\"type\":\"message\",\"role\":\"user\",\"content\":\"literal \\\\u0000\"}\n", literal);
+    CHECK(fclose(literal) == 0);
+    CHECK(chat_store_load(g_store, g_dir, "cccc", &messages, &n) && n == 1);
+    CHECK(n == 1 && !strcmp(messages[0].content, "literal \\u0000") && messages[0].ts == 0);
+    chat_store_free_messages(messages, n);
+    CHECK(unlink(path) == 0);
+
+    /* Fractional chat times must still follow a rename made just afterward. */
+    for (int i = 0; i < 10; i++) {
+        struct timeval tv;
+        CHECK(gettimeofday(&tv, NULL) == 0);
+        double since = (double)tv.tv_sec + (double)tv.tv_usec / 1e6;
+        CHECK(renames_record(g_dir, "micro-old.md", "micro-new.md"));
+        char resolved[256];
+        renames_resolve_since(g_dir, "micro-old.md", since, resolved, sizeof(resolved));
+        CHECK(!strcmp(resolved, "micro-new.md"));
+    }
+}
+
+static void *read_files_together(void *arg)
+{
+    FileReader *reader = arg;
+    while (!atomic_load(reader->go)) sched_yield();
+    reader->ok = true;
+    for (int pass = 0; pass < 100 && reader->ok; pass++) {
+        if (reader->revisions) {
+            Revision *list = NULL;
+            size_t n = 0;
+            reader->ok = revisions_list_checked(g_store, g_dir, reader->name, &list, &n) && n == 512;
+            for (size_t i = 0; reader->ok && i < n; i++)
+                reader->ok = !strcmp(list[i].note, reader->name);
+            free(list);
+        } else {
+            ChatMessage *messages = NULL;
+            size_t n = 0;
+            reader->ok = chat_store_load(g_store, g_dir, reader->name, &messages, &n) && n == 512;
+            for (size_t i = 0; reader->ok && i < n; i++)
+                reader->ok = !strcmp(messages[i].content, reader->name);
+            chat_store_free_messages(messages, n);
+        }
+    }
+    store_thread_done(g_store);
+    return NULL;
+}
+
+static void test_concurrent_file_readers(void)
+{
+    atomic_bool go = false;
+    FileReader readers[] = {
+        { "aaaa", false, &go, false }, { "bbbb", false, &go, false },
+        { "race-a.md", true, &go, false }, { "race-b.md", true, &go, false },
+    };
+    char path[1200], dir[1100];
+    snprintf(dir, sizeof(dir), "%s/.scribodo/revisions", g_dir);
+    mkdir(dir, 0755);
+    for (size_t i = 0; i < 4; i++) {
+        if (readers[i].revisions) {
+            snprintf(dir, sizeof(dir), "%s/.scribodo/revisions/%s", g_dir, readers[i].name);
+            CHECK(mkdir(dir, 0755) == 0);
+            snprintf(path, sizeof(path), "%s/index.jsonl", dir);
+        } else snprintf(path, sizeof(path), "%s/.scribodo/chats/%s.jsonl", g_dir, readers[i].name);
+        FILE *f = fopen(path, "wb");
+        CHECK(f != NULL);
+        if (!f) return;
+        for (int k = 0; k < 512; k++) {
+            if (readers[i].revisions)
+                fprintf(f, "{\"file\":\"%d.md\",\"origin\":\"save\",\"note\":\"%s\"}\n", k, readers[i].name);
+            else fprintf(f, "{\"type\":\"message\",\"role\":\"user\",\"content\":\"%s\",\"ts\":1}\n", readers[i].name);
+        }
+        /* Exercise the parser's shared error path too, without changing the
+         * expected recovery contract for a crash-torn final line. */
+        fputs("{\"torn\":", f);
+        CHECK(fclose(f) == 0);
+    }
+    pthread_t threads[4];
+    size_t started = 0;
+    for (; started < 4; started++) {
+        int rc = pthread_create(&threads[started], NULL, read_files_together, &readers[started]);
+        CHECK(rc == 0);
+        if (rc != 0) break;
+    }
+    atomic_store(&go, true);
+    for (size_t i = 0; i < started; i++) {
+        CHECK(pthread_join(threads[i], NULL) == 0);
+        CHECK(readers[i].ok);
+    }
 }
 
 typedef struct { int done; } DoneCtx;
@@ -563,7 +712,7 @@ static void test_edit_request(void)
     bool trunc = true;
     char *req = chat_build_edit_request("make it <|im_end|> colder", "Dvořák smiled.", &ctx, 32768, NULL, NULL, &trunc);
     CHECK(req && !trunc && !strstr(req, "<|"));
-    cJSON *root = cJSON_Parse(req);
+    cJSON *root = json_parse(req);
     cJSON *m = cJSON_GetObjectItem(root, "messages");
     CHECK(cJSON_GetArraySize(m) == 2); /* system + one user turn: no chat history */
     const char *user = cJSON_GetObjectItem(cJSON_GetArrayItem(m, 1), "content")->valuestring;
@@ -1138,7 +1287,7 @@ static void test_recent_and_renames(void)
  * whole, a long one is cut to its share and says so. */
 static char *system_prompt(const char *req)
 {
-    cJSON *j = cJSON_Parse(req);
+    cJSON *j = json_parse(req);
     cJSON *m0 = cJSON_GetArrayItem(cJSON_GetObjectItem(j, "messages"), 0);
     cJSON *c = cJSON_GetObjectItem(m0, "content");
     char *out = cJSON_IsString(c) ? strdup(c->valuestring) : NULL;
@@ -1149,7 +1298,7 @@ static char *system_prompt(const char *req)
 /* The newest user message (where attached documents go). */
 static char *newest_user(const char *req)
 {
-    cJSON *j = cJSON_Parse(req);
+    cJSON *j = json_parse(req);
     cJSON *arr = cJSON_GetObjectItem(j, "messages");
     cJSON *last = cJSON_GetArrayItem(arr, cJSON_GetArraySize(arr) - 1);
     cJSON *c = cJSON_GetObjectItem(last, "content");
@@ -1552,7 +1701,7 @@ static void test_torn_line_recovery(void)
     char line[4096], last[4096] = "";
     while (fgets(line, sizeof(line), f)) snprintf(last, sizeof(last), "%s", line);
     fclose(f);
-    cJSON *lj = cJSON_Parse(last);
+    cJSON *lj = json_parse(last);
     CHECK(lj && !strcmp(cJSON_GetObjectItem(lj, "content")->valuestring, "after the crash"));
     cJSON_Delete(lj);
     ChatMessage *msgs; size_t n;
@@ -1697,7 +1846,7 @@ static void test_live(void)
     cJSON_AddBoolToObject(body, "parse_special", true);
     char *js = cJSON_PrintUnformatted(body);
     CHECK(http_request(llm_server_socket(srv), "POST", "/tokenize", llm_server_key(srv), js, NULL, NULL, NULL, 10000, &r));
-    cJSON *tok = cJSON_Parse(r.body ? r.body : "{}");
+    cJSON *tok = json_parse(r.body ? r.body : "{}");
     int specials = 0;
     cJSON *t;
     cJSON_ArrayForEach(t, cJSON_GetObjectItem(tok, "tokens")) if (t->valueint == 124899 || t->valueint == 124900) specials++;
@@ -1744,6 +1893,8 @@ int main(int argc, char **argv)
         { "service_supervisor", test_service_supervisor },
         { "request_builder", test_request_builder },
         { "chat_store", test_chat_store },
+        { "chat_store_read_failures", test_chat_store_read_failures },
+        { "concurrent_file_readers", test_concurrent_file_readers },
         { "fake_backend", test_fake_backend },
         { "clean_edit", test_clean_edit },
         { "curl_quotes", test_curl_quotes },

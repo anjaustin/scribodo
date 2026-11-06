@@ -9,7 +9,7 @@
 #include <strings.h>
 
 #include "app/profile.h"
-#include "cJSON.h"
+#include "core/json.h"
 #include "llm/http.h"
 
 #define NAMES_SLOT 1 /* the observer's slot: chat keeps slot 0 */
@@ -123,7 +123,7 @@ bool names_detect_cancel(LlmServer *server, const char *assistant_prev, const ch
     cJSON_AddStringToObject(rf, "type", "json_schema");
     cJSON *js = cJSON_AddObjectToObject(rf, "json_schema");
     cJSON_AddStringToObject(js, "name", "names");
-    cJSON_AddItemToObject(js, "schema", cJSON_Parse(schema_js));
+    cJSON_AddItemToObject(js, "schema", json_parse(schema_js));
     cJSON *kw = cJSON_AddObjectToObject(root, "chat_template_kwargs");
     cJSON_AddBoolToObject(kw, "enable_thinking", false);
     char *body = cJSON_PrintUnformatted(root);
@@ -135,10 +135,10 @@ bool names_detect_cancel(LlmServer *server, const char *assistant_prev, const ch
               r.status == 200 && r.body;
     free(body);
     if (ok) {
-        cJSON *j = cJSON_Parse(r.body);
+        cJSON *j = json_parse(r.body);
         cJSON *ch = j ? cJSON_GetArrayItem(cJSON_GetObjectItem(j, "choices"), 0) : NULL;
         cJSON *c = ch ? cJSON_GetObjectItem(cJSON_GetObjectItem(ch, "message"), "content") : NULL;
-        cJSON *res = cJSON_IsString(c) ? cJSON_Parse(c->valuestring) : NULL;
+        cJSON *res = cJSON_IsString(c) ? json_parse(c->valuestring) : NULL;
         cJSON *a = cJSON_GetObjectItem(res, "author_name"), *s = cJSON_GetObjectItem(res, "assistant_name");
         /* Kept only if the author's own message contains it. */
         if (cJSON_IsString(a)) keep_if_present(a->valuestring, author_msg, out->author, sizeof(out->author));

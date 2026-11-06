@@ -13,7 +13,7 @@
 #include <unistd.h>
 #include <pthread.h>
 
-#include "cJSON.h"
+#include "core/json.h"
 
 struct RecentStore {
     char dir[PATH_MAX];
@@ -61,7 +61,7 @@ static size_t load_all(RecentStore *store, RecentProject *out, size_t max, bool 
     size_t n = fread(buf, 1, sizeof(buf) - 1, f);
     fclose(f);
     buf[n] = '\0';
-    cJSON *j = cJSON_Parse(buf), *it;
+    cJSON *j = json_parse(buf), *it;
     if (corrupt && n > 0 && !cJSON_IsArray(cJSON_GetObjectItem(j, "projects"))) *corrupt = true;
     size_t k = 0;
     cJSON_ArrayForEach(it, cJSON_GetObjectItem(j, "projects"))

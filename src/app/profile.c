@@ -8,7 +8,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "cJSON.h"
+#include "core/json.h"
 #include "core/utf8.h"
 
 static void path_of(char *out, size_t outlen)
@@ -46,7 +46,7 @@ void profile_load(Profile *p)
     size_t n = fread(buf, 1, sizeof(buf) - 1, f);
     fclose(f);
     buf[n] = '\0';
-    cJSON *j = cJSON_Parse(buf);
+    cJSON *j = json_parse(buf);
     const cJSON *a = cJSON_GetObjectItem(j, "author"), *s = cJSON_GetObjectItem(j, "assistant");
     if (cJSON_IsString(a)) profile_clean_name(a->valuestring, p->author, sizeof(p->author));
     if (cJSON_IsString(s)) profile_clean_name(s->valuestring, p->assistant, sizeof(p->assistant));

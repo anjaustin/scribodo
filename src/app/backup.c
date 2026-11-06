@@ -19,7 +19,7 @@
 
 #include "app/store.h"
 #include "app/store_backends.h"
-#include "cJSON.h"
+#include "core/json.h"
 
 extern char **environ;
 
@@ -274,7 +274,7 @@ bool backup_restore_copy(const char *tools_dir, const char *backup_dir, const ch
     size_t n = f ? fread(buf, 1, sizeof(buf) - 1, f) : 0;
     if (f) fclose(f);
     buf[n] = '\0';
-    cJSON *m = cJSON_Parse(buf);
+    cJSON *m = json_parse(buf);
     const cJSON *nm = cJSON_GetObjectItem(m, "project_name");
     char name[256] = "";
     if (cJSON_IsString(nm)) snprintf(name, sizeof(name), "%s", nm->valuestring);

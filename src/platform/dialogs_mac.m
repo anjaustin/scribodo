@@ -60,7 +60,8 @@ size_t dialogs_choose_files(const char *message, char ***paths)
         for (char *c = buf; *c; c++) n += *c == '|';
         char **list = calloc(n, sizeof(char *));
         size_t k = 0;
-        for (char *tok = strtok(buf, "|"); tok && list && k < n; tok = strtok(NULL, "|")) list[k++] = strdup(tok);
+        char *save = NULL;
+        for (char *tok = strtok_r(buf, "|", &save); tok && list && k < n; tok = strtok_r(NULL, "|", &save)) list[k++] = strdup(tok);
         *paths = list;
         return list ? k : 0;
     }

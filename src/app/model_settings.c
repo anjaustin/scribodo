@@ -9,7 +9,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "cJSON.h"
+#include "core/json.h"
 
 static const ModelSettingInfo k_info[MODEL_SETTING_COUNT] = {
     { "Max reply length", "tokens per reply", 256, 8192, 256, true },
@@ -101,7 +101,7 @@ void model_settings_load(ModelSettings *m)
     size_t n = fread(buf, 1, sizeof(buf) - 1, f);
     fclose(f);
     buf[n] = '\0';
-    cJSON *j = cJSON_Parse(buf);
+    cJSON *j = json_parse(buf);
     for (int i = 0; i < MODEL_SETTING_COUNT; i++) {
         const cJSON *v = cJSON_GetObjectItem(j, k_keys[i]);
         if (cJSON_IsNumber(v)) model_setting_set(m, i, v->valuedouble);

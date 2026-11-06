@@ -47,6 +47,9 @@ bool store_needs_import(StoreManager *manager, const char *project_dir);
 bool store_fork(StoreManager *manager, const char *project_dir, char *why, size_t whylen);
 /* The project's store data written as files into `dir` (its .scribodo/),
  * with original times: what a backup carries for an in-app restore. */
+/* Destination must have no structured data (a pre-created import.lock is OK).
+ * A failed export may leave partial output; retry in a fresh destination, never
+ * append into that output. Calls to the same destination are serialized. */
 bool store_export_project(StoreManager *manager, const char *project_id, const char *dir, char *why, size_t whylen);
 /* A project whose store record is missing is restored from its newest
  * set-aside files (or starts again on its documents if there are none). */

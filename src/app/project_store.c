@@ -395,7 +395,7 @@ bool project_store_feature_key(StoreManager *manager, const char *project_dir, u
  * so a writer that selected files cannot run after authority moves to the DB.
  * Resolve again while holding it: an import may have completed while we
  * waited. */
-int project_store_file_lock_shared(const char *project_dir)
+static int file_lock(const char *project_dir, int operation)
 {
     char dir[PATH_MAX + 32], path[PATH_MAX + 64];
     int n = snprintf(dir, sizeof(dir), "%s/.scribodo", project_dir ? project_dir : "");
@@ -405,11 +405,14 @@ int project_store_file_lock_shared(const char *project_dir)
     int fd = open(path, O_RDWR | O_CREAT, 0644);
     if (fd < 0) return -1;
     int rc;
-    do rc = flock(fd, LOCK_SH); while (rc != 0 && errno == EINTR);
+    do rc = flock(fd, operation); while (rc != 0 && errno == EINTR);
     if (rc == 0) return fd;
     close(fd);
     return -1;
 }
+
+int project_store_file_lock_shared(const char *project_dir) { return file_lock(project_dir, LOCK_SH); }
+int project_store_file_lock_exclusive(const char *project_dir) { return file_lock(project_dir, LOCK_EX); }
 
 void project_store_file_unlock(int fd)
 {

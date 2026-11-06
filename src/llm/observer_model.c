@@ -6,7 +6,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "cJSON.h"
+#include "core/json.h"
 #include "llm/http.h"
 #include "llm/llm_text.h"
 #include "llm/observer.h"
@@ -40,14 +40,14 @@ static cJSON *extract_schema(void)
         "\"relation\":{\"type\":\"string\",\"maxLength\":40},"
         "\"object\":{\"type\":\"string\",\"maxLength\":60}},"
         "\"required\":[\"type\",\"subject\",\"description\",\"evidence\"]}}},\"required\":[\"findings\"]}";
-    return cJSON_Parse(js);
+    return json_parse(js);
 }
 
 static cJSON *judge_schema(void)
 {
     /* "check" comes first: the model explains before it decides (measured:
      * conflict recall 4/6 -> 6/6). */
-    return cJSON_Parse("{\"type\":\"object\",\"properties\":{\"check\":{\"type\":\"string\",\"maxLength\":300},"
+    return json_parse("{\"type\":\"object\",\"properties\":{\"check\":{\"type\":\"string\",\"maxLength\":300},"
                        "\"verdict\":{\"type\":\"string\",\"enum\":[\"conflict\",\"consistent\",\"unrelated\"]}},"
                        "\"required\":[\"check\",\"verdict\"]}");
 }
@@ -89,7 +89,7 @@ static char *complete(ObserverModel *model, const char *system, const char *user
     if (http_request(llm_server_socket(model->server), "POST", "/v1/chat/completions", llm_server_key(model->server), body, NULL,
                      NULL, model->cancel, 180000, &r) &&
         r.status == 200 && r.body) {
-        cJSON *j = cJSON_Parse(r.body);
+        cJSON *j = json_parse(r.body);
         cJSON *ch = j ? cJSON_GetArrayItem(cJSON_GetObjectItem(j, "choices"), 0) : NULL;
         cJSON *c = ch ? cJSON_GetObjectItem(cJSON_GetObjectItem(ch, "message"), "content") : NULL;
         if (cJSON_IsString(c)) content = strdup(c->valuestring);
@@ -146,7 +146,7 @@ bool observer_model_judge(ObserverModel *model, const char *canon, const char *s
             out = complete(model, k_judge_system, user, judge_schema(), 260);
             free(user);
         }
-        cJSON *j = out ? cJSON_Parse(out) : NULL;
+        cJSON *j = out ? json_parse(out) : NULL;
         cJSON *v = j ? cJSON_GetObjectItem(j, "verdict") : NULL, *c = j ? cJSON_GetObjectItem(j, "check") : NULL;
         votes = cJSON_IsString(v) && !strcmp(v->valuestring, "conflict");
         if (votes && pass == 0 && cJSON_IsString(c)) snprintf(check, checklen, "%s", c->valuestring);

@@ -125,6 +125,10 @@ order, limiting parallel tests and future independent application instances.
 
 ### Intentional process-global state
 
+- cJSON's parser owns process-global error state even when callers ignore it.
+  All application and test parsing uses `src/core/json.c`, which serializes the
+  parse call only; returned trees remain caller-owned. Allocator hooks and locale
+  must not change while workers run, and callers must not use `cJSON_GetErrorPtr`.
 - POSIX signal delivery remains a process concern: the handler only stores a
   `sig_atomic_t` shutdown request, which the single application event loop
   consumes. It owns no resources and calls no non-signal-safe code.
@@ -414,3 +418,52 @@ Do not treat these as remediation targets without a changed product decision:
   excluding forks. Verified that the owner is the repository's only collaborator.
 - Enforced repository-level SHA pinning and GitHub-owned Actions only, and changed
   runner credentials, metadata and work directories to owner-only permissions.
+
+### 2026-11-06 — persistence audit remediation
+
+- Reproduced cross-chat data mixing in concurrent file readers. Replaced every
+  application `strtok()` call with caller-owned tokenizer state. A new concurrent
+  chat/revision regression initially failed against the original implementation.
+- The expanded TSan test then exposed cJSON's shared parser error state. Routed
+  parsing through one serialized application boundary without modifying the
+  pinned dependency; concurrent valid and crash-torn JSON is now covered.
+- Made failed chat enumeration/loading abort and roll back migration, preserving
+  file authority and allowing repair/retry. Chat reads reject short reads and
+  non-regular files; attachment/id-map allocation failures also abort import.
+- Replaced the export's error-collapsing record list with the checked API. Database
+  regressions cover decode failures for notes, canon and findings, as well as
+  successful export after repair.
+- Aligned backup creation with restore's regular-file-only policy: reject links
+  and special files, refuse recursive destinations, reserve a fresh destination,
+  verify before reporting success and clean up failed output. Checksum generation
+  now includes nested author files named `SHA256SUMS`. Headless backup regressions
+  run under the normal watchdog-wrapped test target.
+- Verification on the final code: build/headless, ASan/UBSan (including database
+  integration), TSan, database integration, base UI, store UI, backup/disaster
+  recovery, stand-in remote-provider acceptance and dependency reporting passed.
+  Real-model/offline acceptance was not rerun for this persistence-focused change.
+
+### 2026-11-06 — persistence remediation red-team
+
+- Adversarial tests found that verification ignored inaccessible extra
+  directories. Both filesystem traversal passes now propagate errors.
+- Chat loading now validates the actual opened regular-file descriptor, rejects
+  raw/decoded NUL truncation and malformed recognized messages, and distinguishes
+  omitted legacy timestamps from wrong-type timestamps. Nonempty attachment
+  allocation failure no longer falls back to an empty attachment list.
+- File chat persistence now preserves truncation flags and fractional message
+  times. Rename timestamps use matching precision so a rename cannot round down
+  before an earlier chat source in the same millisecond.
+- Explicit exports now require fresh structured metadata and hold an exclusive
+  transition lock. A failed or completed export cannot be appended to on retry;
+  callers use a new destination, and in-app backups already own and clean theirs.
+- Ten scratch-copy mutations were compiled/executed or exercised through the
+  backup suite; all ten produced assertion failures (not crashes or timeouts).
+  Detailed scope, regression evidence and validation are recorded in
+  `docs/REDTEAM-010-persistence.md`.
+- Final-code verification passed: build/headless, ASan/UBSan, sanitized database
+  integration, TSan, database integration, base/store UI, backup/disaster recovery,
+  stand-in remote-provider acceptance and dependency reporting. A second scoped
+  review and the final mutation rerun found no remaining confirmed defects in the
+  reviewed changes. Real-model/offline suites remain unavailable without the
+  built local runtime; no claim of their completion is made.

@@ -91,6 +91,7 @@ The local model must run with BF16 weights and BF16 compute. Quantized checkpoin
 - Every finding, note, and canon entry carries **source references**: a document revision or chat message, plus a text range, with stable IDs.
 - Retrieval distinguishes committed canon from draft or speculative material. Nothing becomes canon automatically.
 - A backup consists of the project files plus a transactionally consistent MariaDB export. The Qdrant index can be regenerated.
+- Backups accept only regular files and directories: symlinks and special files are refused explicitly, never silently followed. Every backup is checksum-verified before success is reported; failed copies are removed.
 - There is no telemetry, no account, no login, and no cloud sync. All services bind only to local interfaces.
 
 ## Roadmap
