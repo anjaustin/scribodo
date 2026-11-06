@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include "core/json.h"
+#include "core/file_text.h"
 #include "app/chat_store_internal.h"
 #include "app/project_store.h"
 #include "app/store.h"
@@ -82,35 +83,37 @@ bool chat_store_append_files(StoreManager *manager, const char *project_dir, con
     char path[1200];
     if (!path_for(project_dir, id, path, sizeof(path))) return false;
     struct stat st;
-    bool fresh = stat(path, &st) != 0;
+    bool fresh = stat(path, &st) != 0 || st.st_size == 0;
     int fd = open(path, O_RDWR | O_CREAT | O_APPEND, 0644);
     if (fd < 0) return false;
     bool ok = ensure_trailing_newline(fd);
     if (fresh) {
         cJSON *meta = cJSON_CreateObject();
-        cJSON_AddStringToObject(meta, "type", "meta");
-        cJSON_AddNumberToObject(meta, "version", 1);
-        cJSON_AddStringToObject(meta, "title", title ? title : "Chat");
-        cJSON_AddNumberToObject(meta, "created", store_write_time(manager));
-        ok = write_line(fd, meta);
+        ok = ok && meta && cJSON_AddStringToObject(meta, "type", "meta") && cJSON_AddNumberToObject(meta, "version", 1) &&
+             cJSON_AddStringToObject(meta, "title", title ? title : "Chat") &&
+             cJSON_AddNumberToObject(meta, "created", store_write_time(manager)) && write_line(fd, meta);
         cJSON_Delete(meta);
     }
     cJSON *j = cJSON_CreateObject();
-    cJSON_AddStringToObject(j, "type", "message");
-    cJSON_AddStringToObject(j, "role", m->role == CHAT_USER ? "user" : "assistant");
-    cJSON_AddStringToObject(j, "content", m->content ? m->content : "");
-    cJSON_AddNumberToObject(j, "ts", store_write_time(manager));
-    if (m->error) cJSON_AddBoolToObject(j, "error", true);
-    if (m->is_edit) cJSON_AddBoolToObject(j, "edit", true);
-    if (m->truncated) cJSON_AddBoolToObject(j, "truncated", true);
-    if (m->via && m->via[0]) cJSON_AddStringToObject(j, "via", m->via); /* went to a remote model */
+    ok = ok && j && cJSON_AddStringToObject(j, "type", "message") &&
+         cJSON_AddStringToObject(j, "role", m->role == CHAT_USER ? "user" : "assistant") &&
+         cJSON_AddStringToObject(j, "content", m->content ? m->content : "") &&
+         cJSON_AddNumberToObject(j, "ts", store_write_time(manager));
+    if (ok && m->error) ok = cJSON_AddBoolToObject(j, "error", true);
+    if (ok && m->is_edit) ok = cJSON_AddBoolToObject(j, "edit", true);
+    if (ok && m->truncated) ok = cJSON_AddBoolToObject(j, "truncated", true);
+    if (ok && m->via && m->via[0]) ok = cJSON_AddStringToObject(j, "via", m->via);
     /* The documents a user message was sent with; an empty list is recorded
      * too, so "nothing attached" is never confused with "not recorded". */
-    if (m->role == CHAT_USER && m->docs) {
+    if (ok && m->role == CHAT_USER && m->docs) {
         cJSON *arr = cJSON_AddArrayToObject(j, "docs");
         char *copy = strdup(m->docs);
-        for (char *save = NULL, *t = copy ? strtok_r(copy, "\n", &save) : NULL; t; t = strtok_r(NULL, "\n", &save))
-            cJSON_AddItemToArray(arr, cJSON_CreateString(t));
+        ok = arr && copy;
+        for (char *save = NULL, *t = copy ? strtok_r(copy, "\n", &save) : NULL; ok && t; t = strtok_r(NULL, "\n", &save)) {
+            cJSON *name = cJSON_CreateString(t);
+            ok = name && cJSON_AddItemToArray(arr, name);
+            if (!ok) cJSON_Delete(name);
+        }
         free(copy);
     }
     ok = ok && write_line(fd, j);
@@ -130,9 +133,8 @@ bool chat_store_rename_files(const char *project_dir, const char *id, const char
     if (fd < 0) return false;
     bool ok = ensure_trailing_newline(fd);
     cJSON *j = cJSON_CreateObject();
-    cJSON_AddStringToObject(j, "type", "title");
-    cJSON_AddStringToObject(j, "title", title);
-    cJSON_AddNumberToObject(j, "ts", (double)time(NULL));
+    ok = ok && j && cJSON_AddStringToObject(j, "type", "title") && cJSON_AddStringToObject(j, "title", title) &&
+         cJSON_AddNumberToObject(j, "ts", (double)time(NULL));
     ok = ok && write_line(fd, j);
     cJSON_Delete(j);
     ok = ok && fsync(fd) == 0;
@@ -150,9 +152,8 @@ bool chat_store_set_observer_files(const char *project_dir, const char *id, bool
     if (fd < 0) return false;
     bool ok = ensure_trailing_newline(fd);
     cJSON *j = cJSON_CreateObject();
-    cJSON_AddStringToObject(j, "type", "observer");
-    cJSON_AddBoolToObject(j, "read", read);
-    cJSON_AddNumberToObject(j, "ts", (double)time(NULL));
+    ok = ok && j && cJSON_AddStringToObject(j, "type", "observer") && cJSON_AddBoolToObject(j, "read", read) &&
+         cJSON_AddNumberToObject(j, "ts", (double)time(NULL));
     ok = ok && write_line(fd, j);
     cJSON_Delete(j);
     ok = ok && fsync(fd) == 0;
@@ -175,33 +176,13 @@ static FILE *open_regular(const char *path, struct stat *st)
     return f;
 }
 
-/* cJSON represents strings as C strings: decoded NUL would silently discard a
- * suffix. Skip escaped backslashes so a literal "\\u0000" remains valid. */
-static bool has_nul_escape(const char *text, size_t n)
-{
-    for (size_t i = 0; i + 1 < n; i++) {
-        if (text[i] != '\\') continue;
-        if (n - i >= 6 && !memcmp(text + i + 1, "u0000", 5)) return true;
-        i++;
-    }
-    return false;
-}
-
 /* Read a whole file (chat logs are small). */
 static char *slurp(const char *path)
 {
-    struct stat st;
-    FILE *f = open_regular(path, &st);
-    if (!f) return NULL;
-    size_t n = (size_t)st.st_size;
-    char *buf = malloc(n + 1);
-    if (buf) {
-        size_t got = fread(buf, 1, n, f);
-        if (got != n || ferror(f) || memchr(buf, '\0', n) || has_nul_escape(buf, n)) { free(buf); buf = NULL; }
-        else buf[n] = '\0';
-    }
-    if (fclose(f) != 0) { free(buf); buf = NULL; }
-    return buf;
+    char *text = NULL;
+    if (file_text_read(path, &text) != FILE_TEXT_OK) return NULL;
+    if (json_has_nul_escape(text, strlen(text))) { free(text); return NULL; }
+    return text;
 }
 
 static int by_updated_desc(const void *a, const void *b)
@@ -261,12 +242,16 @@ bool chat_store_list_files_checked(const char *project_dir, ChatSummary **out, s
             bool first = true;
             while (getline(&line, &cap_l, f) > 0) { /* lines of any length */
                 if (first || strstr(line, "\"type\":\"title\"")) {
-                    cJSON *j = json_parse(line);
+                    bool allocation_error;
+                    cJSON *j = json_parse_checked(line, &allocation_error);
+                    if (allocation_error) { cJSON_Delete(j); read_ok = false; break; }
                     cJSON *t = j ? cJSON_GetObjectItem(j, "title") : NULL;
                     if (cJSON_IsString(t)) snprintf(c->title, sizeof(c->title), "%s", t->valuestring);
                     cJSON_Delete(j);
                 } else if (strstr(line, "\"type\":\"observer\"")) { /* the latest one counts */
-                    cJSON *j = json_parse(line);
+                    bool allocation_error;
+                    cJSON *j = json_parse_checked(line, &allocation_error);
+                    if (allocation_error) { cJSON_Delete(j); read_ok = false; break; }
                     cJSON *rd = j ? cJSON_GetObjectItem(j, "read") : NULL;
                     if (cJSON_IsBool(rd)) c->observer_ignore = !cJSON_IsTrue(rd);
                     cJSON_Delete(j);
@@ -310,7 +295,9 @@ bool chat_store_load_files(const char *project_dir, const char *id, ChatMessage 
     bool ok = true;
     char *save = NULL;
     for (char *line = strtok_r(text, "\n", &save); line && ok; line = strtok_r(NULL, "\n", &save)) {
-        cJSON *j = json_parse(line);
+        bool allocation_error;
+        cJSON *j = json_parse_checked(line, &allocation_error);
+        if (allocation_error) { cJSON_Delete(j); ok = false; break; }
         if (!j) {
             /* A torn line from a crash, possibly glued to a later record by an
              * older version: recover the last complete record in it. */
@@ -320,7 +307,8 @@ bool chat_store_load_files(const char *project_dir, const char *id, ChatMessage 
                 last = rec;
                 rec = strstr(rec + 1, "{\"type\"");
             }
-            if (last && last != line) j = json_parse(last);
+            if (last && last != line) j = json_parse_checked(last, &allocation_error);
+            if (allocation_error) { cJSON_Delete(j); ok = false; break; }
             if (!j) continue;
         }
         cJSON *type = cJSON_GetObjectItem(j, "type");

@@ -35,6 +35,32 @@
   and author-owned files named `SHA256SUMS`. Unreadable extra directories fail
   verification instead of being skipped. See the dated validation and mutation
   evidence in [`REDTEAM-010-persistence.md`](REDTEAM-010-persistence.md).
+- `test_llm: file_history_read_failures` checks unreadable record logs and revision
+  indexes, unchanged data after refused writes, and clean empty-history results.
+- `test_db: legacy_import_read_failures`, `fork_retry_snapshot`, and
+  `import_revision_identity` cover rollback/repair, immutable fork retries across
+  store restart, copied pending-state ownership, post-commit journal cleanup, and
+  equal snapshot filenames in different documents.
+- `test_persistence_faults` is a separate binary that fails each instrumented
+  allocation in representative record/revision/chat reads and writes, in both
+  one-shot and sustained-failure modes. It runs in
+  `make test` and `make sanitize`; injection is not compiled into the app. The
+  cJSON implementation is compiled through `core/json_vendor.c` so parse OOM can
+  be distinguished from malformed crash-torn input without switching allocator
+  hooks at runtime or modifying the pinned dependency.
+
+The follow-up evidence and recovery contracts are in
+[`REDTEAM-011-legacy-fork.md`](REDTEAM-011-legacy-fork.md). With the pinned weights
+already cached, `make llama` builds the runtime without unused web assets; if
+CMake is available only through a cached uv tool, use
+`make CMAKE="uvx --offline --from cmake cmake" llama`. Model weights are acquired
+separately by `make model`; acceptance never needs to select a quantized fallback.
+
+[`REDTEAM-012-marker-snapshots.md`](REDTEAM-012-marker-snapshots.md) records the
+retained-copy-marker regression, the 1,000-name snapshot exhaustion test, and the
+non-monotonic-clock export/import check.
+`snapshot_reuse_integrity` covers missing/damaged candidates, repair, and missing
+older-source snapshots; reuse cannot succeed from an index hash alone.
 
 ## Automated trusted acceptance
 

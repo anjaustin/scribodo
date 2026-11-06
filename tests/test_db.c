@@ -1271,6 +1271,208 @@ static void test_transition_read_failures(void)
     system(cmd);
 }
 
+static void test_legacy_import_read_failures(void)
+{
+    char why[256] = "";
+    CHECK(store_start(g_store, g_name, why, sizeof(why)));
+    for (int which = 0; which < 7; which++) {
+        char project[PATH_MAX], doc[PATH_MAX + 32], path[PATH_MAX + 300];
+        snprintf(project, sizeof(project), "%sscribodo-legacy-errors-XXXXXX", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp/");
+        CHECK(mkdtemp(project) != NULL);
+        snprintf(doc, sizeof(doc), "%s/chapter.md", project);
+        write_file(doc, "Saved manuscript");
+        CHECK(revisions_record(g_store, project, doc, "First revision", "save", NULL, NULL));
+        CHECK(revisions_record(g_store, project, doc, "Second revision", "save", NULL, NULL));
+        CHECK(records_append(g_store, project, REC_NOTE, "n-legacy", "active", "A note", NULL, 0, NULL));
+        CHECK(records_append(g_store, project, REC_CANON, "c-legacy", "committed", "A fact", NULL, 0, NULL));
+        CHECK(records_append(g_store, project, REC_FINDING, "f-legacy", "new", "A finding", NULL, 0, NULL));
+        const char *suffixes[] = { "notes.jsonl", "canon.jsonl", "findings.jsonl", "revisions/chapter.md/index.jsonl", "revisions", "" };
+        if (which < 5) snprintf(path, sizeof(path), "%s/.scribodo/%s", project, suffixes[which]);
+        else {
+            Revision *revs = NULL;
+            size_t n = revisions_list(g_store, project, doc, &revs);
+            CHECK(n == 2);
+            if (n != 2) { free(revs); return; }
+            snprintf(path, sizeof(path), "%s/.scribodo/revisions/chapter.md/%s", project, revs[0].file);
+            free(revs);
+        }
+        if (which == 6) write_file(path, "Damaged snapshot");
+        else CHECK(chmod(path, 0000) == 0);
+        CHECK(!store_import(g_store, project, why, sizeof(why)) && why[0]);
+        if (which == 6) write_file(path, "Second revision");
+        else CHECK(chmod(path, which == 4 ? 0755 : 0644) == 0);
+        CHECK(store_mode(g_store, project, NULL, 0, NULL) == STORE_FILES && access(path, F_OK) == 0);
+        char pending_id[40];
+        CHECK(store_project_id(g_store, project, false, pending_id, sizeof(pending_id)));
+        DbRows rollback;
+        CHECK(db_query(store_db(g_store), "SELECT COUNT(*) FROM documents WHERE project_id = ?",
+                       (DbArg[1]){ DB_S(pending_id) }, 1, &rollback));
+        CHECK(rollback.nrows == 1 && !strcmp(db_cell(&rollback, 0, 0), "0"));
+        db_rows_free(&rollback);
+        CHECK(store_import(g_store, project, why, sizeof(why)));
+        Revision *revs = NULL;
+        CHECK(revisions_list(g_store, project, doc, &revs) == 2);
+        free(revs);
+        CHECK(note_count(project) == 1);
+        char cmd[PATH_MAX + 20];
+        snprintf(cmd, sizeof(cmd), "rm -rf '%s'", project);
+        system(cmd);
+    }
+}
+
+static void test_fork_retry_snapshot(void)
+{
+    char why[256] = "", root[PATH_MAX], original[PATH_MAX + 20], copy[PATH_MAX + 20], cmd[PATH_MAX * 3];
+    CHECK(store_start(g_store, g_name, why, sizeof(why)));
+    snprintf(root, sizeof(root), "%sscribodo-fork-retry-XXXXXX", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp/");
+    CHECK(mkdtemp(root) != NULL);
+    snprintf(original, sizeof(original), "%s/original", root);
+    snprintf(copy, sizeof(copy), "%s/copy", root);
+    CHECK(mkdir(original, 0755) == 0);
+    ChatMessage user = { .role = CHAT_USER, .content = "First message" };
+    ChatMessage assistant = { .role = CHAT_ASSISTANT, .content = "Second message" };
+    char chat_id[40];
+    chat_store_new_id(chat_id, sizeof(chat_id));
+    CHECK(chat_store_append(g_store, original, chat_id, "Two messages", &user));
+    CHECK(chat_store_append(g_store, original, chat_id, "Two messages", &assistant));
+    CHECK(records_append(g_store, original, REC_NOTE, "n-fork", "active", "v1", NULL, 0, NULL));
+    CHECK(records_append(g_store, original, REC_NOTE, "n-fork", "active", "v2", NULL, 0, NULL));
+    CHECK(records_append(g_store, original, REC_CANON, "c-fork", "committed", "Canon", NULL, 0, NULL));
+    CHECK(store_import(g_store, original, why, sizeof(why)));
+    char original_id[40];
+    CHECK(store_mode(g_store, original, original_id, sizeof(original_id), NULL) == STORE_DB);
+    snprintf(cmd, sizeof(cmd), "cp -R '%s' '%s'", original, copy);
+    CHECK(system(cmd) == 0);
+    char unowned[PATH_MAX + 100], sentinel[PATH_MAX + 130];
+    snprintf(unowned, sizeof(unowned), "%s/.scribodo/fork-snapshot", copy);
+    snprintf(sentinel, sizeof(sentinel), "%s/keep.txt", unowned);
+    CHECK(mkdir(unowned, 0700) == 0);
+    write_file(sentinel, "Unrecognized staging must be preserved");
+    CHECK(!store_fork(g_store, copy, why, sizeof(why)) && access(sentinel, F_OK) == 0);
+    CHECK(unlink(sentinel) == 0 && rmdir(unowned) == 0);
+    Db *db = store_db(g_store);
+    CHECK(db_run(db, "UPDATE record_versions SET status = '1234567890123456' WHERE record_id = 'c-fork' AND record_id IN"
+                     " (SELECT id FROM records WHERE project_id = ?)", (DbArg[1]){ DB_S(original_id) }, 1, NULL));
+    CHECK(!store_fork(g_store, copy, why, sizeof(why)));
+    CHECK(store_problem(g_store, copy, NULL, 0) == STORE_PROBLEM_COPY);
+    CHECK(store_mode(g_store, copy, NULL, 0, NULL) == STORE_PAUSED);
+    CHECK(!chat_store_append(g_store, copy, chat_id, "Must stay paused", &user));
+    char chats[PATH_MAX + 60];
+    snprintf(chats, sizeof(chats), "%s/.scribodo/chats", copy);
+    CHECK(access(chats, F_OK) != 0); /* partial export never becomes live metadata */
+    CHECK(db_run(db, "UPDATE record_versions SET status = 'committed' WHERE record_id = 'c-fork' AND record_id IN"
+                     " (SELECT id FROM records WHERE project_id = ?)", (DbArg[1]){ DB_S(original_id) }, 1, NULL));
+    char pending[PATH_MAX + 80];
+    snprintf(pending, sizeof(pending), "%s/.scribodo/import-pending", copy);
+    CHECK(mkdir(pending, 0700) == 0); /* export completes, but registration cannot persist */
+    bool blocked = !store_fork(g_store, copy, why, sizeof(why));
+    CHECK(blocked && store_problem(g_store, copy, NULL, 0) == STORE_PROBLEM_COPY);
+    CHECK(store_mode(g_store, copy, NULL, 0, NULL) == STORE_PAUSED);
+    if (blocked) {
+        CHECK(rmdir(pending) == 0);
+        write_file(pending, original_id); /* copied crash residue must never resume the source project's row */
+        CHECK(chat_store_append(g_store, original, chat_id, "Two messages", &user));
+        char staged_notes[PATH_MAX + 100];
+        snprintf(staged_notes, sizeof(staged_notes), "%s/.scribodo/fork-snapshot/.scribodo/notes.jsonl", copy);
+        CHECK(chmod(staged_notes, 0000) == 0);
+        CHECK(!store_fork(g_store, copy, why, sizeof(why)) && store_problem(g_store, copy, NULL, 0) == STORE_PROBLEM_COPY);
+        CHECK(chmod(staged_notes, 0644) == 0);
+        store_stop(g_store);
+        CHECK(store_start(g_store, g_name, why, sizeof(why))); /* resume using only the durable journal */
+        char aside_path[PATH_MAX + 100];
+        snprintf(aside_path, sizeof(aside_path), "%s/.scribodo/store.json.set-aside", copy);
+        CHECK(mkdir(aside_path, 0700) == 0); /* marker withdrawal must not be part of a fork */
+        CHECK(store_fork(g_store, copy, why, sizeof(why)));
+        CHECK(rmdir(aside_path) == 0);
+        char copy_id[40];
+        CHECK(store_mode(g_store, copy, copy_id, sizeof(copy_id), NULL) == STORE_DB && strcmp(copy_id, original_id));
+        ChatMessage *messages = NULL;
+        size_t n = 0;
+        ChatSummary *chats_list = NULL;
+        CHECK(chat_store_list_checked(g_store, copy, &chats_list, &n) && n == 1);
+        CHECK(n == 1 && chat_store_load(g_store, copy, chats_list[0].id, &messages, &n) && n == 2);
+        free(chats_list);
+        chat_store_free_messages(messages, n);
+        Record *notes = NULL;
+        n = records_list(g_store, copy, REC_NOTE, &notes);
+        CHECK(n == 1 && notes[0].nversions == 2 && !strcmp(record_current(&notes[0])->content, "v2"));
+        records_free(notes, n);
+        CHECK(chat_store_load(g_store, original, chat_id, &messages, &n) && n == 3);
+        chat_store_free_messages(messages, n);
+        char journal[PATH_MAX + 80];
+        snprintf(journal, sizeof(journal), "%s/.scribodo/fork.json", copy);
+        CHECK(access(journal, F_OK) != 0 && access(pending, F_OK) != 0 && access(staged_notes, F_OK) != 0);
+
+        /* Simulate a journal copied after marker commit but before cleanup. */
+        char copy2[PATH_MAX + 20], residue[400];
+        snprintf(copy2, sizeof(copy2), "%s/copy2", root);
+        snprintf(cmd, sizeof(cmd), "cp -R '%s' '%s'", copy, copy2);
+        CHECK(system(cmd) == 0);
+        snprintf(journal, sizeof(journal), "%s/.scribodo/fork.json", copy2);
+        snprintf(residue, sizeof(residue), "{\"version\":1,\"source\":\"%s\",\"target\":\"%s\",\"ready\":true,\"signature\":\"0000000000000000\"}", original_id, copy_id);
+        write_file(journal, residue);
+        snprintf(pending, sizeof(pending), "%s/.scribodo/import-pending", copy2);
+        write_file(pending, copy_id);
+        CHECK(store_fork(g_store, copy2, why, sizeof(why)));
+        char copy2_id[40];
+        CHECK(store_mode(g_store, copy2, copy2_id, sizeof(copy2_id), NULL) == STORE_DB && strcmp(copy2_id, copy_id));
+        CHECK(access(journal, F_OK) != 0 && access(pending, F_OK) != 0);
+    }
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root);
+    system(cmd);
+}
+
+static void test_import_revision_identity(void)
+{
+    char why[256] = "", root[PATH_MAX], doc[PATH_MAX + 32], snapshots[2][160];
+    CHECK(store_start(g_store, g_name, why, sizeof(why)));
+    snprintf(root, sizeof(root), "%sscribodo-revision-identity-XXXXXX", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp/");
+    CHECK(mkdtemp(root) != NULL);
+    SourceRef sources[2] = { { .kind = SRC_DOC, .quote = "A" }, { .kind = SRC_DOC, .quote = "B" } };
+    const char *names[] = { "a.md", "b.md" }, *texts[] = { "A", "B" };
+    store_set_write_time(g_store, 1700000000.125);
+    for (size_t i = 0; i < 2; i++) {
+        snprintf(doc, sizeof(doc), "%s/%s", root, names[i]);
+        write_file(doc, texts[i]);
+        CHECK(revisions_snapshot(g_store, root, doc, texts[i], snapshots[i], sizeof(snapshots[i])));
+        snprintf(sources[i].doc, sizeof(sources[i].doc), "%s", names[i]);
+        snprintf(sources[i].revision, sizeof(sources[i].revision), "%s", snapshots[i]);
+    }
+    store_set_write_time(g_store, 0);
+    CHECK(!strcmp(snapshots[0], snapshots[1])); /* filenames alone are not revision identities */
+    CHECK(records_append(g_store, root, REC_NOTE, "n-revision-identity", "active", "Two sources", sources, 2, NULL));
+    CHECK(store_import(g_store, root, why, sizeof(why)));
+    char pid[40];
+    CHECK(store_mode(g_store, root, pid, sizeof(pid), NULL) == STORE_DB);
+    DbRows rows;
+    CHECK(db_query(store_db(g_store), "SELECT COUNT(*) FROM source_refs s JOIN revisions v ON v.id = s.revision_id"
+                                      " JOIN records r ON r.id = s.record_id WHERE r.project_id = ? AND s.document_id <> v.document_id",
+                   (DbArg[1]){ DB_S(pid) }, 1, &rows));
+    CHECK(rows.nrows == 1 && !strcmp(db_cell(&rows, 0, 0), "0"));
+    db_rows_free(&rows);
+    /* Database sequence is authoritative even when wall-clock time goes back. */
+    snprintf(doc, sizeof(doc), "%s/a.md", root);
+    CHECK(revisions_record(g_store, root, doc, "Later sequence, earlier clock", "save", NULL, NULL));
+    CHECK(db_run(store_db(g_store), "UPDATE revisions v JOIN documents d ON d.id = v.document_id"
+                 " SET v.created_at = 1600000000 WHERE d.project_id = ? AND v.content = 'Later sequence, earlier clock'",
+                 (DbArg[1]){ DB_S(pid) }, 1, NULL));
+    char exported[PATH_MAX + 32];
+    snprintf(exported, sizeof(exported), "%s/exported", root);
+    CHECK(store_export_project(g_store, pid, exported, why, sizeof(why)));
+    CHECK(store_import(g_store, exported, why, sizeof(why)));
+    snprintf(doc, sizeof(doc), "%s/a.md", exported);
+    Revision *history = NULL;
+    size_t nhistory = revisions_list(g_store, exported, doc, &history);
+    CHECK(nhistory == 2);
+    char *latest = nhistory ? revisions_load(g_store, exported, doc, &history[0]) : NULL;
+    CHECK(latest && !strcmp(latest, "Later sequence, earlier clock"));
+    free(latest);
+    free(history);
+    char cmd[PATH_MAX + 20];
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root);
+    system(cmd);
+}
+
 int main(void)
 {
     g_store = store_manager_create();
@@ -1285,7 +1487,10 @@ int main(void)
     }
     TestCase tests[] = { { "store_ids", test_store_ids }, { "store_managers", test_store_managers }, { "backends", test_backends },
                          { "import", test_import }, { "import_safety", test_import_safety },
-                         { "transition_read_failures", test_transition_read_failures }, { "entities", test_entities },
+                          { "transition_read_failures", test_transition_read_failures }, { "entities", test_entities },
+                          { "legacy_import_read_failures", test_legacy_import_read_failures },
+                          { "fork_retry_snapshot", test_fork_retry_snapshot },
+                          { "import_revision_identity", test_import_revision_identity },
                          { "entities_redteam", test_entities_redteam }, { "semantic", test_semantic } };
     int rc = run_db_core_tests();
     if (run_tests(tests, sizeof(tests) / sizeof(tests[0])) != 0) rc = 1;

@@ -31,11 +31,15 @@
 #include <stdint.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <sys/time.h>
+#include <removefile.h>
 
 #include "app/renames.h"
-#include "cJSON.h"
+#include "core/json.h"
+#include "core/file_text.h"
 
 typedef struct {
+    char doc[256];
     char file[160];
     char id[40];
     double t; /* when it was made (epoch seconds) */
@@ -115,13 +119,6 @@ static void derived_id(const char *pid, const char *a, const char *b, char *out,
     snprintf(out, outlen, "r-i%s", hex);
 }
 
-static const char *rev_lookup(const RevMap *m, size_t n, const char *file)
-{
-    for (size_t i = 0; i < n; i++)
-        if (!strcmp(m[i].file, file)) return m[i].id;
-    return NULL;
-}
-
 /* A snapshot name "YYYYMMDD-HHMMSS-mmm-…" as seconds, or 0. */
 static double snapshot_time(const char *file);
 
@@ -140,11 +137,16 @@ static double revision_time(const char *file, time_t ts)
     return snapshot_time(file);
 }
 
-static double map_time(const RevMap *m, size_t n, const char *file)
+static const RevMap *source_revision(const char *project, const RevMap *m, size_t n, const SourceRef *source,
+                                     char *current, size_t currentlen)
 {
-    for (size_t i = 0; i < n; i++)
-        if (!strcmp(m[i].file, file)) return m[i].t;
-    return snapshot_time(file);
+    for (size_t i = 0; i < n; i++) {
+        if (strcmp(m[i].file, source->revision)) continue;
+        renames_resolve_since(project, source->doc, m[i].t, current, currentlen);
+        if (!strcmp(current, m[i].doc)) return &m[i];
+    }
+    renames_resolve_since(project, source->doc, snapshot_time(source->revision), current, currentlen);
+    return NULL;
 }
 
 static double snapshot_time(const char *file)
@@ -163,22 +165,26 @@ static bool import_revisions(Db *db, const char *project_dir, const char *pid, R
     char dir[PATH_MAX + 64];
     snprintf(dir, sizeof(dir), "%s/.scribodo/revisions", project_dir);
     DIR *d = opendir(dir);
-    if (!d) return true; /* no history yet */
+    if (!d) return errno == ENOENT; /* missing history is not unreadable history */
     bool ok = true;
     struct dirent *ent;
     size_t cap = 0;
-    while (ok && (ent = readdir(d)) != NULL) {
+    while (ok) {
+        errno = 0;
+        ent = readdir(d);
+        if (!ent) { ok = errno == 0; break; }
         if (ent->d_name[0] == '.') continue;
         char doc_path[PATH_MAX + 300];
         snprintf(doc_path, sizeof(doc_path), "%s/%s", project_dir, ent->d_name);
         char did[40];
-        if (!store_document_id_db(db, pid, ent->d_name, true, did, sizeof(did))) continue;
+        if (!store_document_id_db(db, pid, ent->d_name, true, did, sizeof(did))) { ok = false; break; }
         Revision *list = NULL;
-        size_t n = revisions_list_files(project_dir, doc_path, &list);
+        size_t n = 0;
+        ok = revisions_list_files_checked(project_dir, doc_path, &list, &n);
         size_t order = 0; /* ties within a millisecond keep the original order */
         for (size_t i = n; ok && i-- > 0;) {                      /* oldest first */
             char *text = revisions_load_files(project_dir, doc_path, &list[i]);
-            if (!text) continue; /* a damaged snapshot is not imported */
+            if (!text) { ok = false; break; } /* no incomplete or damaged migration */
             char id[40];
             derived_id(pid, ent->d_name, list[i].file, id, sizeof(id));
             DbArg a[7] = { DB_S(id), DB_S(did), DB_S(list[i].hash), DB_S(text), DB_S(list[i].origin), DB_S(list[i].note),
@@ -195,6 +201,7 @@ static bool import_revisions(Db *db, const char *project_dir, const char *pid, R
                 else *map = m;
             }
             if (ok) {
+                snprintf((*map)[*nmap].doc, sizeof((*map)[0].doc), "%s", ent->d_name);
                 snprintf((*map)[*nmap].file, sizeof((*map)[0].file), "%s", list[i].file);
                 snprintf((*map)[*nmap].id, sizeof((*map)[0].id), "%s", id);
                 (*map)[*nmap].t = revision_time(list[i].file, list[i].ts);
@@ -206,7 +213,7 @@ static bool import_revisions(Db *db, const char *project_dir, const char *pid, R
         }
         free(list);
     }
-    closedir(d);
+    if (closedir(d) != 0) ok = false;
     return ok;
 }
 
@@ -277,8 +284,8 @@ static bool import_records(Db *db, const char *project_dir, const char *pid, Rec
                            IdMaps *rec_map, const IdMaps *chats_map)
 {
     Record *recs = NULL;
-    size_t n = records_list_files(project_dir, kind, &recs);
-    bool ok = true;
+    size_t n = 0;
+    bool ok = records_list_files_checked(project_dir, kind, &recs, &n);
     for (size_t i = 0; ok && i < n; i++) {
         const Record *r = &recs[i];
         char rid[40];
@@ -316,10 +323,10 @@ static bool import_records(Db *db, const char *project_dir, const char *pid, Rec
                 char cur[256] = "", did[40] = "";
                 const char *rev = NULL, *conv = NULL;
                 if (src->kind == SRC_DOC) {
-                    double made = map_time(map, nmap, src->revision);
-                    renames_resolve_since(project_dir, src->doc, made, cur, sizeof(cur));
-                    if (cur[0]) store_document_id_db(db, pid, cur, true, did, sizeof(did));
-                    rev = rev_lookup(map, nmap, src->revision);
+                    const RevMap *source_rev = source_revision(project_dir, map, nmap, src, cur, sizeof(cur));
+                    if (cur[0] && !store_document_id_db(db, pid, cur, true, did, sizeof(did))) { ok = false; break; }
+                    rev = source_rev ? source_rev->id : NULL;
+                    if (src->revision[0] && !rev) { ok = false; break; }
                 } else {
                     DbRows c;
                     const char *chat = mapped(chats_map, src->chat);
@@ -327,7 +334,7 @@ static bool import_records(Db *db, const char *project_dir, const char *pid, Rec
                                  (DbArg[2]){ DB_S(chat), DB_S(pid) }, 2, &c)) {
                         if (c.nrows) conv = chat;
                         db_rows_free(&c);
-                    }
+                    } else { ok = false; break; }
                 }
                 DbArg sa[10] = { DB_S(rid), DB_I(ver->ver), DB_S(src->kind == SRC_DOC ? "doc" : "chat"), DB_S(nz(did)),
                                  DB_S(rev), DB_S(conv), DB_I(src->kind == SRC_CHAT ? src->message : 0), DB_I(src->start),
@@ -352,7 +359,8 @@ static bool import_observer(Db *db, const char *project_dir, const char *pid)
     cJSON_ArrayForEach(doc, cJSON_GetObjectItem(st, "docs"))
     {
         char did[40];
-        if (!ok || strchr(doc->string, '/') || !store_document_id_db(db, pid, doc->string, true, did, sizeof(did))) continue;
+        if (!ok) break;
+        if (strchr(doc->string, '/') || !store_document_id_db(db, pid, doc->string, true, did, sizeof(did))) { ok = false; break; }
         cJSON_ArrayForEach(h, doc)
         if (ok && cJSON_IsString(h))
             ok = db_run(db, "INSERT IGNORE INTO observer_pieces (document_id, piece_hash) VALUES (?, ?)",
@@ -383,15 +391,23 @@ static bool import_observer(Db *db, const char *project_dir, const char *pid)
 }
 
 /* The old files, set aside (never deleted). */
-static void set_aside(const char *project_dir)
+static bool legacy_path(const char *project_dir, char *out, size_t outlen)
 {
-    time_t t = time(NULL);
+    struct timeval tv;
+    if (gettimeofday(&tv, NULL) != 0) return false;
+    time_t t = tv.tv_sec;
     struct tm tmv;
     localtime_r(&t, &tmv);
-    char stamp[32], legacy[PATH_MAX + 64];
+    char stamp[32];
     strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tmv);
-    snprintf(legacy, sizeof(legacy), "%s/.scribodo/legacy-%s", project_dir, stamp);
-    mkdir(legacy, 0755);
+    int n = snprintf(out, outlen, "%s/.scribodo/legacy-%s-%06ld-XXXXXX", project_dir, stamp, (long)tv.tv_usec);
+    return n >= 0 && (size_t)n < outlen && mkdtemp(out) != NULL;
+}
+
+static void set_aside(const char *project_dir)
+{
+    char legacy[PATH_MAX + 100];
+    if (!legacy_path(project_dir, legacy, sizeof(legacy))) return;
     static const char *const items[] = { "chats", "revisions", "notes.jsonl", "canon.jsonl", "findings.jsonl",
                                          "observer", "observer-rules", "renames.jsonl" };
     for (size_t i = 0; i < sizeof(items) / sizeof(items[0]); i++) {
@@ -458,34 +474,39 @@ static uint64_t fingerprint(const char *project_dir)
     return h;
 }
 
-static bool import_once(Db *db, const char *project_dir, const char *pid, uint64_t expected_fingerprint,
+static bool import_once(Db *db, const char *project_dir, const char *data_dir, const char *pid, uint64_t expected_fingerprint,
+                        uint64_t expected_data_fingerprint,
                         bool *changed, char *why, size_t whylen)
 {
     *changed = false;
+    if (!db_begin(db)) { snprintf(why, whylen, "Couldn't begin project migration: %s", db_error(db)); return false; }
     /* Documents present now. */
     DIR *d = opendir(project_dir);
     struct dirent *ent;
-    while (d && (ent = readdir(d)) != NULL) {
+    bool ok = d != NULL;
+    while (ok) {
+        errno = 0;
+        ent = readdir(d);
+        if (!ent) { ok = errno == 0; break; }
         size_t n = strlen(ent->d_name);
         if (ent->d_name[0] == '.') continue;
         if ((n > 3 && !strcasecmp(ent->d_name + n - 3, ".md")) || (n > 4 && !strcasecmp(ent->d_name + n - 4, ".txt")) ||
             (n > 9 && !strcasecmp(ent->d_name + n - 9, ".markdown"))) {
             char did[40];
-            store_document_id_db(db, pid, ent->d_name, true, did, sizeof(did));
+            ok = store_document_id_db(db, pid, ent->d_name, true, did, sizeof(did));
         }
     }
-    if (d) closedir(d);
+    if (d && closedir(d) != 0) ok = false;
     RevMap *map = NULL;
     size_t nmap = 0;
     IdMaps chats = { 0 }, recs = { 0 };
-    bool ok = db_begin(db);
-    ok = ok && import_revisions(db, project_dir, pid, &map, &nmap);
-    ok = ok && import_chats(db, project_dir, pid, &chats);
+    ok = ok && import_revisions(db, data_dir, pid, &map, &nmap);
+    ok = ok && import_chats(db, data_dir, pid, &chats);
     /* notes and canon before findings: findings name them as related */
-    ok = ok && import_records(db, project_dir, pid, REC_NOTE, map, nmap, &recs, &chats);
-    ok = ok && import_records(db, project_dir, pid, REC_CANON, map, nmap, &recs, &chats);
-    ok = ok && import_records(db, project_dir, pid, REC_FINDING, map, nmap, &recs, &chats);
-    ok = ok && import_observer(db, project_dir, pid);
+    ok = ok && import_records(db, data_dir, pid, REC_NOTE, map, nmap, &recs, &chats);
+    ok = ok && import_records(db, data_dir, pid, REC_CANON, map, nmap, &recs, &chats);
+    ok = ok && import_records(db, data_dir, pid, REC_FINDING, map, nmap, &recs, &chats);
+    ok = ok && import_observer(db, data_dir, pid);
     /* The graph, from the imported findings: derived data, so a failure
      * here never fails the import (red-team 009); it's retried later. */
     if (ok)
@@ -495,18 +516,45 @@ static bool import_once(Db *db, const char *project_dir, const char *pid, uint64
                     " JOIN record_versions v ON v.record_id = x.record_id AND v.ver = x.mv SET r.current_status = v.status",
                     (DbArg[1]){ DB_S(pid) }, 1, NULL);
     if (ok) sdb_entities_backfill(db, pid);
-    if (ok && fingerprint(project_dir) != expected_fingerprint) {
+    if (ok && (fingerprint(project_dir) != expected_fingerprint || fingerprint(data_dir) != expected_data_fingerprint)) {
         *changed = true;
         ok = false;
     }
     if (ok) ok = db_commit(db);
-    else db_rollback(db);
+    if (!ok) db_rollback(db);
     free(map);
     free(chats.m);
     free(recs.m);
     if (!ok && !*changed)
         snprintf(why, whylen, "Moving the project into the store failed: %s",
                  db_error(db)[0] ? db_error(db) : "a project file couldn't be read or decoded");
+    return ok;
+}
+
+static bool project_atomic_text(const char *project, const char *name, const char *text)
+{
+    char dir[PATH_MAX + 32], path[PATH_MAX + 64], tmp[PATH_MAX + 80];
+    snprintf(dir, sizeof(dir), "%s/.scribodo", project);
+    snprintf(path, sizeof(path), "%s/%s", dir, name);
+    snprintf(tmp, sizeof(tmp), "%s.tmp-XXXXXX", path);
+    int fd = mkstemp(tmp);
+    bool ok = fd >= 0;
+    size_t n = strlen(text), off = 0;
+    while (ok && off < n) {
+        ssize_t wrote = write(fd, text + off, n - off);
+        if (wrote < 0 && errno == EINTR) continue;
+        ok = wrote > 0;
+        if (ok) off += (size_t)wrote;
+    }
+    if (ok) ok = fsync(fd) == 0;
+    if (fd >= 0 && close(fd) != 0) ok = false;
+    if (ok) ok = rename(tmp, path) == 0;
+    if (!ok && fd >= 0) unlink(tmp);
+    if (ok) {
+        int parent = open(dir, O_RDONLY);
+        ok = parent >= 0 && fsync(parent) == 0;
+        if (parent >= 0) close(parent);
+    }
     return ok;
 }
 
@@ -518,49 +566,150 @@ static bool import_project(Db *db, const char *project_dir, char *pid, size_t pi
 {
     char pending[PATH_MAX + 64];
     snprintf(pending, sizeof(pending), "%s/.scribodo/import-pending", project_dir);
-    FILE *f = fopen(pending, "rb");
-    if (f) {
-        char id[64] = "";
-        size_t n = fread(id, 1, sizeof(id) - 1, f);
-        fclose(f);
-        id[n] = '\0';
-        id[strcspn(id, "\r\n")] = '\0';
-        DbRows r;
-        if (id[0] == 'p' && db_query(db, "SELECT id FROM projects WHERE id = ?", (DbArg[1]){ DB_S(id) }, 1, &r)) {
-            bool found = r.nrows > 0;
-            db_rows_free(&r);
-            if (found) {
-                snprintf(pid, pidlen, "%s", id);
-                return true;
-            }
-        }
+    char *id = NULL;
+    FileTextStatus pending_status = file_text_read(pending, &id);
+    if (pending_status == FILE_TEXT_ERROR) {
+        snprintf(why, whylen, "Couldn't read the pending project registration; nothing was imported");
+        return false;
     }
-    char old[40];
-    if (store_project_id_db(db, project_dir, false, old, sizeof(old)))
-        db_run(db, "UPDATE projects SET path_hash = CONCAT('superseded-', id) WHERE id = ?", (DbArg[1]){ DB_S(old) }, 1, NULL);
+    if (pending_status == FILE_TEXT_OK) {
+        size_t n = strcspn(id, "\r\n");
+        bool valid = id[0] == 'p' && n < 40 && strspn(id + n, "\r\n") == strlen(id + n);
+        id[n] = '\0';
+        valid = valid && strspn(id, "abcdefghijklmnopqrstuvwxyz0123456789-") == strlen(id);
+        if (!valid) {
+            free(id);
+            snprintf(why, whylen, "The pending project registration is damaged; it was preserved");
+            return false;
+        }
+        DbRows r;
+        if (!db_query(db, "SELECT path FROM projects WHERE id = ?", (DbArg[1]){ DB_S(id) }, 1, &r)) {
+            free(id);
+            snprintf(why, whylen, "Couldn't verify the pending project's owner: %s", db_error(db));
+            return false;
+        }
+        const char *owner = NULL;
+        char real[PATH_MAX];
+        bool checked = db_rows_has_columns(&r, 1) && r.nrows <= 1 && realpath(project_dir, real) &&
+                       (!r.nrows || db_cell_text(&r, 0, 0, &owner));
+        bool resume = checked && owner && !strcmp(owner, real);
+        if (resume) snprintf(pid, pidlen, "%s", id);
+        db_rows_free(&r);
+        free(id);
+        if (!checked) { snprintf(why, whylen, "Couldn't verify the pending project's owner"); return false; }
+        if (resume) return true;
+        /* Copied crash residue belongs to another folder, never this import. */
+    }
+    char real[PATH_MAX], path_hash[65];
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+    if (!realpath(project_dir, real)) { snprintf(why, whylen, "Couldn't resolve the project folder"); return false; }
+    CC_SHA256(real, (CC_LONG)strlen(real), digest);
+    for (size_t i = 0; i < sizeof(digest); i++) snprintf(path_hash + i * 2, 3, "%02x", digest[i]);
+    if (!db_run(db, "UPDATE projects SET path_hash = CONCAT('superseded-', id) WHERE path_hash = ?",
+                (DbArg[1]){ DB_S(path_hash) }, 1, NULL)) {
+        snprintf(why, whylen, "Couldn't reserve the project path: %s", db_error(db));
+        return false;
+    }
     if (!store_project_id_db(db, project_dir, true, pid, pidlen)) {
         snprintf(why, whylen, "Couldn't register the project: %s", db_error(db));
         return false;
     }
-    f = fopen(pending, "wb");
-    if (f) {
-        fprintf(f, "%s\n", pid);
-        fflush(f);
-        fsync(fileno(f));
-        fclose(f);
-    }
-    return true;
+    char line[80];
+    snprintf(line, sizeof(line), "%s\n", pid);
+    bool ok = project_atomic_text(project_dir, "import-pending", line);
+    if (!ok) snprintf(why, whylen, "Couldn't persist the pending project registration; nothing was imported");
+    return ok;
 }
 
-static bool import_locked(StoreManager *manager, Db *db, const char *project_dir, const char *dir, char *why, size_t whylen)
+typedef struct {
+    char source[64], target[64];
+    bool ready;
+    uint64_t signature;
+} ForkSnapshot;
+
+static FileTextStatus fork_snapshot_read(const char *project, ForkSnapshot *snapshot)
 {
-    bool ok = store_mode(manager, project_dir, NULL, 0, NULL) == STORE_FILES;
+    memset(snapshot, 0, sizeof(*snapshot));
+    char path[PATH_MAX + 64], *text = NULL;
+    snprintf(path, sizeof(path), "%s/.scribodo/fork.json", project);
+    FileTextStatus status = file_text_read(path, &text);
+    if (status != FILE_TEXT_OK) return status;
+    cJSON *j = strlen(text) < 2048 ? json_parse(text) : NULL;
+    const cJSON *source = cJSON_GetObjectItem(j, "source"), *target = cJSON_GetObjectItem(j, "target"),
+                *ready = cJSON_GetObjectItem(j, "ready"), *sig = cJSON_GetObjectItem(j, "signature");
+    bool ok = cJSON_GetNumberValue(cJSON_GetObjectItem(j, "version")) == 1 && cJSON_IsString(source) &&
+              source->valuestring[0] == 'p' && strlen(source->valuestring) < sizeof(snapshot->source) &&
+              cJSON_IsString(target) && strlen(target->valuestring) < sizeof(snapshot->target) &&
+              cJSON_IsBool(ready) && cJSON_IsString(sig) && strlen(sig->valuestring) == 16 &&
+              strspn(sig->valuestring, "0123456789abcdef") == 16;
+    if (ok) {
+        snprintf(snapshot->source, sizeof(snapshot->source), "%s", source->valuestring);
+        snprintf(snapshot->target, sizeof(snapshot->target), "%s", target->valuestring);
+        snapshot->ready = cJSON_IsTrue(ready);
+        snapshot->signature = strtoull(sig->valuestring, NULL, 16);
+    }
+    cJSON_Delete(j);
+    free(text);
+    return ok ? FILE_TEXT_OK : FILE_TEXT_ERROR;
+}
+
+static bool fork_snapshot_write(const char *project, const ForkSnapshot *snapshot)
+{
+    char sig[17];
+    snprintf(sig, sizeof(sig), "%016llx", (unsigned long long)snapshot->signature);
+    cJSON *j = cJSON_CreateObject();
+    bool ok = j && cJSON_AddNumberToObject(j, "version", 1) &&
+              cJSON_AddStringToObject(j, "source", snapshot->source) &&
+              cJSON_AddStringToObject(j, "target", snapshot->target) &&
+              cJSON_AddBoolToObject(j, "ready", snapshot->ready) && cJSON_AddStringToObject(j, "signature", sig);
+    char *text = ok ? cJSON_PrintUnformatted(j) : NULL;
+    cJSON_Delete(j);
+    if (!text) return false;
+    ok = project_atomic_text(project, "fork.json", text);
+    free(text);
+    return ok;
+}
+
+static bool fork_snapshot_finish(const char *project, const char *stage)
+{
+    char source[PATH_MAX + 100], legacy[PATH_MAX + 100], path[PATH_MAX + 64];
+    snprintf(source, sizeof(source), "%s/.scribodo", stage);
+    struct stat st;
+    if (lstat(source, &st) == 0) {
+        if (!S_ISDIR(st.st_mode) || !legacy_path(project, legacy, sizeof(legacy))) return false;
+        if (rename(source, legacy) != 0) { rmdir(legacy); return false; }
+    } else if (errno != ENOENT) return false;
+    if (rmdir(stage) != 0 && errno != ENOENT) return false;
+    snprintf(path, sizeof(path), "%s/.scribodo/import-pending", project);
+    if (unlink(path) != 0 && errno != ENOENT) return false;
+    snprintf(path, sizeof(path), "%s/.scribodo/fork.json", project);
+    return unlink(path) == 0 || errno == ENOENT;
+}
+
+static bool import_locked_from(StoreManager *manager, Db *db, const char *project_dir, const char *data_dir,
+                               const char *dir, char *why, size_t whylen)
+{
+    bool fork = strcmp(project_dir, data_dir) != 0;
+    /* Keep the copy marker authoritative until its atomic replacement. A
+     * crash must never expose an unmarked folder with empty live metadata. */
+    bool ok = fork ? store_problem(manager, project_dir, NULL, 0) == STORE_PROBLEM_COPY
+                   : store_mode(manager, project_dir, NULL, 0, NULL) == STORE_FILES;
     char pid[40] = "";
     if (ok) ok = import_project(db, project_dir, pid, sizeof(pid), why, whylen);
+    if (ok && strcmp(project_dir, data_dir)) {
+        ForkSnapshot snapshot;
+        ok = fork_snapshot_read(project_dir, &snapshot) == FILE_TEXT_OK && snapshot.ready;
+        if (ok) {
+            snprintf(snapshot.target, sizeof(snapshot.target), "%s", pid);
+            ok = fork_snapshot_write(project_dir, &snapshot);
+        }
+        if (!ok) snprintf(why, whylen, "Couldn't persist the fork's target; its source snapshot is retained");
+    }
     for (int attempt = 0; ok && attempt < 4; attempt++) {
         uint64_t before = fingerprint(project_dir);
+        uint64_t data_before = fingerprint(data_dir);
         bool changed = false;
-        ok = import_once(db, project_dir, pid, before, &changed, why, whylen);
+        ok = import_once(db, project_dir, data_dir, pid, before, data_before, &changed, why, whylen);
         if (ok) break;
         if (changed && attempt < 3) {
             ok = true;
@@ -578,10 +727,15 @@ static bool import_locked(StoreManager *manager, Db *db, const char *project_dir
         set_aside(project_dir);
         char pending[PATH_MAX + 64];
         snprintf(pending, sizeof(pending), "%s/import-pending", dir);
-        unlink(pending);
+        if (!strcmp(project_dir, data_dir)) unlink(pending); /* fork cleanup retains its commit witness until archived */
         store_forget_verification(manager);
     }
     return ok;
+}
+
+static bool import_locked(StoreManager *manager, Db *db, const char *project_dir, const char *dir, char *why, size_t whylen)
+{
+    return import_locked_from(manager, db, project_dir, project_dir, dir, why, whylen);
 }
 
 bool store_import(StoreManager *manager, const char *project_dir, char *why, size_t whylen)
@@ -636,16 +790,6 @@ bool store_needs_import(StoreManager *manager, const char *project_dir)
 
 /* ---- copies and missing projects ------------------------------------------------ */
 
-static void set_marker_aside(StoreManager *manager, const char *project_dir, bool aside)
-{
-    char a[PATH_MAX + 64], b[PATH_MAX + 64];
-    snprintf(a, sizeof(a), "%s/.scribodo/store.json", project_dir);
-    snprintf(b, sizeof(b), "%s/.scribodo/store.json.set-aside", project_dir);
-    if (aside) rename(a, b);
-    else unlink(b);
-    store_forget_verification(manager);
-}
-
 /* Write the project's data from the store as files in `project_dir` (so a
  * normal import can take them in as a new project). Times of notes and
  * canon versions become the export time; sources keep their passages. */
@@ -660,8 +804,13 @@ typedef struct {
  * snapshots. False if anything couldn't be written. */
 static bool export_files_unlocked(StoreManager *manager, Db *db, const char *pid, const char *project_dir)
 {
+    if (!db_run(db, "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ", NULL, 0, NULL)) return false;
+    if (!db_begin(db)) return false; /* one consistent source snapshot across all repositories */
     DbRows docs;
-    if (!db_query(db, "SELECT id, name FROM documents WHERE project_id = ?", (DbArg[1]){ DB_S(pid) }, 1, &docs)) return false;
+    if (!db_query(db, "SELECT id, name FROM documents WHERE project_id = ?", (DbArg[1]){ DB_S(pid) }, 1, &docs)) {
+        db_rollback(db);
+        return false;
+    }
     bool ok = db_rows_has_columns(&docs, 2);
     ExportRev *revs = NULL;
     size_t nrevs = 0, cap = 0;
@@ -691,7 +840,8 @@ static bool export_files_unlocked(StoreManager *manager, Db *db, const char *pid
             bool rec = false;
             ok = revisions_record_files(manager, project_dir, path, content, origin, note, &rec);
             Revision *list = NULL;
-            size_t n = ok ? revisions_list_files(project_dir, path, &list) : 0;
+            size_t n = 0;
+            if (ok) ok = revisions_list_files_checked(project_dir, path, &list, &n) && n > 0;
             if (n && nrevs == cap) {
                 size_t next = cap ? cap * 2 : 64;
                 if (next < cap || next > SIZE_MAX / sizeof(ExportRev)) ok = false;
@@ -744,8 +894,10 @@ static bool export_files_unlocked(StoreManager *manager, Db *db, const char *pid
                     const char *file = "";
                     for (size_t e = 0; e < nrevs && !file[0]; e++)
                         if (!strcmp(revs[e].id, src->revision)) file = revs[e].file;
+                    if (src->revision[0] && !file[0]) { ok = false; break; }
                     snprintf(src->revision, sizeof(src->revision), "%s", file); /* store ids mean nothing in files */
                 }
+                if (!ok) break;
                 store_set_write_time(manager, (double)ver->ts);
                 ok = records_append_files(manager, project_dir, kinds[k], recs[i].id, ver->status, ver->content,
                                           ver->sources, ver->nsources,
@@ -761,6 +913,8 @@ static bool export_files_unlocked(StoreManager *manager, Db *db, const char *pid
     if (ok) ok = observer_rules_set_files(project_dir, observer_rules);
     store_set_write_time(manager, 0);
     free(revs);
+    if (ok) ok = db_commit(db);
+    if (!ok) db_rollback(db);
     return ok;
 }
 
@@ -818,6 +972,47 @@ bool store_export_project(StoreManager *manager, const char *project_id, const c
     return ok;
 }
 
+/* A ready snapshot is immutable and reused after registration/import failures.
+ * An incomplete export is rebuilt only in its journal-owned staging folder. */
+static bool fork_snapshot_prepare(StoreManager *manager, Db *db, const char *project, const char *id,
+                                  const char *stage, char *why, size_t whylen)
+{
+    ForkSnapshot snapshot;
+    FileTextStatus status = fork_snapshot_read(project, &snapshot);
+    struct stat st;
+    if (status == FILE_TEXT_OK && strcmp(snapshot.source, id)) {
+        /* A copied folder may contain a journal left after the previous fork's
+         * marker committed but before its archive/cleanup completed. */
+        if (strcmp(snapshot.target, id) || !fork_snapshot_finish(project, stage)) goto damaged;
+        status = FILE_TEXT_MISSING;
+    }
+    if (status == FILE_TEXT_ERROR) goto damaged;
+    if (status == FILE_TEXT_MISSING) {
+        if (lstat(stage, &st) == 0 || errno != ENOENT) goto damaged;
+        memset(&snapshot, 0, sizeof(snapshot));
+        snprintf(snapshot.source, sizeof(snapshot.source), "%s", id);
+        if (!fork_snapshot_write(project, &snapshot)) goto failed;
+    }
+    if (snapshot.ready) {
+        if (lstat(stage, &st) != 0 || !S_ISDIR(st.st_mode) || fingerprint(stage) != snapshot.signature) goto damaged;
+        return true;
+    }
+    if (lstat(stage, &st) == 0) {
+        if (!S_ISDIR(st.st_mode) || removefile(stage, NULL, REMOVEFILE_RECURSIVE) != 0) goto failed;
+    } else if (errno != ENOENT) goto failed;
+    if (mkdir(stage, 0700) != 0 || !export_files_unlocked(manager, db, id, stage)) goto failed;
+    snapshot.ready = true;
+    snapshot.signature = fingerprint(stage);
+    if (!fork_snapshot_write(project, &snapshot)) goto failed;
+    return true;
+damaged:
+    snprintf(why, whylen, "The pending fork snapshot is missing, changed or unrecognized; it was preserved, not imported");
+    return false;
+failed:
+    snprintf(why, whylen, "Couldn't prepare the fork snapshot; the copy is unchanged and the export can be retried");
+    return false;
+}
+
 bool store_fork(StoreManager *manager, const char *project_dir, char *why, size_t whylen)
 {
     char original[PATH_MAX];
@@ -841,8 +1036,8 @@ bool store_fork(StoreManager *manager, const char *project_dir, char *why, size_
         snprintf(why, whylen, "The project store is offline");
         return false;
     }
-    /* Own the entire marker/export/import transition. Otherwise another
-     * window could import between setting the marker aside and exporting. */
+    /* Own the complete export/import/marker transition so competing forks
+     * cannot replace each other's snapshot or registration. */
     char dir[PATH_MAX + 32], ownerp[PATH_MAX + 64], lockp[PATH_MAX + 64];
     snprintf(dir, sizeof(dir), "%s/.scribodo", project_dir);
     snprintf(ownerp, sizeof(ownerp), "%s/import.owner.lock", dir);
@@ -881,16 +1076,16 @@ bool store_fork(StoreManager *manager, const char *project_dir, char *why, size_
         snprintf(why, whylen, "This folder is no longer the same copy");
         return false;
     }
-    store_set_importing(manager, project_dir);
-    set_marker_aside(manager, project_dir, true);
-    bool ok = export_files_unlocked(manager, db, id, project_dir) && import_locked(manager, db, project_dir, dir, why, whylen);
-    if (ok) set_marker_aside(manager, project_dir, false);
-    else {
-        char a[PATH_MAX + 64], b[PATH_MAX + 64];
-        snprintf(a, sizeof(a), "%s/.scribodo/store.json.set-aside", project_dir);
-        snprintf(b, sizeof(b), "%s/.scribodo/store.json", project_dir);
-        rename(a, b); /* back as it was */
-        store_forget_verification(manager);
+    char stage[PATH_MAX + 80];
+    snprintf(stage, sizeof(stage), "%s/fork-snapshot", dir);
+    bool ok = fork_snapshot_prepare(manager, db, project_dir, id, stage, why, whylen);
+    if (ok) {
+        store_set_importing(manager, project_dir);
+        ok = import_locked_from(manager, db, project_dir, stage, dir, why, whylen);
+    }
+    if (ok) {
+        if (!fork_snapshot_finish(project_dir, stage))
+            snprintf(why, whylen, "The fork is complete; its staging snapshot was retained because archiving couldn't finish");
     }
     store_set_importing(manager, NULL);
     flock(lfd, LOCK_UN);

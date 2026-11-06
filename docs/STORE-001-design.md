@@ -42,16 +42,18 @@ Every change (a message, a record version, a rename, a revision) is one transact
 ## Migration from the file store
 
 On the first open of a project with the database available:
-1. Import `.scribodo/` into MariaDB in one transaction per kind: chats, revisions (text from the snapshot files), notes, canon, findings, observer state.
+1. Import `.scribodo/` into MariaDB in one transaction covering documents, chats, revisions (text from the snapshot files), notes, canon, findings, and observer state.
 2. Resolve every document file name, following `renames.jsonl`, to a `documents` row.
-3. Move the old files to `.scribodo/legacy-<date>/`, kept read-only for one release so nothing is deleted.
+3. Move the old files to a unique `.scribodo/legacy-<date>-<time>-…/` folder. Import preserves them rather than deleting them.
 
 The import is idempotent: rows are keyed by the existing ids, so a crash mid-import resumes. Hardened in red-team 008:
 - **One importer at a time.** It holds an exclusive lock on `.scribodo/import.lock`. While the lock is held, every other window and thread sees the project as paused, so nothing is written to files that are about to be set aside.
-- **Resumable into the same project.** `.scribodo/import-pending` names the project row being filled. A crashed import continues into that row instead of starting another.
+- **Resumable into the same project.** Atomically written `.scribodo/import-pending` names the project row being filled. Resume verifies that the row belongs to this folder's canonical path. Copied crash residue cannot select another folder's row; unreadable or malformed pending state stops the import.
 - **Never into someone else's rows.** A project row that already has this path (the folder's marker was lost) is superseded, not reused. Any record or chat id that belongs to another project gets an id of its own, derived from the project and the original id, so a re-run gets the same one.
 - **Files that change underneath.** A fingerprint (sizes and times) of the imported files is taken before and after each pass. If anything changed, the import runs again, up to four passes.
 - **Times** come from each snapshot's epoch timestamp plus the milliseconds in its file name, not from parsing the local-time name (which is ambiguous across a DST change).
+- **No partial reads.** Checked file readers distinguish missing data from unreadable, special, changing or NUL-containing files. Allocation failures discard the whole decoded result. Unreadable indexes, damaged/unreadable snapshots, or failed authoritative queries roll back migration; they never become empty history. Existing crash-torn-line recovery remains supported.
+- **Revision identity** includes the document and snapshot filename. Two documents can legitimately have the same timestamp/origin filename without sharing a revision or source.
 
 ## The entity graph (SOW §4.3, acceptance 7)
 
@@ -66,8 +68,24 @@ Derived from observer findings, in the store only (projects on files have no gra
 
 The marker (`.scribodo/store.json`, version 2) records the project id and the folder's device and inode. On use, it is checked against the store (cached for 30 s per thread):
 - **Moved folder** (same inode, new path): the project's path is updated.
-- **Copy** (another inode, and the original folder still holds the project): paused, with "Make it its own project". `store_fork` writes the original's data as files into the copy and imports them as a new project with ids of its own. The original is never written to.
+- **Copy** (another inode, and the original folder still holds the project): paused, with "Make it its own project". `store_fork` exports a consistent read transaction into private `.scribodo/fork-snapshot/` staging, then imports that snapshot into a new project. Partial exports never become the copy's live structured files. The original is never written to.
 - **Missing** (no such project row: the store was reset, or the folder came from another machine): paused, with "Restore it from its saved files". `store_restore` puts back the newest `legacy-*` files and imports them. With none, the project starts again from its documents.
+
+The fork journal (`.scribodo/fork.json`) is atomically written and synced. Before
+an export completes, retry can rebuild only the journal-owned staging directory.
+After completion, retry reuses the same snapshot instead of appending or mixing
+in newer source data. Its source/target IDs and metadata fingerprint are checked;
+unrecognized or changed staging is preserved and refused. After marker commit,
+the snapshot is archived in `legacy-*` and pending state is removed. A copied
+post-commit journal can finish that cleanup before starting another fork. This
+is local crash/retry coordination, not a hostile-tampering trust boundary.
+
+Forks keep the original copy marker until atomic replacement with the committed
+target marker; they never temporarily expose file-backed authority. Snapshot
+recording refuses exhausted timestamp/origin names instead of overwriting an
+existing snapshot. See `REDTEAM-012-marker-snapshots.md`.
+Reusing a snapshot also requires reading and matching its actual content, not
+just trusting the index hash; a missing or damaged candidate fails the operation.
 
 ## Backups (SOW §7)
 
@@ -87,7 +105,7 @@ The marker (`.scribodo/store.json`, version 2) records the project id and the fo
 Qdrant isn't backed up. When a project's collection is missing, the next sync rebuilds the whole index from the store (acceptance criterion 10), documents and chats included. The marks alone would otherwise claim everything was already indexed.
 
 **From the app** (Explorer → PROJECT):
-- **Back up now** runs `tools/backup.sh` in the background, so you keep writing. For a project in the store, it also adds `export/`: the project's own History, notes, canon, findings and chats, written in the file format with their original times. Sources point at the exported snapshots.
+- **Back up now** runs `tools/backup.sh` in the background, so you keep writing. For a project in the store, it also adds `export/`: one repeatable-read snapshot of the project's History, notes, canon, findings and chats, written in the file format with their original times. Sources point at the exported snapshots. A required revision mapping that cannot be exported fails the operation rather than becoming an empty source.
 - **Restore from a backup…** never overwrites anything, and never touches the database. The backed-up project goes into a new folder beside the current one, "Name (restored <time>)", built from its documents plus `export/` (or, for a project on files, its own `.scribodo/`). It then opens and is imported as a project of its own; ids that belong to the original get their own.
 - **Whole-database disasters** are restored with `tools/restore.sh`. So is a backup made by the CLI without an export, and the app says so.
 
