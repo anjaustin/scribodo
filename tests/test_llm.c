@@ -16,6 +16,7 @@
 #include "../src/app/backup.h"
 #include "../src/app/backup_job.h"
 #include "../src/app/service_supervisor.h"
+#include "../src/app/name_detection_job.h"
 #include "../src/app/chat_store.h"
 #include "../src/app/recent.h"
 #include "../src/app/records.h"
@@ -1544,7 +1545,16 @@ static void test_instance_lock(void)
     snprintf(cfg.run_dir, sizeof(cfg.run_dir), "%s/lockrun", g_dir);
     snprintf(cfg.log_path, sizeof(cfg.log_path), "%s/lock.log", g_dir);
     snprintf(cfg.model_path, sizeof(cfg.model_path), "%s/fake.gguf", g_dir);
-    snprintf(cfg.server_bin, sizeof(cfg.server_bin), "/bin/sleep"); /* stays alive, never healthy */
+    char fake_server[600];
+    snprintf(fake_server, sizeof(fake_server), "%s/fake-server.sh", g_dir);
+    FILE *script = fopen(fake_server, "wb");
+    CHECK(script != NULL);
+    if (script) {
+        fputs("#!/bin/sh\nwhile :; do sleep 1; done\n", script);
+        fclose(script);
+        chmod(fake_server, 0700);
+    }
+    snprintf(cfg.server_bin, sizeof(cfg.server_bin), "%s", fake_server); /* accepts arbitrary llama-server flags */
     cfg.sha256[0] = '\0';
     FILE *f = fopen(cfg.model_path, "w"); fputs("x", f); fclose(f);
     LlmServer *a = llm_server_create(&cfg), *b = llm_server_create(&cfg);
@@ -2003,6 +2013,26 @@ static void test_names_detect(void)
     CHECK(names_worth_checking("How about `Maz`?") && !names_worth_checking("Ingrid rows across the fjord."));
 }
 
+static void test_name_detection_job(void)
+{
+    NameDetectionJob job;
+    CHECK(name_detection_job_init(&job, NULL));
+    CHECK(name_detection_job_start(&job, "How about Maz?", "I'll call you Maz from now on."));
+    CHECK(name_detection_job_busy(&job));
+    CHECK(!name_detection_job_start(&job, NULL, "My name is Tripp."));
+    NameGuess result = { 0 };
+    bool succeeded = false, delivered = false;
+    for (int i = 0; !delivered && i < 200; i++) {
+        delivered = name_detection_job_poll(&job, &result, &succeeded);
+        if (!delivered) usleep(1000);
+    }
+    CHECK(delivered && succeeded && !strcmp(result.assistant, "Maz") && !name_detection_job_busy(&job));
+    CHECK(!name_detection_job_poll(&job, &result, &succeeded));
+    CHECK(name_detection_job_start(&job, NULL, "Please call me Mary Ann."));
+    name_detection_job_destroy(&job);
+    CHECK(!name_detection_job_busy(&job));
+}
+
 /* The chat rules with names, and repairing what older rules recorded. */
 static void test_observer_rules_and_refilter(void)
 {
@@ -2167,6 +2197,7 @@ int main(int argc, char **argv)
         { "markdown_display", test_markdown_display },
         { "observer_chat_filter", test_observer_chat_filter },
         { "names_detect", test_names_detect },
+        { "name_detection_job", test_name_detection_job },
         { "model_settings", test_model_settings },
         { "memfit", test_memfit },
         { "observer_rules_refilter", test_observer_rules_and_refilter },

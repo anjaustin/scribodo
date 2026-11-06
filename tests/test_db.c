@@ -14,6 +14,7 @@
 #include "../src/app/store_backends.h"
 #include "../src/app/store_entities.h"
 #include "../src/app/project_store.h"
+#include "../src/app/entity_backfill_job.h"
 #include "../src/llm/semantic.h"
 #include "cJSON.h"
 #include <fcntl.h>
@@ -449,6 +450,17 @@ static void test_import(void)
     CHECK(store_import(proj, why, sizeof(why)));
     if (why[0]) fprintf(stderr, "    %s\n", why);
     CHECK(store_mode(proj, NULL, 0, NULL) == STORE_DB);
+    EntityBackfillJob backfill;
+    CHECK(entity_backfill_job_init(&backfill));
+    CHECK(entity_backfill_job_start(&backfill, proj));
+    CHECK(entity_backfill_job_busy(&backfill) && !entity_backfill_job_start(&backfill, proj));
+    bool backfill_ok = false, backfill_done = false;
+    for (int i = 0; !backfill_done && i < 500; i++) {
+        backfill_done = entity_backfill_job_poll(&backfill, &backfill_ok);
+        if (!backfill_done) usleep(1000);
+    }
+    CHECK(backfill_done && backfill_ok && !entity_backfill_job_busy(&backfill));
+    entity_backfill_job_destroy(&backfill);
     inspection = project_store_inspect(proj);
     CHECK((inspection.capabilities & (PROJECT_STORE_CAP_STRUCTURED_WRITE | PROJECT_STORE_CAP_ENTITIES |
                                       PROJECT_STORE_CAP_SEMANTIC | PROJECT_STORE_CAP_LINKED_DOCUMENTS)) ==

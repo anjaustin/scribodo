@@ -84,7 +84,8 @@ static bool fixed_phrasings(const char *msg, NameGuess *g)
     return g->author[0] || g->assistant[0];
 }
 
-bool names_detect(LlmServer *server, const char *assistant_prev, const char *author_msg, NameGuess *out)
+bool names_detect_cancel(LlmServer *server, const char *assistant_prev, const char *author_msg, NameGuess *out,
+                         atomic_bool *cancel)
 {
     memset(out, 0, sizeof(*out));
     if (!author_msg || !names_worth_checking(author_msg)) return false;
@@ -130,7 +131,7 @@ bool names_detect(LlmServer *server, const char *assistant_prev, const char *aut
     if (!body) return false;
     HttpResult r;
     bool ok = http_request(llm_server_socket(server), "POST", "/v1/chat/completions", llm_server_key(server), body, NULL, NULL,
-                           NULL, 60000, &r) &&
+                           cancel, 60000, &r) &&
               r.status == 200 && r.body;
     free(body);
     if (ok) {
@@ -148,4 +149,9 @@ bool names_detect(LlmServer *server, const char *assistant_prev, const char *aut
     }
     http_result_free(&r);
     return out->author[0] || out->assistant[0];
+}
+
+bool names_detect(LlmServer *server, const char *assistant_prev, const char *author_msg, NameGuess *out)
+{
+    return names_detect_cancel(server, assistant_prev, author_msg, out, NULL);
 }

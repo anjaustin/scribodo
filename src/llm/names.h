@@ -12,6 +12,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdatomic.h>
 
 #include "llm/server.h"
 
@@ -27,6 +28,8 @@ bool names_worth_checking(const char *author_msg);
  * author's (it gives "How about Maz?" its meaning); may be NULL. `server`
  * NULL: the fixed phrasings. */
 bool names_detect(LlmServer *server, const char *assistant_prev, const char *author_msg, NameGuess *out);
+bool names_detect_cancel(LlmServer *server, const char *assistant_prev, const char *author_msg, NameGuess *out,
+                         atomic_bool *cancel);
 
 /* Exposed for tests: is `name` in `text` as whole words? */
 bool names_in_text(const char *name, const char *text);

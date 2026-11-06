@@ -42,6 +42,8 @@
 #include "app/backup.h"
 #include "app/backup_job.h"
 #include "app/service_supervisor.h"
+#include "app/entity_backfill_job.h"
+#include "app/name_detection_job.h"
 #include "app/profile.h"
 #include "app/model_settings.h"
 #include "llm/memfit.h"
@@ -164,9 +166,7 @@ typedef struct {
     char drawn_row_finding[ENT_ROWS][40], drawn_row_other[ENT_ROWS][40];
     /* Building a project's graph from its findings (once per project, in
      * the background: thousands of findings take seconds). */
-    pthread_t graph_thread;
-    atomic_int graph_state; /* 0 idle, 1 running, 2 finished */
-    char graph_project[PATH_MAX];
+    EntityBackfillJob graph_job;
     char graph_tried[PATH_MAX]; /* one attempt per project per session */
     RecordView *record;
     Rectangle record_rect;
@@ -230,9 +230,7 @@ typedef struct {
     int names_step;         /* 0 none, 1 author prompt, 2 assistant prompt to open, 3 assistant prompt */
     char names_author[64];  /* the author step's answer */
     /* Names noticed in chat, offered for confirmation (never saved unasked). */
-    pthread_t names_thread;
-    atomic_int names_state;  /* 0 idle, 1 checking, 2 finished */
-    char *names_prev, *names_msg;
+    NameDetectionJob names_job;
     NameGuess names_guess;
     char suggest_author[64], suggest_assistant[64];
     char declined_author[64], declined_assistant[64];
@@ -260,6 +258,13 @@ typedef struct {
     ProjectStoreInspection store_inspection;
     char chat_header[200];
     Clay_Color model_color;
+    bool window_ready;
+    bool backup_initialized;
+    bool services_initialized;
+    bool graph_job_initialized;
+    bool names_job_initialized;
+    void *clay_buf;
+    Script *script;
 } App;
 
 static void store_adopt_project(App *app);
@@ -369,15 +374,6 @@ static void record_label(char *out, size_t outlen, const char *prefix, const cha
     snprintf(out, outlen, "%s%s", prefix, line[0] ? line : "(empty)");
 }
 
-static void *graph_main(void *arg)
-{
-    App *app = arg;
-    project_store_entities_backfill(app->graph_project);
-    store_thread_done();
-    atomic_store(&app->graph_state, 2);
-    return NULL;
-}
-
 static void refresh_entities(App *app)
 {
     entity_list_free(app->ents, app->nents);
@@ -390,12 +386,10 @@ static void refresh_entities(App *app)
     }
     /* Findings from before the graph existed are folded in once per
      * project, off the UI thread (red-team 009). */
-    if (atomic_load(&app->graph_state) == 0 && strcmp(app->graph_tried, app->project_dir) != 0 &&
+    if (!entity_backfill_job_busy(&app->graph_job) && strcmp(app->graph_tried, app->project_dir) != 0 &&
         !project_store_entities_built(app->project_dir)) {
-        snprintf(app->graph_project, sizeof(app->graph_project), "%s", app->project_dir);
         snprintf(app->graph_tried, sizeof(app->graph_tried), "%s", app->project_dir);
-        atomic_store(&app->graph_state, 1);
-        if (pthread_create(&app->graph_thread, NULL, graph_main, app) != 0) atomic_store(&app->graph_state, 0);
+        (void)entity_backfill_job_start(&app->graph_job, app->project_dir);
     }
     app->nents = project_store_entity_list(app->project_dir, &app->ents);
     for (size_t i = 0; i < app->nents && i < ENT_SHOW; i++) {
@@ -1104,7 +1098,7 @@ static void apply_model_settings(App *app, bool context)
     if (app->chat) chat_set_sampling(app->chat, &sp);
     if (!context) return;
     if (app->llm && llm_server_slot_ctx(app->llm) != app->model.context) {
-        if (app->chat && chat_busy(app->chat)) {
+        if ((app->chat && chat_busy(app->chat)) || name_detection_job_busy(&app->names_job)) {
             app->ctx_pending = true;
             set_status(app, "Saved. The new context size applies after the reply finishes and the model restarts");
             return;
@@ -1482,41 +1476,27 @@ static void save(App *app)
 
 /* ---- names noticed in chat ----------------------------------------------------------- */
 
-static void *names_main(void *arg)
-{
-    App *app = arg;
-    names_detect(app->llm, app->names_prev, app->names_msg, &app->names_guess);
-    atomic_store(&app->names_state, 2);
-    return NULL;
-}
-
 /* After a reply: did the author's message before it say a name? Checked in
  * the background (the local model, structured output, verified against the
  * author's words). */
 static void names_check(App *app, size_t reply_index)
 {
-    if (atomic_load(&app->names_state) != 0) return;
+    if (name_detection_job_busy(&app->names_job)) return;
     chat_lock(app->chat);
     const ChatMessage *um = chat_message(app->chat, reply_index - 1);
     const ChatMessage *pm = reply_index >= 2 ? chat_message(app->chat, reply_index - 2) : NULL;
     bool go = um && um->role == CHAT_USER && !um->is_edit && names_worth_checking(um->content);
-    if (go) {
-        free(app->names_msg);
-        free(app->names_prev);
-        app->names_msg = strdup(um->content);
-        app->names_prev = pm && pm->role == CHAT_ASSISTANT ? strdup(pm->content) : NULL;
-    }
+    const char *author_msg = go ? um->content : NULL;
+    const char *assistant_prev = go && pm && pm->role == CHAT_ASSISTANT ? pm->content : NULL;
+    if (go) (void)name_detection_job_start(&app->names_job, assistant_prev, author_msg);
     chat_unlock(app->chat);
-    if (!go || !app->names_msg) return;
-    atomic_store(&app->names_state, 1);
-    if (pthread_create(&app->names_thread, NULL, names_main, app) != 0) atomic_store(&app->names_state, 0);
 }
 
 static void names_poll(App *app)
 {
-    if (atomic_load(&app->names_state) != 2) return;
-    pthread_join(app->names_thread, NULL);
-    atomic_store(&app->names_state, 0);
+    bool succeeded = false;
+    if (!name_detection_job_poll(&app->names_job, &app->names_guess, &succeeded)) return;
+    if (!succeeded) return;
     const NameGuess *g = &app->names_guess;
     /* Offered only if new: not what's stored, not what the author declined. */
     if (g->author[0] && strcasecmp(g->author, app->profile.author) && strcasecmp(g->author, app->declined_author))
@@ -3002,8 +2982,63 @@ static bool load_fonts(App *app, float dpi)
 
 /* ---- main ------------------------------------------------------------------------- */
 
+static void app_destroy(App *app)
+{
+    if (!app) return;
+    script_free(app->script);
+    app->script = NULL;
+    chat_view_destroy(app->chat_view);
+    app->chat_view = NULL;
+    free(app->proposal.original);
+    free(app->proposal.replacement);
+    free(app->proposal.note);
+    free(app->pending.original);
+    free(app->pending.instruction);
+    free(app->edit_text);
+    review_destroy(app->review);
+    record_view_destroy(app->record);
+    prompt_destroy(app->prompt);
+    records_free(app->notes, app->nnotes);
+    records_free(app->canon, app->ncanon);
+    free(app->revs);
+    if (app->backup_initialized) (void)backup_job_destroy(&app->backup);
+    if (app->graph_job_initialized) entity_backfill_job_destroy(&app->graph_job);
+    if (app->names_job_initialized) name_detection_job_destroy(&app->names_job);
+    observer_destroy(app->observer); /* cancels its request before the server stops */
+    if (app->services_initialized) (void)service_supervisor_destroy(&app->services);
+    store_stop();
+    findings_view_destroy(app->findings);
+    records_free(app->flist, app->nflist);
+    entity_list_free(app->ents, app->nents);
+    entity_detail_free(&app->ent);
+    chat_destroy(app->chat);      /* cancels any reply in progress */
+    semantic_set_embedder(NULL);  /* clear the borrowed server before destroying it */
+    llm_server_destroy(app->llm);
+    llm_server_destroy(app->embed);
+    editor_destroy(app->editor);
+    for (size_t i = 0; i < app->ndocs; i++) free(app->docs[i]);
+    free(app->chats);
+    free(app->chat_labels);
+    for (int i = 0; i < FONT_COUNT; i++) sfont_unload(&app->fonts[i]);
+    free(app->clay_buf);
+    app->clay_buf = NULL;
+    if (app->window_ready) {
+        CloseWindow();
+        app->window_ready = false;
+    }
+    memset(app, 0, sizeof(*app));
+}
+
 int main(int argc, char **argv)
 {
+    static App app;
+    if (!entity_backfill_job_init(&app.graph_job)) return 1;
+    app.graph_job_initialized = true;
+    if (!name_detection_job_init(&app.names_job, NULL)) {
+        app_destroy(&app);
+        return 1;
+    }
+    app.names_job_initialized = true;
     const char *path = argc > 1 ? argv[1] : NULL;
 
     /* UI test mode: SCRIBODO_SCRIPT=file.scribo runs a scripted session in a
@@ -3020,24 +3055,26 @@ int main(int argc, char **argv)
     InitWindow(1440, 860, "Scribodo");
     if (!IsWindowReady()) {
         fprintf(stderr, "scribodo: could not create a window (is a display available?)\n");
+        app_destroy(&app);
         return 3;
     }
+    app.window_ready = true;
     SetWindowMinSize(900, 480);
     SetExitKey(KEY_NULL); /* Esc must never quit a writing app */
     SetTargetFPS(60);
 
-    static App app;
     if (!backup_job_init(&app.backup)) {
         fprintf(stderr, "scribodo: couldn't initialise the backup worker\n");
-        CloseWindow();
+        app_destroy(&app);
         return 1;
     }
+    app.backup_initialized = true;
     if (!service_supervisor_init(&app.services)) {
         fprintf(stderr, "scribodo: couldn't initialise the service supervisor\n");
-        (void)backup_job_destroy(&app.backup);
-        CloseWindow();
+        app_destroy(&app);
         return 1;
     }
+    app.services_initialized = true;
     app.explorer_w = 210;
     app.observer_w = 260;
     app.chat_w = 420;
@@ -3046,7 +3083,7 @@ int main(int argc, char **argv)
     float dpi = GetWindowScaleDPI().x;
     if (!load_fonts(&app, dpi)) {
         fprintf(stderr, "scribodo: no usable font found (set SCRIBODO_PROSE_FONT)\n");
-        CloseWindow();
+        app_destroy(&app);
         return 1;
     }
     style_raygui(&app.fonts[FONT_UI]);
@@ -3055,9 +3092,10 @@ int main(int argc, char **argv)
     void *clay_buf = malloc(clay_mem);
     if (!clay_buf) {
         fprintf(stderr, "scribodo: out of memory\n");
-        CloseWindow();
+        app_destroy(&app);
         return 1;
     }
+    app.clay_buf = clay_buf;
     Clay_Arena arena = Clay_CreateArenaWithCapacityAndMemory(clay_mem, clay_buf);
     Clay_Initialize(arena, (Clay_Dimensions){ (float)GetScreenWidth(), (float)GetScreenHeight() },
                     (Clay_ErrorHandler){ clay_error, 0 });
@@ -3093,6 +3131,7 @@ int main(int argc, char **argv)
         semantic_set_embedder(app.embed);
     }
     app.chat = chat_create(app.llm);
+    name_detection_job_set_server(&app.names_job, app.llm);
     /* TLS secrets are never written out for a remote model's traffic. */
     unsetenv("SSLKEYLOGFILE");
     /* A remote model only if the author configured one; never selected here. */
@@ -3115,7 +3154,7 @@ int main(int argc, char **argv)
     if (app.observer && script_path) observer_set_enabled(app.observer, false);
     if (!app.chat || !app.editor || !app.chat_view || !app.review || !app.record || !app.observer || !app.findings || !app.prompt) {
         fprintf(stderr, "scribodo: out of memory\n");
-        CloseWindow();
+        app_destroy(&app);
         return 1;
     }
     chat_on_message_done(app.chat, on_message_done, &app);
@@ -3151,17 +3190,16 @@ int main(int argc, char **argv)
         app.nrecents = recent_load(app.recents, RECENT_MAX);
     }
     dialogs_script_mode(script_path != NULL);
-    Script *script = NULL;
     ScriptHost host = { app.editor, &app.explorer_w, &app.observer_w, &app.editor_rect,
                         host_status, host_open, host_drop, &app, app.chat, host_element, host_model_ready,
                         host_record_text, host_observer_enable, host_observer_idle, host_findings_text,
                         host_attached_text, host_explorer_text, host_observer_status };
     if (script_path) {
         char err[256];
-        script = script_load(script_path, getenv("SCRIBODO_SCRIPT_DIR"), getenv("SCRIBODO_SHOT_DIR"), err, sizeof(err));
-        if (!script) {
+        app.script = script_load(script_path, getenv("SCRIBODO_SCRIPT_DIR"), getenv("SCRIBODO_SHOT_DIR"), err, sizeof(err));
+        if (!app.script) {
             fprintf(stderr, "scribodo: %s\n", err);
-            CloseWindow();
+            app_destroy(&app);
             return 2;
         }
         printf("script %s\n", script_path);
@@ -3209,7 +3247,7 @@ int main(int argc, char **argv)
             break;
         }
         /* Scripted input is injected before anything reads input state. */
-        if (script && !script_frame(script, &host)) break;
+        if (app.script && !script_frame(app.script, &host)) break;
 
         if (app.llm) llm_server_tick(app.llm);
         if (app.embed) llm_server_tick(app.embed);
@@ -3237,13 +3275,12 @@ int main(int argc, char **argv)
         names_tick(&app);
         names_poll(&app);
         /* A context size chosen while a reply was being written: now. */
-        if (app.llm && app.ctx_pending && !chat_busy(app.chat)) {
+        if (app.llm && app.ctx_pending && !chat_busy(app.chat) && !name_detection_job_busy(&app.names_job)) {
             app.ctx_pending = false;
             fit_context(&app, false);
         }
-        if (atomic_load(&app.graph_state) == 2) { /* the graph is built: show it */
-            pthread_join(app.graph_thread, NULL);
-            atomic_store(&app.graph_state, 0);
+        bool graph_succeeded = false;
+        if (entity_backfill_job_poll(&app.graph_job, &graph_succeeded)) { /* the graph is built: show it */
             app.lists_dirty = true;
         }
         chat_poll(app.chat);
@@ -3755,7 +3792,7 @@ int main(int argc, char **argv)
                 }
             }
         }
-        const char *shot_path = script ? script_take_shot(script) : NULL;
+        const char *shot_path = app.script ? script_take_shot(app.script) : NULL;
         if (shot_path) {
             /* raylib batches draws until EndDrawing; flush so the capture
              * includes everything drawn this frame (e.g. raygui controls). */
@@ -3774,34 +3811,7 @@ int main(int argc, char **argv)
         }
     }
 
-    int rc = script ? script_finish(script, &host, closed_by_window) : 0;
-    script_free(script);
-    chat_view_destroy(app.chat_view);
-    clear_proposal(&app);
-    clear_pending(&app);
-    leave_edit_mode(&app);
-    review_destroy(app.review);
-    record_view_destroy(app.record);
-    prompt_destroy(app.prompt);
-    records_free(app.notes, app.nnotes);
-    records_free(app.canon, app.ncanon);
-    free(app.revs);
-    (void)backup_job_destroy(&app.backup); /* a backup finishes, never cut off */
-    if (atomic_load(&app.graph_state) != 0) pthread_join(app.graph_thread, NULL);
-    if (atomic_load(&app.names_state) != 0) pthread_join(app.names_thread, NULL);
-    observer_destroy(app.observer);  /* cancels its request before the server stops */
-    (void)service_supervisor_destroy(&app.services);
-    store_stop();
-    findings_view_destroy(app.findings);
-    records_free(app.flist, app.nflist);
-    chat_destroy(app.chat);          /* cancels any reply in progress */
-    llm_server_destroy(app.llm);     /* stops llama-server and removes its socket */
-    llm_server_destroy(app.embed);
-    editor_destroy(app.editor);
-    for (size_t i = 0; i < app.ndocs; i++) free(app.docs[i]);
-    free(app.chats);
-    for (int i = 0; i < FONT_COUNT; i++) sfont_unload(&app.fonts[i]);
-    free(clay_buf);
-    CloseWindow();
+    int rc = app.script ? script_finish(app.script, &host, closed_by_window) : 0;
+    app_destroy(&app);
     return rc;
 }
