@@ -1,6 +1,9 @@
 #define _DARWIN_C_SOURCE
 #include "db.h"
 
+#include <errno.h>
+#include <inttypes.h>
+#include <math.h>
 #include <mysql.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -209,6 +212,59 @@ void db_rows_free(DbRows *r)
     for (size_t i = 0; i < r->nrows * r->ncols; i++) free(r->cells[i]);
     free(r->cells);
     memset(r, 0, sizeof(*r));
+}
+
+bool db_rows_has_columns(const DbRows *r, size_t expected)
+{
+    return r && r->ncols == expected && (r->nrows == 0 || r->cells);
+}
+
+bool db_cell_nullable(const DbRows *r, size_t row, size_t col, const char **out)
+{
+    if (!r || !out || !r->cells || row >= r->nrows || col >= r->ncols || (r->ncols && row > SIZE_MAX / r->ncols)) return false;
+    *out = r->cells[row * r->ncols + col];
+    return true;
+}
+
+bool db_cell_text(const DbRows *r, size_t row, size_t col, const char **out)
+{
+    return db_cell_nullable(r, row, col, out) && *out;
+}
+
+bool db_cell_i64(const DbRows *r, size_t row, size_t col, int64_t *out)
+{
+    const char *value;
+    if (!out || !db_cell_text(r, row, col, &value) || !value[0]) return false;
+    char *end = NULL;
+    errno = 0;
+    intmax_t parsed = strtoimax(value, &end, 10);
+    if (errno == ERANGE || !end || *end || parsed < INT64_MIN || parsed > INT64_MAX) return false;
+    *out = (int64_t)parsed;
+    return true;
+}
+
+bool db_cell_u64(const DbRows *r, size_t row, size_t col, uint64_t *out)
+{
+    const char *value;
+    if (!out || !db_cell_text(r, row, col, &value) || !value[0] || value[0] == '-') return false;
+    char *end = NULL;
+    errno = 0;
+    uintmax_t parsed = strtoumax(value, &end, 10);
+    if (errno == ERANGE || !end || *end || parsed > UINT64_MAX) return false;
+    *out = (uint64_t)parsed;
+    return true;
+}
+
+bool db_cell_double(const DbRows *r, size_t row, size_t col, double *out)
+{
+    const char *value;
+    if (!out || !db_cell_text(r, row, col, &value) || !value[0]) return false;
+    char *end = NULL;
+    errno = 0;
+    double parsed = strtod(value, &end);
+    if (errno == ERANGE || !end || *end || !isfinite(parsed)) return false;
+    *out = parsed;
+    return true;
 }
 
 bool db_query(Db *db, const char *sql, const DbArg *args, size_t nargs, DbRows *out)

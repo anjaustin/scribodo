@@ -66,7 +66,7 @@ llama-server drops an abandoned request immediately. The multi-second stall meas
   - `observer_locate`: curly-quote, emphasis, line-break and prefix matching; invented evidence refused.
   - `observer_text`: paragraphs, overlap, the fake backend.
   - `observer_run`: an end-to-end run on the fake backend covering exact codepoint ranges into the stored revision, the canon conflict with its related text, nothing re-read on re-poke, only a new paragraph read after an edit, duplicates dropped, no work while chat is active and resumption after, chat-sourced questions, status versions, invented evidence never recorded, and non-UTF-8 documents skipped.
-- **`observer.scribo`** (30 checks): findings shown; never in the chat unless sent; Discuss, Save as note, Commit to canon and Dismiss; a conflict from a saved paragraph, listed first even before newer findings; Source selecting the exact passage; no duplicates on re-save.
+- **`observer.scribo`:** findings shown; never in the chat unless sent; Discuss, Save as note, Commit to canon and Dismiss; a conflict from a saved paragraph, listed first even before newer findings; Source selecting the exact passage; no duplicates on re-save.
 - **`real-observer.scribo`:** the real model, as above.
 - **`make sanitize`** and **`make tsan`** (new; ThreadSanitizer over the chat worker, observer and supervisor) are clean. TSan found one race, in the *test* stub server's stop flag, which is now atomic.
 - **Mutation check:** 10 of 10 caught:

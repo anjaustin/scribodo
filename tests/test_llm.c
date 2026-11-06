@@ -745,61 +745,6 @@ static void test_records(void)
 
 /* ---- observer ----------------------------------------------------------------------- */
 
-static bool locate_is(const char *text, const char *ev, const char *want)
-{
-    size_t s = 0, n = 0;
-    bool ok = obs_locate(text, strlen(text), ev, &s, &n);
-    if (!want) return !ok;
-    bool good = ok && n == strlen(want) && !strncmp(text + s, want, n);
-    if (!good) fprintf(stderr, "    locate [%s] got [%.*s]\n", ev, ok ? (int)n : 0, ok ? text + s : "");
-    return good;
-}
-
-static void test_observer_locate(void)
-{
-    const char *t = "\xE2\x80\x9CYou\xE2\x80\x99re late,\xE2\x80\x9D said Dvo\xC5\x99\xC3\xA1k, without turning around.\n"
-                    "He grunted \xE2\x80\x94 the *particular* grunt that meant\nwe will talk about this later.";
-    /* exact */
-    CHECK(locate_is(t, "without turning around", "without turning around"));
-    /* the model straightens quotes: map back to the curly source text */
-    CHECK(locate_is(t, "\"You're late,\" said Dvo\xC5\x99\xC3\xA1k", "\xE2\x80\x9CYou\xE2\x80\x99re late,\xE2\x80\x9D said Dvo\xC5\x99\xC3\xA1k"));
-    /* emphasis markers and line breaks ignored */
-    CHECK(locate_is(t, "the particular grunt that meant we will talk", "the *particular* grunt that meant\nwe will talk"));
-    /* a paraphrased ending: the longest matching prefix of 4+ words */
-    CHECK(locate_is(t, "He grunted \xE2\x80\x94 the particular grunt that meant trouble ahead", "He grunted \xE2\x80\x94 the *particular* grunt that meant"));
-    /* invented evidence is not found */
-    CHECK(locate_is(t, "Dvo\xC5\x99\xC3\xA1k smiled warmly at her", NULL));
-    CHECK(locate_is(t, "late", "late")); /* short but exact */
-    CHECK(locate_is(t, "", NULL));
-    /* case differences are tolerated */
-    CHECK(locate_is(t, "WITHOUT turning around", "without turning around"));
-    /* Red-team 005: matches are word-bounded, and a prefix must cover most
-     * of the quote (a made-up claim can't borrow a sentence's first words). */
-    CHECK(locate_is("Zo\xC3\xAB climbed the stairs.", "ed", NULL));
-    CHECK(locate_is("Zo\xC3\xAB climbed the stairs.", "imbed the", NULL));
-    CHECK(locate_is("Mara left the lighthouse at dawn.", "Mara left the lighthouse and then burned it to the ground with Zo\xC3\xAB inside", NULL));
-    CHECK(locate_is("Mara left the lighthouse at dawn.", "Mara left the lighthouse at dusk", "Mara left the lighthouse at"));
-}
-
-static void test_observer_text(void)
-{
-    size_t st[8], ln[8];
-    const char *doc = "\n\nFirst para\nstill first.\n\n  \n\nSecond.\n\n\n";
-    size_t n = obs_paragraphs(doc, st, ln, 8);
-    CHECK(n == 2 && !strncmp(doc + st[0], "First para\nstill first.", ln[0]) && ln[0] == 23 && !strncmp(doc + st[1], "Second.", ln[1]));
-    CHECK(obs_overlap("Zo\xC3\xAB\xE2\x80\x99s eyes are brown.", "Zo\xC3\xAB's eyes are green.") >= 3); /* name + "eyes" */
-    CHECK(obs_overlap("The fog came in.", "Dvo\xC5\x99\xC3\xA1k lost his hand.") == 0);
-    char *f = obs_fake_extract("The fog came. Zo\xC3\xAB's eyes are brown. Is Dvo\xC5\x99\xC3\xA1k her uncle?");
-    CHECK(f && strstr(f, "\"question\"") && strstr(f, "\"event\"") && strstr(f, "Dvo\xC5\x99\xC3\xA1k is mentioned"));
-    free(f);
-    f = obs_fake_judge("Zo\xC3\xAB's eyes are green.", "Zo\xC3\xAB's eyes are brown.");
-    CHECK(f && strstr(f, "\"conflict\""));
-    free(f);
-    f = obs_fake_judge("Zo\xC3\xAB's eyes are green.", "Zo\xC3\xAB's eyes are green.");
-    CHECK(f && !strstr(f, "\"conflict\""));
-    free(f);
-}
-
 static bool wait_jobs(Observer *o, unsigned want, double secs)
 {
     for (int i = 0; i < (int)(secs * 50); i++) {
@@ -2357,8 +2302,6 @@ int main(int argc, char **argv)
         { "edit_too_long", test_edit_too_long },
         { "revisions", test_revisions },
         { "records", test_records },
-        { "observer_locate", test_observer_locate },
-        { "observer_text", test_observer_text },
         { "observer_run", test_observer_run },
         { "observer_redteam", test_observer_redteam },
         { "recent_and_renames", test_recent_and_renames },

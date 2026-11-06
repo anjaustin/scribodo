@@ -4,6 +4,7 @@
 #define _DARWIN_C_SOURCE
 #include "store_backends.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,13 +17,72 @@ static double now_s(void)
     return (double)tv.tv_sec + (double)tv.tv_usec / 1e6;
 }
 
+typedef struct {
+    const char *id;
+    const char *title;
+    double updated;
+    bool observer_ignore;
+} ChatSummaryRow;
+
+typedef struct {
+    int64_t seq;
+    const char *role;
+    const char *content;
+    bool error;
+    bool is_edit;
+    bool truncated;
+    const char *via;
+    double created_at;
+} ChatMessageRow;
+
+static bool bool_cell(const DbRows *rows, size_t row, size_t col, bool *out)
+{
+    int64_t value;
+    if (!db_cell_i64(rows, row, col, &value) || (value != 0 && value != 1)) return false;
+    *out = value == 1;
+    return true;
+}
+
+static bool chat_summary_row(const DbRows *rows, size_t row, ChatSummaryRow *out)
+{
+    return db_rows_has_columns(rows, 4) && db_cell_text(rows, row, 0, &out->id) &&
+           db_cell_text(rows, row, 1, &out->title) && db_cell_double(rows, row, 2, &out->updated) &&
+           bool_cell(rows, row, 3, &out->observer_ignore);
+}
+
+static bool chat_message_row(const DbRows *rows, size_t row, ChatMessageRow *out)
+{
+    return db_rows_has_columns(rows, 8) && db_cell_i64(rows, row, 0, &out->seq) &&
+           db_cell_text(rows, row, 1, &out->role) && db_cell_text(rows, row, 2, &out->content) &&
+           bool_cell(rows, row, 3, &out->error) && bool_cell(rows, row, 4, &out->is_edit) &&
+           bool_cell(rows, row, 5, &out->truncated) && db_cell_nullable(rows, row, 6, &out->via) &&
+           db_cell_double(rows, row, 7, &out->created_at);
+}
+
+static bool chat_document_row(const DbRows *rows, size_t row, int64_t *seq, const char **name)
+{
+    return db_rows_has_columns(rows, 2) && db_cell_i64(rows, row, 0, seq) && db_cell_text(rows, row, 1, name);
+}
+
+static void chat_messages_free_partial(ChatMessage *messages, size_t count)
+{
+    if (!messages) return;
+    for (size_t i = 0; i < count; i++) {
+        free(messages[i].content);
+        free(messages[i].docs);
+        free(messages[i].via);
+    }
+    free(messages);
+}
+
 /* The conversation exists, belongs to this project, and is locked. */
 static bool own_conversation(Db *db, const char *project_id, const char *id)
 {
     DbRows r;
     if (!db_query(db, "SELECT project_id FROM conversations WHERE id = ? FOR UPDATE", (DbArg[1]){ DB_S(id) }, 1, &r))
         return false;
-    bool ok = r.nrows == 1 && db_cell(&r, 0, 0) && !strcmp(db_cell(&r, 0, 0), project_id);
+    const char *owner;
+    bool ok = r.nrows == 1 && db_rows_has_columns(&r, 1) && db_cell_text(&r, 0, 0, &owner) && !strcmp(owner, project_id);
     db_rows_free(&r);
     return ok;
 }
@@ -39,7 +99,9 @@ bool sdb_chat_append(Db *db, const char *project_id, const char *id, const char 
     DbRows r;
     if (ok && db_query(db, "SELECT COALESCE(MAX(seq), -1) + 1 FROM messages WHERE conversation_id = ?",
                        (DbArg[1]){ DB_S(id) }, 1, &r)) {
-        seq = r.nrows && db_cell(&r, 0, 0) ? atoi(db_cell(&r, 0, 0)) : 0;
+        int64_t next;
+        ok = r.nrows == 1 && db_rows_has_columns(&r, 1) && db_cell_i64(&r, 0, 0, &next) && next >= 0 && next <= INT_MAX;
+        if (ok) seq = (int)next;
         db_rows_free(&r);
     } else {
         ok = false;
@@ -79,20 +141,28 @@ bool sdb_chat_list_checked(Db *db, const char *project_id, ChatSummary **out, si
     if (!db_query(db, "SELECT id, title, updated_at, observer_ignore FROM conversations WHERE project_id = ? ORDER BY updated_at DESC",
                   (DbArg[1]){ DB_S(project_id) }, 1, &r))
         return false;
-    ChatSummary *list = r.nrows ? calloc(r.nrows, sizeof(ChatSummary)) : NULL;
+    bool ok = db_rows_has_columns(&r, 4);
+    ChatSummary *list = ok && r.nrows ? calloc(r.nrows, sizeof(ChatSummary)) : NULL;
     if (r.nrows && !list) {
         db_rows_free(&r);
         return false;
     }
     size_t n = 0;
-    for (size_t i = 0; list && i < r.nrows; i++) {
+    for (size_t i = 0; ok && list && i < r.nrows; i++) {
+        ChatSummaryRow row;
+        ok = chat_summary_row(&r, i, &row);
+        if (!ok) break;
         ChatSummary *c = &list[n++];
-        snprintf(c->id, sizeof(c->id), "%s", db_cell(&r, i, 0));
-        snprintf(c->title, sizeof(c->title), "%s", db_cell(&r, i, 1) ? db_cell(&r, i, 1) : "Chat");
-        c->updated = (time_t)atof(db_cell(&r, i, 2) ? db_cell(&r, i, 2) : "0");
-        c->observer_ignore = db_cell(&r, i, 3) && atoi(db_cell(&r, i, 3)) == 1;
+        snprintf(c->id, sizeof(c->id), "%s", row.id);
+        snprintf(c->title, sizeof(c->title), "%s", row.title);
+        c->updated = (time_t)row.updated;
+        c->observer_ignore = row.observer_ignore;
     }
     db_rows_free(&r);
+    if (!ok) {
+        free(list);
+        return false;
+    }
     *out = list;
     *count = n;
     return true;
@@ -125,34 +195,70 @@ bool sdb_chat_load(Db *db, const char *project_id, const char *id, ChatMessage *
         db_rows_free(&r);
         return false;
     }
-    ChatMessage *list = r.nrows ? calloc(r.nrows, sizeof(ChatMessage)) : NULL;
+    bool ok = db_rows_has_columns(&r, 8) && db_rows_has_columns(&d, 2);
+    for (size_t i = 0; ok && i < d.nrows; i++) {
+        int64_t seq;
+        const char *name;
+        ok = chat_document_row(&d, i, &seq, &name);
+    }
+    size_t row_count = r.nrows;
+    ChatMessage *list = ok && row_count ? calloc(row_count, sizeof(ChatMessage)) : NULL;
+    if (row_count && !list) ok = false;
     size_t k2 = 0;
-    for (size_t i = 0; list && i < r.nrows; i++) {
+    for (size_t i = 0; ok && i < row_count; i++) {
+        ChatMessageRow row;
+        ok = chat_message_row(&r, i, &row) && (!strcmp(row.role, "user") || !strcmp(row.role, "assistant"));
+        if (!ok) break;
         ChatMessage *m = &list[*n];
-        m->role = db_cell(&r, i, 1) && !strcmp(db_cell(&r, i, 1), "user") ? CHAT_USER : CHAT_ASSISTANT;
-        m->content = strdup(db_cell(&r, i, 2) ? db_cell(&r, i, 2) : "");
-        m->error = db_cell(&r, i, 3) && atoi(db_cell(&r, i, 3));
-        m->is_edit = db_cell(&r, i, 4) && atoi(db_cell(&r, i, 4));
-        m->truncated = db_cell(&r, i, 5) && atoi(db_cell(&r, i, 5));
-        m->via = db_cell(&r, i, 6) && db_cell(&r, i, 6)[0] ? strdup(db_cell(&r, i, 6)) : NULL;
-        m->ts = db_cell(&r, i, 7) ? atof(db_cell(&r, i, 7)) : 0;
+        m->role = !strcmp(row.role, "user") ? CHAT_USER : CHAT_ASSISTANT;
+        m->content = strdup(row.content);
+        m->error = row.error;
+        m->is_edit = row.is_edit;
+        m->truncated = row.truncated;
+        m->via = row.via && row.via[0] ? strdup(row.via) : NULL;
+        m->ts = row.created_at;
+        ok = m->content && (!row.via || !row.via[0] || m->via);
+        if (!ok) break;
         /* The documents' *current* names: renames are followed for free. */
-        int seq = atoi(db_cell(&r, i, 0));
+        int64_t seq = row.seq;
         size_t len = 1;
-        for (size_t j = k2; j < d.nrows && atoi(db_cell(&d, j, 0)) == seq; j++) len += strlen(db_cell(&d, j, 1)) + 1;
+        for (size_t j = k2; ok && j < d.nrows; j++) {
+            int64_t document_seq;
+            const char *name;
+            ok = chat_document_row(&d, j, &document_seq, &name);
+            if (!ok || document_seq != seq) break;
+            size_t name_len = strlen(name);
+            if (name_len > SIZE_MAX - len - 1) ok = false;
+            else len += name_len + 1;
+        }
+        if (!ok) break;
         if (len > 1 && (m->docs = malloc(len)) != NULL) {
             m->docs[0] = '\0';
-            for (; k2 < d.nrows && atoi(db_cell(&d, k2, 0)) == seq; k2++) {
+            for (; k2 < d.nrows; k2++) {
+                int64_t document_seq;
+                const char *name;
+                ok = chat_document_row(&d, k2, &document_seq, &name);
+                if (!ok || document_seq != seq) break;
                 if (m->docs[0]) strcat(m->docs, "\n");
-                strcat(m->docs, db_cell(&d, k2, 1));
+                strcat(m->docs, name);
             }
+        } else if (len > 1) ok = false;
+        while (ok && k2 < d.nrows) {
+            int64_t document_seq;
+            const char *name;
+            ok = chat_document_row(&d, k2, &document_seq, &name);
+            if (!ok || document_seq > seq) break;
+            k2++;
         }
-        while (k2 < d.nrows && atoi(db_cell(&d, k2, 0)) <= seq) k2++;
-        if (m->content) (*n)++;
+        if (ok) (*n)++;
     }
-    bool ok = list != NULL || r.nrows == 0;
     db_rows_free(&r);
     db_rows_free(&d);
+    if (!ok) {
+        chat_messages_free_partial(list, row_count);
+        *n = 0;
+        return false;
+    }
     *msgs = list;
     return ok;
 }

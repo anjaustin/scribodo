@@ -9,6 +9,7 @@
 | `make dbtest` | MariaDB/Qdrant integration in throwaway databases (`tools/services.sh up` first) | No |
 | `make llmtest` | The model adapter end to end against the real `llama-server`: verification, stale-socket start-up, auth, streaming, injection neutralization, crash and restart | No |
 | `make uitest-real` | `tests/ui/real-*.scribo`: the real model through the real UI | Yes |
+| `make dependency-report` | Verifies submodule pins, container digests and OSV advisories; lists available upstream updates without failing on them | No |
 
 ## Hang protection
 
@@ -95,7 +96,7 @@ The chat feature was red-teamed separately; see [`REDTEAM-003-chat.md`](REDTEAM-
 ## Reviewed AI edits
 
 - **Unit tests:** `test_core: diff` (word-level Myers diff, with a 300-case reconstruction property and fallback at the edit limit) and `test_llm` (edit-reply cleaning, the edit request, fake-model edits, revision store integrity). `test_editor: ranges` covers range read, replace and find; `test_editor: anchor` covers the tracked passage through edits, undo and redo.
-- **`edits.scribo`** (fake model; 53 checks) covers:
+- **`edits.scribo`** (fake model) covers:
   - select, ⌘K, review, Accept and the revisions it records;
   - restoring from History, then undoing the restore;
   - Reject;
@@ -118,7 +119,7 @@ The chat feature was red-teamed separately; see [`REDTEAM-003-chat.md`](REDTEAM-
   - a torn line skipped, and the next record starting on its own line;
   - ids and source names that look like paths refused;
   - hand-edited lines with missing numbers.
-- **`notes.scribo`** (45 checks) covers:
+- **`notes.scribo`** covers:
   - a selection saved as a note with its exact source;
   - editing (⌘S, and saving on Close);
   - opening the source, including after the passage moved;
@@ -143,7 +144,7 @@ The chat feature was red-teamed separately; see [`REDTEAM-003-chat.md`](REDTEAM-
 
 See [`OBSERVER-001-design.md`](OBSERVER-001-design.md):
 - unit tests for evidence matching and an end-to-end fake-backend run;
-- `observer.scribo` (30 checks) and `real-observer.scribo`;
+- `observer.scribo` and `real-observer.scribo`;
 - ASan/UBSan and the new `make tsan`, all clean;
 - 10 of 10 mutations caught.
 
@@ -153,7 +154,7 @@ UI scripts start with the observer **off**, so other scripts' file expectations 
 
 ## Projects and documents
 
-- **`projects.scribo`** (35 checks) and **`projects_rt.scribo`** (25 checks) cover:
+- **`projects.scribo`** and **`projects_rt.scribo`** cover:
   - the welcome screen;
   - opening projects;
   - New document, Import, and Rename via the context menu;
@@ -165,7 +166,7 @@ UI scripts start with the observer **off**, so other scripts' file expectations 
 ## Chat attachments
 
 - **Coverage:**
-  - `attachments.scribo` (28 checks) and `attach_many.scribo` (9 checks);
+  - `attachments.scribo` and `attach_many.scribo`;
   - `test_llm: multi_doc_request`: fair budget sharing, cut marking, neutralization, and protection against forged framing.
 - **Red-team:** [`REDTEAM-007-attachments.md`](REDTEAM-007-attachments.md): 12 findings, all fixed; 9 of 9 mutations caught.
 

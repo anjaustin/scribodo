@@ -75,4 +75,14 @@ bool db_query(Db *db, const char *sql, const DbArg *args, size_t nargs, DbRows *
 void db_rows_free(DbRows *r);
 static inline const char *db_cell(const DbRows *r, size_t row, size_t col) { return r->cells[row * r->ncols + col]; }
 
+/* Checked result decoding. `db_cell_nullable` distinguishes a valid SQL NULL
+ * (true with *out == NULL) from a malformed row/column access (false). Numeric
+ * readers reject NULL, overflow, non-finite values and trailing bytes. */
+bool db_rows_has_columns(const DbRows *r, size_t expected);
+bool db_cell_nullable(const DbRows *r, size_t row, size_t col, const char **out);
+bool db_cell_text(const DbRows *r, size_t row, size_t col, const char **out);
+bool db_cell_i64(const DbRows *r, size_t row, size_t col, int64_t *out);
+bool db_cell_u64(const DbRows *r, size_t row, size_t col, uint64_t *out);
+bool db_cell_double(const DbRows *r, size_t row, size_t col, double *out);
+
 #endif

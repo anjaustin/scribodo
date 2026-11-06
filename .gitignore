@@ -6,3 +6,4 @@ build/
 __pycache__/
 *.pyc
 journal/technical-debt-p1_*.md
+journal/technical-debt-p2_*.md

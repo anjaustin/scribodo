@@ -1,0 +1,41 @@
+name: Dependency report
+
+on:
+  schedule:
+    - cron: "17 13 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    name: Pinned dependency inventory
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - name: Check out pinned dependencies
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          submodules: recursive
+
+      - name: Build dependency report
+        id: report
+        continue-on-error: true
+        run: python3 tools/dependency_report.py --output build/dependency-report.md
+
+      - name: Publish job summary
+        if: always()
+        run: cat build/dependency-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload dependency report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dependency-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/dependency-report.md
+          if-no-files-found: error
+
+      - name: Enforce report health
+        if: steps.report.outcome == 'failure'
+        run: exit 1

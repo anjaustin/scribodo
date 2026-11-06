@@ -66,8 +66,8 @@ and shutdown ambiguity.
 
 ### Evidence
 
-- `src/main.c` is a multi-thousand-line composition root and controller.
-- `App` spans `src/main.c:102-268` and mixes long-lived objects, frame strings,
+- `src/main.c` is a large composition root and controller.
+- `App` mixes long-lived objects, frame strings,
   domain data, UI state and worker results.
 - Backup, service, graph and name workers are coordinated directly in `App`.
 
@@ -187,13 +187,13 @@ but this repository policy cannot be established from a source commit alone.
 
 ## P2 backlog
 
-| Debt | Evidence | Next action |
-|---|---|---|
-| Observer monolith | `src/llm/observer.c` is 2,150 lines across text, model, state, jobs and worker sections. | Split along existing section boundaries after storage routing. |
-| Test monoliths | `test_llm.c` and `test_db.c` span many unrelated subsystems. | Extract shared fixtures, then split by subsystem without weakening targets. |
-| Documentation drift | API comments and hard-coded check counts have diverged from behavior. | Keep contracts current; avoid volatile numeric claims. |
-| Weakly typed DB rows | `DbRows` exposes nullable strings by column index. | Add checked conversion helpers and typed repositories. |
-| Manual dependency maintenance | Pins are strong but inventory and update reporting are manual. | Add a scheduled submodule/image/advisory report. |
+| Debt | Status | Evidence | Next action |
+|---|---|---|---|
+| Observer monolith | In progress | `src/llm/observer.c` still combines pure text analysis, model calls, persisted state, jobs and worker orchestration. | Extract cohesive internals without exposing mutable worker state. |
+| Test monoliths | In progress | Pure DB-row, observer-text and observer-fake suites now build independently; `test_llm.c` and `test_db.c` still span multiple stateful subsystems. | Extract shared stateful fixtures, then split the remaining integration suites without weakening targets. |
+| Documentation drift | Done | Living guides no longer encode volatile source locations or assertion totals; dated red-team reports retain their point-in-time evidence. | Keep contracts current and reserve numeric evidence for dated reports. |
+| Weakly typed DB rows | In progress | `DbRows` exposes nullable strings by column index. | Add checked conversion helpers, then migrate repository-local typed decoders. |
+| Manual dependency maintenance | Done | `make dependency-report` and a weekly workflow inventory submodules and images, verify immutable pins, and query OSV by vendored commit. | Review informational upstream updates and remediate any report failure. |
 
 ## Intentional pre-alpha tradeoffs
 
@@ -267,8 +267,8 @@ Do not treat these as remediation targets without a changed product decision:
   and scheduled acceptance gates remain blocked on a trusted macOS runner or
   pinned native-service harness; required-check enforcement remains blocked on
   repository administration.
-- Verification: build and headless tests, ASan/UBSan, TSan (579 checks),
-  database integration (397 checks), base UI and store UI passed locally.
+- Verification: build and headless tests, ASan/UBSan, TSan, database integration,
+  base UI and store UI passed locally.
 
 ### 2026-11-05 — StoreManager red-team follow-up
 
@@ -278,6 +278,25 @@ Do not treat these as remediation targets without a changed product decision:
   failed before script execution because the runner had no display. The durable
   register retains that verified infrastructure constraint without creating a
   permanently failing, non-gating job.
-- Verification: build and headless suites (including 579 LLM checks),
-  ASan/UBSan, TSan (579 checks), database integration (397 checks), base UI and
-  store UI passed locally.
+- Verification: build and headless suites, ASan/UBSan, TSan, database
+  integration, base UI and store UI passed locally.
+
+### 2026-11-05 — P2 maintenance truthfulness
+
+- Removed volatile source locations and assertion totals from living guides while
+  preserving dated red-team evidence as historical records.
+- Added an owned dependency report for submodule pins, upstream availability,
+  container tag/digest integrity and OSV commit advisories, plus a weekly/manual
+  workflow that publishes the Markdown result.
+- Updated the pinned checkout action to its Node 24 release and advanced cJSON to
+  its current post-1.7.19 revision after the first report identified six
+  advisories on the previous pin. Scribodo does not compile `cJSON_Utils` or call
+  `cJSON_Compare`, and its supported 64-bit target is not exposed to the reported
+  32-bit print overflow; the newer pin also includes upstream depth and utility
+  hardening.
+- Added checked `DbRows` shape, nullability and numeric conversions with focused
+  overflow/malformed-value tests, then moved the chat repository to local typed
+  row decoders instead of unchecked column coercion.
+- Split pure evidence/overlap analysis and the deterministic observer backend
+  from worker orchestration. Their tests now run as independent binaries, which
+  begins the test-monolith migration without exposing `Observer` worker state.

@@ -1,5 +1,6 @@
 #define _DARWIN_C_SOURCE
 #include "observer.h"
+#include "observer_text_internal.h"
 
 #include "core/utf8.h"
 
@@ -144,396 +145,6 @@ static char *dupn(const char *s, size_t n)
     return d;
 }
 
-size_t obs_paragraphs(const char *text, size_t *starts, size_t *lens, size_t max)
-{
-    size_t n = strlen(text), k = 0, i = 0;
-    while (i < n && k < max) {
-        while (i < n && (text[i] == '\n' || text[i] == '\r' || text[i] == ' ' || text[i] == '\t')) i++;
-        if (i >= n) break;
-        size_t s = i;
-        /* up to a blank line */
-        while (i < n) {
-            if (text[i] == '\n') {
-                size_t j = i + 1;
-                while (j < n && (text[j] == ' ' || text[j] == '\t' || text[j] == '\r')) j++;
-                if (j >= n || text[j] == '\n') break;
-            }
-            i++;
-        }
-        size_t e = i;
-        while (e > s && (text[e - 1] == ' ' || text[e - 1] == '\t' || text[e - 1] == '\r' || text[e - 1] == '\n')) e--;
-        starts[k] = s;
-        lens[k] = e - s;
-        k++;
-    }
-    return k;
-}
-
-/* Normalized form for matching: curly quotes -> straight, whitespace runs ->
- * one space, emphasis markers and ZWNJ dropped, ASCII lowercased. map[i] /
- * map_end[i] give the source byte range of normalized byte i. */
-static size_t normalize(const char *s, size_t n, char *out, size_t *map, size_t *map_end)
-{
-    size_t k = 0;
-    bool space = false;
-    for (size_t i = 0; i < n;) {
-        const unsigned char *u = (const unsigned char *)s + i;
-        size_t clen = u[0] < 0x80 ? 1 : (u[0] & 0xE0) == 0xC0 ? 2 : (u[0] & 0xF0) == 0xE0 ? 3 : 4;
-        if (i + clen > n) clen = n - i;
-        char rep = 0;
-        bool skip = false;
-        if (u[0] == ' ' || u[0] == '\n' || u[0] == '\t' || u[0] == '\r') {
-            if (!space && k > 0) rep = ' ';
-            else skip = true;
-            space = true;
-        } else {
-            space = false;
-            if (u[0] == '*' || u[0] == '_') skip = true;
-            else if (clen == 3 && u[0] == 0xE2 && u[1] == 0x80 && u[2] == 0x8C) skip = true; /* ZWNJ */
-            else if (clen == 3 && u[0] == 0xE2 && u[1] == 0x80 && (u[2] == 0x98 || u[2] == 0x99)) rep = '\'';
-            else if (clen == 3 && u[0] == 0xE2 && u[1] == 0x80 && (u[2] == 0x9C || u[2] == 0x9D)) rep = '"';
-            else if (clen == 2 && u[0] == 0xC2 && (u[1] == 0xAB || u[1] == 0xBB)) rep = '"';
-        }
-        if (!skip) {
-            if (rep) {
-                out[k] = rep;
-                map[k] = i;
-                map_end[k] = i + clen;
-                k++;
-            } else {
-                for (size_t j = 0; j < clen; j++) {
-                    char c = s[i + j];
-                    out[k] = (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c;
-                    map[k] = i;
-                    map_end[k] = i + clen;
-                    k++;
-                }
-            }
-        }
-        i += clen;
-    }
-    while (k > 0 && out[k - 1] == ' ') k--;
-    out[k] = '\0';
-    return k;
-}
-
-static bool word_byte(unsigned char c);
-
-static const char *memfind(const char *h, size_t hn, const char *n, size_t nn)
-{
-    if (nn == 0 || nn > hn) return NULL;
-    for (size_t i = 0; i + nn <= hn; i++)
-        if (h[i] == n[0] && !memcmp(h + i, n, nn)) return h + i;
-    return NULL;
-}
-
-static bool locate_once(const char *text, size_t n, const char *evidence, size_t en, size_t *start, size_t *len);
-
-bool obs_locate(const char *text, size_t n, const char *evidence, size_t *start, size_t *len)
-{
-    if (!evidence) return false;
-    /* As given (an opening quote mark is often part of the passage), then
-     * without quote marks the model wrapped around it. */
-    while (*evidence == ' ' || *evidence == '\n') evidence++;
-    size_t en = strlen(evidence);
-    while (en && (evidence[en - 1] == ' ' || evidence[en - 1] == '\n')) en--;
-    if (locate_once(text, n, evidence, en, start, len)) return true;
-    while (en && (*evidence == '"' || *evidence == '\'')) {
-        evidence++;
-        en--;
-    }
-    while (en && (evidence[en - 1] == '"' || evidence[en - 1] == '\'')) en--;
-    return locate_once(text, n, evidence, en, start, len);
-}
-
-/* A match must not start or end inside a word ("ed" is not evidence
- * found in "climbed"). */
-static bool word_bounded(const char *h, size_t hn, size_t at, size_t len)
-{
-    bool starts_word = word_byte((unsigned char)h[at]), ends_word = word_byte((unsigned char)h[at + len - 1]);
-    if (starts_word && at > 0 && word_byte((unsigned char)h[at - 1]) && ((unsigned char)h[at] & 0xC0) != 0x80) return false;
-    if (starts_word && at > 0 && ((unsigned char)h[at] & 0xC0) == 0x80) return false; /* mid-character */
-    if (ends_word && at + len < hn && word_byte((unsigned char)h[at + len]) && ((unsigned char)h[at + len] & 0xC0) != 0x80)
-        return false;
-    if (ends_word && at + len < hn && ((unsigned char)h[at + len] & 0xC0) == 0x80) return false;
-    return true;
-}
-
-static const char *memfind_word(const char *h, size_t hn, const char *n, size_t nn)
-{
-    for (size_t from = 0; from + nn <= hn;) {
-        const char *hit = memfind(h + from, hn - from, n, nn);
-        if (!hit) return NULL;
-        size_t at = (size_t)(hit - h);
-        if (word_bounded(h, hn, at, nn)) return hit;
-        from = at + 1;
-    }
-    return NULL;
-}
-
-static bool locate_once(const char *text, size_t n, const char *evidence, size_t en, size_t *start, size_t *len)
-{
-    if (en < 2) return false;
-    const char *hit = memfind_word(text, n, evidence, en);
-    if (hit) {
-        *start = (size_t)(hit - text);
-        *len = en;
-        return true;
-    }
-    char *nt = malloc(n * 1 + 1), *ne = malloc(en + 1);
-    size_t *map = malloc((n + 1) * sizeof(size_t)), *map_end = malloc((n + 1) * sizeof(size_t));
-    size_t *emap = malloc((en + 1) * sizeof(size_t)), *emap_end = malloc((en + 1) * sizeof(size_t));
-    bool ok = false;
-    if (nt && ne && map && map_end && emap && emap_end) {
-        size_t tn = normalize(text, n, nt, map, map_end);
-        size_t evn = normalize(evidence, en, ne, emap, emap_end);
-        /* Full match, then ever shorter word prefixes (at least 4 words and
-         * 20 bytes): models often paraphrase the end of a quote. */
-        size_t try_len = evn;
-        int words = 1;
-        for (size_t i = 0; i < evn; i++) words += ne[i] == ' ';
-        while (try_len >= 2 && !ok) {
-            const char *h = memfind_word(nt, tn, ne, try_len);
-            /* A prefix must cover most of the quote: a made-up claim can't
-             * borrow a sentence's first words as its "evidence". */
-            if (h && (try_len == evn || (try_len >= 20 && try_len * 100 >= evn * 60))) {
-                size_t a = (size_t)(h - nt), z = a + try_len - 1;
-                *start = map[a];
-                *len = map_end[z] - map[a];
-                ok = true;
-                break;
-            }
-            if (words <= 4) break;
-            /* drop the last word */
-            size_t cut = try_len;
-            while (cut > 0 && ne[cut - 1] != ' ') cut--;
-            if (cut == 0) break;
-            try_len = cut - 1;
-            words--;
-        }
-    }
-    free(nt);
-    free(ne);
-    free(map);
-    free(map_end);
-    free(emap);
-    free(emap_end);
-    return ok;
-}
-
-/* ---- overlap ---------------------------------------------------------------------- */
-
-static bool word_byte(unsigned char c)
-{
-    return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c >= 0x80;
-}
-
-static bool is_upper_start(const unsigned char *w)
-{
-    return (w[0] >= 'A' && w[0] <= 'Z') || (w[0] == 0xC3 && w[1] >= 0x80 && w[1] <= 0x9E) ||
-           (w[0] == 0xC5 && (w[1] & 1) == 0 && w[1] >= 0x80);
-}
-
-static bool stopword(const char *w, size_t n)
-{
-    static const char *const stop[] = {
-        "the", "and", "that", "with", "this", "from", "have", "were", "they", "their", "there", "what", "when",
-        "which", "would", "could", "should", "about", "into", "over", "only", "then", "than", "them", "your",
-        "will", "been", "being", "does", "said", "says", "like", "just", "very", "also", "here", "she", "her",
-        "his", "him", "its", "for", "not", "but", "you", "are", "was", "had", "has", "one", "who", "how", "why",
-        "is", "a", "an", "of", "to", "in", "on", "at", "it", "he", "as", "by", "or", "be",
-    };
-    for (size_t i = 0; i < sizeof(stop) / sizeof(stop[0]); i++)
-        if (strlen(stop[i]) == n && !strncasecmp(stop[i], w, n)) return true;
-    return false;
-}
-
-typedef struct {
-    char w[48];
-    bool name;
-} Tok;
-
-static size_t tokens(const char *s, Tok *out, size_t max)
-{
-    size_t k = 0;
-    const unsigned char *u = (const unsigned char *)s;
-    for (size_t i = 0; u[i] && k < max;) {
-        while (u[i] && !word_byte(u[i])) i++;
-        size_t a = i;
-        while (u[i] && (word_byte(u[i]) || (u[i] == '\'' && word_byte(u[i + 1])) ||
-                        (u[i] == 0xE2 && u[i + 1] == 0x80 && u[i + 2] == 0x99)))
-            i += (u[i] == 0xE2) ? 3 : 1;
-        size_t n = i - a;
-        if (n == 0) continue;
-        /* strip a possessive ('s / ’s) */
-        if (n > 2 && u[a + n - 1] == 's' && u[a + n - 2] == '\'') n -= 2;
-        else if (n > 4 && u[a + n - 1] == 's' && u[a + n - 2] == 0x99 && u[a + n - 3] == 0x80) n -= 4;
-        if (n >= sizeof(out[0].w) || stopword(s + a, n)) continue;
-        bool name = is_upper_start(u + a);
-        if (!name && cp_count(s + a, n) < 4) continue;
-        bool dup = false;
-        for (size_t j = 0; j < k && !dup; j++) dup = strlen(out[j].w) == n && !strncasecmp(out[j].w, s + a, n);
-        if (dup) continue;
-        memcpy(out[k].w, s + a, n);
-        out[k].w[n] = '\0';
-        out[k].name = name;
-        k++;
-    }
-    return k;
-}
-
-int obs_overlap(const char *a, const char *b)
-{
-    Tok ta[64], tb[64];
-    size_t na = tokens(a, ta, 64), nb = tokens(b, tb, 64);
-    int score = 0;
-    for (size_t i = 0; i < na; i++)
-        for (size_t j = 0; j < nb; j++)
-            if (!strcasecmp(ta[i].w, tb[j].w)) {
-                score += ta[i].name || tb[j].name ? 2 : 1;
-                break;
-            }
-    return score;
-}
-
-/* ---- fake backend ------------------------------------------------------------------- */
-
-/* "<Name>'s <attr> is|are <value>" -> fields (all lowercased except name). */
-static bool attr_pattern(const char *s, char *name, char *attr, char *value)
-{
-    const char *p = strstr(s, "'s ");
-    size_t plen = 3;
-    const char *q = strstr(s, "\xE2\x80\x99s ");
-    if (!p || (q && q < p)) {
-        p = q;
-        plen = 5;
-    }
-    if (!p) return false;
-    const char *ns = p;
-    while (ns > s && word_byte((unsigned char)ns[-1])) ns--;
-    if (p - ns < 2 || p - ns > 40) return false;
-    snprintf(name, 48, "%.*s", (int)(p - ns), ns);
-    const char *a = p + plen;
-    int an = 0;
-    while (a[an] && word_byte((unsigned char)a[an])) an++;
-    if (!an || an > 40) return false;
-    snprintf(attr, 48, "%.*s", an, a);
-    const char *v = a + an;
-    if (!strncmp(v, " is ", 4)) v += 4;
-    else if (!strncmp(v, " are ", 5)) v += 5;
-    else return false;
-    int vn = 0;
-    while (v[vn] && word_byte((unsigned char)v[vn])) vn++;
-    if (!vn || vn > 40) return false;
-    snprintf(value, 48, "%.*s", vn, v);
-    return true;
-}
-
-static void add_finding(cJSON *arr, const char *type, const char *desc, const char *ev, const char *subject)
-{
-    if (cJSON_GetArraySize(arr) >= 8) return;
-    cJSON *f = cJSON_CreateObject();
-    cJSON_AddStringToObject(f, "type", type);
-    cJSON_AddStringToObject(f, "subject", subject ? subject : "");
-    cJSON_AddStringToObject(f, "description", desc);
-    cJSON_AddStringToObject(f, "evidence", ev);
-    cJSON_AddItemToArray(arr, f);
-}
-
-/* "Zoë is Mara's sister." -> Zoë, "sister of", Mara (the fake model's one
- * relationship form). */
-static bool rel_pattern(const char *sent, char *a, char *rel, char *b)
-{
-    char tail[8] = "";
-    if (sscanf(sent, "%47[^ ] is %47[^' ]'s %47[a-z]%7s", a, b, rel, tail) != 4 || strcmp(tail, ".") != 0) return false;
-    if (!is_upper_start((const unsigned char *)a) || !is_upper_start((const unsigned char *)b)) return false;
-    size_t n = strlen(rel);
-    if (n + 4 < 48) memcpy(rel + n, " of", 4);
-    return true;
-}
-
-char *obs_fake_extract(const char *chunk)
-{
-    cJSON *root = cJSON_CreateObject();
-    cJSON *arr = cJSON_AddArrayToObject(root, "findings");
-    size_t n = strlen(chunk);
-    /* Sentences: questions, and attribute statements. */
-    for (size_t i = 0; i < n;) {
-        while (i < n && (chunk[i] == ' ' || chunk[i] == '\n')) i++;
-        size_t s = i;
-        while (i < n && chunk[i] != '.' && chunk[i] != '?' && chunk[i] != '!' && chunk[i] != '\n') i++;
-        if (i < n && chunk[i] != '\n') i++;
-        if (i - s < 3) continue;
-        char *sent = dupn(chunk + s, i - s);
-        if (!sent) break;
-        char nm[48], at[48], va[48], ra[48], rr[48], rb[48];
-        if (sent[strlen(sent) - 1] == '?') add_finding(arr, "question", sent, sent, "");
-        else if (rel_pattern(sent, ra, rr, rb)) {
-            add_finding(arr, "relationship", sent, sent, ra);
-            cJSON *last = cJSON_GetArrayItem(arr, cJSON_GetArraySize(arr) - 1);
-            cJSON_AddStringToObject(last, "relation", rr);
-            cJSON_AddStringToObject(last, "object", rb);
-        }
-        else if (attr_pattern(sent, nm, at, va)) add_finding(arr, "event", sent, sent, nm);
-        free(sent);
-    }
-    /* Test hook: a finding whose evidence is not in the text (as a model
-     * might invent), which must never be recorded. */
-    if (strstr(chunk, "[[invent]]")) add_finding(arr, "event", "Ingrid sails away.", "Ingrid sailed away at dawn.", "Ingrid");
-    /* ...and one citing a trivial word that is in the text (prompt injection). */
-    if (strstr(chunk, "[[weak]]")) add_finding(arr, "event", "Ingrid is the murderer.", "the", "Ingrid");
-    /* Names: capitalised words that aren't sentence starts or ALL CAPS. */
-    char seen[16][48];
-    size_t nseen = 0;
-    const unsigned char *u = (const unsigned char *)chunk;
-    for (size_t i = 0; i < n;) {
-        while (i < n && !word_byte(u[i])) i++;
-        size_t a = i;
-        while (i < n && word_byte(u[i])) i++;
-        size_t len = i - a;
-        if (len < 3 || len >= 48 || !is_upper_start(u + a)) continue;
-        size_t b = a;
-        while (b > 0 && (u[b - 1] == ' ' || u[b - 1] == '"' || u[b - 1] == '\'' || u[b - 1] == 0x9C)) b--;
-        bool initial = b == 0 || u[b - 1] == '.' || u[b - 1] == '?' || u[b - 1] == '!' || u[b - 1] == '\n' || u[b - 1] == ':';
-        bool caps = len > 1 && u[a + 1] >= 'A' && u[a + 1] <= 'Z';
-        /* A sentence may start with a name ("Dvořák waited."), but not with
-         * a common word ("The", "Should"). */
-        static const char *const starters[] = { "Then", "When", "There", "This", "That", "What", "Should", "Could",
-                                                "Would", "Does", "Did", "Will", "Can", "After", "Before", "Where" };
-        bool starter = false;
-        for (size_t q = 0; q < sizeof(starters) / sizeof(starters[0]) && !starter; q++)
-            starter = strlen(starters[q]) == len && !strncmp(starters[q], chunk + a, len);
-        if (stopword(chunk + a, len) || (initial && starter) || caps) continue;
-        char w[48];
-        snprintf(w, sizeof(w), "%.*s", (int)len, chunk + a);
-        bool dup = false;
-        for (size_t k = 0; k < nseen && !dup; k++) dup = !strcmp(seen[k], w);
-        if (dup || nseen == 16) continue;
-        snprintf(seen[nseen++], 48, "%s", w);
-        char desc[96];
-        snprintf(desc, sizeof(desc), "%s is mentioned.", w);
-        add_finding(arr, "entity", desc, w, w);
-    }
-    char *out = cJSON_PrintUnformatted(root);
-    cJSON_Delete(root);
-    return out;
-}
-
-char *obs_fake_judge(const char *canon, const char *statement)
-{
-    char n1[48], a1[48], v1[48], n2[48], a2[48], v2[48];
-    bool conflict = attr_pattern(canon, n1, a1, v1) && attr_pattern(statement, n2, a2, v2) && !strcasecmp(n1, n2) &&
-                    !strcasecmp(a1, a2) && strcasecmp(v1, v2) != 0;
-    cJSON *root = cJSON_CreateObject();
-    char check[300];
-    if (conflict) snprintf(check, sizeof(check), "Canon says %s's %s: %s; the new text says %s.", n1, a1, v1, v2);
-    else snprintf(check, sizeof(check), "No contradiction found.");
-    cJSON_AddStringToObject(root, "check", check);
-    cJSON_AddStringToObject(root, "verdict", conflict ? "conflict" : "unrelated");
-    char *out = cJSON_PrintUnformatted(root);
-    cJSON_Delete(root);
-    return out;
-}
 
 /* ---- model backend ------------------------------------------------------------------ */
 
@@ -1026,7 +637,7 @@ static void norm_key(const char *s, char *out, size_t outlen)
     size_t k = 0;
     bool sep = false;
     for (const unsigned char *p = (const unsigned char *)s; *p && k + 2 < outlen; p++) {
-        if (word_byte(*p)) {
+        if (obs_word_byte(*p)) {
             if (sep && k) out[k++] = ' ';
             out[k++] = (*p >= 'A' && *p <= 'Z') ? (char)(*p + 32) : (char)*p;
             sep = false;
@@ -1080,7 +691,7 @@ static bool strong_evidence(const char *type, const char *subject, const char *q
     int words = 0;
     bool in = false;
     for (const unsigned char *p = (const unsigned char *)quote; *p; p++) {
-        bool w = word_byte(*p);
+        bool w = obs_word_byte(*p);
         if (w && !in) words++;
         in = w;
     }
@@ -1123,7 +734,7 @@ static bool mentions_name(const char *text, const char *name)
 static bool named_subject(const char *subject)
 {
     while (*subject == ' ') subject++;
-    if (!is_upper_start((const unsigned char *)subject) || strlen(subject) < 2) return false;
+    if (!obs_upper_start((const unsigned char *)subject) || strlen(subject) < 2) return false;
     int words = 0;
     for (const char *p = subject; *p;) {
         while (*p == ' ') p++;
@@ -1143,7 +754,7 @@ static bool names_someone(const char *text)
     while (*p) {
         while (*p && (*p == ' ' || ispunct(*p))) p++;
         if (!*p) break;
-        if (!first && is_upper_start(p)) return true;
+        if (!first && obs_upper_start(p)) return true;
         first = false;
         while (*p && *p != ' ') p++;
     }
@@ -1275,12 +886,12 @@ static size_t parse_candidates(const Job *j, const char *json, const char *revis
         if (cJSON_IsString(obj)) utf8_clip(c->info.object, sizeof(c->info.object), obj->valuestring, SIZE_MAX);
         /* A relationship links two *named* entities ("the eyes" and "the
          * sea" are not a relationship worth recording). */
-        if (!strcmp(t, "relationship") && (!is_upper_start((const unsigned char *)c->info.subject) ||
-                                           !is_upper_start((const unsigned char *)c->info.object)))
+        if (!strcmp(t, "relationship") && (!obs_upper_start((const unsigned char *)c->info.subject) ||
+                                           !obs_upper_start((const unsigned char *)c->info.object)))
             continue;
         /* A description that never names its subject ("A man who is
          * hunched over the lens") gets the name in front. */
-        if (!strcmp(t, "entity") && c->info.subject[0] && is_upper_start((const unsigned char *)c->info.subject) &&
+        if (!strcmp(t, "entity") && c->info.subject[0] && obs_upper_start((const unsigned char *)c->info.subject) &&
             !strstr(desc->valuestring, c->info.subject)) {
             size_t dn = strlen(c->info.subject) + strlen(desc->valuestring) + 8;
             c->desc = malloc(dn);
