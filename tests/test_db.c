@@ -1355,6 +1355,8 @@ static void test_fork_retry_snapshot(void)
                      " (SELECT id FROM records WHERE project_id = ?)", (DbArg[1]){ DB_S(original_id) }, 1, NULL));
     CHECK(!store_fork(g_store, copy, why, sizeof(why)));
     CHECK(store_problem(g_store, copy, NULL, 0) == STORE_PROBLEM_COPY);
+    CHECK(store_mode(g_store, copy, NULL, 0, NULL) == STORE_PAUSED);
+    CHECK(!chat_store_append(g_store, copy, chat_id, "Must stay paused", &user));
     char chats[PATH_MAX + 60];
     snprintf(chats, sizeof(chats), "%s/.scribodo/chats", copy);
     CHECK(access(chats, F_OK) != 0); /* partial export never becomes live metadata */
@@ -1365,6 +1367,7 @@ static void test_fork_retry_snapshot(void)
     CHECK(mkdir(pending, 0700) == 0); /* export completes, but registration cannot persist */
     bool blocked = !store_fork(g_store, copy, why, sizeof(why));
     CHECK(blocked && store_problem(g_store, copy, NULL, 0) == STORE_PROBLEM_COPY);
+    CHECK(store_mode(g_store, copy, NULL, 0, NULL) == STORE_PAUSED);
     if (blocked) {
         CHECK(rmdir(pending) == 0);
         write_file(pending, original_id); /* copied crash residue must never resume the source project's row */
@@ -1376,7 +1379,11 @@ static void test_fork_retry_snapshot(void)
         CHECK(chmod(staged_notes, 0644) == 0);
         store_stop(g_store);
         CHECK(store_start(g_store, g_name, why, sizeof(why))); /* resume using only the durable journal */
+        char aside_path[PATH_MAX + 100];
+        snprintf(aside_path, sizeof(aside_path), "%s/.scribodo/store.json.set-aside", copy);
+        CHECK(mkdir(aside_path, 0700) == 0); /* marker withdrawal must not be part of a fork */
         CHECK(store_fork(g_store, copy, why, sizeof(why)));
+        CHECK(rmdir(aside_path) == 0);
         char copy_id[40];
         CHECK(store_mode(g_store, copy, copy_id, sizeof(copy_id), NULL) == STORE_DB && strcmp(copy_id, original_id));
         ChatMessage *messages = NULL;
@@ -1443,6 +1450,24 @@ static void test_import_revision_identity(void)
                    (DbArg[1]){ DB_S(pid) }, 1, &rows));
     CHECK(rows.nrows == 1 && !strcmp(db_cell(&rows, 0, 0), "0"));
     db_rows_free(&rows);
+    /* Database sequence is authoritative even when wall-clock time goes back. */
+    snprintf(doc, sizeof(doc), "%s/a.md", root);
+    CHECK(revisions_record(g_store, root, doc, "Later sequence, earlier clock", "save", NULL, NULL));
+    CHECK(db_run(store_db(g_store), "UPDATE revisions v JOIN documents d ON d.id = v.document_id"
+                 " SET v.created_at = 1600000000 WHERE d.project_id = ? AND v.content = 'Later sequence, earlier clock'",
+                 (DbArg[1]){ DB_S(pid) }, 1, NULL));
+    char exported[PATH_MAX + 32];
+    snprintf(exported, sizeof(exported), "%s/exported", root);
+    CHECK(store_export_project(g_store, pid, exported, why, sizeof(why)));
+    CHECK(store_import(g_store, exported, why, sizeof(why)));
+    snprintf(doc, sizeof(doc), "%s/a.md", exported);
+    Revision *history = NULL;
+    size_t nhistory = revisions_list(g_store, exported, doc, &history);
+    CHECK(nhistory == 2);
+    char *latest = nhistory ? revisions_load(g_store, exported, doc, &history[0]) : NULL;
+    CHECK(latest && !strcmp(latest, "Later sequence, earlier clock"));
+    free(latest);
+    free(history);
     char cmd[PATH_MAX + 20];
     snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root);
     system(cmd);

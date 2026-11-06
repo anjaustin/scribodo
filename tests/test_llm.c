@@ -899,6 +899,38 @@ static void test_records(void)
 }
 
 /* ---- observer ----------------------------------------------------------------------- */
+static void test_snapshot_name_exhaustion(void)
+{
+    char project[700], doc[800], path[1000];
+    snprintf(project, sizeof(project), "%s/snapshot-collisions", g_dir);
+    CHECK(mkdir(project, 0755) == 0);
+    snprintf(doc, sizeof(doc), "%s/chapter.md", project);
+    store_set_write_time(g_store, 1700000000.125);
+    CHECK(revisions_record(g_store, project, doc, "Original", "save", NULL, NULL));
+    for (int i = 1; i < 1000; i++) {
+        time_t t = 1700000000 + (125 + i) / 1000;
+        struct tm tmv;
+        localtime_r(&t, &tmv);
+        char stamp[40];
+        strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tmv);
+        snprintf(path, sizeof(path), "%s/.scribodo/revisions/chapter.md/%s-%03d-save.md", project, stamp, (125 + i) % 1000);
+        FILE *f = fopen(path, "wb");
+        CHECK(f != NULL);
+        if (f) { CHECK(fputs("Preserve", f) >= 0); CHECK(fclose(f) == 0); }
+    }
+    bool recorded = true;
+    CHECK(!revisions_record(g_store, project, doc, "Must not overwrite", "save", NULL, &recorded) && !recorded);
+    FILE *f = fopen(path, "rb");
+    char text[40] = "";
+    CHECK(f != NULL);
+    if (f) { CHECK(fread(text, 1, sizeof(text) - 1, f) == 8); fclose(f); }
+    CHECK(!strcmp(text, "Preserve"));
+    Revision *revs = NULL;
+    CHECK(revisions_list(g_store, project, doc, &revs) == 1);
+    free(revs);
+    store_set_write_time(g_store, 0);
+}
+
 static void test_file_history_read_failures(void)
 {
     char project[700], path[1000], doc[800];
@@ -1951,6 +1983,7 @@ int main(int argc, char **argv)
         { "revisions", test_revisions },
         { "records", test_records },
         { "file_history_read_failures", test_file_history_read_failures },
+        { "snapshot_name_exhaustion", test_snapshot_name_exhaustion },
         { "observer_run", test_observer_run },
         { "observer_redteam", test_observer_redteam },
         { "recent_and_renames", test_recent_and_renames },

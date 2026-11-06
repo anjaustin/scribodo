@@ -497,3 +497,18 @@ Do not treat these as remediation targets without a changed product decision:
   expanded one-shot/sustained allocation suite passed 680 checks normally and
   under ASan/UBSan; all seven final mutations were caught. The three outstanding
   concerns are closed within this review's documented scope.
+
+### 2026-11-06 — follow-up adversarial marker/snapshot review
+
+- Found a fork crash window caused by temporarily withdrawing the copy marker.
+  Removed marker withdrawal/restoration: retain copy authority until the atomic
+  target-marker replacement. The baseline fails the new occupied-set-aside-path
+  regression; the remediation preserves that unrelated path and succeeds.
+- Reproduced immutable snapshot overwrite when all 1,000 candidate filenames
+  were occupied. Exhaustion now fails before writing; `lstat` treats dangling
+  links as occupied and inspection errors fail closed.
+- Added paused-write and non-monotonic-clock export/import checks. Nine compiled
+  mutations were caught by assertions, including restoration of both defects.
+- Headless, database, ASan/UBSan (headless and database), TSan, and dependency
+  validation passed. Full native/offline acceptance is running before publication.
+  Scope, evidence and limits: `docs/REDTEAM-012-marker-snapshots.md`.

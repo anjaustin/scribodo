@@ -80,6 +80,11 @@ the snapshot is archived in `legacy-*` and pending state is removed. A copied
 post-commit journal can finish that cleanup before starting another fork. This
 is local crash/retry coordination, not a hostile-tampering trust boundary.
 
+Forks keep the original copy marker until atomic replacement with the committed
+target marker; they never temporarily expose file-backed authority. Snapshot
+recording refuses exhausted timestamp/origin names instead of overwriting an
+existing snapshot. See `REDTEAM-012-marker-snapshots.md`.
+
 ## Backups (SOW §7)
 
 `tools/backup.sh [--db NAME] PROJECT_DIR [DEST]` writes a folder (0700, by default under `~/Library/Application Support/Scribodo/backups/`) holding:

@@ -689,7 +689,11 @@ static bool fork_snapshot_finish(const char *project, const char *stage)
 static bool import_locked_from(StoreManager *manager, Db *db, const char *project_dir, const char *data_dir,
                                const char *dir, char *why, size_t whylen)
 {
-    bool ok = store_mode(manager, project_dir, NULL, 0, NULL) == STORE_FILES;
+    bool fork = strcmp(project_dir, data_dir) != 0;
+    /* Keep the copy marker authoritative until its atomic replacement. A
+     * crash must never expose an unmarked folder with empty live metadata. */
+    bool ok = fork ? store_problem(manager, project_dir, NULL, 0) == STORE_PROBLEM_COPY
+                   : store_mode(manager, project_dir, NULL, 0, NULL) == STORE_FILES;
     char pid[40] = "";
     if (ok) ok = import_project(db, project_dir, pid, sizeof(pid), why, whylen);
     if (ok && strcmp(project_dir, data_dir)) {
@@ -785,16 +789,6 @@ bool store_needs_import(StoreManager *manager, const char *project_dir)
 }
 
 /* ---- copies and missing projects ------------------------------------------------ */
-
-static bool set_marker_aside(StoreManager *manager, const char *project_dir, bool aside)
-{
-    char a[PATH_MAX + 64], b[PATH_MAX + 64];
-    snprintf(a, sizeof(a), "%s/.scribodo/store.json", project_dir);
-    snprintf(b, sizeof(b), "%s/.scribodo/store.json.set-aside", project_dir);
-    bool ok = aside ? rename(a, b) == 0 : unlink(b) == 0 || errno == ENOENT;
-    store_forget_verification(manager);
-    return ok;
-}
 
 /* Write the project's data from the store as files in `project_dir` (so a
  * normal import can take them in as a new project). Times of notes and
@@ -1042,8 +1036,8 @@ bool store_fork(StoreManager *manager, const char *project_dir, char *why, size_
         snprintf(why, whylen, "The project store is offline");
         return false;
     }
-    /* Own the entire marker/export/import transition. Otherwise another
-     * window could import between setting the marker aside and exporting. */
+    /* Own the complete export/import/marker transition so competing forks
+     * cannot replace each other's snapshot or registration. */
     char dir[PATH_MAX + 32], ownerp[PATH_MAX + 64], lockp[PATH_MAX + 64];
     snprintf(dir, sizeof(dir), "%s/.scribodo", project_dir);
     snprintf(ownerp, sizeof(ownerp), "%s/import.owner.lock", dir);
@@ -1084,26 +1078,14 @@ bool store_fork(StoreManager *manager, const char *project_dir, char *why, size_
     }
     char stage[PATH_MAX + 80];
     snprintf(stage, sizeof(stage), "%s/fork-snapshot", dir);
-    bool aside = false;
     bool ok = fork_snapshot_prepare(manager, db, project_dir, id, stage, why, whylen);
     if (ok) {
         store_set_importing(manager, project_dir);
-        aside = set_marker_aside(manager, project_dir, true);
-        ok = aside;
-        if (ok) ok = import_locked_from(manager, db, project_dir, stage, dir, why, whylen);
-        else snprintf(why, whylen, "Couldn't set the copy marker aside; its snapshot is retained for retry");
+        ok = import_locked_from(manager, db, project_dir, stage, dir, why, whylen);
     }
     if (ok) {
-        set_marker_aside(manager, project_dir, false);
         if (!fork_snapshot_finish(project_dir, stage))
             snprintf(why, whylen, "The fork is complete; its staging snapshot was retained because archiving couldn't finish");
-    } else if (aside) {
-        char a[PATH_MAX + 64], b[PATH_MAX + 64];
-        snprintf(a, sizeof(a), "%s/.scribodo/store.json.set-aside", project_dir);
-        snprintf(b, sizeof(b), "%s/.scribodo/store.json", project_dir);
-        if (rename(a, b) != 0)
-            snprintf(why, whylen, "Fork paused: couldn't restore its copy marker; the marker and snapshot were retained");
-        store_forget_verification(manager);
     }
     store_set_importing(manager, NULL);
     flock(lfd, LOCK_UN);

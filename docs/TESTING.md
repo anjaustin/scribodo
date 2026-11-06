@@ -56,6 +56,10 @@ CMake is available only through a cached uv tool, use
 `make CMAKE="uvx --offline --from cmake cmake" llama`. Model weights are acquired
 separately by `make model`; acceptance never needs to select a quantized fallback.
 
+[`REDTEAM-012-marker-snapshots.md`](REDTEAM-012-marker-snapshots.md) records the
+retained-copy-marker regression, the 1,000-name snapshot exhaustion test, and the
+non-monotonic-clock export/import check.
+
 ## Automated trusted acceptance
 
 The repository-scoped `scribodo-mac-studio` runner executes database and UI

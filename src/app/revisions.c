@@ -220,7 +220,12 @@ static bool record_impl(StoreManager *manager, const char *project_dir, const ch
     for (int tries = 0;; tries++) {
         snprintf(file, sizeof(file), "%s-%03d-%s.md", stamp, ms, origin);
         snprintf(path, sizeof(path), "%s/%s", dir, file);
-        if (access(path, F_OK) != 0 || tries == 999) break;
+        struct stat existing;
+        if (lstat(path, &existing) != 0) {
+            if (errno == ENOENT) break;
+            return false;
+        }
+        if (tries == 999) return false; /* exhaustion must never replace history */
         if (++ms == 1000) { /* into the next second */
             ms = 0;
             now++;
