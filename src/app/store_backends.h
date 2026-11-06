@@ -21,6 +21,7 @@
 bool sdb_revision_record(Db *db, const char *project_id, const char *doc_path, const char *text, const char *origin,
                          const char *note, bool any_match, bool *recorded, char *id_out, size_t idlen);
 size_t sdb_revision_list(Db *db, const char *project_id, const char *doc_path, Revision **out);
+bool sdb_revision_list_checked(Db *db, const char *project_id, const char *doc_path, Revision **out, size_t *count);
 char *sdb_revision_load(Db *db, const char *project_id, const char *doc_path, const Revision *rev);
 
 /* records (notes, canon, findings) */
@@ -28,6 +29,7 @@ bool sdb_record_append(Db *db, const char *project_id, RecordKind kind, const ch
                        const char *content, const SourceRef *sources, size_t nsources, const FindingInfo *finding,
                        bool fresh, int *ver_out);
 size_t sdb_record_list(Db *db, const char *project_id, RecordKind kind, Record **out);
+bool sdb_record_list_checked(Db *db, const char *project_id, RecordKind kind, Record **out, size_t *count);
 
 /* chats */
 bool sdb_chat_append(Db *db, const char *project_id, const char *id, const char *title, const ChatMessage *m);

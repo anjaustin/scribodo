@@ -58,7 +58,7 @@ $(RAYLIB_LIB): $(RAYLIB_OBJS)
 # --- Scribodo ----------------------------------------------------------------
 CORE_SRCS := src/core/utf8.c src/core/text_buffer.c src/core/undo.c src/core/wrap.c src/core/doc_io.c src/core/diff.c src/app/frame_view_model.c
 STORE_SRCS := src/app/db.c src/app/store.c src/app/project_store.c src/app/observer_store.c src/app/store_revisions.c src/app/store_records.c src/app/store_chats.c src/app/store_import.c src/app/store_entities.c src/app/backup.c src/app/backup_job.c src/app/service_supervisor.c src/app/entity_backfill_job.c src/app/name_detection_job.c src/app/project_session.c src/app/explorer_snapshot.c src/app/profile.c src/app/model_settings.c
-LLM_SRCS  := src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/app/recent.c src/app/renames.c src/llm/observer.c src/llm/observer_text.c src/llm/observer_fake.c src/llm/semantic.c src/llm/remote.c src/llm/names.c src/llm/memfit.c $(STORE_SRCS)
+LLM_SRCS  := src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/app/recent.c src/app/renames.c src/llm/observer.c src/llm/observer_text.c src/llm/observer_fake.c src/llm/observer_model.c src/llm/observer_job.c src/llm/semantic.c src/llm/remote.c src/llm/names.c src/llm/memfit.c $(STORE_SRCS)
 LLM_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(LLM_SRCS)) $(BUILD)/third_party/cJSON/cJSON.o
 APP_SRCS  := src/main.c src/app/script.c src/app/chat_controller.c src/app/reviewed_edit_controller.c src/ui/font.c src/ui/clay_render.c src/ui/editor.c src/ui/input.c \
              src/ui/chat_view.c src/ui/review_view.c src/ui/record_view.c src/ui/findings_view.c src/ui/prompt_view.c src/ui/menu_view.c src/ui/vendor_impl.c
@@ -67,7 +67,7 @@ APP_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(APP_SRCS))
 # Native dialogs (Objective-C on macOS).
 APP_OBJS  += $(BUILD)/src/platform/dialogs_mac.o
 APP   := $(BUILD)/scribodo
-TESTS := $(BUILD)/test_core $(BUILD)/test_doc_io $(BUILD)/test_editor $(BUILD)/test_db_rows $(BUILD)/test_observer_text $(BUILD)/test_observer_fake $(BUILD)/test_llm
+TESTS := $(BUILD)/test_core $(BUILD)/test_doc_io $(BUILD)/test_editor $(BUILD)/test_db_rows $(BUILD)/test_observer_text $(BUILD)/test_observer_fake $(BUILD)/test_components $(BUILD)/test_remote $(BUILD)/test_llm
 
 .PHONY: all run test uitest uitest-real sanitize tsan cstest dbtest uitest-db backuptest remotetest offlinetest dependency-report clean distclean llama model llmtest
 
@@ -100,7 +100,13 @@ $(BUILD)/test_core: $(CORE_OBJS) $(BUILD)/tests/test_core.o
 $(BUILD)/test_doc_io: $(CORE_OBJS) $(BUILD)/tests/test_doc_io.o
 	$(CC) $(CFLAGS) $^ -o $@
 
-$(BUILD)/test_llm: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_llm.o
+$(BUILD)/test_llm: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_state_fixture.o $(BUILD)/tests/test_llm.o
+	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
+
+$(BUILD)/test_remote: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_state_fixture.o $(BUILD)/tests/test_remote.o
+	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
+
+$(BUILD)/test_components: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_state_fixture.o $(BUILD)/tests/test_components.o
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
 
 $(BUILD)/test_db_rows: $(BUILD)/src/app/db.o $(BUILD)/tests/test_db_rows.o
@@ -162,7 +168,7 @@ $(MARIADB_LIB):
 	  -DWITH_CURL=OFF -DWITH_EXTERNAL_ZLIB=ON > build/mariadb-cc.log
 	$(CMAKE) --build build/mariadb-cc --target mariadbclient -j8 >> build/mariadb-cc.log
 
-$(BUILD)/test_db: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_db.o
+$(BUILD)/test_db: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_db_core.o $(BUILD)/tests/test_db.o
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
 
 # Against the running local services (tools/services.sh up).
@@ -252,8 +258,14 @@ sanitize:
 tsan: $(MARIADB_LIB)
 	@mkdir -p build/tsan
 	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) $(CORE_SRCS) $(LLM_SRCS) third_party/cJSON/cJSON.c \
-	  tests/test_llm.c -o build/tsan/test_llm $(MARIADB_LIBS) -lpthread
-	TSAN_OPTIONS=halt_on_error=1 $(WATCHDOG) 300 tsan ./build/tsan/test_llm
+	  tests/test_state_fixture.c tests/test_llm.c -o build/tsan/test_llm $(MARIADB_LIBS) -lpthread
+	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) $(CORE_SRCS) $(LLM_SRCS) third_party/cJSON/cJSON.c \
+	  tests/test_state_fixture.c tests/test_components.c -o build/tsan/test_components $(MARIADB_LIBS) -lpthread
+	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) $(CORE_SRCS) $(LLM_SRCS) third_party/cJSON/cJSON.c \
+	  tests/test_state_fixture.c tests/test_remote.c -o build/tsan/test_remote $(MARIADB_LIBS) -lpthread
+	@set -e; for t in test_llm test_components test_remote; do \
+	  TSAN_OPTIONS=halt_on_error=1 $(WATCHDOG) 300 tsan-$$t ./build/tsan/$$t; echo; \
+	done
 
 run: $(APP)
 	./$(APP) assets/sample/sample.md

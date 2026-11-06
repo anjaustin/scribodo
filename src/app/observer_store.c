@@ -235,18 +235,33 @@ cJSON *observer_state_load_db(Db *db, const char *pid)
         cJSON_Delete(j);
         return NULL;
     }
-    for (size_t i = 0; i < r.nrows; i++) {
-        cJSON *arr = cJSON_GetObjectItem(docs, db_cell(&r, i, 0));
-        if (!arr) arr = cJSON_AddArrayToObject(docs, db_cell(&r, i, 0));
-        cJSON_AddItemToArray(arr, cJSON_CreateString(db_cell(&r, i, 1)));
+    bool ok = db_rows_has_columns(&r, 2) && db_rows_has_columns(&c, 3);
+    for (size_t i = 0; ok && i < r.nrows; i++) {
+        const char *name, *hash;
+        ok = db_cell_text(&r, i, 0, &name) && db_cell_text(&r, i, 1, &hash) && strlen(hash) == 16;
+        if (!ok) break;
+        cJSON *arr = cJSON_GetObjectItemCaseSensitive(docs, name);
+        if (!arr) arr = cJSON_AddArrayToObject(docs, name);
+        cJSON *value = arr ? cJSON_CreateString(hash) : NULL;
+        ok = arr && value && cJSON_AddItemToArray(arr, value);
+        if (!ok) cJSON_Delete(value);
     }
-    for (size_t i = 0; i < c.nrows; i++) {
-        cJSON *o = cJSON_AddObjectToObject(chats, db_cell(&c, i, 0));
-        cJSON_AddNumberToObject(o, "n", atof(db_cell(&c, i, 1)));
-        cJSON_AddNumberToObject(o, "off", atof(db_cell(&c, i, 2)));
+    for (size_t i = 0; ok && i < c.nrows; i++) {
+        const char *id;
+        int64_t message;
+        uint64_t offset;
+        ok = db_cell_text(&c, i, 0, &id) && db_cell_i64(&c, i, 1, &message) && message >= 0 && message < (1ll << 53) &&
+             db_cell_u64(&c, i, 2, &offset) && offset < (1ull << 53);
+        if (!ok) break;
+        cJSON *o = cJSON_AddObjectToObject(chats, id);
+        ok = o && cJSON_AddNumberToObject(o, "n", (double)message) && cJSON_AddNumberToObject(o, "off", (double)offset);
     }
     db_rows_free(&r);
     db_rows_free(&c);
+    if (!ok) {
+        cJSON_Delete(j);
+        return NULL;
+    }
     char id[80];
     snprintf(id, sizeof(id), "obs-%s", pid);
     DbRows version;
@@ -254,8 +269,15 @@ cJSON *observer_state_load_db(Db *db, const char *pid)
         cJSON_Delete(j);
         return NULL;
     }
-    if (version.nrows) cJSON_AddNumberToObject(j, "_version", atof(db_cell(&version, 0, 0)));
+    uint64_t value = 0;
+    ok = version.nrows <= 1 && db_rows_has_columns(&version, 1) &&
+         (!version.nrows || (db_cell_u64(&version, 0, 0, &value) && value < (1ull << 53)));
+    if (ok && version.nrows) ok = cJSON_AddNumberToObject(j, "_version", (double)value) != NULL;
     db_rows_free(&version);
+    if (!ok) {
+        cJSON_Delete(j);
+        return NULL;
+    }
     return j;
 }
 
@@ -459,9 +481,12 @@ bool observer_rules_get_db(Db *db, const char *pid, char out[17])
     snprintf(id, sizeof(id), "rules-%s", pid);
     DbRows r;
     if (!db_query(db, "SELECT state FROM jobs WHERE id = ?", (DbArg[1]){ DB_S(id) }, 1, &r)) return false;
-    if (r.nrows && db_cell(&r, 0, 0)) snprintf(out, 17, "%s", db_cell(&r, 0, 0));
+    const char *value;
+    bool ok = r.nrows <= 1 && db_rows_has_columns(&r, 1) &&
+              (!r.nrows || (db_cell_text(&r, 0, 0, &value) && strlen(value) == 16));
+    if (ok && r.nrows) snprintf(out, 17, "%s", value);
     db_rows_free(&r);
-    return true;
+    return ok;
 }
 
 bool observer_rules_set_db(Db *db, const char *pid, const char *sig)

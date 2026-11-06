@@ -4,7 +4,7 @@ This is the durable cross-session register for architectural and maintenance
 work. It records debt rather than individual defects. Update the status,
 evidence and session log when a remediation lands.
 
-**Last reviewed:** 2026-11-05
+**Last reviewed:** 2026-11-06
 **Baseline:** `a9652c7` (`Route project stores and own service startup`)
 **Status:** pre-alpha; macOS on Apple Silicon is the MVP target
 
@@ -189,10 +189,10 @@ but this repository policy cannot be established from a source commit alone.
 
 | Debt | Status | Evidence | Next action |
 |---|---|---|---|
-| Observer monolith | In progress | `src/llm/observer.c` still combines pure text analysis, model calls, persisted state, jobs and worker orchestration. | Extract cohesive internals without exposing mutable worker state. |
-| Test monoliths | In progress | Pure DB-row, observer-text and observer-fake suites now build independently; `test_llm.c` and `test_db.c` still span multiple stateful subsystems. | Extract shared stateful fixtures, then split the remaining integration suites without weakening targets. |
+| Observer monolith | Done | Text analysis, deterministic/model backends and job discovery/state pruning are separate modules; `observer.c` retains candidate application plus worker synchronization, cancellation and generations. | Keep worker ownership cohesive unless a narrower interface emerges. |
+| Test monoliths | Done | Pure observer/DB suites, stateful components and remote/network behavior run independently; shared fixtures own temporary roots and stores, and database core/migrations are a separately registered suite. | Add future subsystem tests to the narrowest existing binary. |
 | Documentation drift | Done | Living guides no longer encode volatile source locations or assertion totals; dated red-team reports retain their point-in-time evidence. | Keep contracts current and reserve numeric evidence for dated reports. |
-| Weakly typed DB rows | In progress | Shared conversions and local decoders now cover schema versions, chats, revisions and records; observer, entity and import repositories still read indexed strings directly. Count-returning revision/record list APIs also cannot yet distinguish an empty result from decode failure. | Continue repository-local decoder migration, starting with observer/entity reads, then add checked list variants at the routing boundary. |
+| Weakly typed DB rows | Done | Production code has no direct indexed-cell reads; repository decoders validate shape, nullability, type and domain. Checked record/revision list failures propagate through `ProjectStore`, with compatibility count wrappers retained. | Require local decoders and checked routing for every new query. |
 | Manual dependency maintenance | Done | `make dependency-report` and a weekly workflow inventory submodules and images, verify immutable pins, and query OSV by vendored commit. | Review informational upstream updates and remediate any report failure. |
 
 ## Intentional pre-alpha tradeoffs
@@ -335,3 +335,19 @@ Do not treat these as remediation targets without a changed product decision:
 - Remaining limitation: legacy count-returning revision and record list APIs
   still collapse decode failure and an empty result; this remains explicit P2
   work rather than being claimed complete.
+
+### 2026-11-06 — P2 completion
+
+- Migrated every remaining production query in semantic indexing, observer
+  state, entities, import/export and store identity to checked local decoding;
+  a source search now finds no direct `db_cell` reads under `src/`.
+- Added checked record and revision list APIs through database backends and the
+  `ProjectStore` routing seam, retaining count-returning compatibility wrappers.
+- Split observer model execution and job discovery/state pruning from the worker
+  owner. Mutexes, cancellation, generations and candidate application remain
+  together rather than leaking through a broad internal header.
+- Added a shared stateful test fixture; split remote/network and component suites
+  into independent binaries; and separated database core/migration registration
+  while preserving translation-unit-local failure accounting.
+- Expanded TSan to every stateful LLM/component/remote binary so decomposition
+  does not reduce race coverage.

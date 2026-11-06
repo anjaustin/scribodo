@@ -4,6 +4,7 @@
 #include "core/utf8.h"
 
 #include <CommonCrypto/CommonDigest.h>
+#include <limits.h>
 #include <math.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -240,7 +241,9 @@ static bool marked(Db *db, const char *pid, const char *key, const char *hash)
     if (!db_query(db, "SELECT content_hash FROM semantic_marks WHERE project_id = ? AND point_key = ?",
                   (DbArg[2]){ DB_S(pid), DB_S(key) }, 2, &r))
         return false;
-    bool same = r.nrows && db_cell(&r, 0, 0) && !strcmp(db_cell(&r, 0, 0), hash);
+    const char *stored_hash;
+    bool same = r.nrows == 1 && db_rows_has_columns(&r, 1) && db_cell_text(&r, 0, 0, &stored_hash) &&
+                !strcmp(stored_hash, hash);
     db_rows_free(&r);
     return same;
 }
@@ -329,7 +332,8 @@ static bool rebuild_pending(Db *db, const char *pid)
 {
     DbRows r;
     if (!db_query(db, "SELECT index_rebuild_pending FROM projects WHERE id = ?", (DbArg[1]){ DB_S(pid) }, 1, &r)) return false;
-    bool p = r.nrows && db_cell(&r, 0, 0) && atoi(db_cell(&r, 0, 0)) == 1;
+    int64_t value;
+    bool p = r.nrows == 1 && db_rows_has_columns(&r, 1) && db_cell_i64(&r, 0, 0, &value) && value == 1;
     db_rows_free(&r);
     return p;
 }
@@ -375,9 +379,13 @@ static bool sync_records_impl(SemanticClient *client, const char *project_id, ch
     }
     Pending *p = calloc(r.nrows ? r.nrows : 1, sizeof(Pending));
     size_t np = 0;
-    bool ok = p != NULL;
+    bool ok = p != NULL && db_rows_has_columns(&r, 4);
     for (size_t i = 0; ok && i < r.nrows; i++) {
-        const char *id = db_cell(&r, i, 0), *kind = db_cell(&r, i, 1), *status = db_cell(&r, i, 2), *text = db_cell(&r, i, 3);
+        const char *id, *kind, *status, *text;
+        ok = db_cell_text(&r, i, 0, &id) && db_cell_text(&r, i, 1, &kind) &&
+             db_cell_text(&r, i, 2, &status) && db_cell_text(&r, i, 3, &text) && strlen(id) < 180 &&
+             (!strcmp(kind, "note") || !strcmp(kind, "canon"));
+        if (!ok) break;
         char key[191], h[17], tag[600];
         snprintf(key, sizeof(key), "rec:%s", id);
         /* The status is part of what's indexed: a retracted entry must stop
@@ -445,10 +453,13 @@ bool semantic_prune_doc(SemanticClient *client, const char *project_id, const ch
     if (!db_query(db, "SELECT point_key FROM semantic_marks WHERE project_id = ? AND point_key LIKE ?",
                   (DbArg[2]){ DB_S(project_id), DB_S(like) }, 2, &r))
         return false;
-    bool ok = true;
+    bool ok = db_rows_has_columns(&r, 1);
     size_t prefix = strlen(like) - 1;
-    for (size_t i = 0; i < r.nrows; i++) {
-        const char *key = db_cell(&r, i, 0), *h = key + prefix;
+    for (size_t i = 0; ok && i < r.nrows; i++) {
+        const char *key;
+        ok = db_cell_text(&r, i, 0, &key) && strlen(key) >= prefix;
+        if (!ok) break;
+        const char *h = key + prefix;
         bool current = false;
         for (size_t k = 0; k < n && !current; k++) current = !strcmp(piece_hashes[k], h);
         if (current) continue;
@@ -613,8 +624,12 @@ long semantic_rebuild(SemanticClient *client, const char *project_id, char *err,
                  "SELECT d.id, v.id, v.content FROM documents d JOIN revisions v ON v.id = d.current_revision_id"
                  " WHERE d.project_id = ?",
                  (DbArg[1]){ DB_S(project_id) }, 1, &r)) {
-        for (size_t i = 0; i < r.nrows; i++) {
-            const char *text = db_cell(&r, i, 2);
+        bool rows_ok = db_rows_has_columns(&r, 3);
+        for (size_t i = 0; rows_ok && i < r.nrows; i++) {
+            const char *document_id, *revision_id, *text;
+            rows_ok = db_cell_text(&r, i, 0, &document_id) && db_cell_text(&r, i, 1, &revision_id) &&
+                      db_cell_text(&r, i, 2, &text);
+            if (!rows_ok) break;
             size_t cap = 256, np = 0;
             size_t *ps = malloc(cap * sizeof(size_t)), *pl = malloc(cap * sizeof(size_t));
             while (ps && pl && (np = obs_paragraphs(text, ps, pl, cap)) == cap) { /* every paragraph */
@@ -646,13 +661,14 @@ long semantic_rebuild(SemanticClient *client, const char *project_id, char *err,
                 for (size_t b = 0; b < ps[k]; b++) cps += ((unsigned char)text[b] & 0xC0) != 0x80;
                 size_t clen = 0;
                 for (size_t b = 0; b < len; b++) clen += ((unsigned char)piece[b] & 0xC0) != 0x80;
-                if (semantic_index_text(client, project_id, "draft", db_cell(&r, i, 0), db_cell(&r, i, 1), NULL, 0, cps, clen, piece)) count++;
+                if (semantic_index_text(client, project_id, "draft", document_id, revision_id, NULL, 0, cps, clen, piece)) count++;
                 else failed++;
                 free(piece);
             }
             free(ps);
             free(pl);
         }
+        if (!rows_ok) failed++;
         db_rows_free(&r);
     }
     /* Chat messages (not failed replies or AI rewrites). */
@@ -660,8 +676,13 @@ long semantic_rebuild(SemanticClient *client, const char *project_id, char *err,
                  "SELECT m.conversation_id, m.seq, m.content FROM messages m JOIN conversations c ON c.id = m.conversation_id"
                  " WHERE c.project_id = ? AND m.error = 0 AND NOT (m.role = 'assistant' AND m.is_edit = 1)",
                  (DbArg[1]){ DB_S(project_id) }, 1, &r)) {
-        for (size_t i = 0; i < r.nrows; i++) {
-            const char *text = db_cell(&r, i, 2) ? db_cell(&r, i, 2) : "";
+        bool rows_ok = db_rows_has_columns(&r, 3);
+        for (size_t i = 0; rows_ok && i < r.nrows; i++) {
+            const char *conversation_id, *text;
+            int64_t seq;
+            rows_ok = db_cell_text(&r, i, 0, &conversation_id) && db_cell_i64(&r, i, 1, &seq) && seq >= 0 &&
+                      seq <= LONG_MAX && db_cell_text(&r, i, 2, &text);
+            if (!rows_ok) break;
             char *piece = malloc(2001);
             if (!piece) {
                 failed++;
@@ -670,17 +691,23 @@ long semantic_rebuild(SemanticClient *client, const char *project_id, char *err,
             utf8_clip(piece, 2001, text, 2000);
             size_t clen = 0; /* the range is in characters */
             for (const char *b = piece; *b; b++) clen += ((unsigned char)*b & 0xC0) != 0x80;
-            if (semantic_index_text(client, project_id, "chat", NULL, NULL, db_cell(&r, i, 0), atol(db_cell(&r, i, 1)), 0, clen, piece))
+            if (semantic_index_text(client, project_id, "chat", NULL, NULL, conversation_id, (long)seq, 0, clen, piece))
                 count++;
             else failed++;
             free(piece);
         }
+        if (!rows_ok) failed++;
         db_rows_free(&r);
     }
     DbRows rc;
     if (db_query(db, "SELECT COUNT(*) FROM records WHERE project_id = ? AND kind IN ('note','canon')",
                  (DbArg[1]){ DB_S(project_id) }, 1, &rc)) {
-        count += atol(db_cell(&rc, 0, 0));
+        int64_t records;
+        if (rc.nrows == 1 && db_rows_has_columns(&rc, 1) && db_cell_i64(&rc, 0, 0, &records) && records >= 0 &&
+            records <= LONG_MAX - count)
+            count += (long)records;
+        else
+            failed++;
         db_rows_free(&rc);
     }
     if (failed) {

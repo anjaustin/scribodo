@@ -371,8 +371,10 @@ static int verify(StoreManager *manager, Db *d, const char *project_dir, const M
         verification->checked = 0; /* not a verdict: try again next time */
         return VERDICT_OK;
     }
-    bool found = r.nrows > 0;
-    if (found) snprintf(verification->original, sizeof(verification->original), "%s", db_cell(&r, 0, 0));
+    const char *stored_path;
+    bool found = r.nrows == 1 && db_rows_has_columns(&r, 1) && db_cell_text(&r, 0, 0, &stored_path) &&
+                 strlen(stored_path) < sizeof(verification->original);
+    if (found) snprintf(verification->original, sizeof(verification->original), "%s", stored_path);
     db_rows_free(&r);
     if (!found) return verification->verdict = STORE_PROBLEM_MISSING;
     bool other_inode = m->ident && (m->dev != (unsigned long long)st.st_dev || m->ino != (unsigned long long)st.st_ino);
@@ -474,8 +476,10 @@ static bool one_value(Db *db, const char *sql, const DbArg *args, size_t n, char
 {
     DbRows r;
     if (!db_query(db, sql, args, n, &r)) return false;
-    bool found = r.nrows > 0 && db_cell(&r, 0, 0);
-    if (found) snprintf(out, outlen, "%s", db_cell(&r, 0, 0));
+    const char *value;
+    bool found = r.nrows == 1 && db_rows_has_columns(&r, 1) && db_cell_text(&r, 0, 0, &value) &&
+                 strlen(value) < outlen;
+    if (found) snprintf(out, outlen, "%s", value);
     db_rows_free(&r);
     return found;
 }

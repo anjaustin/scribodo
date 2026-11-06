@@ -42,6 +42,8 @@ bool revisions_snapshot(StoreManager *manager, const char *project_dir, const ch
 
 /* List revisions, newest first. Caller frees *out. */
 size_t revisions_list(StoreManager *manager, const char *project_dir, const char *doc_path, Revision **out);
+bool revisions_list_checked(StoreManager *manager, const char *project_dir, const char *doc_path, Revision **out,
+                            size_t *count);
 
 /* Load a revision's text (malloc'd), or NULL. */
 char *revisions_load(StoreManager *manager, const char *project_dir, const char *doc_path, const Revision *r);

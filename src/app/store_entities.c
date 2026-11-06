@@ -7,6 +7,7 @@
 #define _DARWIN_C_SOURCE
 #include "store_entities.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -140,6 +141,11 @@ static void display_name(const char *name, char *out, size_t outlen)
     else if (n > 4 && !strcmp(out + n - 4, "\xE2\x80\x99s")) out[n - 4] = '\0';
 }
 
+static bool id_row(const DbRows *rows, size_t row, const char **id)
+{
+    return db_rows_has_columns(rows, 1) && db_cell_text(rows, row, 0, id) && strlen(*id) < 40;
+}
+
 bool sdb_entity_upsert(Db *db, const char *pid, const char *name, const char *type, char *id_out, size_t idlen)
 {
     char norm[256];
@@ -149,9 +155,11 @@ bool sdb_entity_upsert(Db *db, const char *pid, const char *name, const char *ty
     DbArg k[2] = { DB_S(pid), DB_S(norm) };
     if (!db_query(db, "SELECT id FROM entities WHERE project_id = ? AND norm_name = ?", k, 2, &r)) return false;
     if (r.nrows) {
-        snprintf(id_out, idlen, "%s", db_cell(&r, 0, 0));
+        const char *id;
+        bool valid = r.nrows == 1 && id_row(&r, 0, &id) && strlen(id) < idlen;
+        if (valid) snprintf(id_out, idlen, "%s", id);
         db_rows_free(&r);
-        return true;
+        return valid;
     }
     db_rows_free(&r);
     /* A first name alone ("Zoë") is the one full name it starts, if there
@@ -163,8 +171,9 @@ bool sdb_entity_upsert(Db *db, const char *pid, const char *name, const char *ty
         if (!db_query(db, "SELECT id FROM entities WHERE project_id = ? AND norm_name LIKE ? LIMIT 2",
                       (DbArg[2]){ DB_S(pid), DB_S(like) }, 2, &r))
             return false;
-        bool one = r.nrows == 1;
-        if (one) snprintf(id_out, idlen, "%s", db_cell(&r, 0, 0));
+        const char *id;
+        bool one = r.nrows == 1 && id_row(&r, 0, &id) && strlen(id) < idlen;
+        if (one) snprintf(id_out, idlen, "%s", id);
         db_rows_free(&r);
         if (one) return true;
     }
@@ -176,8 +185,9 @@ bool sdb_entity_upsert(Db *db, const char *pid, const char *name, const char *ty
         return false;
     /* Another writer may have created it meanwhile: use whichever is there. */
     if (!db_query(db, "SELECT id FROM entities WHERE project_id = ? AND norm_name = ?", k, 2, &r)) return false;
-    bool ok = r.nrows > 0;
-    if (ok) snprintf(id_out, idlen, "%s", db_cell(&r, 0, 0));
+    const char *stored_id;
+    bool ok = r.nrows == 1 && id_row(&r, 0, &stored_id) && strlen(stored_id) < idlen;
+    if (ok) snprintf(id_out, idlen, "%s", stored_id);
     db_rows_free(&r);
     /* A new full name absorbs an existing entity for its first name alone,
      * unless another full name starts with it too. */
@@ -188,10 +198,15 @@ bool sdb_entity_upsert(Db *db, const char *pid, const char *name, const char *ty
         DbRows f, others;
         if (db_query(db, "SELECT id FROM entities WHERE project_id = ? AND norm_name = ?", (DbArg[2]){ DB_S(pid), DB_S(firstn) }, 2,
                      &f)) {
-            if (f.nrows == 1 &&
+            const char *from;
+            if (f.nrows == 1 && id_row(&f, 0, &from) &&
                 db_query(db, "SELECT COUNT(*) FROM entities WHERE project_id = ? AND norm_name LIKE ?",
-                         (DbArg[2]){ DB_S(pid), DB_S(like) }, 2, &others)) {
-                if (!strcmp(db_cell(&others, 0, 0), "1")) ok = fold_entity(db, db_cell(&f, 0, 0), id_out);
+                          (DbArg[2]){ DB_S(pid), DB_S(like) }, 2, &others)) {
+                uint64_t count;
+                bool valid = others.nrows == 1 && db_rows_has_columns(&others, 1) &&
+                             db_cell_u64(&others, 0, 0, &count);
+                if (!valid) ok = false;
+                else if (count == 1) ok = fold_entity(db, from, id_out);
                 db_rows_free(&others);
             }
             db_rows_free(&f);
@@ -213,7 +228,8 @@ static bool own_finding(Db *db, const char *pid, const char *finding_id)
     if (!db_query(db, "SELECT id FROM records WHERE id = ? AND project_id = ? AND kind = 'finding'",
                   (DbArg[2]){ DB_S(finding_id), DB_S(pid) }, 2, &r))
         return false;
-    bool ok = r.nrows == 1;
+    const char *id;
+    bool ok = r.nrows == 1 && id_row(&r, 0, &id) && !strcmp(id, finding_id);
     db_rows_free(&r);
     return ok;
 }
@@ -255,16 +271,19 @@ bool sdb_entities_backfill(Db *db, const char *pid)
                   " WHERE r.project_id = ? AND r.kind = 'finding' ORDER BY r.created_at",
                   (DbArg[1]){ DB_S(pid) }, 1, &r))
         return false;
-    bool ok = true;
+    bool ok = db_rows_has_columns(&r, 5);
     for (size_t i = 0; ok && i < r.nrows; i++) {
+        const char *id, *type, *subject, *relation, *object;
+        ok = db_cell_text(&r, i, 0, &id) && strlen(id) < 40 && db_cell_nullable(&r, i, 1, &type) &&
+             db_cell_nullable(&r, i, 2, &subject) && db_cell_nullable(&r, i, 3, &relation) &&
+             db_cell_nullable(&r, i, 4, &object);
+        if (!ok) break;
         FindingInfo f = { 0 };
-#define CP(dst, col) utf8_clip(f.dst, sizeof(f.dst), db_cell(&r, i, col) ? db_cell(&r, i, col) : "", SIZE_MAX)
-        CP(type, 1);
-        CP(subject, 2);
-        CP(relation, 3);
-        CP(object, 4);
-#undef CP
-        ok = sdb_entities_from_finding(db, pid, db_cell(&r, i, 0), &f);
+        utf8_clip(f.type, sizeof(f.type), type ? type : "", SIZE_MAX);
+        utf8_clip(f.subject, sizeof(f.subject), subject ? subject : "", SIZE_MAX);
+        utf8_clip(f.relation, sizeof(f.relation), relation ? relation : "", SIZE_MAX);
+        utf8_clip(f.object, sizeof(f.object), object ? object : "", SIZE_MAX);
+        ok = sdb_entities_from_finding(db, pid, id, &f);
     }
     db_rows_free(&r);
     if (ok) db_run(db, "UPDATE projects SET graph_built = 1 WHERE id = ?", (DbArg[1]){ DB_S(pid) }, 1, NULL);
@@ -275,7 +294,8 @@ bool sdb_entities_built(Db *db, const char *pid)
 {
     DbRows r;
     if (!db_query(db, "SELECT graph_built FROM projects WHERE id = ?", (DbArg[1]){ DB_S(pid) }, 1, &r)) return true; /* don't retry blindly */
-    bool built = r.nrows && db_cell(&r, 0, 0) && atoi(db_cell(&r, 0, 0)) == 1;
+    int64_t value;
+    bool built = r.nrows == 1 && db_rows_has_columns(&r, 1) && db_cell_i64(&r, 0, 0, &value) && value == 1;
     db_rows_free(&r);
     return built;
 }
@@ -310,15 +330,27 @@ size_t sdb_entity_list(Db *db, const char *pid, EntityRow **out)
                   " ORDER BY COALESCE(lc.n, 0) + COALESCE(mc.n, 0) DESC, e.name",
                   (DbArg[4]){ DB_S(pid), DB_S(pid), DB_S(pid), DB_S(pid) }, 4, &r))
         return 0;
-    EntityRow *list = r.nrows ? calloc(r.nrows, sizeof(EntityRow)) : NULL;
-    for (size_t i = 0; list && i < r.nrows; i++) {
-        snprintf(list[i].id, sizeof(list[i].id), "%s", db_cell(&r, i, 0));
-        utf8_clip(list[i].name, sizeof(list[i].name), db_cell(&r, i, 1) ? db_cell(&r, i, 1) : "", SIZE_MAX);
-        list[i].mentions = atoi(db_cell(&r, i, 2) ? db_cell(&r, i, 2) : "0");
-        list[i].links = atoi(db_cell(&r, i, 3) ? db_cell(&r, i, 3) : "0");
+    bool ok = db_rows_has_columns(&r, 4);
+    EntityRow *list = ok && r.nrows ? calloc(r.nrows, sizeof(EntityRow)) : NULL;
+    if (r.nrows && !list) ok = false;
+    for (size_t i = 0; ok && i < r.nrows; i++) {
+        const char *id, *name;
+        int64_t mentions, links;
+        ok = db_cell_text(&r, i, 0, &id) && strlen(id) < sizeof(list[i].id) &&
+             db_cell_text(&r, i, 1, &name) && db_cell_i64(&r, i, 2, &mentions) && mentions >= 0 && mentions <= INT_MAX &&
+             db_cell_i64(&r, i, 3, &links) && links >= 0 && links <= INT_MAX;
+        if (!ok) break;
+        snprintf(list[i].id, sizeof(list[i].id), "%s", id);
+        utf8_clip(list[i].name, sizeof(list[i].name), name, SIZE_MAX);
+        list[i].mentions = (int)mentions;
+        list[i].links = (int)links;
     }
-    size_t n = list ? r.nrows : 0;
+    size_t n = ok ? r.nrows : 0;
     db_rows_free(&r);
+    if (!ok) {
+        free(list);
+        list = NULL;
+    }
     *out = list;
     return n;
 }
@@ -336,12 +368,13 @@ bool sdb_entity_detail(Db *db, const char *pid, const char *entity_id, EntityDet
     if (!db_query(db, "SELECT name FROM entities WHERE id = ? AND project_id = ?", (DbArg[2]){ DB_S(entity_id), DB_S(pid) }, 2,
                   &e))
         return false;
-    if (!e.nrows) {
+    const char *entity_name;
+    if (e.nrows != 1 || !db_rows_has_columns(&e, 1) || !db_cell_text(&e, 0, 0, &entity_name)) {
         db_rows_free(&e);
         return false;
     }
     snprintf(d->id, sizeof(d->id), "%s", entity_id);
-    utf8_clip(d->name, sizeof(d->name), db_cell(&e, 0, 0) ? db_cell(&e, 0, 0) : "", SIZE_MAX);
+    utf8_clip(d->name, sizeof(d->name), entity_name, SIZE_MAX);
     db_rows_free(&e);
     /* Relationships in both directions, with the other end and the finding
      * that supports each. */
@@ -362,27 +395,47 @@ bool sdb_entity_detail(Db *db, const char *pid, const char *entity_id, EntityDet
         db_rows_free(&l);
         return false;
     }
-    size_t n = l.nrows + m.nrows;
-    d->rows = n ? calloc(n, sizeof(EntityDetailRow)) : NULL;
-    for (size_t i = 0; d->rows && i < l.nrows; i++) {
+    bool ok = db_rows_has_columns(&l, 6) && db_rows_has_columns(&m, 2) && l.nrows <= SIZE_MAX - m.nrows;
+    size_t n = ok ? l.nrows + m.nrows : 0;
+    d->rows = ok && n ? calloc(n, sizeof(EntityDetailRow)) : NULL;
+    if (n && !d->rows) ok = false;
+    for (size_t i = 0; ok && i < l.nrows; i++) {
+        const char *relation, *finding, *from_id, *from_name, *to_id, *to_name;
+        ok = db_cell_text(&l, i, 0, &relation) && db_cell_text(&l, i, 1, &finding) &&
+             db_cell_text(&l, i, 2, &from_id) && db_cell_text(&l, i, 3, &from_name) &&
+             db_cell_text(&l, i, 4, &to_id) && db_cell_text(&l, i, 5, &to_name) &&
+             strlen(finding) < sizeof(((EntityDetailRow *)0)->finding_id) &&
+             strlen(from_id) < sizeof(((EntityDetailRow *)0)->other_id) &&
+             strlen(to_id) < sizeof(((EntityDetailRow *)0)->other_id);
+        if (!ok) break;
         EntityDetailRow *row = &d->rows[d->nrows++];
-        bool outgoing = !strcmp(db_cell(&l, i, 2), entity_id);
+        bool outgoing = !strcmp(from_id, entity_id);
         row->is_link = true;
         row->outgoing = outgoing;
-        utf8_clip(row->relation, sizeof(row->relation), db_cell(&l, i, 0) ? db_cell(&l, i, 0) : "", SIZE_MAX);
-        snprintf(row->finding_id, sizeof(row->finding_id), "%s", db_cell(&l, i, 1) ? db_cell(&l, i, 1) : "");
-        snprintf(row->other_id, sizeof(row->other_id), "%s", db_cell(&l, i, outgoing ? 4 : 2));
-        utf8_clip(row->other_name, sizeof(row->other_name), db_cell(&l, i, outgoing ? 5 : 3), SIZE_MAX);
+        utf8_clip(row->relation, sizeof(row->relation), relation, SIZE_MAX);
+        snprintf(row->finding_id, sizeof(row->finding_id), "%s", finding);
+        snprintf(row->other_id, sizeof(row->other_id), "%s", outgoing ? to_id : from_id);
+        utf8_clip(row->other_name, sizeof(row->other_name), outgoing ? to_name : from_name, SIZE_MAX);
     }
-    for (size_t i = 0; d->rows && i < m.nrows; i++) {
+    for (size_t i = 0; ok && i < m.nrows; i++) {
+        const char *finding, *text;
+        ok = db_cell_text(&m, i, 0, &finding) && strlen(finding) < sizeof(((EntityDetailRow *)0)->finding_id) &&
+             db_cell_text(&m, i, 1, &text);
+        if (!ok) break;
         bool linked = false; /* shown above as its link */
-        for (size_t k = 0; k < l.nrows && !linked; k++) linked = db_cell(&l, k, 1) && !strcmp(db_cell(&l, k, 1), db_cell(&m, i, 0));
+        for (size_t k = 0; ok && k < l.nrows && !linked; k++) {
+            const char *link_finding;
+            ok = db_cell_text(&l, k, 1, &link_finding);
+            linked = ok && !strcmp(link_finding, finding);
+        }
+        if (!ok) break;
         if (linked) continue;
         EntityDetailRow *row = &d->rows[d->nrows++];
-        snprintf(row->finding_id, sizeof(row->finding_id), "%s", db_cell(&m, i, 0));
-        utf8_clip(row->text, sizeof(row->text), db_cell(&m, i, 1) ? db_cell(&m, i, 1) : "", SIZE_MAX);
+        snprintf(row->finding_id, sizeof(row->finding_id), "%s", finding);
+        utf8_clip(row->text, sizeof(row->text), text, SIZE_MAX);
     }
     db_rows_free(&l);
     db_rows_free(&m);
-    return true;
+    if (!ok) entity_detail_free(d);
+    return ok;
 }

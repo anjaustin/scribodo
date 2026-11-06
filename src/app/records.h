@@ -91,6 +91,7 @@ bool records_create_ex(StoreManager *manager, const char *project_dir, RecordKin
 
 /* All records, most recently changed first. Caller frees with records_free. */
 size_t records_list(StoreManager *manager, const char *project_dir, RecordKind kind, Record **out);
+bool records_list_checked(StoreManager *manager, const char *project_dir, RecordKind kind, Record **out, size_t *count);
 /* The file store's records, whatever the project's mode (the importer). */
 size_t records_list_files(const char *project_dir, RecordKind kind, Record **out);
 void records_free(Record *r, size_t n);

@@ -46,11 +46,15 @@ void project_store_guard_end(ProjectStoreGuard *guard);
 bool project_store_feature_key(StoreManager *manager, const char *project_dir, unsigned capability, char *key, size_t keylen);
 
 size_t project_store_records_list(StoreManager *manager, const char *project_dir, RecordKind kind, Record **out);
+bool project_store_records_list_checked(StoreManager *manager, const char *project_dir, RecordKind kind, Record **out,
+                                        size_t *count);
 bool project_store_records_append(StoreManager *manager, const char *project_dir, RecordKind kind, const char *id, const char *status,
                                   const char *content, const SourceRef *sources, size_t nsources,
                                    const FindingInfo *finding, bool fresh, int *ver_out);
 
 size_t project_store_revisions_list(StoreManager *manager, const char *project_dir, const char *doc_path, Revision **out);
+bool project_store_revisions_list_checked(StoreManager *manager, const char *project_dir, const char *doc_path,
+                                          Revision **out, size_t *count);
 bool project_store_revisions_record(StoreManager *manager, const char *project_dir, const char *doc_path, const char *text,
                                     const char *origin, const char *note, bool *recorded);
 bool project_store_revisions_snapshot(StoreManager *manager, const char *project_dir, const char *doc_path, const char *text,

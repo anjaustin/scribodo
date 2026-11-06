@@ -79,8 +79,9 @@ static bool owned(Db *db, const char *sql, const char *id, const char *pid, cons
 {
     DbRows r;
     if (!db_query(db, sql, (DbArg[1]){ DB_S(id) }, 1, &r)) return false;
-    bool ok = r.nrows == 1 && db_cell(&r, 0, 0) && !strcmp(db_cell(&r, 0, 0), pid) &&
-              (!kind || (r.ncols > 1 && db_cell(&r, 0, 1) && !strcmp(db_cell(&r, 0, 1), kind)));
+    const char *owner, *stored_kind = NULL;
+    bool ok = r.nrows == 1 && db_rows_has_columns(&r, kind ? 2 : 1) && db_cell_text(&r, 0, 0, &owner) &&
+              !strcmp(owner, pid) && (!kind || (db_cell_text(&r, 0, 1, &stored_kind) && !strcmp(stored_kind, kind)));
     db_rows_free(&r);
     return ok;
 }
@@ -657,32 +658,48 @@ static bool export_files_unlocked(StoreManager *manager, Db *db, const char *pid
 {
     DbRows docs;
     if (!db_query(db, "SELECT id, name FROM documents WHERE project_id = ?", (DbArg[1]){ DB_S(pid) }, 1, &docs)) return false;
-    bool ok = true;
+    bool ok = db_rows_has_columns(&docs, 2);
     ExportRev *revs = NULL;
     size_t nrevs = 0, cap = 0;
     for (size_t i = 0; ok && i < docs.nrows; i++) {
+        const char *document_id, *document_name;
+        ok = db_cell_text(&docs, i, 0, &document_id) && strlen(document_id) < 40 &&
+             db_cell_text(&docs, i, 1, &document_name);
+        if (!ok) break;
         DbRows r;
         if (!db_query(db, "SELECT id, content, origin, note, created_at FROM revisions WHERE document_id = ? ORDER BY seq",
-                      (DbArg[1]){ DB_S(db_cell(&docs, i, 0)) }, 1, &r)) {
+                       (DbArg[1]){ DB_S(document_id) }, 1, &r)) {
             ok = false;
             break;
         }
         char path[PATH_MAX + 300];
-        snprintf(path, sizeof(path), "%s/%s", project_dir, db_cell(&docs, i, 1));
+        int path_len = snprintf(path, sizeof(path), "%s/%s", project_dir, document_name);
+        ok = path_len >= 0 && (size_t)path_len < sizeof(path) && db_rows_has_columns(&r, 5);
         for (size_t k = 0; ok && k < r.nrows; k++) {
-            store_set_write_time(manager, atof(db_cell(&r, k, 4) ? db_cell(&r, k, 4) : "0"));
+            const char *revision_id, *content, *origin, *note;
+            double created_at;
+            ok = db_cell_text(&r, k, 0, &revision_id) && strlen(revision_id) < sizeof(revs[0].id) &&
+                 db_cell_text(&r, k, 1, &content) && db_cell_text(&r, k, 2, &origin) &&
+                 db_cell_text(&r, k, 3, &note) && db_cell_double(&r, k, 4, &created_at) &&
+                 created_at >= 0 && created_at < 0x1p63;
+            if (!ok) break;
+            store_set_write_time(manager, created_at);
             bool rec = false;
-            ok = revisions_record_files(manager, project_dir, path, db_cell(&r, k, 1), db_cell(&r, k, 2), db_cell(&r, k, 3), &rec);
+            ok = revisions_record_files(manager, project_dir, path, content, origin, note, &rec);
             Revision *list = NULL;
             size_t n = ok ? revisions_list_files(project_dir, path, &list) : 0;
             if (n && nrevs == cap) {
-                cap = cap ? cap * 2 : 64;
-                ExportRev *m = realloc(revs, cap * sizeof(ExportRev));
+                size_t next = cap ? cap * 2 : 64;
+                if (next < cap || next > SIZE_MAX / sizeof(ExportRev)) ok = false;
+                ExportRev *m = ok ? realloc(revs, next * sizeof(ExportRev)) : NULL;
                 if (!m) ok = false;
-                else revs = m;
+                else {
+                    revs = m;
+                    cap = next;
+                }
             }
             if (ok && n) { /* the newest snapshot is this revision (or the identical one before it) */
-                snprintf(revs[nrevs].id, sizeof(revs[0].id), "%s", db_cell(&r, k, 0));
+                snprintf(revs[nrevs].id, sizeof(revs[0].id), "%s", revision_id);
                 snprintf(revs[nrevs].file, sizeof(revs[0].file), "%s", list[0].file);
                 nrevs++;
             }
@@ -692,7 +709,8 @@ static bool export_files_unlocked(StoreManager *manager, Db *db, const char *pid
     }
     db_rows_free(&docs);
     ChatSummary *cs = NULL;
-    size_t nc = ok ? sdb_chat_list(db, pid, &cs) : 0;
+    size_t nc = 0;
+    if (ok) ok = sdb_chat_list_checked(db, pid, &cs, &nc);
     for (size_t i = 0; ok && i < nc; i++) {
         ChatMessage *m = NULL;
         size_t n = 0;

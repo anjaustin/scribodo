@@ -107,17 +107,29 @@ bool sdb_revision_record(Db *db, const char *project_id, const char *doc_path, c
     return ok;
 }
 
-size_t sdb_revision_list(Db *db, const char *project_id, const char *doc_path, Revision **out)
+bool sdb_revision_list_checked(Db *db, const char *project_id, const char *doc_path, Revision **out, size_t *count)
 {
     *out = NULL;
+    *count = 0;
     char doc[40];
-    if (!store_document_id_db(db, project_id, base_name(doc_path), false, doc, sizeof(doc))) return 0;
+    DbRows document;
+    if (!db_query(db, "SELECT id FROM documents WHERE project_id = ? AND name = ?",
+                  (DbArg[2]){ DB_S(project_id), DB_S(base_name(doc_path)) }, 2, &document))
+        return false;
+    const char *document_id = NULL;
+    bool document_ok = document.nrows <= 1 && db_rows_has_columns(&document, 1) &&
+                       (!document.nrows || (db_cell_text(&document, 0, 0, &document_id) && strlen(document_id) < sizeof(doc)));
+    if (document_ok && document.nrows) snprintf(doc, sizeof(doc), "%s", document_id);
+    bool found = document.nrows == 1;
+    db_rows_free(&document);
+    if (!document_ok) return false;
+    if (!found) return true;
     DbRows r;
     if (!db_query(db,
                   "SELECT id, origin, note, hash, created_at, CHAR_LENGTH(content) FROM revisions WHERE document_id = ? "
                   "ORDER BY seq DESC",
                   (DbArg[1]){ DB_S(doc) }, 1, &r))
-        return 0;
+        return false;
     bool ok = db_rows_has_columns(&r, 6);
     Revision *list = ok && r.nrows ? calloc(r.nrows, sizeof(Revision)) : NULL;
     if (r.nrows && !list) ok = false;
@@ -137,10 +149,18 @@ size_t sdb_revision_list(Db *db, const char *project_id, const char *doc_path, R
     db_rows_free(&r);
     if (!ok) {
         free(list);
-        return 0;
+        return false;
     }
     *out = list;
-    return n;
+    *count = n;
+    return true;
+}
+
+size_t sdb_revision_list(Db *db, const char *project_id, const char *doc_path, Revision **out)
+{
+    size_t count = 0;
+    (void)sdb_revision_list_checked(db, project_id, doc_path, out, &count);
+    return count;
 }
 
 char *sdb_revision_load(Db *db, const char *project_id, const char *doc_path, const Revision *rev)

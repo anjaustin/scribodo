@@ -28,10 +28,10 @@ struct ProjectStore {
 };
 
 struct ProjectStoreOps {
-    size_t (*records_list)(ProjectStore *, RecordKind, Record **);
+    bool (*records_list)(ProjectStore *, RecordKind, Record **, size_t *);
     bool (*records_append)(ProjectStore *, RecordKind, const char *, const char *, const char *, const SourceRef *, size_t,
                            const FindingInfo *, bool, int *);
-    size_t (*revisions_list)(ProjectStore *, const char *, Revision **);
+    bool (*revisions_list)(ProjectStore *, const char *, Revision **, size_t *);
     bool (*revisions_record)(ProjectStore *, const char *, const char *, const char *, const char *, bool *);
     bool (*revisions_snapshot)(ProjectStore *, const char *, const char *, char *, size_t);
     char *(*revisions_load)(ProjectStore *, const char *, const Revision *);
@@ -46,9 +46,10 @@ struct ProjectStoreOps {
     bool (*observer_rules_set)(ProjectStore *, const char *);
 };
 
-static size_t file_records_list(ProjectStore *store, RecordKind kind, Record **out)
+static bool file_records_list(ProjectStore *store, RecordKind kind, Record **out, size_t *count)
 {
-    return records_list_files(store->project_dir, kind, out);
+    *count = records_list_files(store->project_dir, kind, out);
+    return true;
 }
 
 static bool file_records_append(ProjectStore *store, RecordKind kind, const char *id, const char *status,
@@ -58,9 +59,9 @@ static bool file_records_append(ProjectStore *store, RecordKind kind, const char
     return records_append_files(store->manager, store->project_dir, kind, id, status, content, sources, nsources, finding, fresh, ver_out);
 }
 
-static size_t db_records_list(ProjectStore *store, RecordKind kind, Record **out)
+static bool db_records_list(ProjectStore *store, RecordKind kind, Record **out, size_t *count)
 {
-    return sdb_record_list(store->db, store->project_id, kind, out);
+    return sdb_record_list_checked(store->db, store->project_id, kind, out, count);
 }
 
 static bool db_records_append(ProjectStore *store, RecordKind kind, const char *id, const char *status,
@@ -71,10 +72,11 @@ static bool db_records_append(ProjectStore *store, RecordKind kind, const char *
                              ver_out);
 }
 
-static size_t paused_records_list(ProjectStore *store, RecordKind kind, Record **out)
+static bool paused_records_list(ProjectStore *store, RecordKind kind, Record **out, size_t *count)
 {
     *out = NULL;
-    return 0;
+    *count = 0;
+    return false;
 }
 
 static bool paused_records_append(ProjectStore *store, RecordKind kind, const char *id, const char *status,
@@ -84,9 +86,10 @@ static bool paused_records_append(ProjectStore *store, RecordKind kind, const ch
     return false;
 }
 
-static size_t file_revisions_list(ProjectStore *store, const char *doc_path, Revision **out)
+static bool file_revisions_list(ProjectStore *store, const char *doc_path, Revision **out, size_t *count)
 {
-    return revisions_list_files(store->project_dir, doc_path, out);
+    *count = revisions_list_files(store->project_dir, doc_path, out);
+    return true;
 }
 
 static bool file_revisions_record(ProjectStore *store, const char *doc_path, const char *text, const char *origin,
@@ -106,9 +109,9 @@ static char *file_revisions_load(ProjectStore *store, const char *doc_path, cons
     return revisions_load_files(store->project_dir, doc_path, revision);
 }
 
-static size_t db_revisions_list(ProjectStore *store, const char *doc_path, Revision **out)
+static bool db_revisions_list(ProjectStore *store, const char *doc_path, Revision **out, size_t *count)
 {
-    return sdb_revision_list(store->db, store->project_id, doc_path, out);
+    return sdb_revision_list_checked(store->db, store->project_id, doc_path, out, count);
 }
 
 static bool db_revisions_record(ProjectStore *store, const char *doc_path, const char *text, const char *origin,
@@ -129,10 +132,11 @@ static char *db_revisions_load(ProjectStore *store, const char *doc_path, const 
     return sdb_revision_load(store->db, store->project_id, doc_path, revision);
 }
 
-static size_t paused_revisions_list(ProjectStore *store, const char *doc_path, Revision **out)
+static bool paused_revisions_list(ProjectStore *store, const char *doc_path, Revision **out, size_t *count)
 {
     *out = NULL;
-    return 0;
+    *count = 0;
+    return false;
 }
 
 static bool paused_revisions_record(ProjectStore *store, const char *doc_path, const char *text, const char *origin,
@@ -423,23 +427,32 @@ static int begin_operation(StoreManager *manager, const char *project_dir, Proje
     return lock;
 }
 
-size_t project_store_records_list(StoreManager *manager, const char *project_dir, RecordKind kind, Record **out)
+bool project_store_records_list_checked(StoreManager *manager, const char *project_dir, RecordKind kind, Record **out,
+                                        size_t *count)
 {
+    *out = NULL;
+    *count = 0;
     if (!project_dir || !project_dir[0]) {
-        *out = NULL;
-        return 0;
+        return false;
     }
     ProjectStore store;
     int lock = begin_operation(manager, project_dir, &store);
     if (store.ops == &file_ops) {
         if (lock < 0) {
             *out = NULL;
-            return 0;
+            return false;
         }
     }
-    size_t n = store.ops->records_list(&store, kind, out);
+    bool ok = store.ops->records_list(&store, kind, out, count);
     project_store_file_unlock(lock);
-    return n;
+    return ok;
+}
+
+size_t project_store_records_list(StoreManager *manager, const char *project_dir, RecordKind kind, Record **out)
+{
+    size_t count = 0;
+    (void)project_store_records_list_checked(manager, project_dir, kind, out, &count);
+    return count;
 }
 
 bool project_store_records_append(StoreManager *manager, const char *project_dir, RecordKind kind, const char *id, const char *status,
@@ -456,16 +469,25 @@ bool project_store_records_append(StoreManager *manager, const char *project_dir
 }
 
 
-size_t project_store_revisions_list(StoreManager *manager, const char *project_dir, const char *doc_path, Revision **out)
+bool project_store_revisions_list_checked(StoreManager *manager, const char *project_dir, const char *doc_path,
+                                          Revision **out, size_t *count)
 {
     *out = NULL;
-    if (!project_dir || !project_dir[0]) return 0;
+    *count = 0;
+    if (!project_dir || !project_dir[0]) return false;
     ProjectStore store;
     int lock = begin_operation(manager, project_dir, &store);
-    if (store.ops == &file_ops && lock < 0) return 0;
-    size_t n = store.ops->revisions_list(&store, doc_path, out);
+    if (store.ops == &file_ops && lock < 0) return false;
+    bool ok = store.ops->revisions_list(&store, doc_path, out, count);
     project_store_file_unlock(lock);
-    return n;
+    return ok;
+}
+
+size_t project_store_revisions_list(StoreManager *manager, const char *project_dir, const char *doc_path, Revision **out)
+{
+    size_t count = 0;
+    (void)project_store_revisions_list_checked(manager, project_dir, doc_path, out, &count);
+    return count;
 }
 
 bool project_store_revisions_record(StoreManager *manager, const char *project_dir, const char *doc_path, const char *text,

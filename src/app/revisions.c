@@ -297,6 +297,12 @@ size_t revisions_list(StoreManager *manager, const char *project_dir, const char
     return project_store_revisions_list(manager, project_dir, doc_path, out);
 }
 
+bool revisions_list_checked(StoreManager *manager, const char *project_dir, const char *doc_path, Revision **out,
+                            size_t *count)
+{
+    return project_store_revisions_list_checked(manager, project_dir, doc_path, out, count);
+}
+
 bool revisions_record(StoreManager *manager, const char *project_dir, const char *doc_path, const char *text, const char *origin,
                       const char *note, bool *recorded)
 {

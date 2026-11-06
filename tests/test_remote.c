@@ -1,0 +1,301 @@
+#define _DARWIN_C_SOURCE
+#include <netinet/in.h>
+#include <poll.h>
+#include <pthread.h>
+#include <stdatomic.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/time.h>
+#include <unistd.h>
+
+#include "app/chat_store.h"
+#include "app/store.h"
+#include "llm/chat.h"
+#include "llm/http.h"
+#include "llm/remote.h"
+#include "test_state_fixture.h"
+#include "test_util.h"
+
+static char g_dir[512];
+static StoreManager *g_store;
+
+typedef struct { int done; } DoneCtx;
+static void on_done(ChatSession *session, size_t index, void *context)
+{
+    (void)session;
+    (void)index;
+    ((DoneCtx *)context)->done++;
+}
+
+static void wait_idle(ChatSession *session, DoneCtx *done, int want)
+{
+    for (int i = 0; i < 6000 && (chat_busy(session) || done->done < want); i++) {
+        chat_poll(session);
+        usleep(5000);
+    }
+    chat_poll(session);
+}
+
+/* ---- the optional remote model ---------------------------------------------------- */
+
+typedef enum { RSTUB_OK, RSTUB_401, RSTUB_REDIRECT, RSTUB_BIG } RStubMode;
+typedef struct {
+    int lfd, port;
+    RStubMode mode;
+    atomic_int stop, requests;
+    char last[65536];
+} RStub;
+
+static void *rstub_main(void *arg)
+{
+    RStub *st = arg;
+    while (!atomic_load(&st->stop)) {
+        struct pollfd pfd = { .fd = st->lfd, .events = POLLIN };
+        if (poll(&pfd, 1, 50) <= 0) continue;
+        int c = accept(st->lfd, NULL, NULL);
+        if (c < 0) continue;
+        int one = 1;
+        setsockopt(c, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
+        struct timeval io_timeout = { .tv_sec = 10 };
+        setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, &io_timeout, sizeof(io_timeout));
+        setsockopt(c, SOL_SOCKET, SO_SNDTIMEO, &io_timeout, sizeof(io_timeout));
+        /* Read headers and the whole body (Content-Length). */
+        size_t got = 0;
+        long need = -1;
+        while (got < sizeof(st->last) - 1) {
+            ssize_t r = recv(c, st->last + got, sizeof(st->last) - 1 - got, 0);
+            if (r <= 0) break;
+            got += (size_t)r;
+            st->last[got] = 0;
+            char *end = strstr(st->last, "\r\n\r\n");
+            if (end && need < 0) {
+                char *cl = strcasestr(st->last, "Content-Length:");
+                need = (long)(end + 4 - st->last) + (cl ? atol(cl + 15) : 0);
+            }
+            if (need >= 0 && (long)got >= need) break;
+        }
+        atomic_fetch_add(&st->requests, 1);
+        if (st->mode == RSTUB_BIG) {
+            const char *head = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n";
+            send(c, head, strlen(head), 0);
+            char block[65536];
+            memset(block, 'x', sizeof(block));
+            size_t sent = 0, want = REMOTE_MAX_RESPONSE_BYTES + sizeof(block);
+            while (sent < want) {
+                ssize_t n = send(c, block, sizeof(block), 0);
+                if (n <= 0) break;
+                sent += (size_t)n;
+            }
+            close(c);
+            continue;
+        }
+        const char *r;
+        if (st->mode == RSTUB_401) r = "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: 27\r\nConnection: close\r\n\r\n{\"error\":\"invalid api key\"}";
+        else if (st->mode == RSTUB_REDIRECT) r = "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:9/steal\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+        else r = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n"
+                 "data: {\"choices\":[{\"delta\":{\"content\":\"The knight drew his\"}}]}\n\n"
+                 "data: {\"choices\":[{\"delta\":{\"content\":\" sword.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
+        send(c, r, strlen(r), 0);
+        close(c);
+    }
+    return NULL;
+}
+
+static bool rstub_start(RStub *st, RStubMode mode, pthread_t *th)
+{
+    memset(st, 0, sizeof(*st));
+    st->mode = mode;
+    st->lfd = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in a = { .sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK) };
+    socklen_t al = sizeof(a);
+    if (bind(st->lfd, (struct sockaddr *)&a, sizeof(a)) || listen(st->lfd, 4) || getsockname(st->lfd, (struct sockaddr *)&a, &al))
+        return false;
+    st->port = ntohs(a.sin_port);
+    return pthread_create(th, NULL, rstub_main, st) == 0;
+}
+
+static void rstub_stop(RStub *st, pthread_t th)
+{
+    atomic_store(&st->stop, 1);
+    pthread_join(th, NULL);
+    close(st->lfd);
+}
+
+static bool remote_cfg(RemoteConfig *c, const char *url, const char *key, int mode, char *err, size_t errlen)
+{
+    char kf[600], json[1400];
+    snprintf(kf, sizeof(kf), "%s/remote-key", g_dir);
+    FILE *f = fopen(kf, "wb");
+    fputs(key, f);
+    fclose(f);
+    chmod(kf, (mode_t)mode);
+    snprintf(json, sizeof(json), "{\"name\":\"Frontier\",\"base_url\":\"%s\",\"model\":\"m1\",\"api_key_file\":\"%s\"}", url, kf);
+    return remote_parse(json, c, err, errlen);
+}
+
+static void test_remote(void)
+{
+    char cmd_buf[900];
+    RemoteConfig c;
+    char err[200];
+    /* Configuration: HTTPS (plain http only to this machine), no credentials
+     * in the URL, a private key file. */
+    CHECK(remote_cfg(&c, "https://api.example.com/v1/", "sk-test", 0600, err, sizeof(err)) && !strcmp(c.host, "api.example.com") &&
+          !strcmp(c.base_url, "https://api.example.com/v1") && !strcmp(c.key, "sk-test") && !strcmp(c.name, "Frontier"));
+    CHECK(!remote_cfg(&c, "http://api.example.com/v1", "sk-test", 0600, err, sizeof(err)) && strstr(err, "https"));
+    CHECK(!remote_cfg(&c, "https://user:pw@api.example.com/v1", "sk-test", 0600, err, sizeof(err)) && strstr(err, "credentials"));
+    CHECK(!remote_cfg(&c, "https://api.example.com/v1", "sk-test", 0644, err, sizeof(err)) && strstr(err, "private") && !c.key[0]);
+    CHECK(!remote_cfg(&c, "https://api.example.com/v1", "sk test\r\nX-Evil: 1", 0600, err, sizeof(err))); /* no header injection */
+    CHECK(!remote_cfg(&c, "https://api.example.com/v1", "sk\x01", 0600, err, sizeof(err)));
+    CHECK(!remote_parse("{\"base_url\":\"https://a.b/v1\"}", &c, err, sizeof(err)));
+    CHECK(remote_cfg(&c, "http://127.0.0.1:1/v1", "sk-test", 0600, err, sizeof(err)));
+    /* Adapting the local request: llama-server extras out, the model in. */
+    char *a = remote_adapt_request(&c, "{\"messages\":[],\"stream\":true,\"id_slot\":0,\"cache_prompt\":true,\"repeat_penalty\":1.05,"
+                                       "\"chat_template_kwargs\":{\"enable_thinking\":false}}");
+    CHECK(a && strstr(a, "\"model\":\"m1\"") && strstr(a, "\"stream\":true") && !strstr(a, "id_slot") && !strstr(a, "cache_prompt") &&
+          !strstr(a, "repeat_penalty") && !strstr(a, "chat_template_kwargs"));
+    free(a);
+
+    /* A chat through the remote, then back to local: nothing more is sent. */
+    RStub st;
+    pthread_t th;
+    CHECK(rstub_start(&st, RSTUB_OK, &th));
+    char url[64];
+    snprintf(url, sizeof(url), "http://127.0.0.1:%d/v1", st.port);
+    CHECK(remote_cfg(&c, url, "sk-test", 0600, err, sizeof(err)));
+    ChatSession *s = chat_create(NULL); /* the local model: the fake one */
+    DoneCtx d = { 0 };
+    chat_on_message_done(s, on_done, &d);
+    CHECK(chat_select_remote(s, &c) && chat_remote_selected(s));
+    CHECK(chat_send(s, "Tell me", NULL, err, sizeof(err)));
+    wait_idle(s, &d, 2);
+    chat_lock(s);
+    const ChatMessage *m = chat_message(s, 1);
+    CHECK(m && !m->error && !strcmp(m->content, "The knight drew his sword."));
+    CHECK(m && m->via && !strcmp(m->via, "Frontier \xC2\xB7 127.0.0.1")); /* the reply says where it came from */
+    CHECK(chat_message(s, 0)->via && !strcmp(chat_message(s, 0)->via, m->via)); /* and the message where it went */
+    chat_unlock(s);
+    CHECK(atomic_load(&st.requests) == 1 && strstr(st.last, "POST /v1/chat/completions") &&
+          strstr(st.last, "Authorization: Bearer sk-test") && strstr(st.last, "\"model\":\"m1\"") && strstr(st.last, "Tell me") &&
+          !strstr(st.last, "id_slot"));
+    CHECK(chat_select_remote(s, NULL) && !chat_remote_selected(s));
+    d.done = 0;
+    CHECK(chat_send(s, "Locally now", NULL, err, sizeof(err)));
+    wait_idle(s, &d, 2);
+    chat_lock(s);
+    m = chat_message(s, 3);
+    CHECK(m && strstr(m->content, "fake model") && strstr(m->content, "Locally now"));
+    CHECK(m && !m->via && !chat_message(s, 2)->via); /* local messages carry no via */
+    /* Saved and reloaded, the marks stay with their messages. */
+    ChatMessage saved[4];
+    for (int i = 0; i < 4; i++) saved[i] = *chat_message(s, (size_t)i);
+    chat_unlock(s);
+    char proj[600];
+    snprintf(proj, sizeof(proj), "%s/remote-proj", g_dir);
+    mkdir(proj, 0755);
+    for (int i = 0; i < 4; i++) CHECK(chat_store_append(g_store, proj, "20261104-120000-abcd", "Remote", &saved[i]));
+    ChatMessage *back = NULL;
+    size_t nb = 0;
+    CHECK(chat_store_load(g_store, proj, "20261104-120000-abcd", &back, &nb) && nb == 4 && back[0].via && back[1].via &&
+          !strcmp(back[1].via, "Frontier \xC2\xB7 127.0.0.1") && !back[2].via && !back[3].via);
+    chat_store_free_messages(back, nb);
+    chat_lock(s);
+    chat_unlock(s);
+    CHECK(atomic_load(&st.requests) == 1);
+    chat_destroy(s);
+    rstub_stop(&st, th);
+
+    /* A refused key is said plainly; nothing falls back to local. */
+    CHECK(rstub_start(&st, RSTUB_401, &th));
+    snprintf(url, sizeof(url), "http://127.0.0.1:%d/v1", st.port);
+    CHECK(remote_cfg(&c, url, "sk-bad", 0600, err, sizeof(err)));
+    s = chat_create(NULL);
+    d.done = 0;
+    chat_on_message_done(s, on_done, &d);
+    CHECK(chat_select_remote(s, &c));
+    CHECK(chat_send(s, "Tell me", NULL, err, sizeof(err)));
+    wait_idle(s, &d, 2);
+    chat_lock(s);
+    m = chat_message(s, 1);
+    CHECK(m && m->error && strstr(m->content, "refused the API key") && !strstr(m->content, "fake model"));
+    chat_unlock(s);
+    chat_destroy(s);
+    rstub_stop(&st, th);
+
+    /* Red-team 009: remote.json writable by others, or a key file that is
+     * one of Scribodo's own secrets, is refused. */
+    {
+        char cfgp[700], json[1400], sd[700], kf2[800];
+        snprintf(cfgp, sizeof(cfgp), "%s/remote.json", g_dir);
+        snprintf(sd, sizeof(sd), "%s/Scribodo/services", g_dir);
+        snprintf(cmd_buf, sizeof(cmd_buf), "mkdir -p '%s'", sd);
+        system(cmd_buf);
+        snprintf(kf2, sizeof(kf2), "%s/qdrant_api_key", sd);
+        FILE *kfp = fopen(kf2, "wb");
+        fputs("not-for-providers", kfp);
+        fclose(kfp);
+        chmod(kf2, 0600);
+        snprintf(json, sizeof(json), "{\"base_url\":\"https://a.example/v1\",\"model\":\"m\",\"api_key_file\":\"%s\"}", kf2);
+        CHECK(!remote_parse(json, &c, err, sizeof(err)) && strstr(err, "service secrets"));
+        FILE *cf = fopen(cfgp, "wb");
+        fputs(json, cf);
+        fclose(cf);
+        chmod(cfgp, 0666);
+        setenv("SCRIBODO_REMOTE_CONFIG", cfgp, 1);
+        CHECK(!remote_load(&c, err, sizeof(err)) && strstr(err, "not writable by others"));
+        unsetenv("SCRIBODO_REMOTE_CONFIG");
+    }
+
+    /* Local turns before switching never reach the remote model. */
+    CHECK(rstub_start(&st, RSTUB_OK, &th));
+    snprintf(url, sizeof(url), "http://127.0.0.1:%d/v1", st.port);
+    CHECK(remote_cfg(&c, url, "sk-test", 0600, err, sizeof(err)));
+    s = chat_create(NULL);
+    d.done = 0;
+    chat_on_message_done(s, on_done, &d);
+    CHECK(chat_send(s, "PRIVATE local turn", NULL, err, sizeof(err)));
+    wait_idle(s, &d, 2);
+    CHECK(chat_select_remote(s, &c));
+    CHECK(chat_send(s, "Now remote", NULL, err, sizeof(err)));
+    wait_idle(s, &d, 4);
+    CHECK(atomic_load(&st.requests) == 1 && strstr(st.last, "Now remote") && !strstr(st.last, "PRIVATE"));
+    d.done = 0;
+    CHECK(chat_send(s, "Remote again", NULL, err, sizeof(err)));
+    wait_idle(s, &d, 2);
+    CHECK(atomic_load(&st.requests) == 2 && strstr(st.last, "Now remote") && strstr(st.last, "Remote again") &&
+          !strstr(st.last, "PRIVATE")); /* the remote exchange is its context */
+    chat_destroy(s);
+    rstub_stop(&st, th);
+
+    /* Redirects are never followed (they could take the key elsewhere). */
+    CHECK(rstub_start(&st, RSTUB_REDIRECT, &th));
+    snprintf(url, sizeof(url), "http://127.0.0.1:%d/v1", st.port);
+    CHECK(remote_cfg(&c, url, "sk-test", 0600, err, sizeof(err)));
+    HttpResult r;
+    remote_request(&c, "/chat/completions", "{}", NULL, NULL, NULL, 5000, &r);
+    CHECK(r.status == 302 && atomic_load(&st.requests) == 1);
+    http_result_free(&r);
+    rstub_stop(&st, th);
+
+    /* The wire-level cap protects non-streamed error/JSON responses too. */
+    CHECK(rstub_start(&st, RSTUB_BIG, &th));
+    snprintf(url, sizeof(url), "http://127.0.0.1:%d/v1", st.port);
+    CHECK(remote_cfg(&c, url, "sk-test", 0600, err, sizeof(err)));
+    CHECK(!remote_request(&c, "/chat/completions", "{}", NULL, NULL, NULL, 5000, &r));
+    CHECK(strstr(r.error, "safety limit") && r.len <= REMOTE_MAX_RESPONSE_BYTES);
+    http_result_free(&r);
+    rstub_stop(&st, th);
+}
+
+
+int main(void)
+{
+    if (!test_state_fixture_init(g_dir, sizeof(g_dir), &g_store)) return 1;
+    const TestCase tests[] = { { "remote", test_remote } };
+    int result = run_tests(tests, sizeof(tests) / sizeof(tests[0]));
+    test_state_fixture_destroy(g_dir, g_store);
+    return result;
+}

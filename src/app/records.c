@@ -162,6 +162,11 @@ size_t records_list(StoreManager *manager, const char *project_dir, RecordKind k
     return project_store_records_list(manager, project_dir, kind, out);
 }
 
+bool records_list_checked(StoreManager *manager, const char *project_dir, RecordKind kind, Record **out, size_t *count)
+{
+    return project_store_records_list_checked(manager, project_dir, kind, out, count);
+}
+
 size_t records_list_files(const char *project_dir, RecordKind kind, Record **out)
 {
     /* Open-addressing index from id to slot (red-team 005: a linear search

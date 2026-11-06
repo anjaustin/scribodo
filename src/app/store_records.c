@@ -183,9 +183,10 @@ typedef struct {
 
 static int by_id(const void *a, const void *b) { return strcmp(((const IdIndex *)a)->id, ((const IdIndex *)b)->id); }
 
-size_t sdb_record_list(Db *db, const char *project_id, RecordKind kind, Record **out)
+bool sdb_record_list_checked(Db *db, const char *project_id, RecordKind kind, Record **out, size_t *out_count)
 {
     *out = NULL;
+    *out_count = 0;
     DbArg query_args[2] = { DB_S(project_id), DB_S(kind_name(kind)) };
     DbRows versions, sources;
     if (!db_query(db,
@@ -195,7 +196,7 @@ size_t sdb_record_list(Db *db, const char *project_id, RecordKind kind, Record *
                   " FROM records r JOIN record_versions v ON v.record_id = r.id"
                   " WHERE r.project_id = ? AND r.kind = ? ORDER BY changed DESC, r.id, v.ver",
                   query_args, 2, &versions))
-        return 0;
+        return false;
     if (!db_query(db,
                   "SELECT s.record_id, s.ver, s.kind, d.name, s.revision_id, s.conversation_id, s.message_seq, s.start,"
                   " s.len, s.quote FROM source_refs s JOIN records r ON r.id = s.record_id"
@@ -203,7 +204,7 @@ size_t sdb_record_list(Db *db, const char *project_id, RecordKind kind, Record *
                   " WHERE r.project_id = ? AND r.kind = ? ORDER BY s.id",
                   query_args, 2, &sources)) {
         db_rows_free(&versions);
-        return 0;
+        return false;
     }
 
     bool ok = db_rows_has_columns(&versions, 13) && db_rows_has_columns(&sources, 10);
@@ -325,8 +326,16 @@ size_t sdb_record_list(Db *db, const char *project_id, RecordKind kind, Record *
     db_rows_free(&sources);
     if (!ok) {
         records_free(list, count);
-        return 0;
+        return false;
     }
     *out = list;
+    *out_count = count;
+    return true;
+}
+
+size_t sdb_record_list(Db *db, const char *project_id, RecordKind kind, Record **out)
+{
+    size_t count = 0;
+    (void)sdb_record_list_checked(db, project_id, kind, out, &count);
     return count;
 }
