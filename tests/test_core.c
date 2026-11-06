@@ -8,6 +8,7 @@
 #include "../src/core/undo.h"
 #include "../src/core/utf8.h"
 #include "../src/core/wrap.h"
+#include "../src/app/frame_view_model.h"
 #include "test_util.h"
 
 /* Fill a buffer from a UTF-8 literal. */
@@ -428,6 +429,29 @@ static void test_diff(void)
     }
 }
 
+static void test_frame_view_model(void)
+{
+    FrameViewModel frame;
+    frame_view_model_init(&frame);
+    frame_view_model_begin(&frame);
+    CHECK(frame.generation == 1 && !frame.sealed);
+    const char *first = frame_view_model_copy(&frame, "first label");
+    char large[5000];
+    memset(large, 'x', sizeof(large) - 1);
+    large[sizeof(large) - 1] = '\0';
+    const char *second = frame_view_model_copy(&frame, large);
+    CHECK(!strcmp(first, "first label")); /* later block growth never invalidates earlier strings */
+    CHECK(strlen(second) == sizeof(large) - 1);
+    frame_view_model_seal(&frame);
+    CHECK(frame.sealed);
+    CHECK(!strcmp(frame_view_model_copy(&frame, "late mutation"), "[frame text unavailable]"));
+    frame_view_model_begin(&frame);
+    CHECK(frame.generation == 2 && !frame.sealed);
+    CHECK(!strcmp(frame_view_model_copy(&frame, "next frame"), "next frame"));
+    frame_view_model_destroy(&frame);
+    frame_view_model_destroy(&frame);
+}
+
 int main(void)
 {
     TestCase tests[] = {
@@ -443,6 +467,7 @@ int main(void)
         { "undo_state_ids", test_undo_state_ids },
         { "wrap", test_wrap },
         { "diff", test_diff },
+        { "frame_view_model", test_frame_view_model },
     };
     return run_tests(tests, sizeof(tests) / sizeof(tests[0]));
 }

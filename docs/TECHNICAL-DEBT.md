@@ -59,7 +59,7 @@ dispatch and teaches UI/domain code about persistence topology.
 
 ## P1 — `main.c` coordination bottleneck
 
-**Status:** In progress
+**Status:** Complete
 **Why now:** `App` owns rendering, project/session data, persistence lifecycle,
 model state and several worker mailboxes. New async features increase ownership
 and shutdown ambiguity.
@@ -80,7 +80,7 @@ and shutdown ambiguity.
 - [x] Extract entity-backfill and name-detection jobs separately.
 - [x] Introduce project/session and Explorer snapshot ownership.
 - [x] Extract chat and reviewed-edit controllers.
-- [ ] Separate a read-only frame view model from layout construction.
+- [x] Separate a read-only frame view model from layout construction.
 - [x] Establish one `app_destroy()` path for full and partial initialization.
 
 ### Acceptance criteria
@@ -215,6 +215,8 @@ Do not treat these as remediation targets without a changed product decision:
   snapshots so refreshes cannot retarget document or chat hit tests.
 - Extracted owned chat/attachment and reviewed-edit transition controllers,
   including explicit adoption, pending-response transfer and idempotent teardown.
+- Added a generation-tagged frame string arena; every Clay text command now
+  references immutable frame-owned storage through render.
 - Hardened the local HTTP stub used by hosted CI to consume complete requests
   and emit complete responses instead of depending on single `recv`/`send` calls.
 - Verification: build, unit/headless, ASan/UBSan, TSan, database, base UI and

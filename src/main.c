@@ -48,6 +48,7 @@
 #include "app/explorer_snapshot.h"
 #include "app/chat_controller.h"
 #include "app/reviewed_edit_controller.h"
+#include "app/frame_view_model.h"
 #include "app/profile.h"
 #include "app/model_settings.h"
 #include "llm/memfit.h"
@@ -107,6 +108,7 @@ static const Clay_Color COL_ERR     = RGB(0xE5, 0x73, 0x73);
 #define ENT_ROWS 60   /* relationships and mentions shown for the open one */
 
 typedef struct {
+    FrameViewModel frame;
     Editor *editor;
     SFont fonts[FONT_COUNT];
     SFont *font_ptrs[FONT_COUNT];
@@ -2387,25 +2389,26 @@ static void send_chat(App *app, char *text)
 
 /* ---- layout helpers ------------------------------------------------------------- */
 
-static Clay_String cstr(const char *s)
+static Clay_String cstr(FrameViewModel *frame, const char *s)
 {
-    return (Clay_String){ .isStaticallyAllocated = false, .length = (int32_t)strlen(s), .chars = s };
+    const char *copy = frame_view_model_copy(frame, s);
+    return (Clay_String){ .isStaticallyAllocated = false, .length = (int32_t)strlen(copy), .chars = copy };
 }
 
-static void label(const char *s, int font, Clay_Color color)
+static void label(App *app, const char *s, int font, Clay_Color color)
 {
-    CLAY_TEXT(cstr(s), CLAY_TEXT_CONFIG({ .fontId = (uint16_t)font, .textColor = color,
+    CLAY_TEXT(cstr(&app->frame, s), CLAY_TEXT_CONFIG({ .fontId = (uint16_t)font, .textColor = color,
                                          .wrapMode = CLAY_TEXT_WRAP_NONE }));
 }
 
 
-static void section_header(const char *s)
+static void section_header(App *app, const char *s)
 {
-    CLAY({ .layout = { .padding = { 0, 0, 10, 4 } } }) { label(s, FONT_UI, COL_MUTED); }
+    CLAY({ .layout = { .padding = { 0, 0, 10, 4 } } }) { label(app, s, FONT_UI, COL_MUTED); }
 }
 
 /* A clickable list row. */
-static void list_item(Clay_ElementId id, const char *s, bool active)
+static void list_item(App *app, Clay_ElementId id, const char *s, bool active)
 {
     bool hover = Clay_PointerOver(id);
     CLAY({ .id = id,
@@ -2416,14 +2419,14 @@ static void list_item(Clay_ElementId id, const char *s, bool active)
            .cornerRadius = CLAY_CORNER_RADIUS(4) }) {
         /* Clipped by the Explorer itself: a clip on every row made each a
          * Clay scroll container and overflowed Clay's limit (red-team 005). */
-        label(s, FONT_UI, active ? COL_TEXT : COL_MUTED);
+        label(app, s, FONT_UI, active ? COL_TEXT : COL_MUTED);
     }
 }
 
 /* Inactive placeholder text: deliberately not styled like a row. */
-static void coming_soon(const char *s)
+static void coming_soon(App *app, const char *s)
 {
-    CLAY({ .layout = { .padding = { 8, 8, 2, 2 } } }) { label(s, FONT_UI, COL_DIM); }
+    CLAY({ .layout = { .padding = { 8, 8, 2, 2 } } }) { label(app, s, FONT_UI, COL_DIM); }
 }
 
 static void splitter(Clay_ElementId id, bool active)
@@ -2511,6 +2514,7 @@ static void update_labels(App *app)
 static Clay_RenderCommandArray build_layout(App *app)
 {
     app->drawn_explorer_generation = app->explorer.generation;
+    frame_view_model_begin(&app->frame);
     update_labels(app);
     Clay_BeginLayout();
     CLAY({ .id = CLAY_ID("Root"),
@@ -2525,19 +2529,19 @@ static Clay_RenderCommandArray build_layout(App *app)
                            .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
                .backgroundColor = COL_PANEL,
                .border = { .color = COL_BORDER, .width = { .bottom = 1 } } }) {
-            label("Scribodo", FONT_UI, COL_TEXT);
+            label(app, "Scribodo", FONT_UI, COL_TEXT);
             slot(CLAY_ID("OpenButton"), 64, 24);
-            label(app->doc_label, FONT_UI, COL_MUTED);
+            label(app, app->doc_label, FONT_UI, COL_MUTED);
             slot(CLAY_ID("SaveButton"), 64, 24);
             grow();
-            if (app->store_label[0]) label(app->store_label, FONT_UI, app->store_color);
+            if (app->store_label[0]) label(app, app->store_label, FONT_UI, app->store_color);
             /* The model in use; click to choose (when a remote is configured). */
             CLAY({ .id = CLAY_ID("ModelPicker"),
                    .layout = { .sizing = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(26) }, .padding = { 8, 8, 0, 0 },
                                .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
                    .backgroundColor = Clay_PointerOver(CLAY_ID("ModelPicker")) ? COL_HOVER : (Clay_Color){ 0 },
                    .cornerRadius = CLAY_CORNER_RADIUS(4) }) {
-                label(app->model_label, FONT_UI, app->model_color);
+                label(app, app->model_label, FONT_UI, app->model_color);
             }
             slot(CLAY_ID("ObserverToggle"), 96, 24);
         }
@@ -2550,64 +2554,64 @@ static Clay_RenderCommandArray build_layout(App *app)
                                .layoutDirection = CLAY_TOP_TO_BOTTOM },
                    .backgroundColor = COL_PANEL, .clip = { .horizontal = true, .vertical = true, .childOffset = Clay_GetScrollOffset() } }) {
                 if (app->store_problem == STORE_PROBLEM_COPY) {
-                    coming_soon("This folder is a copy of a project in the store.");
-                    coming_soon("Notes, canon, chats and History are paused.");
-                    list_item(CLAY_ID("StoreFixItem"), "Make it its own project", false);
+                    coming_soon(app, "This folder is a copy of a project in the store.");
+                    coming_soon(app, "Notes, canon, chats and History are paused.");
+                    list_item(app, CLAY_ID("StoreFixItem"), "Make it its own project", false);
                 } else if (app->store_problem == STORE_PROBLEM_MISSING) {
-                    coming_soon("This project is missing from the store.");
-                    coming_soon("Notes, canon, chats and History are paused.");
-                    list_item(CLAY_ID("StoreFixItem"), "Restore it from its saved files", false);
+                    coming_soon(app, "This project is missing from the store.");
+                    coming_soon(app, "Notes, canon, chats and History are paused.");
+                    list_item(app, CLAY_ID("StoreFixItem"), "Restore it from its saved files", false);
                 } else if (app->store_inspection.blocked_by != PROJECT_STORE_BLOCK_NONE)
-                    coming_soon("Project store offline: notes, canon, chats and History are paused");
-                section_header("DOCUMENTS");
+                    coming_soon(app, "Project store offline: notes, canon, chats and History are paused");
+                section_header(app, "DOCUMENTS");
                 const char *cur = editor_path(app->editor) ? base_name(editor_path(app->editor)) : "";
-                if (!app->project_dir[0]) coming_soon("Open a folder (\xE2\x8C\x98O)");
-                else if (app->ndocs == 0) coming_soon("No .md or .txt files yet");
+                if (!app->project_dir[0]) coming_soon(app, "Open a folder (\xE2\x8C\x98O)");
+                else if (app->ndocs == 0) coming_soon(app, "No .md or .txt files yet");
                 for (size_t i = 0; i < app->ndocs; i++)
-                    list_item(CLAY_IDI("DocItem", (uint32_t)i), app->docs[i], !strcmp(cur, app->docs[i]));
+                    list_item(app, CLAY_IDI("DocItem", (uint32_t)i), app->docs[i], !strcmp(cur, app->docs[i]));
                 if (app->project_dir[0]) {
-                    list_item(CLAY_ID("NewDocItem"), "+ New document", false);
-                    list_item(CLAY_ID("ImportItem"), "Import\xE2\x80\xA6", false);
+                    list_item(app, CLAY_ID("NewDocItem"), "+ New document", false);
+                    list_item(app, CLAY_ID("ImportItem"), "Import\xE2\x80\xA6", false);
                 }
-                section_header("CHATS");
-                list_item(CLAY_ID("NewChatItem"), "+ New chat", false);
+                section_header(app, "CHATS");
+                list_item(app, CLAY_ID("NewChatItem"), "+ New chat", false);
                 for (size_t i = 0; i < app->nchats; i++)
-                    list_item(CLAY_IDI("ChatItem", (uint32_t)i), app->chat_labels ? app->chat_labels[i] : app->chats[i].title,
+                    list_item(app, CLAY_IDI("ChatItem", (uint32_t)i), app->chat_labels ? app->chat_labels[i] : app->chats[i].title,
                               !strcmp(app->chat_id, app->chats[i].id));
-                if (!app->project_dir[0]) coming_soon("Open a project to save chats");
-                section_header("HISTORY");
-                if (app->nrevs == 0) coming_soon(editor_path(app->editor) ? "No revisions yet" : "Open a document");
+                if (!app->project_dir[0]) coming_soon(app, "Open a project to save chats");
+                section_header(app, "HISTORY");
+                if (app->nrevs == 0) coming_soon(app, editor_path(app->editor) ? "No revisions yet" : "Open a document");
                 for (size_t i = 0; i < app->nrevs && i < REV_SHOW; i++)
-                    list_item(CLAY_IDI("RevItem", (uint32_t)i), app->rev_labels[i], false);
-                if (app->nrevs > REV_SHOW) coming_soon("Older revisions are in .scribodo/revisions");
-                section_header("NOTES");
+                    list_item(app, CLAY_IDI("RevItem", (uint32_t)i), app->rev_labels[i], false);
+                if (app->nrevs > REV_SHOW) coming_soon(app, "Older revisions are in .scribodo/revisions");
+                section_header(app, "NOTES");
                 const char *open_id = record_view_active(app->record) ? record_view_id(app->record) : "";
-                if (app->project_dir[0]) list_item(CLAY_ID("NewNoteItem"), "+ New note", false);
-                else coming_soon("Open a project to keep notes");
+                if (app->project_dir[0]) list_item(app, CLAY_ID("NewNoteItem"), "+ New note", false);
+                else coming_soon(app, "Open a project to keep notes");
                 for (size_t i = 0; i < app->nnotes && i < REC_SHOW; i++)
                     if (app->note_labels[i][0])
-                        list_item(CLAY_IDI("NoteItem", (uint32_t)i), app->note_labels[i], !strcmp(open_id, app->notes[i].id));
-                section_header("CANON");
-                if (app->project_dir[0] && app->ncanon == 0) coming_soon("Select a passage, then \xE2\x8C\x98\xE2\x87\xA7" "C");
+                        list_item(app, CLAY_IDI("NoteItem", (uint32_t)i), app->note_labels[i], !strcmp(open_id, app->notes[i].id));
+                section_header(app, "CANON");
+                if (app->project_dir[0] && app->ncanon == 0) coming_soon(app, "Select a passage, then \xE2\x8C\x98\xE2\x87\xA7" "C");
                 for (size_t i = 0; i < app->ncanon && i < REC_SHOW; i++)
-                    list_item(CLAY_IDI("CanonItem", (uint32_t)i), app->canon_labels[i], !strcmp(open_id, app->canon[i].id));
+                    list_item(app, CLAY_IDI("CanonItem", (uint32_t)i), app->canon_labels[i], !strcmp(open_id, app->canon[i].id));
                 if (app->project_dir[0]) {
-                    section_header("PROJECT");
-                    list_item(CLAY_ID("BackupItem"), backup_job_busy(&app->backup) ? "Backing up\xE2\x80\xA6" : "Back up now", false);
-                    list_item(CLAY_ID("RestoreItem"), "Restore from a backup\xE2\x80\xA6", false);
-                    list_item(CLAY_ID("NamesItem"), "Names\xE2\x80\xA6", false);
-                    if (app->backup_label[0]) coming_soon(app->backup_label);
+                    section_header(app, "PROJECT");
+                    list_item(app, CLAY_ID("BackupItem"), backup_job_busy(&app->backup) ? "Backing up\xE2\x80\xA6" : "Back up now", false);
+                    list_item(app, CLAY_ID("RestoreItem"), "Restore from a backup\xE2\x80\xA6", false);
+                    list_item(app, CLAY_ID("NamesItem"), "Names\xE2\x80\xA6", false);
+                    if (app->backup_label[0]) coming_soon(app, app->backup_label);
                 }
                 memset(app->drawn_ent, 0, sizeof(app->drawn_ent));
                 memset(app->drawn_row_finding, 0, sizeof(app->drawn_row_finding));
                 memset(app->drawn_row_other, 0, sizeof(app->drawn_row_other));
                 if (app->store_inspection.capabilities & PROJECT_STORE_CAP_ENTITIES) {
-                    section_header("ENTITIES");
-                    if (app->nents == 0) coming_soon("The observer lists who and what appears here");
+                    section_header(app, "ENTITIES");
+                    if (app->nents == 0) coming_soon(app, "The observer lists who and what appears here");
                     for (size_t i = 0; i < app->nents && i < ENT_SHOW; i++) {
                         bool open = !strcmp(app->ent_open, app->ents[i].id);
                         snprintf(app->drawn_ent[i], sizeof(app->drawn_ent[i]), "%s", app->ents[i].id);
-                        list_item(CLAY_IDI("EntityItem", (uint32_t)i), app->ent_labels[i], open);
+                        list_item(app, CLAY_IDI("EntityItem", (uint32_t)i), app->ent_labels[i], open);
                         if (!open) continue;
                         /* Its relationships (click: the passage; \xE2\x80\xBA: go to the other one)
                          * and mentions (click: the passage). */
@@ -2616,22 +2620,22 @@ static Clay_RenderCommandArray build_layout(App *app)
                             snprintf(app->drawn_row_other[k], sizeof(app->drawn_row_other[k]), "%s",
                                      app->ent.rows[k].is_link ? app->ent.rows[k].other_id : "");
                             if (!app->ent.rows[k].is_link) {
-                                list_item(CLAY_IDI("EntRow", (uint32_t)k), app->ent_row_labels[k], false);
+                                list_item(app, CLAY_IDI("EntRow", (uint32_t)k), app->ent_row_labels[k], false);
                                 continue;
                             }
                             CLAY({ .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) } } }) {
-                                list_item(CLAY_IDI("EntRow", (uint32_t)k), app->ent_row_labels[k], false);
+                                list_item(app, CLAY_IDI("EntRow", (uint32_t)k), app->ent_row_labels[k], false);
                                 bool hover = Clay_PointerOver(CLAY_IDI("EntGo", (uint32_t)k));
                                 CLAY({ .id = CLAY_IDI("EntGo", (uint32_t)k),
                                        .layout = { .sizing = { CLAY_SIZING_FIXED(24), CLAY_SIZING_FIXED(24) },
                                                    .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER } },
                                        .backgroundColor = hover ? COL_HOVER : (Clay_Color){ 0 },
                                        .cornerRadius = CLAY_CORNER_RADIUS(4) }) {
-                                    label("\xE2\x80\xBA", FONT_UI, COL_MUTED);
+                                    label(app, "\xE2\x80\xBA", FONT_UI, COL_MUTED);
                                 }
                             }
                         }
-                        if (app->ent.nrows == 0) coming_soon("  No relationships or mentions left");
+                        if (app->ent.nrows == 0) coming_soon(app, "  No relationships or mentions left");
                     }
                 }
             }
@@ -2654,9 +2658,9 @@ static Clay_RenderCommandArray build_layout(App *app)
                                    .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
                        .border = { .color = COL_BORDER, .width = { .bottom = 1 } },
                        .clip = { .horizontal = true } }) {
-                    label("CHAT", FONT_UI, COL_MUTED);
-                    label(app->chat_header, FONT_UI, COL_TEXT);
-                    if (app->remote_badge[0]) label(app->remote_badge, FONT_UI, COL_WARN);
+                    label(app, "CHAT", FONT_UI, COL_MUTED);
+                    label(app, app->chat_header, FONT_UI, COL_TEXT);
+                    if (app->remote_badge[0]) label(app, app->remote_badge, FONT_UI, COL_WARN);
                     grow();
                     if (open_chat_stored(app)) slot(CLAY_ID("ObserverReads"), 190, 24);
                     slot(CLAY_ID("NewChatButton"), 80, 24);
@@ -2672,7 +2676,7 @@ static Clay_RenderCommandArray build_layout(App *app)
                         CLAY({ .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
                                            .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
                                .clip = { .horizontal = true } }) {
-                            label(app->suggest_text, FONT_UI, COL_TEXT);
+                            label(app, app->suggest_text, FONT_UI, COL_TEXT);
                         }
                         slot(CLAY_ID("NameSave"), 64, 24);
                         slot(CLAY_ID("NameSkip"), 72, 24);
@@ -2686,7 +2690,7 @@ static Clay_RenderCommandArray build_layout(App *app)
                         CLAY({ .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
                                            .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
                                .clip = { .horizontal = true } }) {
-                            label(app->edit_banner, FONT_UI, COL_WARN);
+                            label(app, app->edit_banner, FONT_UI, COL_WARN);
                         }
                         slot(CLAY_ID("CancelEdit"), 64, 24);
                     } else {
@@ -2709,10 +2713,10 @@ static Clay_RenderCommandArray build_layout(App *app)
                                    .padding = CLAY_PADDING_ALL(12), .childGap = 8,
                                    .layoutDirection = CLAY_TOP_TO_BOTTOM },
                        .backgroundColor = COL_PANEL, .clip = { .vertical = true } }) {
-                    section_header("OBSERVER");
-                    label(app->observer_label, FONT_UI, COL_DIM);
+                    section_header(app, "OBSERVER");
+                    label(app, app->observer_label, FONT_UI, COL_DIM);
                     if (app->store_inspection.capabilities & PROJECT_STORE_CAP_SEMANTIC)
-                        list_item(CLAY_ID("RebuildIndex"), "Rebuild the index", false);
+                        list_item(app, CLAY_ID("RebuildIndex"), "Rebuild the index", false);
                     CLAY({ .id = CLAY_ID("Findings"),
                            .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } } }) {}
                 }
@@ -2726,13 +2730,15 @@ static Clay_RenderCommandArray build_layout(App *app)
                            .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
                .backgroundColor = COL_PANEL,
                .border = { .color = COL_BORDER, .width = { .top = 1 } } }) {
-            label(app->status_left, FONT_UI, COL_MUTED);
+            label(app, app->status_left, FONT_UI, COL_MUTED);
             grow();
             if (app->status[0] && GetTime() - app->status_time < 6.0)
-                label(app->status, FONT_UI, editor_path(app->editor) && editor_is_read_only(app->editor) ? COL_WARN : COL_TEXT);
+                label(app, app->status, FONT_UI, editor_path(app->editor) && editor_is_read_only(app->editor) ? COL_WARN : COL_TEXT);
         }
     }
-    return Clay_EndLayout();
+    Clay_RenderCommandArray commands = Clay_EndLayout();
+    frame_view_model_seal(&app->frame);
+    return commands;
 }
 
 static Rectangle element_rect_str(Clay_String s, uint32_t index, bool indexed)
@@ -2921,6 +2927,7 @@ static bool load_fonts(App *app, float dpi)
 static void app_destroy(App *app)
 {
     if (!app) return;
+    frame_view_model_destroy(&app->frame);
     script_free(app->script);
     app->script = NULL;
     reviewed_edit_controller_destroy(&app->reviewed_edit);
@@ -2959,6 +2966,7 @@ static void app_destroy(App *app)
 int main(int argc, char **argv)
 {
     static App app;
+    frame_view_model_init(&app.frame);
     project_session_init(&app.session);
     explorer_snapshot_init(&app.explorer);
     chat_controller_init(&app.chat_controller);
