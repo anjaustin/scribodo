@@ -208,6 +208,11 @@ static void test_backends(void)
     n = sdb_revision_list(db, pid, "/x/ch1.md", &list);
     CHECK(n == 2 && !strcmp(list[0].origin, "ai-edit")); /* r2, recorded last, is still the newest */
     free(list);
+    CHECK(db_run(db, "UPDATE revisions SET origin = REPEAT('x', 24) WHERE id = ?", (DbArg[1]){ DB_S(r2) }, 1, NULL));
+    list = (Revision *)1;
+    n = 99;
+    CHECK(!sdb_revision_list_checked(db, pid, "/x/ch1.md", &list, &n) && list == NULL && n == 0);
+    CHECK(db_run(db, "UPDATE revisions SET origin = 'ai-edit' WHERE id = ?", (DbArg[1]){ DB_S(r2) }, 1, NULL));
     CHECK(sdb_revision_record(db, pid, "/x/ch1.md", "second", "save", NULL, false, &rec, NULL, 0) && !rec); /* same as newest */
 
     /* Records: versions, sources by id, the document's current name after a rename. */
@@ -235,6 +240,13 @@ static void test_backends(void)
           !strcmp(record_current(&recs[0])->sources[0].doc, "Chapter One.md") && /* follows the rename */
           !strcmp(record_current(&recs[0])->sources[0].revision, r1) && !strcmp(record_current(&recs[0])->sources[0].quote, "first"));
     records_free(recs, nr);
+    CHECK(db_run(db, "UPDATE record_versions SET status = REPEAT('x', 16) WHERE record_id = ? AND ver = 2",
+                 (DbArg[1]){ DB_S(cid) }, 1, NULL));
+    recs = (Record *)1;
+    nr = 99;
+    CHECK(!sdb_record_list_checked(db, pid, REC_CANON, &recs, &nr) && recs == NULL && nr == 0);
+    CHECK(db_run(db, "UPDATE record_versions SET status = 'retracted' WHERE record_id = ? AND ver = 2",
+                 (DbArg[1]){ DB_S(cid) }, 1, NULL));
     nr = sdb_record_list(db, pid, REC_FINDING, &recs);
     CHECK(nr == 1 && !strcmp(record_current(&recs[0])->finding.type, "conflict") &&
           !strcmp(record_current(&recs[0])->finding.related, cid) && record_current(&recs[0])->finding.related_text &&

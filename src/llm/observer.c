@@ -726,13 +726,18 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, ObserverJob 
                 cJSON_DeleteItemFromObject(docs, j->name);
                 arr = cJSON_AddArrayToObject(docs, j->name);
             }
-            for (size_t h = 0; h < j->nhashes; h++) {
+            if (!arr) io_failed = true;
+            for (size_t h = 0; !io_failed && h < j->nhashes; h++) {
                 char hex[17];
                 snprintf(hex, sizeof(hex), "%016llx", (unsigned long long)j->hashes[h]);
-                cJSON_AddItemToArray(arr, cJSON_CreateString(hex));
+                cJSON *value = cJSON_CreateString(hex);
+                if (!value || !cJSON_AddItemToArray(arr, value)) {
+                    cJSON_Delete(value);
+                    io_failed = true;
+                }
             }
         } else {
-            observer_job_set_chat_progress(cJSON_GetObjectItem(st, "chats"), j->name, j->msg_to, j->off_to);
+            if (!observer_job_set_chat_progress(cJSON_GetObjectItem(st, "chats"), j->name, j->msg_to, j->off_to)) io_failed = true;
         }
         if (!io_failed && !observer_job_state_save(o->store, project, st)) io_failed = true;
         ok = !io_failed;
@@ -855,11 +860,18 @@ static void *worker(void *arg)
             }
         }
         ObserverJob j;
-        if (!observer_job_find(o->store, project, st, &j)) {
-            bool saved = observer_job_state_save(o->store, project, st); /* pruned state; blank text marked read */
+        bool discovery_error = false;
+        if (!observer_job_find(o->store, project, st, &j, &discovery_error)) {
+            bool saved = !discovery_error && observer_job_state_save(o->store, project, st); /* pruned state; blank text marked read */
             cJSON_Delete(st);
             pthread_mutex_lock(&o->mu);
-            if (gen == o->gen) snprintf(o->status, sizeof(o->status), "%s", saved ? "Up to date" : "Can't write .scribodo/observer/state.json");
+            if (gen == o->gen)
+                snprintf(o->status, sizeof(o->status), "%s",
+                         saved ? "Up to date" : discovery_error ? "Can't read observer inputs — retrying" : "Can't write .scribodo/observer/state.json");
+            if (discovery_error) {
+                o->poked = true;
+                o->retry_at = now_s() + RETRY_DELAY;
+            }
             o->running = false;
             pthread_mutex_unlock(&o->mu);
             continue;

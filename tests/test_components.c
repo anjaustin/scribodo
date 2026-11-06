@@ -18,12 +18,24 @@
 #include "llm/memfit.h"
 #include "llm/names.h"
 #include "llm/observer.h"
+#include "llm/observer_job_internal.h"
 #include "llm/semantic.h"
 #include "test_state_fixture.h"
 #include "test_util.h"
 
 static char g_dir[512];
 static StoreManager *g_store;
+
+static void test_observer_job_errors(void)
+{
+    cJSON *state = cJSON_CreateObject();
+    CHECK(state && cJSON_AddObjectToObject(state, "docs") && cJSON_AddObjectToObject(state, "chats"));
+    ObserverJob job;
+    bool error = false;
+    CHECK(!observer_job_find(g_store, "/path/that/does/not/exist", state, &job, &error) && error);
+    observer_job_free(&job);
+    cJSON_Delete(state);
+}
 
 static void test_markdown_display(void)
 {
@@ -326,6 +338,7 @@ int main(void)
         { "model_settings", test_model_settings },
         { "memfit", test_memfit },
         { "owned_store_dependencies", test_owned_store_dependencies },
+        { "observer_job_errors", test_observer_job_errors },
     };
     int result = run_tests(tests, sizeof(tests) / sizeof(tests[0]));
     test_state_fixture_destroy(g_dir, g_store);

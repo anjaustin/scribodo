@@ -142,8 +142,12 @@ static char *read_doc(const char *path, size_t *n)
     if (!f) return NULL;
     char *buf = malloc((size_t)st.st_size + 1);
     size_t got = buf ? fread(buf, 1, (size_t)st.st_size, f) : 0;
-    fclose(f);
-    if (!buf) return NULL;
+    bool read_ok = buf && got == (size_t)st.st_size && !ferror(f);
+    bool ok = fclose(f) == 0 && read_ok;
+    if (!ok) {
+        free(buf);
+        return NULL;
+    }
     size_t r = 0, w = 0;
     if (got >= 3 && (unsigned char)buf[0] == 0xEF && (unsigned char)buf[1] == 0xBB && (unsigned char)buf[2] == 0xBF) r = 3;
     for (; r < got; r++) {
@@ -161,12 +165,11 @@ static char *read_doc(const char *path, size_t *n)
 
 static int cmp_names(const void *a, const void *b) { return strcmp(*(char *const *)a, *(char *const *)b); }
 
-void observer_job_set_chat_progress(cJSON *chats, const char *id, size_t n, size_t off)
+bool observer_job_set_chat_progress(cJSON *chats, const char *id, size_t n, size_t off)
 {
     cJSON_DeleteItemFromObject(chats, id);
     cJSON *o = cJSON_AddObjectToObject(chats, id);
-    cJSON_AddNumberToObject(o, "n", (double)n);
-    cJSON_AddNumberToObject(o, "off", (double)off);
+    return o && cJSON_AddNumberToObject(o, "n", (double)n) && cJSON_AddNumberToObject(o, "off", (double)off);
 }
 
 static bool in_list(char **names, size_t n, const char *s)
@@ -178,12 +181,17 @@ static bool in_list(char **names, size_t n, const char *s)
 
 /* The next unread piece of stored text, or false if all is read. Also
  * prunes state for paragraphs, documents and chats that no longer exist. */
-bool observer_job_find(StoreManager *store, const char *project, cJSON *st, ObserverJob *j)
+bool observer_job_find(StoreManager *store, const char *project, cJSON *st, ObserverJob *j, bool *error)
 {
     memset(j, 0, sizeof(*j));
+    *error = false;
     cJSON *docs = cJSON_GetObjectItem(st, "docs"), *chats = cJSON_GetObjectItem(st, "chats");
     /* Documents, by name (no cap). */
     DIR *d = opendir(project);
+    if (!d) {
+        *error = true;
+        return false;
+    }
     char **names = NULL;
     size_t nn = 0, cap = 0;
     struct dirent *ent;
@@ -196,12 +204,25 @@ bool observer_job_find(StoreManager *store, const char *project, cJSON *st, Obse
         if (nn == cap) {
             cap = cap ? cap * 2 : 64;
             char **nm = realloc(names, cap * sizeof(char *));
-            if (!nm) break;
+            if (!nm) {
+                *error = true;
+                break;
+            }
             names = nm;
         }
-        names[nn++] = strdup(ent->d_name);
+        names[nn] = strdup(ent->d_name);
+        if (!names[nn]) {
+            *error = true;
+            break;
+        }
+        nn++;
     }
     if (d) closedir(d);
+    if (*error) {
+        for (size_t i = 0; i < nn; i++) free(names[i]);
+        free(names);
+        return false;
+    }
     if (nn) qsort(names, nn, sizeof(char *), cmp_names);
     /* Forget documents that are gone. */
     for (cJSON *it = docs ? docs->child : NULL, *next; it; it = next) {
@@ -223,7 +244,8 @@ bool observer_job_find(StoreManager *store, const char *project, cJSON *st, Obse
         cJSON *kept = cJSON_CreateArray(); /* seen hashes still present (pruned) */
         size_t np = 0, pcap = 256;
         size_t *ps = malloc(pcap * sizeof(size_t)), *pl = malloc(pcap * sizeof(size_t));
-        while (ps && pl) { /* all paragraphs, however many */
+        if (!kept || !ps || !pl) *error = true;
+        while (!*error && ps && pl) { /* all paragraphs, however many */
             np = obs_paragraphs(text, ps, pl, pcap);
             if (np < pcap) break;
             pcap *= 2;
@@ -232,23 +254,36 @@ bool observer_job_find(StoreManager *store, const char *project, cJSON *st, Obse
                 free(a ? a : ps);
                 free(b ? b : pl);
                 ps = pl = NULL;
+                *error = true;
                 break;
             }
             ps = a;
             pl = b;
         }
         bool full = false;
-        for (size_t p = 0; ps && pl && p < np; p++) {
-            for (size_t off = 0; off < pl[p];) {
+        for (size_t p = 0; !*error && ps && pl && p < np; p++) {
+            for (size_t off = 0; !*error && off < pl[p];) {
                 size_t plen = piece_len(text + ps[p] + off, pl[p] - off);
                 while (off + plen < pl[p] && text[ps[p] + off + plen] == ' ') plen++; /* keep spaces with the piece */
                 uint64_t h = fnv(text + ps[p] + off, plen);
                 if (seen && hash_seen(seen, h)) {
                     char hex[17];
                     snprintf(hex, sizeof(hex), "%016llx", (unsigned long long)h);
-                    if (!hash_seen(kept, h)) cJSON_AddItemToArray(kept, cJSON_CreateString(hex));
+                    if (!hash_seen(kept, h)) {
+                        cJSON *value = cJSON_CreateString(hex);
+                        if (!value || !cJSON_AddItemToArray(kept, value)) {
+                            cJSON_Delete(value);
+                            *error = true;
+                            break;
+                        }
+                    }
                 } else if (!full) {
-                    if (chunk_add(j, NULL, text, ps[p] + off, plen, -1)) add_hash(j, h);
+                    if (chunk_add(j, NULL, text, ps[p] + off, plen, -1)) {
+                        if (!add_hash(j, h)) {
+                            *error = true;
+                            break;
+                        }
+                    }
                     else full = true;
                 }
                 off += plen;
@@ -256,15 +291,30 @@ bool observer_job_find(StoreManager *store, const char *project, cJSON *st, Obse
         }
         free(ps);
         free(pl);
+        if (*error) {
+            cJSON_Delete(kept);
+            free(text);
+            break;
+        }
         if (j->nsegs) {
             /* Every piece the document has now: what was read before plus
              * this job's (the semantic index drops the rest). */
             j->current = cJSON_Duplicate(kept, true);
-            for (size_t h = 0; j->current && h < j->nhashes; h++) {
+            if (!j->current) *error = true;
+            for (size_t h = 0; !*error && h < j->nhashes; h++) {
                 char hex[17];
                 snprintf(hex, sizeof(hex), "%016llx", (unsigned long long)j->hashes[h]);
-                cJSON_AddItemToArray(j->current, cJSON_CreateString(hex));
+                cJSON *value = cJSON_CreateString(hex);
+                if (!value || !cJSON_AddItemToArray(j->current, value)) {
+                    cJSON_Delete(value);
+                    *error = true;
+                }
             }
+        }
+        if (*error) {
+            cJSON_Delete(kept);
+            free(text);
+            break;
         }
         cJSON_DeleteItemFromObject(docs, names[i]);
         cJSON_AddItemToObject(docs, names[i], kept);
@@ -280,11 +330,19 @@ bool observer_job_find(StoreManager *store, const char *project, cJSON *st, Obse
     }
     for (size_t i = 0; i < nn; i++) free(names[i]);
     free(names);
+    if (*error) {
+        observer_job_free(j);
+        return false;
+    }
     if (found) return true;
 
     /* Chats: what follows the position already read. */
     ChatSummary *list = NULL;
-    size_t nc = chat_store_list(store, project, &list);
+    size_t nc = 0;
+    if (!chat_store_list_checked(store, project, &list, &nc)) {
+        *error = true;
+        return false;
+    }
     for (cJSON *it = chats ? chats->child : NULL, *next; it; it = next) { /* forget deleted chats */
         next = it->next;
         bool present = false;
@@ -295,19 +353,32 @@ bool observer_job_find(StoreManager *store, const char *project, cJSON *st, Obse
         if (list[i].observer_ignore) continue; /* the author said not to read it */
         ChatMessage *msgs = NULL;
         size_t n = 0;
-        if (!chat_store_load(store, project, list[i].id, &msgs, &n)) continue;
+        if (!chat_store_load(store, project, list[i].id, &msgs, &n)) {
+            *error = true;
+            break;
+        }
         cJSON *pos = cJSON_GetObjectItem(chats, list[i].id);
         size_t from = 0, from_off = 0;
-        if (cJSON_IsNumber(pos) && pos->valuedouble >= 0) from = (size_t)pos->valuedouble; /* older state */
+        if (cJSON_IsNumber(pos) && pos->valuedouble >= 0 && pos->valuedouble < 0x1p64)
+            from = (size_t)pos->valuedouble; /* older state */
         if (cJSON_IsObject(pos)) {
             cJSON *a = cJSON_GetObjectItem(pos, "n"), *b = cJSON_GetObjectItem(pos, "off");
-            if (cJSON_IsNumber(a) && a->valuedouble >= 0) from = (size_t)a->valuedouble;
-            if (cJSON_IsNumber(b) && b->valuedouble >= 0) from_off = (size_t)b->valuedouble;
+            if (cJSON_IsNumber(a) && a->valuedouble >= 0 && a->valuedouble < 0x1p64) from = (size_t)a->valuedouble;
+            if (cJSON_IsNumber(b) && b->valuedouble >= 0 && b->valuedouble < 0x1p64) from_off = (size_t)b->valuedouble;
         }
         if (from < n) {
             j->msgs = calloc(n, sizeof(char *));
             j->nmsgs = j->msgs ? n : 0;
-            for (size_t k = 0; k < j->nmsgs; k++) j->msgs[k] = strdup(msgs[k].content ? msgs[k].content : "");
+            if (n && !j->msgs) *error = true;
+            for (size_t k = 0; !*error && k < j->nmsgs; k++) {
+                j->msgs[k] = strdup(msgs[k].content ? msgs[k].content : "");
+                if (!j->msgs[k]) *error = true;
+            }
+            if (*error) {
+                observer_job_free(j);
+                chat_store_free_messages(msgs, n);
+                break;
+            }
             size_t k = from, off = from_off;
             bool full = false;
             for (; k < j->nmsgs && !full; k++, off = 0) {
@@ -333,7 +404,7 @@ bool observer_job_find(StoreManager *store, const char *project, cJSON *st, Obse
             snprintf(j->name, sizeof(j->name), "%s", list[i].id);
             found = true;
             if (!j->nsegs) { /* only failed/empty/rewrite messages: just mark them read */
-                observer_job_set_chat_progress(chats, list[i].id, j->msg_to, j->off_to);
+                if (!observer_job_set_chat_progress(chats, list[i].id, j->msg_to, j->off_to)) *error = true;
                 observer_job_free(j);
                 found = false;
             }
@@ -341,5 +412,6 @@ bool observer_job_find(StoreManager *store, const char *project, cJSON *st, Obse
         chat_store_free_messages(msgs, n);
     }
     free(list);
+    if (*error) observer_job_free(j);
     return found;
 }

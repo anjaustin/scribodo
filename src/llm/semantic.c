@@ -670,7 +670,7 @@ long semantic_rebuild(SemanticClient *client, const char *project_id, char *err,
         }
         if (!rows_ok) failed++;
         db_rows_free(&r);
-    }
+    } else failed++;
     /* Chat messages (not failed replies or AI rewrites). */
     if (db_query(db,
                  "SELECT m.conversation_id, m.seq, m.content FROM messages m JOIN conversations c ON c.id = m.conversation_id"
@@ -698,7 +698,7 @@ long semantic_rebuild(SemanticClient *client, const char *project_id, char *err,
         }
         if (!rows_ok) failed++;
         db_rows_free(&r);
-    }
+    } else failed++;
     DbRows rc;
     if (db_query(db, "SELECT COUNT(*) FROM records WHERE project_id = ? AND kind IN ('note','canon')",
                  (DbArg[1]){ DB_S(project_id) }, 1, &rc)) {
@@ -709,7 +709,7 @@ long semantic_rebuild(SemanticClient *client, const char *project_id, char *err,
         else
             failed++;
         db_rows_free(&rc);
-    }
+    } else failed++;
     if (failed) {
         snprintf(err, errlen, "%ld passages couldn't be indexed; the rebuild resumes later", failed);
         return -1;

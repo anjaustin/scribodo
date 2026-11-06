@@ -156,4 +156,3 @@ bool observer_model_judge(ObserverModel *model, const char *canon, const char *s
     }
     return votes;
 }
-

@@ -34,8 +34,8 @@ typedef struct {
 
 cJSON *observer_job_state_load(StoreManager *store, const char *project);
 bool observer_job_state_save(StoreManager *store, const char *project, cJSON *state);
-bool observer_job_find(StoreManager *store, const char *project, cJSON *state, ObserverJob *job);
+bool observer_job_find(StoreManager *store, const char *project, cJSON *state, ObserverJob *job, bool *error);
 void observer_job_free(ObserverJob *job);
-void observer_job_set_chat_progress(cJSON *chats, const char *id, size_t messages, size_t offset);
+bool observer_job_set_chat_progress(cJSON *chats, const char *id, size_t messages, size_t offset);
 
 #endif

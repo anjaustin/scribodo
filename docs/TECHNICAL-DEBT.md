@@ -351,3 +351,20 @@ Do not treat these as remediation targets without a changed product decision:
   while preserving translation-unit-local failure accounting.
 - Expanded TSan to every stateful LLM/component/remote binary so decomposition
   does not reduce race coverage.
+
+### 2026-11-06 — P2 completion red-team
+
+- Found that extracted observer job discovery conflated clean exhaustion with
+  filesystem, allocation and chat-list failures. Those failures could persist
+  pruned state or advance past an unread message. Discovery now reports errors
+  separately, owns chat copies atomically, retains state and retries with backoff.
+- Made file-chat loading all-or-nothing across message, attachment and provider
+  allocations, with strict roles/timestamps; short document reads now fail and
+  retry instead of treating a truncated snapshot as complete.
+- Hardened observer JSON progress updates so allocation failures cannot mark a
+  document or chat read, and bounded persisted numeric positions before casts.
+- Found that semantic rebuild treated document, chat and record-count queries as
+  optional. Every authoritative query is now required; failure leaves rebuild
+  pending for a later retry.
+- Added checked-list corruption regressions for over-width revision origins and
+  record statuses, plus an observer discovery-error regression.
