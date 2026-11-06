@@ -46,6 +46,8 @@
 #include "app/name_detection_job.h"
 #include "app/project_session.h"
 #include "app/explorer_snapshot.h"
+#include "app/chat_controller.h"
+#include "app/reviewed_edit_controller.h"
 #include "app/profile.h"
 #include "app/model_settings.h"
 #include "llm/memfit.h"
@@ -78,7 +80,7 @@ enum { FOCUS_NONE, FOCUS_DOC, FOCUS_CHAT, FOCUS_RECORD };
 enum { DRAG_NONE, DRAG_EXPLORER, DRAG_OBSERVER, DRAG_CHAT };
 enum { PT_NEW_DOC = 1, PT_RENAME_DOC, PT_RENAME_CHAT, PT_ATTACH_NAME, PT_NAME_AUTHOR, PT_NAME_ASSISTANT };  /* what the name prompt is for */
 enum { MT_DOC = 1, MT_CHAT, MT_ATTACH, MT_MODEL };  /* what a context menu is for */
-#define MAX_ATTACH 8
+#define MAX_ATTACH CHAT_CONTROLLER_MAX_ATTACH
 
 #define RGB(r, g, b) ((Clay_Color){ r, g, b, 255 })
 static const Clay_Color COL_BG      = RGB(0x1F, 0x1F, 0x1F);
@@ -121,8 +123,16 @@ typedef struct {
     /* Model and chat */
     LlmServer *llm;
     LlmServer *embed;             /* the embedding model (semantic retrieval) */
-    ChatSession *chat;
-    ChatView *chat_view;
+    union {
+        ChatController chat_controller;
+        struct {
+            ChatSession *chat;
+            ChatView *chat_view;
+            char attached[MAX_ATTACH][256];
+            size_t nattached;
+            bool attach_touched;
+        };
+    };
     /* A conversation belongs to the project it started in, even if the author
      * opens a document elsewhere while a reply is still streaming. The
      * anonymous view keeps call sites readable while ProjectSession owns it. */
@@ -139,20 +149,18 @@ typedef struct {
     };
 
     /* Reviewed AI edits */
-    ReviewView *review;
-    bool edit_mode;              /* next chat message is an edit instruction */
-    char *edit_text;             /* the selected passage (its position is the editor's anchor) */
-    char edit_banner[240];
-    struct {
-        bool active;             /* an edit request is streaming */
-        size_t index;            /* its assistant message */
-        char *original, *instruction;
-    } pending;
-    struct {
-        bool active;
-        char *original, *replacement, *note;
-        char doc[PATH_MAX];
-    } proposal;
+    union {
+        ReviewedEditController reviewed_edit;
+        struct {
+            ReviewView *review;
+            Editor *review_editor;
+            bool edit_mode;              /* next chat message is an edit instruction */
+            char *edit_text;             /* the selected passage (its position is the editor's anchor) */
+            char edit_banner[240];
+            PendingReviewedEdit pending;
+            ReviewedEditProposal proposal;
+        };
+    };
     Rectangle review_rect;
     Revision *revs;
     size_t nrevs;
@@ -202,10 +210,7 @@ typedef struct {
     char menu_names[MENU_MAX_ITEMS][256]; /* the attach menu's documents, by item */
 
     /* Documents attached to the current chat (SOW §4.1: by reference, not copied) */
-    char attached[MAX_ATTACH][256];
-    size_t nattached;
     Rectangle attach_chip[MAX_ATTACH], attach_x[MAX_ATTACH], attach_add;
-    bool attach_touched;          /* the author changed them: opening a document no longer resets them */
     RecentProject recents[RECENT_MAX];
     size_t nrecents;
     Rectangle welcome_btn[3], recent_rect[RECENT_MAX], empty_btn[2];
@@ -655,52 +660,29 @@ static void set_project_from(App *app, const char *doc_path)
 
 static void clear_proposal(App *app)
 {
-    free(app->proposal.original);
-    free(app->proposal.replacement);
-    free(app->proposal.note);
-    memset(&app->proposal, 0, sizeof(app->proposal));
-    review_clear(app->review);
-    editor_anchor_clear(app->editor);
+    reviewed_edit_controller_clear_proposal(&app->reviewed_edit);
 }
 
 static void clear_pending(App *app)
 {
-    free(app->pending.original);
-    free(app->pending.instruction);
-    memset(&app->pending, 0, sizeof(app->pending));
+    reviewed_edit_controller_clear_pending(&app->reviewed_edit);
 }
 
 static void leave_edit_mode(App *app)
 {
-    app->edit_mode = false;
-    free(app->edit_text);
-    app->edit_text = NULL;
+    reviewed_edit_controller_leave_mode(&app->reviewed_edit);
 }
 
 /* Show a proposal for review. Takes ownership of nothing; copies. */
 static void propose(App *app, size_t start, size_t len, const char *original, const char *replacement, const char *note,
                     bool truncated)
 {
-    clear_proposal(app);
-    if (!editor_path(app->editor)) return;
-    if (!editor_anchor_set(app->editor, start, len)) return;
-    if (!replacement[0]) {
-        editor_anchor_clear(app->editor);
-        /* An empty reply is not a proposal to delete the passage. */
+    ReviewedEditResult result = reviewed_edit_controller_propose(&app->reviewed_edit, start, len, original, replacement,
+                                                                 note, truncated);
+    if (result == REVIEWED_EDIT_EMPTY_REPLY)
         set_status(app, "The model returned no text for this edit; nothing was proposed");
-        return;
-    }
-    app->proposal.active = true;
-    app->proposal.original = strdup(original);
-    app->proposal.replacement = strdup(replacement);
-    app->proposal.note = strdup(note ? note : "");
-    snprintf(app->proposal.doc, sizeof(app->proposal.doc), "%s", editor_path(app->editor));
-    if (!app->proposal.original || !app->proposal.replacement || !review_set(app->review, original, replacement, note, truncated)) {
-        clear_proposal(app);
+    else if (result == REVIEWED_EDIT_OUT_OF_MEMORY)
         set_status(app, "Could not show the proposed edit");
-        return;
-    }
-    editor_reveal(app->editor, start);
 }
 
 /* Returns false (and says so) if the revision could not be written. */
@@ -715,50 +697,28 @@ static bool record_revision(App *app, const char *origin, const char *note)
     return ok;
 }
 
+static bool record_revision_for_edit(void *context, const char *origin, const char *note)
+{
+    return record_revision(context, origin, note);
+}
+
 static void accept_proposal(App *app)
 {
-    if (!app->proposal.active) return;
-    if (!editor_path(app->editor) || strcmp(app->proposal.doc, editor_path(app->editor)) != 0) {
-        clear_proposal(app);
-        set_status(app, "That edit was for another document");
-        return;
-    }
-    if (editor_is_read_only(app->editor)) {
-        set_status(app, "This document is read-only; the edit can't be applied");
-        return;
-    }
-    /* Never apply over text that changed since the proposal was made. The
-     * editor tracks the passage through every edit (red-team 004: matching by
-     * offset or by text could land on a different copy of the same words, or
-     * insert mid-word after earlier text changed). */
-    size_t start = 0, len = 0;
-    bool same = editor_anchor_get(app->editor, &start, &len);
-    if (same) {
-        char *now = editor_range_utf8(app->editor, start, len);
-        same = now && !strcmp(now, app->proposal.original);
-        free(now);
-    }
-    if (!same) {
-        clear_proposal(app);
+    ReviewedEditResult result = reviewed_edit_controller_accept(&app->reviewed_edit, record_revision_for_edit, app);
+    if (result == REVIEWED_EDIT_WRONG_DOCUMENT) set_status(app, "That edit was for another document");
+    else if (result == REVIEWED_EDIT_NOT_EDITABLE) set_status(app, "This document is read-only; the edit can't be applied");
+    else if (result == REVIEWED_EDIT_CHANGED)
         set_status(app, "The passage changed since this edit was proposed. Select it again and request a new edit.");
-        return;
-    }
-    /* The text before the edit must be safely in History before it changes. */
-    if (!record_revision(app, "before-ai-edit", app->proposal.note)) {
+    else if (result == REVIEWED_EDIT_HISTORY_BEFORE_FAILED)
         set_status(app, "The edit was not applied: could not save the current text to History (.scribodo/revisions)");
-        return;
-    }
-    if (!editor_replace_range_utf8(app->editor, start, len, app->proposal.replacement)) {
-        set_status(app, "Could not apply the edit");
-        return;
-    }
-    bool after = record_revision(app, "ai-edit", app->proposal.note);
-    clear_proposal(app);
-    if (after)
+    else if (result == REVIEWED_EDIT_REPLACE_FAILED) set_status(app, "Could not apply the edit");
+    else if (result == REVIEWED_EDIT_OK) {
         set_status(app, "Edit applied \xC2\xB7 \xE2\x8C\x98Z undoes it \xC2\xB7 the file isn't saved until you press \xE2\x8C\x98S");
-    else
+        app->focus = FOCUS_DOC;
+    } else if (result == REVIEWED_EDIT_HISTORY_AFTER_FAILED) {
         set_status(app, "Edit applied, but it could not be recorded in History \xC2\xB7 \xE2\x8C\x98Z undoes it");
-    app->focus = FOCUS_DOC;
+        app->focus = FOCUS_DOC;
+    }
 }
 
 static void reject_proposal(App *app)
@@ -770,40 +730,14 @@ static void reject_proposal(App *app)
 /* ⌘K: the next chat message becomes an edit request for the selection. */
 static void begin_edit(App *app)
 {
-    size_t a, c;
-    editor_get_selection(app->editor, &a, &c);
-    size_t lo = a < c ? a : c, hi = a < c ? c : a;
-    if (!editor_path(app->editor) || editor_is_read_only(app->editor)) {
+    ReviewedEditResult result = reviewed_edit_controller_begin(&app->reviewed_edit);
+    if (result == REVIEWED_EDIT_NOT_EDITABLE)
         set_status(app, "Open an editable document to request edits");
-        return;
-    }
-    if (hi == lo) {
+    else if (result == REVIEWED_EDIT_NO_SELECTION)
         set_status(app, "Select the passage you want edited, then press \xE2\x8C\x98K");
-        return;
-    }
-    if (app->pending.active) {
+    else if (result == REVIEWED_EDIT_BUSY)
         set_status(app, "Wait for the current edit to finish (or stop it) before requesting another");
-        return;
-    }
-    leave_edit_mode(app);
-    clear_proposal(app); /* one passage at a time: a new request replaces the open proposal */
-    app->edit_text = editor_range_utf8(app->editor, lo, hi - lo);
-    if (!app->edit_text) return;
-    app->edit_mode = true;
-    /* Banner: the first words of the passage. */
-    char first[80];
-    snprintf(first, sizeof(first), "%.60s", app->edit_text);
-    for (char *p = first; *p; p++)
-        if (*p == '\n' || *p == '\t') *p = ' ';
-    /* don't cut a UTF-8 sequence in half */
-    size_t fl = strlen(first);
-    while (fl > 0 && ((unsigned char)first[fl - 1] & 0xC0) == 0x80) fl--;
-    if (fl > 0 && ((unsigned char)first[fl - 1] & 0xC0) == 0xC0) fl--;
-    first[fl] = '\0';
-    snprintf(app->edit_banner, sizeof(app->edit_banner), "\xE2\x9C\x8E Editing \xE2\x80\x9C%s%s\xE2\x80\x9D \xE2\x80\x94 describe the change",
-             first, strlen(app->edit_text) > fl ? "\xE2\x80\xA6" : "");
-    editor_anchor_set(app->editor, lo, hi - lo);
-    app->focus = FOCUS_CHAT;
+    else if (result == REVIEWED_EDIT_OK) app->focus = FOCUS_CHAT;
 }
 
 static void restore_revision(App *app, const Revision *r)
@@ -1219,7 +1153,7 @@ static bool finish_prompt(App *app, const char *typed)
             return false;
         }
         attach(app, typed);
-        app->attach_touched = true;
+        chat_controller_mark_attachments_changed(&app->chat_controller);
         return true;
     }
     if (prompt_tag(app->prompt) == PT_NAME_AUTHOR) {
@@ -1347,8 +1281,7 @@ static bool finish_prompt(App *app, const char *typed)
             prompt_set_error(app->prompt, "The project store couldn't record the rename; nothing was changed");
             return false;
         }
-        for (size_t i = 0; i < app->nattached; i++)
-            if (!strcmp(app->attached[i], app->rename_from)) snprintf(app->attached[i], sizeof(app->attached[i]), "%s", name);
+        (void)chat_controller_rename_attachment(&app->chat_controller, app->rename_from, name);
         recent_rename_doc(app->project_dir, app->rename_from, name);
         if (is_open) editor_set_path(app->editor, full);
         project_store_guard_end(&guard);
@@ -1376,8 +1309,7 @@ static bool finish_prompt(App *app, const char *typed)
         snprintf(problems + strlen(problems), sizeof(problems) - strlen(problems), "%sthe rename couldn't be recorded",
                  problems[0] ? "; " : "");
     observer_rename_doc(app->observer, app->project_dir, app->rename_from, name);
-    for (size_t i = 0; i < app->nattached; i++)
-        if (!strcmp(app->attached[i], app->rename_from)) snprintf(app->attached[i], sizeof(app->attached[i]), "%s", name);
+    (void)chat_controller_rename_attachment(&app->chat_controller, app->rename_from, name);
     recent_rename_doc(app->project_dir, app->rename_from, name);
     if (is_open) editor_set_path(app->editor, full);
     project_store_guard_end(&guard);
@@ -1539,14 +1471,26 @@ static void on_message_done(ChatSession *s, size_t index, void *ctx)
     App *app = ctx;
     chat_lock(s);
     const ChatMessage *m = chat_message(s, index);
+    bool found = m != NULL;
     ChatMessage copy = { 0 };
     if (m) {
         copy = *m;
         copy.content = strdup(m->content ? m->content : "");
     }
     chat_unlock(s);
-    if (!m || !copy.content) return;
-    if (app->pending.active && index == app->pending.index) {
+    char *pending_original = NULL, *pending_instruction = NULL;
+    bool pending_finished = reviewed_edit_controller_take_finished(&app->reviewed_edit, index, &pending_original,
+                                                                    &pending_instruction);
+    if (!found || !copy.content) {
+        if (pending_finished) {
+            editor_anchor_clear(app->editor);
+            set_status(app, "The edit reply finished, but there wasn't enough memory to review it");
+        }
+        free(pending_original);
+        free(pending_instruction);
+        return;
+    }
+    if (pending_finished) {
         size_t start = 0, len = 0;
         bool intact = editor_anchor_get(app->editor, &start, &len);
         if (copy.error || !copy.content[0]) {
@@ -1560,12 +1504,13 @@ static void on_message_done(ChatSession *s, size_t index, void *ctx)
             editor_anchor_clear(app->editor);
             set_status(app, "The passage changed while the edit was being written; nothing was proposed");
         } else {
-            char *clean = llm_clean_edit(copy.content, app->pending.original);
-            if (clean) propose(app, start, len, app->pending.original, clean, app->pending.instruction, copy.truncated);
+            char *clean = llm_clean_edit(copy.content, pending_original);
+            if (clean) propose(app, start, len, pending_original, clean, pending_instruction, copy.truncated);
             else editor_anchor_clear(app->editor);
             free(clean);
         }
-        clear_pending(app);
+        free(pending_original);
+        free(pending_instruction);
     }
     if (copy.role == CHAT_ASSISTANT && !copy.error && !copy.is_edit && index >= 1) names_check(app, index);
     if (!app->chat_project[0]) { free(copy.content); return; }
@@ -1606,9 +1551,7 @@ static void adopt_chat(App *app)
 
 static bool is_attached(App *app, const char *name)
 {
-    for (size_t i = 0; i < app->nattached; i++)
-        if (!strcmp(app->attached[i], name)) return true;
-    return false;
+    return chat_controller_has_attachment(&app->chat_controller, name);
 }
 
 /* A document the Explorer lists for this project: never a path, a hidden
@@ -1638,22 +1581,18 @@ static bool attach(App *app, const char *name)
         set_status(app, "A chat can have up to 8 documents attached");
         return false;
     }
-    snprintf(app->attached[app->nattached++], sizeof(app->attached[0]), "%s", name);
-    return true;
+    return chat_controller_add_attachment(&app->chat_controller, name);
 }
 
 static void detach(App *app, size_t i)
 {
-    if (i >= app->nattached) return;
-    memmove(&app->attached[i], &app->attached[i + 1], (app->nattached - i - 1) * sizeof(app->attached[0]));
-    app->nattached--;
+    (void)chat_controller_remove_attachment(&app->chat_controller, i);
 }
 
 /* A new conversation starts with the open document attached. */
 static void attach_reset(App *app)
 {
-    app->nattached = 0;
-    app->attach_touched = false;
+    chat_controller_clear_attachments(&app->chat_controller);
     if (editor_path(app->editor)) attach(app, base_name(editor_path(app->editor)));
 }
 
@@ -1734,8 +1673,7 @@ static void open_chat(App *app, const ChatSummary *c)
     /* Its attachments are those of its newest user message, exactly: if
      * that one was sent with nothing, nothing is attached (red-team 007).
      * Renames are followed only if they came after the message. */
-    app->nattached = 0;
-    app->attach_touched = true;
+    chat_controller_use_no_attachments(&app->chat_controller);
     for (size_t i = n; i-- > 0;) {
         if (msgs[i].role != CHAT_USER) continue;
         char *copy = msgs[i].docs ? strdup(msgs[i].docs) : NULL;
@@ -2420,16 +2358,18 @@ static void send_chat(App *app, char *text)
     } else if (app->edit_mode && app->edit_text) {
         sent = chat_send_edit(app->chat, text, app->edit_text, &ctx, err, sizeof(err));
         if (sent) {
-            clear_proposal(app);
-            clear_pending(app);
-            app->pending.active = true;
             chat_lock(app->chat);
-            app->pending.index = chat_count(app->chat) - 1;
+            size_t message_index = chat_count(app->chat) - 1;
             chat_unlock(app->chat);
-            app->pending.original = strdup(app->edit_text);
-            app->pending.instruction = strdup(text);
-            editor_anchor_set(app->editor, a_start, a_len); /* clear_proposal dropped it */
-            leave_edit_mode(app);
+            ReviewedEditResult tracked = reviewed_edit_controller_track_request(
+                &app->reviewed_edit, message_index, app->edit_text, text, a_start, a_len);
+            if (tracked != REVIEWED_EDIT_OK) {
+                reviewed_edit_controller_leave_mode(&app->reviewed_edit);
+                editor_anchor_clear(app->editor);
+                set_status(app, tracked == REVIEWED_EDIT_OUT_OF_MEMORY
+                                    ? "The edit was sent, but there wasn't enough memory to review its reply"
+                                    : "The selected passage changed while the edit was being sent");
+            }
         }
     } else {
         sent = chat_send(app->chat, text, &ctx, err, sizeof(err));
@@ -2983,15 +2923,7 @@ static void app_destroy(App *app)
     if (!app) return;
     script_free(app->script);
     app->script = NULL;
-    chat_view_destroy(app->chat_view);
-    app->chat_view = NULL;
-    free(app->proposal.original);
-    free(app->proposal.replacement);
-    free(app->proposal.note);
-    free(app->pending.original);
-    free(app->pending.instruction);
-    free(app->edit_text);
-    review_destroy(app->review);
+    reviewed_edit_controller_destroy(&app->reviewed_edit);
     record_view_destroy(app->record);
     prompt_destroy(app->prompt);
     records_free(app->notes, app->nnotes);
@@ -3007,7 +2939,7 @@ static void app_destroy(App *app)
     records_free(app->flist, app->nflist);
     entity_list_free(app->ents, app->nents);
     entity_detail_free(&app->ent);
-    chat_destroy(app->chat);      /* cancels any reply in progress */
+    chat_controller_destroy(&app->chat_controller); /* cancels any reply in progress */
     semantic_set_embedder(NULL);  /* clear the borrowed server before destroying it */
     llm_server_destroy(app->llm);
     llm_server_destroy(app->embed);
@@ -3029,6 +2961,8 @@ int main(int argc, char **argv)
     static App app;
     project_session_init(&app.session);
     explorer_snapshot_init(&app.explorer);
+    chat_controller_init(&app.chat_controller);
+    reviewed_edit_controller_init(&app.reviewed_edit);
     if (!entity_backfill_job_init(&app.graph_job)) return 1;
     app.graph_job_initialized = true;
     if (!name_detection_job_init(&app.names_job, NULL)) {
@@ -3127,7 +3061,7 @@ int main(int argc, char **argv)
         if (app.embed) llm_server_start(app.embed);
         semantic_set_embedder(app.embed);
     }
-    app.chat = chat_create(app.llm);
+    ChatSession *owned_chat = chat_create(app.llm);
     name_detection_job_set_server(&app.names_job, app.llm);
     /* TLS secrets are never written out for a remote model's traffic. */
     unsetenv("SSLKEYLOGFILE");
@@ -3139,8 +3073,13 @@ int main(int argc, char **argv)
         set_status(&app, msg);
     }
     app.editor = editor_create(&app.fonts[FONT_PROSE]);
-    app.chat_view = app.chat ? chat_view_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI], app.chat) : NULL;
-    app.review = review_create(&app.fonts[FONT_PROSE], &app.fonts[FONT_UI]);
+    ChatView *chat_view = owned_chat ? chat_view_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI], owned_chat) : NULL;
+    ReviewView *review = review_create(&app.fonts[FONT_PROSE], &app.fonts[FONT_UI]);
+    if (!chat_controller_adopt(&app.chat_controller, owned_chat, chat_view)) {
+        chat_view_destroy(chat_view);
+        chat_destroy(owned_chat);
+    }
+    if (!reviewed_edit_controller_adopt(&app.reviewed_edit, app.editor, review)) review_destroy(review);
     app.record = record_view_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI]);
     app.prompt = prompt_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI]);
     app.observer = observer_create(app.llm);
@@ -3698,7 +3637,7 @@ int main(int argc, char **argv)
             int aa = draw_attach_row(&app, attach_rect);
             if (aa >= 0) {
                 detach(&app, (size_t)aa);
-                app.attach_touched = true;
+                chat_controller_mark_attachments_changed(&app.chat_controller);
             } else if (aa == -2) {
                 if (!app.project_dir[0] || app.ndocs == 0) {
                     set_status(&app, "Open a project with documents to attach them");
@@ -3758,7 +3697,7 @@ int main(int argc, char **argv)
                         break;
                     }
                 if (!found) attach(&app, nm);
-                app.attach_touched = true;
+                chat_controller_mark_attachments_changed(&app.chat_controller);
             }
             if (pick >= 0 && app.menu.tag == MT_MODEL && pick == app.model_menu_settings) {
                 open_model_settings(&app);

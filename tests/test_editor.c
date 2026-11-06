@@ -11,6 +11,7 @@
 
 #include "../src/ui/editor.h"
 #include "../src/ui/review_view.h"
+#include "../src/app/reviewed_edit_controller.h"
 #include "test_util.h"
 
 extern double g_stub_time;
@@ -509,6 +510,49 @@ static void test_review_warnings(void)
     review_destroy(v);
 }
 
+static bool record_review_revision(void *context, const char *origin, const char *note)
+{
+    int *calls = context;
+    CHECK(origin && origin[0]);
+    CHECK(note && !strcmp(note, "tighten"));
+    (*calls)++;
+    return true;
+}
+
+static void test_reviewed_edit_controller(void)
+{
+    Editor *editor = new_editor("The fog came.");
+    ReviewView *review = review_create(&g_font, &g_font);
+    ReviewedEditController controller;
+    reviewed_edit_controller_init(&controller);
+    CHECK(reviewed_edit_controller_adopt(&controller, editor, review));
+
+    editor_set_selection(editor, 4, 7);
+    CHECK(reviewed_edit_controller_begin(&controller) == REVIEWED_EDIT_OK);
+    CHECK(controller.edit_mode && controller.edit_text && !strcmp(controller.edit_text, "fog"));
+    CHECK(reviewed_edit_controller_track_request(&controller, 3, controller.edit_text, "tighten", 4, 3) ==
+          REVIEWED_EDIT_OK);
+    CHECK(controller.pending.active && !controller.edit_mode);
+    char *original = NULL, *instruction = NULL;
+    CHECK(!reviewed_edit_controller_take_finished(&controller, 2, &original, &instruction));
+    CHECK(reviewed_edit_controller_take_finished(&controller, 3, &original, &instruction));
+    CHECK(original && !strcmp(original, "fog"));
+    CHECK(instruction && !strcmp(instruction, "tighten"));
+    free(original);
+    free(instruction);
+
+    CHECK(reviewed_edit_controller_propose(&controller, 4, 3, "fog", "mist", "tighten", false) ==
+          REVIEWED_EDIT_OK);
+    int revisions = 0;
+    CHECK(reviewed_edit_controller_accept(&controller, record_review_revision, &revisions) == REVIEWED_EDIT_OK);
+    CHECK(revisions == 2);
+    CHECK(text_is(editor, "The mist came."));
+
+    reviewed_edit_controller_destroy(&controller);
+    reviewed_edit_controller_destroy(&controller); /* idempotent partial/normal teardown */
+    editor_destroy(editor);
+}
+
 /* ---- fuzz ------------------------------------------------------------------ */
 
 /* Maps content id -> text seen with that id. Equal ids must mean equal text,
@@ -675,6 +719,7 @@ int main(void)
         { "ranges", test_ranges },
         { "anchor", test_anchor },
         { "review_warnings", test_review_warnings },
+        { "reviewed_edit_controller", test_reviewed_edit_controller },
         { "fuzz_editor", test_fuzz_editor },
     };
     int rc = run_tests(tests, sizeof(tests) / sizeof(tests[0]));

@@ -1329,6 +1329,41 @@ static void test_revisions(void)
 typedef enum { STUB_TRUNCATE, STUB_NEVER_READ, STUB_CONTEXT_ERROR, STUB_OK } StubMode;
 typedef struct { char path[256]; int lfd; StubMode mode; atomic_int stop; } Stub;
 
+static bool stub_send_all(int fd, const char *data, size_t length)
+{
+    while (length > 0) {
+        ssize_t sent = send(fd, data, length, 0);
+        if (sent <= 0) return false;
+        data += sent;
+        length -= (size_t)sent;
+    }
+    return true;
+}
+
+static ssize_t stub_read_request(int fd, char *buffer, size_t capacity)
+{
+    size_t used = 0, expected = 0;
+    while (used + 1 < capacity) {
+        struct pollfd pfd = { .fd = fd, .events = POLLIN };
+        if (poll(&pfd, 1, 5000) <= 0) return -1;
+        ssize_t got = recv(fd, buffer + used, capacity - used - 1, 0);
+        if (got <= 0) return -1;
+        used += (size_t)got;
+        buffer[used] = '\0';
+        char *headers = strstr(buffer, "\r\n\r\n");
+        if (!headers) continue;
+        if (!expected) {
+            size_t header_length = (size_t)(headers + 4 - buffer);
+            char *content_length = strstr(buffer, "Content-Length:");
+            expected = header_length;
+            if (content_length && content_length < headers)
+                expected += (size_t)strtoull(content_length + strlen("Content-Length:"), NULL, 10);
+        }
+        if (used >= expected) return (ssize_t)used;
+    }
+    return -1;
+}
+
 static void *stub_main(void *arg)
 {
     Stub *st = arg;
@@ -1345,27 +1380,27 @@ static void *stub_main(void *arg)
             continue;
         }
         char buf[65536];
-        ssize_t got = recv(c, buf, sizeof(buf) - 1, 0);
+        ssize_t got = stub_read_request(c, buf, sizeof(buf));
         buf[got > 0 ? got : 0] = 0;
         if (strstr(buf, "POST /tokenize")) {
             const char *r = "HTTP/1.1 200 OK\r\nContent-Length: 15\r\n\r\n{\"tokens\":[1,2]}";
-            send(c, r, strlen(r), 0);
+            (void)stub_send_all(c, r, strlen(r));
         } else if (st->mode == STUB_CONTEXT_ERROR) {
             const char *body = "{\"error\":{\"code\":400,\"message\":\"request (60016 tokens) exceeds the available context size (32768 tokens), try increasing it\"}}";
             char r[512];
             snprintf(r, sizeof(r), "HTTP/1.1 400 Bad Request\r\nContent-Length: %zu\r\n\r\n%s", strlen(body), body);
-            send(c, r, strlen(r), 0);
+            (void)stub_send_all(c, r, strlen(r));
         } else {
             const char *head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n";
-            send(c, head, strlen(head), 0);
+            (void)stub_send_all(c, head, strlen(head));
             const char *ev = "data: {\"choices\":[{\"delta\":{\"content\":\"The knight drew his\"}}]}\n\n";
             char chunk[512];
             snprintf(chunk, sizeof(chunk), "%zx\r\n%s\r\n", strlen(ev), ev);
-            send(c, chunk, strlen(chunk), 0);
+            (void)stub_send_all(c, chunk, strlen(chunk));
             if (st->mode == STUB_OK) {
                 const char *fin = "data: {\"choices\":[{\"delta\":{\"content\":\" sword.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
                 snprintf(chunk, sizeof(chunk), "%zx\r\n%s\r\n0\r\n\r\n", strlen(fin), fin);
-                send(c, chunk, strlen(chunk), 0);
+                (void)stub_send_all(c, chunk, strlen(chunk));
             }
             /* STUB_TRUNCATE: close mid-stream, as a crashed server would. */
         }

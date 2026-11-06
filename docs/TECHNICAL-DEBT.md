@@ -79,7 +79,7 @@ and shutdown ambiguity.
        `App`.
 - [x] Extract entity-backfill and name-detection jobs separately.
 - [x] Introduce project/session and Explorer snapshot ownership.
-- [ ] Extract chat and reviewed-edit controllers.
+- [x] Extract chat and reviewed-edit controllers.
 - [ ] Separate a read-only frame view model from layout construction.
 - [x] Establish one `app_destroy()` path for full and partial initialization.
 
@@ -213,3 +213,9 @@ Do not treat these as remediation targets without a changed product decision:
   centralized normal/partial shutdown in an idempotent `app_destroy()` path.
 - Added owned project/session state and immutable, generation-tagged Explorer
   snapshots so refreshes cannot retarget document or chat hit tests.
+- Extracted owned chat/attachment and reviewed-edit transition controllers,
+  including explicit adoption, pending-response transfer and idempotent teardown.
+- Hardened the local HTTP stub used by hosted CI to consume complete requests
+  and emit complete responses instead of depending on single `recv`/`send` calls.
+- Verification: build, unit/headless, ASan/UBSan, TSan, database, base UI and
+  store UI suites passed locally; controller ownership review found no blockers.
