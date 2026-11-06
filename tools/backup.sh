@@ -32,8 +32,11 @@ if [ "${1:-}" = verify ]; then
     b="${2:?backup folder}"
     [ -f "$b/SHA256SUMS" ] || { echo "not a backup: $b" >&2; exit 2; }
     cd "$b"
-    if [ -n "$(find . ! -type f ! -type d -print -quit)" ]; then
-        echo "the backup holds links or special files: $(find . ! -type f ! -type d -print -quit)" >&2; exit 1
+    if ! special="$(find . ! -type f ! -type d -print -quit)"; then
+        echo "the backup couldn't be completely inspected" >&2; exit 1
+    fi
+    if [ -n "$special" ]; then
+        echo "the backup holds links or special files: $special" >&2; exit 1
     fi
     shasum -a 256 -c --quiet SHA256SUMS || exit 1
     python3 -I - <<'PY' || exit 1
@@ -47,7 +50,9 @@ for line in open("SHA256SUMS", "rb"):
         name = name.replace(b"\\\\", b"\0").replace(b"\\n", b"\n").replace(b"\0", b"\\")
     listed.add(name)
 present = set()
-for root, dirs, files in os.walk(b"."):
+def walk_error(error):
+    raise error
+for root, dirs, files in os.walk(b".", onerror=walk_error):
     for f in files:
         p = os.path.join(root, f)
         if p != b"./SHA256SUMS": present.add(p)
@@ -76,10 +81,31 @@ project="$(cd "$project" && pwd -P)"
 name="$(basename "$project")"
 stamp="$(date +%Y%m%d-%H%M%S)"
 dest="${2:-$HOME/Library/Application Support/Scribodo/backups/$name-$stamp}"
-[ -e "$dest" ] && { echo "already exists: $dest" >&2; exit 2; }
-mkdir -p "$dest/files"
-chmod 700 "$dest"
+# Keep creation and restoration on the same contract. Never silently follow a
+# link to material outside the project, and fail before starting a dump/copy.
+for source in "$project" ${with:+"$with"}; do
+    special="$(find "$source" ! -type f ! -type d -print -quit)"
+    [ -z "$special" ] || { echo "backups can't contain links or special files: $special" >&2; exit 1; }
+done
+# A destination inside either copied tree would recursively copy itself.
+python3 -I - "$project" "$with" "$dest" <<'PY'
+import os, sys
+dest = os.path.realpath(sys.argv[3])
+for source in filter(None, sys.argv[1:3]):
+    source = os.path.realpath(source)
+    if os.path.commonpath([source, dest]) == source:
+        sys.exit("the backup destination must be outside the folders being copied")
+PY
 umask 077
+mkdir -p "$(dirname "$dest")"
+# mkdir reserves a new destination atomically (including dangling symlinks).
+mkdir "$dest" || { echo "backup destination already exists or can't be created: $dest" >&2; exit 2; }
+complete=0
+cleanup() { if [ "$complete" != 1 ]; then rm -rf -- "$dest"; fi; }
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+mkdir "$dest/files"
 
 # 1. The store: one consistent snapshot. The root password is read inside
 # the container (never on a command line); the dump streams out compressed.
@@ -113,5 +139,8 @@ json.dump({"format": 1, "created": stamp, "database": None if nodb == "1" else d
            "schema_version": int(schema) if schema.strip().isdigit() else None, "contents": contents},
           open(out, "w"), indent=2)
 EOF
-(cd "$dest" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 shasum -a 256 > SHA256SUMS)
+(cd "$dest" && find . -type f ! -path ./SHA256SUMS -print0 | sort -z | xargs -0 shasum -a 256 > SHA256SUMS)
+# Catch unsupported entries introduced during copying as well as bad output.
+"$here/tools/backup.sh" verify "$dest" >/dev/null
+complete=1
 echo "$dest"

@@ -13,7 +13,7 @@
 #include <string.h>
 
 #include "app/store.h"
-#include "cJSON.h"
+#include "core/json.h"
 #include "llm/http.h"
 #include "llm/observer.h"
 
@@ -60,7 +60,7 @@ static bool qdrant(SemanticClient *client, const char *method, const char *path,
               r.status < 300;
     if (!ok && getenv("SCRIBODO_SEM_DEBUG"))
         fprintf(stderr, "qdrant %s %s -> %d %s %.300s\n", method, path, r.status, r.error, r.body ? r.body : "");
-    if (ok && out && r.body) *out = cJSON_Parse(r.body);
+    if (ok && out && r.body) *out = json_parse(r.body);
     http_result_free(&r);
     free(js);
     return ok;
@@ -166,7 +166,7 @@ bool semantic_embed(SemanticClient *client, const char *const *texts, size_t n, 
                                    NULL, NULL, 120000, &r) &&
               r.status == 200 && r.body;
     free(body);
-    cJSON *j = ok ? cJSON_Parse(r.body) : NULL;
+    cJSON *j = ok ? json_parse(r.body) : NULL;
     if (!ok) snprintf(err, errlen, "Embedding request failed (%d %s)", r.status, r.error);
     http_result_free(&r);
     cJSON *data = cJSON_GetObjectItem(j, "data"), *item;

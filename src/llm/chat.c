@@ -9,7 +9,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "cJSON.h"
+#include "core/json.h"
 #include "llm/http.h"
 #include "llm/llm_text.h"
 
@@ -501,7 +501,7 @@ int chat_parse_sse_line(const char *line, char **acc, size_t *acc_len, char *err
     if (strncmp(line, "data:", 5) != 0) {
         /* llama-server reports some errors as a bare JSON line. */
         if (line[0] == '{') {
-            cJSON *j = cJSON_Parse(line);
+            cJSON *j = json_parse(line);
             cJSON *e = j ? cJSON_GetObjectItem(j, "error") : NULL;
             cJSON *msg = e ? cJSON_GetObjectItem(e, "message") : NULL;
             if (cJSON_IsString(msg)) {
@@ -516,7 +516,7 @@ int chat_parse_sse_line(const char *line, char **acc, size_t *acc_len, char *err
     const char *p = line + 5;
     while (*p == ' ') p++;
     if (!strcmp(p, "[DONE]")) return 0;
-    cJSON *j = cJSON_Parse(p);
+    cJSON *j = json_parse(p);
     if (!j) return 1;
     int rc = 1;
     cJSON *e = cJSON_GetObjectItem(j, "error");
@@ -624,7 +624,7 @@ static long server_count(const char *text, void *ctx)
     long n = -1;
     if (http_request(llm_server_socket(s->server), "POST", "/tokenize", llm_server_key(s->server), js, NULL, NULL,
                      &s->cancel, 30000, &r) && r.status == 200 && r.body) {
-        cJSON *j = cJSON_Parse(r.body);
+        cJSON *j = json_parse(r.body);
         cJSON *t = j ? cJSON_GetObjectItem(j, "tokens") : NULL;
         if (cJSON_IsArray(t)) n = cJSON_GetArraySize(t);
         cJSON_Delete(j);
@@ -973,7 +973,7 @@ void chat_set_names(ChatSession *s, const char *author, const char *assistant)
 
 char *chat_apply_sampling(const char *request, const ChatSampling *sp, bool edit)
 {
-    cJSON *j = cJSON_Parse(request);
+    cJSON *j = json_parse(request);
     if (!j) return NULL;
     /* An edit's own length (sized to the passage) is kept if it's larger. */
     cJSON *mt = cJSON_GetObjectItem(j, "max_tokens");

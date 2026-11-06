@@ -529,6 +529,7 @@ static void test_import(void)
         close(export_lfd);
         if (export_rc == 0) pthread_join(exporter, NULL);
         CHECK(export_rc == 0 && export_call.ok);
+        if (!export_call.ok) fprintf(stderr, "    export: %s\n", export_call.why);
         snprintf(exdoc, sizeof(exdoc), "%s/Chapter One.md", ex);
         Revision *erevs = NULL;
         size_t ne = revisions_list(g_store, ex, exdoc, &erevs);
@@ -1191,6 +1192,85 @@ static void test_semantic(void)
     store_stop(g_store);
 }
 
+static void test_transition_read_failures(void)
+{
+    char why[256] = "";
+    CHECK(store_start(g_store, g_name, why, sizeof(why)));
+    char project[PATH_MAX];
+    snprintf(project, sizeof(project), "%sscribodo-read-failures-XXXXXX", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp/");
+    CHECK(mkdtemp(project) != NULL);
+    ChatMessage message = { .role = CHAT_USER, .content = "Keep this chat", .truncated = true };
+    store_set_write_time(g_store, 1700000000.25);
+    CHECK(chat_store_append(g_store, project, "aaaa", "Good", &message));
+    store_set_write_time(g_store, 0);
+    CHECK(chat_store_append(g_store, project, "bbbb", "Bad", &message));
+    char path[PATH_MAX + 80];
+    snprintf(path, sizeof(path), "%s/.scribodo/chats/bbbb.jsonl", project);
+    write_file(path, "{\"type\":\"message\",\"role\":\"user\",\"content\":\"Keep this too\",\"ts\":-1}\n");
+    CHECK(!store_import(g_store, project, why, sizeof(why)) && why[0]);
+    CHECK(store_mode(g_store, project, NULL, 0, NULL) == STORE_FILES && access(path, F_OK) == 0);
+    char pid[40];
+    CHECK(store_project_id(g_store, project, false, pid, sizeof(pid)));
+    Db *db = store_db(g_store);
+    DbRows rows;
+    CHECK(db_query(db, "SELECT COUNT(*) FROM conversations WHERE project_id = ?", (DbArg[1]){ DB_S(pid) }, 1, &rows));
+    CHECK(rows.nrows == 1 && !strcmp(db_cell(&rows, 0, 0), "0"));
+    db_rows_free(&rows);
+    write_file(path, "{\"type\":\"message\",\"role\":\"user\",\"content\":\"Keep this too\",\"ts\":1}\n");
+    CHECK(chmod(path, 0000) == 0);
+    CHECK(!store_import(g_store, project, why, sizeof(why)));
+    CHECK(chmod(path, 0644) == 0);
+    CHECK(store_mode(g_store, project, NULL, 0, NULL) == STORE_FILES && access(path, F_OK) == 0);
+    char chats_dir[PATH_MAX + 40];
+    snprintf(chats_dir, sizeof(chats_dir), "%s/.scribodo/chats", project);
+    CHECK(chmod(chats_dir, 0000) == 0);
+    CHECK(!store_import(g_store, project, why, sizeof(why)));
+    CHECK(chmod(chats_dir, 0755) == 0);
+    CHECK(store_mode(g_store, project, NULL, 0, NULL) == STORE_FILES && access(path, F_OK) == 0);
+    CHECK(store_import(g_store, project, why, sizeof(why)));
+    ChatSummary *chats = NULL;
+    size_t n = 0;
+    CHECK(chat_store_list_checked(g_store, project, &chats, &n) && n == 2);
+    free(chats);
+    CHECK(store_mode(g_store, project, pid, sizeof(pid), NULL) == STORE_DB);
+
+    /* All record kinds must fail export on decode failure, not become empty. */
+    const RecordKind kinds[] = { REC_NOTE, REC_CANON, REC_FINDING };
+    const char *ids[] = { "n-audit", "c-audit", "f-audit" };
+    for (size_t i = 0; i < 3; i++) {
+        CHECK(records_create_ex(g_store, project, kinds[i], ids[i], "active", "Keep this record", NULL, 0, NULL));
+        CHECK(db_run(db, "UPDATE record_versions SET status = '1234567890123456' WHERE record_id = ?",
+                     (DbArg[1]){ DB_S(ids[i]) }, 1, NULL));
+        char exported[PATH_MAX + 40];
+        snprintf(exported, sizeof(exported), "%s-export-%zu", project, i);
+        CHECK(!store_export_project(g_store, pid, exported, why, sizeof(why)) && why[0]);
+        CHECK(db_run(db, "UPDATE record_versions SET status = 'active' WHERE record_id = ?",
+                     (DbArg[1]){ DB_S(ids[i]) }, 1, NULL));
+        /* A failed export is partial output, never an append target on retry. */
+        CHECK(!store_export_project(g_store, pid, exported, why, sizeof(why)) && why[0]);
+    }
+    char exported[PATH_MAX + 40];
+    snprintf(exported, sizeof(exported), "%s-export-ok", project);
+    bool exported_ok = store_export_project(g_store, pid, exported, why, sizeof(why));
+    CHECK(exported_ok);
+    if (!exported_ok) fprintf(stderr, "    export: %s\n", why);
+    CHECK(!store_export_project(g_store, pid, exported, why, sizeof(why)) && strstr(why, "fresh destination"));
+    ChatMessage *messages = NULL;
+    n = 0;
+    CHECK(chat_store_load(g_store, exported, "aaaa", &messages, &n) && n == 1);
+    CHECK(n == 1 && messages[0].truncated && messages[0].ts == 1700000000.25);
+    chat_store_free_messages(messages, n);
+    for (size_t i = 0; i < 3; i++) {
+        Record *records = NULL;
+        n = records_list_files(exported, kinds[i], &records);
+        CHECK(n == 1 && !strcmp(records[0].id, ids[i]) && !strcmp(record_current(&records[0])->content, "Keep this record"));
+        records_free(records, n);
+    }
+    char cmd[PATH_MAX * 3];
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s' '%s'-export-*", project, project);
+    system(cmd);
+}
+
 int main(void)
 {
     g_store = store_manager_create();
@@ -1204,7 +1284,8 @@ int main(void)
         return 1;
     }
     TestCase tests[] = { { "store_ids", test_store_ids }, { "store_managers", test_store_managers }, { "backends", test_backends },
-                         { "import", test_import }, { "import_safety", test_import_safety }, { "entities", test_entities },
+                         { "import", test_import }, { "import_safety", test_import_safety },
+                         { "transition_read_failures", test_transition_read_failures }, { "entities", test_entities },
                          { "entities_redteam", test_entities_redteam }, { "semantic", test_semantic } };
     int rc = run_db_core_tests();
     if (run_tests(tests, sizeof(tests) / sizeof(tests[0])) != 0) rc = 1;

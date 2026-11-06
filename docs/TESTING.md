@@ -11,6 +11,31 @@
 | `make uitest-real` | `tests/ui/real-*.scribo`: the real model through the real UI | Yes |
 | `make dependency-report` | Verifies committed submodule gitlinks against clean checkouts, container digests and OSV advisories; lists available upstream updates without failing on them | No |
 
+### Persistence safety regressions
+
+- `test_llm: concurrent_file_readers` loads separate chats and revision indexes
+  simultaneously, checking counts and ownership of every entry. It also runs
+  under ASan/UBSan and TSan, including malformed trailing JSON. Application JSON
+  parsing uses `src/core/json.c`: cJSON's shared error state must never be written
+  concurrently, even when callers don't use its error-pointer API.
+- `test_db: transition_read_failures` checks that invalid or unreadable chats
+  abort migration without switching authority or committing partial chats. After
+  repair, migration can be retried. Decode failures for notes, canon and findings
+  must fail export rather than produce a falsely empty backup. Reusing a partial
+  or completed export destination is refused, and chat flags/timestamps survive
+  the store-to-file export.
+- `test_llm: chat_store_read_failures` checks all-or-nothing failure for malformed
+  recognized messages, wrong-type timestamps, raw/escaped NULs and special files;
+  literal escaped backslashes and missing legacy timestamps remain supported.
+  Truncation flags and fractional timestamps round-trip, and a later rename still
+  follows a fractional-time source.
+- `tests/test_backup.py` runs in `make test` without Docker or a display. It checks
+  successful verification, symlink/special-file refusal, destination safety,
+  cleanup after verification failure, and complete checksums for unusual names
+  and author-owned files named `SHA256SUMS`. Unreadable extra directories fail
+  verification instead of being skipped. See the dated validation and mutation
+  evidence in [`REDTEAM-010-persistence.md`](REDTEAM-010-persistence.md).
+
 ## Automated trusted acceptance
 
 The repository-scoped `scribodo-mac-studio` runner executes database and UI

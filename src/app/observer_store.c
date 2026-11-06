@@ -15,7 +15,7 @@
 #include <unistd.h>
 
 #include "app/store.h"
-#include "cJSON.h"
+#include "core/json.h"
 
 static void state_path(const char *project, char *out, size_t outlen, bool create)
 {
@@ -42,7 +42,7 @@ cJSON *observer_state_load_files(const char *project)
         char *buf = n > 0 && n < (64l << 20) ? malloc((size_t)n + 1) : NULL;
         if (buf) {
             buf[fread(buf, 1, (size_t)n, f)] = '\0';
-            j = cJSON_Parse(buf);
+            j = json_parse(buf);
             free(buf);
         }
         fclose(f);
@@ -141,7 +141,7 @@ bool observer_state_import_files(const char *project, cJSON **state)
         buf[got] = '\0';
     }
     ok = fclose(f) == 0 && ok;
-    cJSON *parsed = ok ? cJSON_Parse(buf) : NULL;
+    cJSON *parsed = ok ? json_parse(buf) : NULL;
     free(buf);
     if (!valid_import_state(parsed)) {
         cJSON_Delete(parsed);

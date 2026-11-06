@@ -30,7 +30,7 @@
 #include "app/store_entities.h"
 #include "llm/semantic.h"
 #include "app/revisions.h"
-#include "cJSON.h"
+#include "core/json.h"
 #include "llm/http.h"
 #include "llm/llm_text.h"
 
@@ -367,7 +367,7 @@ bool obs_about_the_conversation(const char *subject, const char *desc)
 /* Turn the model's JSON into located candidates. */
 static size_t parse_candidates(const ObserverJob *j, const char *json, const char *revision, Cand *out, size_t max)
 {
-    cJSON *root = cJSON_Parse(json);
+    cJSON *root = json_parse(json);
     cJSON *arr = root ? cJSON_GetObjectItem(root, "findings") : NULL;
     size_t k = 0;
     cJSON *it;

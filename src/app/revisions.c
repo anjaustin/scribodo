@@ -12,7 +12,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-#include "cJSON.h"
+#include "core/json.h"
 #include "app/project_store.h"
 #include "app/revisions_internal.h"
 #include "app/store.h"
@@ -122,8 +122,9 @@ static size_t list_impl(const char *project_dir, const char *doc_path, Revision 
     if (!text) return 0;
     size_t n = 0, cap = 0;
     Revision *list = NULL;
-    for (char *line = strtok(text, "\n"); line; line = strtok(NULL, "\n")) {
-        cJSON *j = cJSON_Parse(line);
+    char *save = NULL;
+    for (char *line = strtok_r(text, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
+        cJSON *j = json_parse(line);
         if (!j) continue; /* torn line after a crash */
         cJSON *file = cJSON_GetObjectItem(j, "file"), *origin = cJSON_GetObjectItem(j, "origin");
         if (cJSON_IsString(file) && cJSON_IsString(origin) && !strchr(file->valuestring, '/')) {

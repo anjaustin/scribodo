@@ -60,18 +60,19 @@ static const char *mapped(const IdMaps *maps, const char *id)
     return id;
 }
 
-static void map_add(IdMaps *maps, const char *from, const char *to)
+static bool map_add(IdMaps *maps, const char *from, const char *to)
 {
     if (maps->n == maps->cap) {
         size_t cap = maps->cap ? maps->cap * 2 : 16;
         IdMap *m = realloc(maps->m, cap * sizeof(IdMap));
-        if (!m) return;
+        if (!m) return false;
         maps->m = m;
         maps->cap = cap;
     }
     snprintf(maps->m[maps->n].from, sizeof(maps->m[0].from), "%s", from);
     snprintf(maps->m[maps->n].to, sizeof(maps->m[0].to), "%s", to);
     maps->n++;
+    return true;
 }
 
 /* Does `table`.id belong to this project (and kind)? Row must exist. */
@@ -212,12 +213,12 @@ static bool import_revisions(Db *db, const char *project_dir, const char *pid, R
 static bool import_chats(Db *db, const char *project_dir, const char *pid, IdMaps *chats_map)
 {
     ChatSummary *list = NULL;
-    size_t nc = chat_store_list_files(project_dir, &list);
-    bool ok = true;
+    size_t nc = 0;
+    bool ok = chat_store_list_files_checked(project_dir, &list, &nc);
     for (size_t i = 0; ok && i < nc; i++) {
         ChatMessage *msgs = NULL;
         size_t n = 0;
-        if (!chat_store_load_files(project_dir, list[i].id, &msgs, &n)) continue;
+        if (!chat_store_load_files(project_dir, list[i].id, &msgs, &n)) { ok = false; break; }
         double t0 = n && msgs[0].ts ? msgs[0].ts : (double)list[i].updated;
         char cid[40];
         snprintf(cid, sizeof(cid), "%s", list[i].id);
@@ -235,7 +236,7 @@ static bool import_chats(Db *db, const char *project_dir, const char *pid, IdMap
             ok = db_run(db, "INSERT IGNORE INTO conversations (id, project_id, title, created_at, updated_at) VALUES (?,?,?,?,?)",
                         c2, 5, NULL);
         }
-        if (ok && strcmp(cid, list[i].id)) map_add(chats_map, list[i].id, cid);
+        if (ok && strcmp(cid, list[i].id)) ok = map_add(chats_map, list[i].id, cid);
         if (ok && list[i].observer_ignore) ok = sdb_chat_set_observer(db, pid, cid, false);
         for (size_t k = 0; ok && k < n; k++) {
             uint64_t added = 0;
@@ -249,11 +250,12 @@ static bool import_chats(Db *db, const char *project_dir, const char *pid, IdMap
                         a, 9, &added);
             if (!ok || !added || !msgs[k].docs || !msgs[k].docs[0]) continue;
             char *copy = strdup(msgs[k].docs);
+            if (!copy) { ok = false; break; }
             for (char *save = NULL, *nm = copy ? strtok_r(copy, "\n", &save) : NULL; ok && nm;
                  nm = strtok_r(NULL, "\n", &save)) {
                 char cur[256], did[40];
                 renames_resolve_since(project_dir, nm, msgs[k].ts, cur, sizeof(cur));
-                if (!store_document_id_db(db, pid, cur, true, did, sizeof(did))) continue;
+                if (!store_document_id_db(db, pid, cur, true, did, sizeof(did))) { ok = false; break; }
                 DbArg m[3] = { DB_S(did), DB_S(cid), DB_I(k) };
                 ok = db_run(db,
                             "INSERT IGNORE INTO message_documents (message_id, document_id)"
@@ -294,7 +296,7 @@ static bool import_records(Db *db, const char *project_dir, const char *pid, Rec
             DbArg rec2[4] = { DB_S(rid), DB_S(pid), DB_S(kind_name(kind)), DB_D((double)r->versions[0].ts) };
             ok = db_run(db, "INSERT IGNORE INTO records (id, project_id, kind, created_at) VALUES (?,?,?,?)", rec2, 4, NULL);
         }
-        if (ok && strcmp(rid, r->id)) map_add(rec_map, r->id, rid);
+        if (ok && strcmp(rid, r->id)) ok = map_add(rec_map, r->id, rid);
         for (size_t v = 0; ok && v < r->nversions; v++) {
             const RecordVersion *ver = &r->versions[v];
             const FindingInfo *f = &ver->finding;
@@ -502,7 +504,9 @@ static bool import_once(Db *db, const char *project_dir, const char *pid, uint64
     free(map);
     free(chats.m);
     free(recs.m);
-    if (!ok && !*changed) snprintf(why, whylen, "Moving the project into the store failed: %s", db_error(db));
+    if (!ok && !*changed)
+        snprintf(why, whylen, "Moving the project into the store failed: %s",
+                 db_error(db)[0] ? db_error(db) : "a project file couldn't be read or decoded");
     return ok;
 }
 
@@ -729,7 +733,8 @@ static bool export_files_unlocked(StoreManager *manager, Db *db, const char *pid
     static const RecordKind kinds[] = { REC_NOTE, REC_CANON, REC_FINDING };
     for (size_t k = 0; ok && k < 3; k++) {
         Record *recs = NULL;
-        size_t n = sdb_record_list(db, pid, kinds[k], &recs);
+        size_t n = 0;
+        ok = sdb_record_list_checked(db, pid, kinds[k], &recs, &n);
         for (size_t i = 0; ok && i < n; i++)
             for (size_t v = 0; ok && v < recs[i].nversions; v++) {
                 RecordVersion *ver = &recs[i].versions[v];
@@ -759,18 +764,45 @@ static bool export_files_unlocked(StoreManager *manager, Db *db, const char *pid
     return ok;
 }
 
-static bool export_files(StoreManager *manager, Db *db, const char *pid, const char *project_dir)
+/* Explicit exports must start fresh. In particular, a failed export has
+ * partial append-only logs; retrying in place would duplicate chats/versions.
+ * Preserve the stable transition lock, and leave failed output for its owner
+ * to remove (backup_project already owns and cleans its temporary export). */
+static bool export_target_empty(const char *project_dir)
 {
-    int export_lock = project_store_file_lock_shared(project_dir);
+    char path[PATH_MAX + 32];
+    snprintf(path, sizeof(path), "%s/.scribodo", project_dir);
+    DIR *d = opendir(path);
+    if (!d) return false;
+    bool ok = true;
+    for (;;) {
+        errno = 0;
+        struct dirent *ent = readdir(d);
+        if (!ent) { ok = errno == 0; break; }
+        if (strcmp(ent->d_name, ".") && strcmp(ent->d_name, "..") && strcmp(ent->d_name, "import.lock")) {
+            ok = false;
+            break;
+        }
+    }
+    return closedir(d) == 0 && ok;
+}
+
+static bool export_files(StoreManager *manager, Db *db, const char *pid, const char *project_dir, char *why, size_t whylen)
+{
+    int export_lock = project_store_file_lock_exclusive(project_dir);
     if (export_lock < 0) return false;
-    bool ok = store_mode(manager, project_dir, NULL, 0, NULL) == STORE_FILES &&
-              export_files_unlocked(manager, db, pid, project_dir);
+    bool ok = export_target_empty(project_dir);
+    if (!ok) snprintf(why, whylen, "Export needs a fresh destination with no project data; use a new folder");
+    /* The empty-metadata check also excludes any store marker. Do not probe
+     * store_mode here: our exclusive lock deliberately pauses other readers. */
+    if (ok) ok = export_files_unlocked(manager, db, pid, project_dir);
     project_store_file_unlock(export_lock);
     return ok;
 }
 
 bool store_export_project(StoreManager *manager, const char *project_id, const char *dir, char *why, size_t whylen)
 {
+    if (why && whylen) why[0] = '\0';
     Db *db = store_db(manager);
     if (!db) {
         snprintf(why, whylen, "The project store is offline");
@@ -780,8 +812,9 @@ bool store_export_project(StoreManager *manager, const char *project_id, const c
     snprintf(sd, sizeof(sd), "%s/.scribodo", dir);
     mkdir(dir, 0755);
     mkdir(sd, 0755);
-    bool ok = export_files(manager, db, project_id, dir);
-    if (!ok) snprintf(why, whylen, "Couldn't export the project: %s", db_error(db)[0] ? db_error(db) : "a file couldn't be written");
+    bool ok = export_files(manager, db, project_id, dir, why, whylen);
+    if (!ok && why && whylen && !why[0]) snprintf(why, whylen, "Couldn't export the project: %s",
+                      db_error(db)[0] ? db_error(db) : "project data couldn't be read or a file couldn't be written");
     return ok;
 }
 

@@ -12,7 +12,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "cJSON.h"
+#include "core/json.h"
 
 static char *slurp(const char *path, size_t max)
 {
@@ -56,7 +56,7 @@ static bool parse_url(const char *url, char *host, size_t hostlen, char *err, si
 bool remote_parse(const char *json, RemoteConfig *c, char *err, size_t errlen)
 {
     memset(c, 0, sizeof(*c));
-    cJSON *j = cJSON_Parse(json);
+    cJSON *j = json_parse(json);
     if (!cJSON_IsObject(j)) {
         snprintf(err, errlen, "remote.json isn't valid JSON");
         cJSON_Delete(j);
@@ -139,7 +139,7 @@ bool remote_load(RemoteConfig *c, char *err, size_t errlen)
 
 char *remote_adapt_request(const RemoteConfig *c, const char *local_request)
 {
-    cJSON *j = cJSON_Parse(local_request);
+    cJSON *j = json_parse(local_request);
     if (!j) return NULL;
     static const char *const local_only[] = { "repeat_penalty", "id_slot", "cache_prompt", "chat_template_kwargs", "seed",
                                               "top_k", "min_p" };

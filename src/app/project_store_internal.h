@@ -3,6 +3,7 @@
 #define SCRIBODO_PROJECT_STORE_INTERNAL_H
 
 int project_store_file_lock_shared(const char *project_dir);
+int project_store_file_lock_exclusive(const char *project_dir);
 void project_store_file_unlock(int fd);
 
 #endif

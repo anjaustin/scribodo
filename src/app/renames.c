@@ -11,7 +11,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "cJSON.h"
+#include "core/json.h"
 
 static void path_for(const char *project_dir, char *out, size_t outlen)
 {
@@ -30,9 +30,9 @@ bool renames_record(const char *project_dir, const char *from, const char *to)
     cJSON_AddStringToObject(j, "to", to);
     struct timeval tv;
     gettimeofday(&tv, NULL);
-    /* Milliseconds: a rename, a new file with the old name and a note on it
-     * can all happen within one second. */
-    cJSON_AddNumberToObject(j, "ts", (double)tv.tv_sec + (double)(tv.tv_usec / 1000) / 1000.0);
+    /* Match chat-message precision: rounding a rename down to milliseconds
+     * can make it appear older than an earlier message in that millisecond. */
+    cJSON_AddNumberToObject(j, "ts", (double)tv.tv_sec + (double)tv.tv_usec / 1e6);
     char *s = cJSON_PrintUnformatted(j);
     cJSON_Delete(j);
     if (!s) return false;
@@ -74,7 +74,7 @@ void renames_resolve_since(const char *project_dir, const char *name, double sin
      * also what applying in order gives. */
     char line[2048];
     while (fgets(line, sizeof(line), f)) {
-        cJSON *j = cJSON_Parse(line);
+        cJSON *j = json_parse(line);
         cJSON *from = cJSON_GetObjectItem(j, "from"), *to = cJSON_GetObjectItem(j, "to"), *ts = cJSON_GetObjectItem(j, "ts");
         /* Only renames made after the source was recorded apply to it: a name
          * reused later by another document is not this one (red-team 006). */
