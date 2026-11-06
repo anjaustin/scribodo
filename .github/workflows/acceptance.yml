@@ -28,7 +28,6 @@ jobs:
       SCRIBODO_COMPOSE_PROJECT: scribodo-ci
       SCRIBODO_DB_PORT: "33062"
       SCRIBODO_QDRANT_PORT: "6334"
-      SCRIBODO_SECRETS: ${{ runner.temp }}/scribodo-services
     steps:
       - name: Check out pinned dependencies
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
@@ -39,6 +38,7 @@ jobs:
         run: |
           echo "$HOME/.docker/bin" >> "$GITHUB_PATH"
           echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
+          echo "SCRIBODO_SECRETS=$RUNNER_TEMP/scribodo-services" >> "$GITHUB_ENV"
           brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
           echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
 
