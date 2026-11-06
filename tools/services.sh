@@ -23,7 +23,7 @@ secrets() {
     chmod 644 "$SCRIBODO_SECRETS/db_password" "$SCRIBODO_SECRETS/db_root_password"
 }
 
-compose() { docker compose -f "$here/docker/compose.yml" "$@"; }
+compose() { docker compose -p "${SCRIBODO_COMPOSE_PROJECT:-scribodo}" -f "$here/docker/compose.yml" "$@"; }
 
 case "${1:-status}" in
     up)
@@ -47,9 +47,10 @@ case "${1:-status}" in
             printf 'DROP DATABASE IF EXISTS `%s`;\n' "$name" | rootsql
             # and its semantic index collections ("<database>__<project>")
             key="$(cat "$SCRIBODO_SECRETS/qdrant_api_key")"
-            for c in $(curl -s -H @<(printf 'Authorization: Bearer %s\n' "$key") http://127.0.0.1:6333/collections |
+            qport="${SCRIBODO_QDRANT_PORT:-6333}"
+            for c in $(curl -s -H @<(printf 'Authorization: Bearer %s\n' "$key") "http://127.0.0.1:$qport/collections" |
                        python3 -c 'import json,sys; print(" ".join(c["name"] for c in json.load(sys.stdin)["result"]["collections"]))'); do
-                case "$c" in "${name}__"*) curl -s -o /dev/null -X DELETE -H @<(printf 'Authorization: Bearer %s\n' "$key") "http://127.0.0.1:6333/collections/$c" ;; esac
+                case "$c" in "${name}__"*) curl -s -o /dev/null -X DELETE -H @<(printf 'Authorization: Bearer %s\n' "$key") "http://127.0.0.1:$qport/collections/$c" ;; esac
             done
         fi
         ;;
@@ -65,7 +66,8 @@ case "${1:-status}" in
         fi
         ;;
     down) compose down ;;
+    purge) compose down -v --remove-orphans ;;
     status) compose ps --format 'table {{.Service}}\t{{.Status}}\t{{.Ports}}' ;;
     logs) compose logs --tail 50 ;;
-    *) echo "usage: $0 up|down|status|logs|testdb create|drop NAME|rotate-root" >&2; exit 2 ;;
+    *) echo "usage: $0 up|down|purge|status|logs|testdb create|drop NAME|rotate-root" >&2; exit 2 ;;
 esac

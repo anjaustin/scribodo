@@ -23,7 +23,7 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="$HOME/.docker/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
 export SCRIBODO_SECRETS="${SCRIBODO_SECRETS:-$HOME/Library/Application Support/Scribodo/services}"
-compose() { docker compose -f "$here/docker/compose.yml" "$@"; }
+compose() { docker compose -p "${SCRIBODO_COMPOSE_PROJECT:-scribodo}" -f "$here/docker/compose.yml" "$@"; }
 rootsql() { compose exec -T mariadb sh -c 'MYSQL_PWD="$(cat /run/secrets/db_root_password)" exec mariadb -uroot "$@"' sh "$@"; }
 
 b="${1:?usage: $0 BACKUP_DIR --to FOLDER [--db NAME] [--replace]}"
@@ -87,9 +87,10 @@ EOF
     # The index described the database before; it's rebuilt from the store.
     key="$(cat "$SCRIBODO_SECRETS/qdrant_api_key" 2>/dev/null || true)"
     if [ -n "$key" ]; then
-        for c in $(curl -s -H @<(printf 'Authorization: Bearer %s\n' "$key") http://127.0.0.1:6333/collections |
+        qport="${SCRIBODO_QDRANT_PORT:-6333}"
+        for c in $(curl -s -H @<(printf 'Authorization: Bearer %s\n' "$key") "http://127.0.0.1:$qport/collections" |
                    python3 -I -c 'import json,sys; print(" ".join(c["name"] for c in json.load(sys.stdin)["result"]["collections"]))' 2>/dev/null); do
-            case "$c" in "${db}__"*) curl -s -o /dev/null -X DELETE -H @<(printf 'Authorization: Bearer %s\n' "$key") "http://127.0.0.1:6333/collections/$c" ;; esac
+            case "$c" in "${db}__"*) curl -s -o /dev/null -X DELETE -H @<(printf 'Authorization: Bearer %s\n' "$key") "http://127.0.0.1:$qport/collections/$c" ;; esac
         done
     fi
 fi

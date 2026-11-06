@@ -22,7 +22,7 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="$HOME/.docker/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
 export SCRIBODO_SECRETS="${SCRIBODO_SECRETS:-$HOME/Library/Application Support/Scribodo/services}"
-compose() { docker compose -f "$here/docker/compose.yml" "$@"; }
+compose() { docker compose -p "${SCRIBODO_COMPOSE_PROJECT:-scribodo}" -f "$here/docker/compose.yml" "$@"; }
 
 # verify: every listed file present and unchanged, and nothing else: no
 # extra files, no links or other non-regular entries. (Checksums kept in
