@@ -4,7 +4,7 @@
 
 #include "app/chat_store.h"
 
-bool chat_store_append_files(const char *project_dir, const char *id, const char *title, const ChatMessage *message);
+bool chat_store_append_files(StoreManager *manager, const char *project_dir, const char *id, const char *title, const ChatMessage *message);
 bool chat_store_rename_files(const char *project_dir, const char *id, const char *title);
 bool chat_store_set_observer_files(const char *project_dir, const char *id, bool read);
 size_t chat_store_list_files(const char *project_dir, ChatSummary **out);

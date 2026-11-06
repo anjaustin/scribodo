@@ -326,7 +326,7 @@ bool observer_state_save_db(Db *db, const char *pid, cJSON *st)
         if ((n && !add) || (m && !del)) ok = false;
         if (ok && (na || nd)) {
             char did[40];
-            if (store_document_id(pid, doc->string, true, did, sizeof(did)))
+            if (store_document_id_db(db, pid, doc->string, true, did, sizeof(did)))
                 ok = pieces_batch(db, true, did, add, na) && pieces_batch(db, false, did, del, nd);
             else ok = false;
         }
@@ -338,7 +338,7 @@ bool observer_state_save_db(Db *db, const char *pid, cJSON *st)
         if (!ok) break;
         if (cJSON_GetObjectItem(docs, doc->string)) continue;
         char did[40];
-        if (store_document_id(pid, doc->string, false, did, sizeof(did)))
+        if (store_document_id_db(db, pid, doc->string, false, did, sizeof(did)))
             ok = db_run(db, "DELETE FROM observer_pieces WHERE document_id = ?", (DbArg[1]){ DB_S(did) }, 1, NULL);
     }
     cJSON *c, *ochats = cJSON_GetObjectItem(old, "chats");

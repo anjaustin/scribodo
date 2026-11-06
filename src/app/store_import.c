@@ -170,7 +170,7 @@ static bool import_revisions(Db *db, const char *project_dir, const char *pid, R
         char doc_path[PATH_MAX + 300];
         snprintf(doc_path, sizeof(doc_path), "%s/%s", project_dir, ent->d_name);
         char did[40];
-        if (!store_document_id(pid, ent->d_name, true, did, sizeof(did))) continue;
+        if (!store_document_id_db(db, pid, ent->d_name, true, did, sizeof(did))) continue;
         Revision *list = NULL;
         size_t n = revisions_list_files(project_dir, doc_path, &list);
         size_t order = 0; /* ties within a millisecond keep the original order */
@@ -252,7 +252,7 @@ static bool import_chats(Db *db, const char *project_dir, const char *pid, IdMap
                  nm = strtok_r(NULL, "\n", &save)) {
                 char cur[256], did[40];
                 renames_resolve_since(project_dir, nm, msgs[k].ts, cur, sizeof(cur));
-                if (!store_document_id(pid, cur, true, did, sizeof(did))) continue;
+                if (!store_document_id_db(db, pid, cur, true, did, sizeof(did))) continue;
                 DbArg m[3] = { DB_S(did), DB_S(cid), DB_I(k) };
                 ok = db_run(db,
                             "INSERT IGNORE INTO message_documents (message_id, document_id)"
@@ -315,7 +315,7 @@ static bool import_records(Db *db, const char *project_dir, const char *pid, Rec
                 if (src->kind == SRC_DOC) {
                     double made = map_time(map, nmap, src->revision);
                     renames_resolve_since(project_dir, src->doc, made, cur, sizeof(cur));
-                    if (cur[0]) store_document_id(pid, cur, true, did, sizeof(did));
+                    if (cur[0]) store_document_id_db(db, pid, cur, true, did, sizeof(did));
                     rev = rev_lookup(map, nmap, src->revision);
                 } else {
                     DbRows c;
@@ -349,7 +349,7 @@ static bool import_observer(Db *db, const char *project_dir, const char *pid)
     cJSON_ArrayForEach(doc, cJSON_GetObjectItem(st, "docs"))
     {
         char did[40];
-        if (!ok || strchr(doc->string, '/') || !store_document_id(pid, doc->string, true, did, sizeof(did))) continue;
+        if (!ok || strchr(doc->string, '/') || !store_document_id_db(db, pid, doc->string, true, did, sizeof(did))) continue;
         cJSON_ArrayForEach(h, doc)
         if (ok && cJSON_IsString(h))
             ok = db_run(db, "INSERT IGNORE INTO observer_pieces (document_id, piece_hash) VALUES (?, ?)",
@@ -468,7 +468,7 @@ static bool import_once(Db *db, const char *project_dir, const char *pid, uint64
         if ((n > 3 && !strcasecmp(ent->d_name + n - 3, ".md")) || (n > 4 && !strcasecmp(ent->d_name + n - 4, ".txt")) ||
             (n > 9 && !strcasecmp(ent->d_name + n - 9, ".markdown"))) {
             char did[40];
-            store_document_id(pid, ent->d_name, true, did, sizeof(did));
+            store_document_id_db(db, pid, ent->d_name, true, did, sizeof(did));
         }
     }
     if (d) closedir(d);
@@ -531,9 +531,9 @@ static bool import_project(Db *db, const char *project_dir, char *pid, size_t pi
         }
     }
     char old[40];
-    if (store_project_id(project_dir, false, old, sizeof(old)))
+    if (store_project_id_db(db, project_dir, false, old, sizeof(old)))
         db_run(db, "UPDATE projects SET path_hash = CONCAT('superseded-', id) WHERE id = ?", (DbArg[1]){ DB_S(old) }, 1, NULL);
-    if (!store_project_id(project_dir, true, pid, pidlen)) {
+    if (!store_project_id_db(db, project_dir, true, pid, pidlen)) {
         snprintf(why, whylen, "Couldn't register the project: %s", db_error(db));
         return false;
     }
@@ -547,9 +547,9 @@ static bool import_project(Db *db, const char *project_dir, char *pid, size_t pi
     return true;
 }
 
-static bool import_locked(Db *db, const char *project_dir, const char *dir, char *why, size_t whylen)
+static bool import_locked(StoreManager *manager, Db *db, const char *project_dir, const char *dir, char *why, size_t whylen)
 {
-    bool ok = store_mode(project_dir, NULL, 0, NULL) == STORE_FILES;
+    bool ok = store_mode(manager, project_dir, NULL, 0, NULL) == STORE_FILES;
     char pid[40] = "";
     if (ok) ok = import_project(db, project_dir, pid, sizeof(pid), why, whylen);
     for (int attempt = 0; ok && attempt < 4; attempt++) {
@@ -574,16 +574,16 @@ static bool import_locked(Db *db, const char *project_dir, const char *dir, char
         char pending[PATH_MAX + 64];
         snprintf(pending, sizeof(pending), "%s/import-pending", dir);
         unlink(pending);
-        store_forget_verification();
+        store_forget_verification(manager);
     }
     return ok;
 }
 
-bool store_import(const char *project_dir, char *why, size_t whylen)
+bool store_import(StoreManager *manager, const char *project_dir, char *why, size_t whylen)
 {
     if (why && whylen) why[0] = '\0';
-    if (store_mode(project_dir, NULL, 0, NULL) == STORE_DB) return true; /* already moved */
-    Db *db = store_db();
+    if (store_mode(manager, project_dir, NULL, 0, NULL) == STORE_DB) return true; /* already moved */
+    Db *db = store_db(manager);
     if (!db) {
         snprintf(why, whylen, "The project store is offline");
         return false;
@@ -614,9 +614,9 @@ bool store_import(const char *project_dir, char *why, size_t whylen)
         snprintf(why, whylen, "Couldn't lock the project's files for import");
         return false;
     }
-    store_set_importing(project_dir);
-    bool ok = import_locked(db, project_dir, dir, why, whylen);
-    store_set_importing(NULL);
+    store_set_importing(manager, project_dir);
+    bool ok = import_locked(manager, db, project_dir, dir, why, whylen);
+    store_set_importing(manager, NULL);
     flock(lfd, LOCK_UN);
     close(lfd);
     flock(ownerfd, LOCK_UN);
@@ -624,21 +624,21 @@ bool store_import(const char *project_dir, char *why, size_t whylen)
     return ok;
 }
 
-bool store_needs_import(const char *project_dir)
+bool store_needs_import(StoreManager *manager, const char *project_dir)
 {
-    return project_dir && project_dir[0] && store_mode(project_dir, NULL, 0, NULL) == STORE_FILES;
+    return project_dir && project_dir[0] && store_mode(manager, project_dir, NULL, 0, NULL) == STORE_FILES;
 }
 
 /* ---- copies and missing projects ------------------------------------------------ */
 
-static void set_marker_aside(const char *project_dir, bool aside)
+static void set_marker_aside(StoreManager *manager, const char *project_dir, bool aside)
 {
     char a[PATH_MAX + 64], b[PATH_MAX + 64];
     snprintf(a, sizeof(a), "%s/.scribodo/store.json", project_dir);
     snprintf(b, sizeof(b), "%s/.scribodo/store.json.set-aside", project_dir);
     if (aside) rename(a, b);
     else unlink(b);
-    store_forget_verification();
+    store_forget_verification(manager);
 }
 
 /* Write the project's data from the store as files in `project_dir` (so a
@@ -653,7 +653,7 @@ typedef struct {
  * normal import can take them in as a project). Everything keeps its
  * original time; sources keep their passages and point at the exported
  * snapshots. False if anything couldn't be written. */
-static bool export_files_unlocked(Db *db, const char *pid, const char *project_dir)
+static bool export_files_unlocked(StoreManager *manager, Db *db, const char *pid, const char *project_dir)
 {
     DbRows docs;
     if (!db_query(db, "SELECT id, name FROM documents WHERE project_id = ?", (DbArg[1]){ DB_S(pid) }, 1, &docs)) return false;
@@ -670,9 +670,9 @@ static bool export_files_unlocked(Db *db, const char *pid, const char *project_d
         char path[PATH_MAX + 300];
         snprintf(path, sizeof(path), "%s/%s", project_dir, db_cell(&docs, i, 1));
         for (size_t k = 0; ok && k < r.nrows; k++) {
-            store_set_write_time(atof(db_cell(&r, k, 4) ? db_cell(&r, k, 4) : "0"));
+            store_set_write_time(manager, atof(db_cell(&r, k, 4) ? db_cell(&r, k, 4) : "0"));
             bool rec = false;
-            ok = revisions_record_files(project_dir, path, db_cell(&r, k, 1), db_cell(&r, k, 2), db_cell(&r, k, 3), &rec);
+            ok = revisions_record_files(manager, project_dir, path, db_cell(&r, k, 1), db_cell(&r, k, 2), db_cell(&r, k, 3), &rec);
             Revision *list = NULL;
             size_t n = ok ? revisions_list_files(project_dir, path, &list) : 0;
             if (n && nrevs == cap) {
@@ -701,8 +701,8 @@ static bool export_files_unlocked(Db *db, const char *pid, const char *project_d
             break;
         }
         for (size_t k = 0; ok && k < n; k++) {
-            store_set_write_time(m[k].ts);
-            ok = chat_store_append_files(project_dir, cs[i].id, cs[i].title, &m[k]);
+            store_set_write_time(manager, m[k].ts);
+            ok = chat_store_append_files(manager, project_dir, cs[i].id, cs[i].title, &m[k]);
         }
         if (ok && n && cs[i].observer_ignore) ok = chat_store_set_observer_files(project_dir, cs[i].id, false);
         chat_store_free_messages(m, n);
@@ -723,8 +723,8 @@ static bool export_files_unlocked(Db *db, const char *pid, const char *project_d
                         if (!strcmp(revs[e].id, src->revision)) file = revs[e].file;
                     snprintf(src->revision, sizeof(src->revision), "%s", file); /* store ids mean nothing in files */
                 }
-                store_set_write_time((double)ver->ts);
-                ok = records_append_files(project_dir, kinds[k], recs[i].id, ver->status, ver->content,
+                store_set_write_time(manager, (double)ver->ts);
+                ok = records_append_files(manager, project_dir, kinds[k], recs[i].id, ver->status, ver->content,
                                           ver->sources, ver->nsources,
                                           kinds[k] == REC_FINDING ? &ver->finding : NULL, false, NULL);
             }
@@ -736,24 +736,24 @@ static bool export_files_unlocked(Db *db, const char *pid, const char *project_d
     char observer_rules[17];
     if (ok) ok = observer_rules_get_db(db, pid, observer_rules);
     if (ok) ok = observer_rules_set_files(project_dir, observer_rules);
-    store_set_write_time(0);
+    store_set_write_time(manager, 0);
     free(revs);
     return ok;
 }
 
-static bool export_files(Db *db, const char *pid, const char *project_dir)
+static bool export_files(StoreManager *manager, Db *db, const char *pid, const char *project_dir)
 {
     int export_lock = project_store_file_lock_shared(project_dir);
     if (export_lock < 0) return false;
-    bool ok = store_mode(project_dir, NULL, 0, NULL) == STORE_FILES &&
-              export_files_unlocked(db, pid, project_dir);
+    bool ok = store_mode(manager, project_dir, NULL, 0, NULL) == STORE_FILES &&
+              export_files_unlocked(manager, db, pid, project_dir);
     project_store_file_unlock(export_lock);
     return ok;
 }
 
-bool store_export_project(const char *project_id, const char *dir, char *why, size_t whylen)
+bool store_export_project(StoreManager *manager, const char *project_id, const char *dir, char *why, size_t whylen)
 {
-    Db *db = store_db();
+    Db *db = store_db(manager);
     if (!db) {
         snprintf(why, whylen, "The project store is offline");
         return false;
@@ -762,19 +762,19 @@ bool store_export_project(const char *project_id, const char *dir, char *why, si
     snprintf(sd, sizeof(sd), "%s/.scribodo", dir);
     mkdir(dir, 0755);
     mkdir(sd, 0755);
-    bool ok = export_files(db, project_id, dir);
+    bool ok = export_files(manager, db, project_id, dir);
     if (!ok) snprintf(why, whylen, "Couldn't export the project: %s", db_error(db)[0] ? db_error(db) : "a file couldn't be written");
     return ok;
 }
 
-bool store_fork(const char *project_dir, char *why, size_t whylen)
+bool store_fork(StoreManager *manager, const char *project_dir, char *why, size_t whylen)
 {
     char original[PATH_MAX];
-    if (store_problem(project_dir, original, sizeof(original)) != STORE_PROBLEM_COPY) {
+    if (store_problem(manager, project_dir, original, sizeof(original)) != STORE_PROBLEM_COPY) {
         snprintf(why, whylen, "This folder isn't a copy");
         return false;
     }
-    Db *db = store_db();
+    Db *db = store_db(manager);
     char path[PATH_MAX + 64], id[64] = "";
     snprintf(path, sizeof(path), "%s/.scribodo/store.json", project_dir);
     FILE *f = fopen(path, "rb");
@@ -822,7 +822,7 @@ bool store_fork(const char *project_dir, char *why, size_t whylen)
         const char *k = strstr(buf, "\"project_id\":\"");
         if (k) snprintf(current, sizeof(current), "%.*s", (int)strcspn(k + 14, "\""), k + 14);
     }
-    if (store_problem(project_dir, NULL, 0) != STORE_PROBLEM_COPY || strcmp(current, id) != 0) {
+    if (store_problem(manager, project_dir, NULL, 0) != STORE_PROBLEM_COPY || strcmp(current, id) != 0) {
         flock(lfd, LOCK_UN);
         close(lfd);
         flock(ownerfd, LOCK_UN);
@@ -830,18 +830,18 @@ bool store_fork(const char *project_dir, char *why, size_t whylen)
         snprintf(why, whylen, "This folder is no longer the same copy");
         return false;
     }
-    store_set_importing(project_dir);
-    set_marker_aside(project_dir, true);
-    bool ok = export_files_unlocked(db, id, project_dir) && import_locked(db, project_dir, dir, why, whylen);
-    if (ok) set_marker_aside(project_dir, false);
+    store_set_importing(manager, project_dir);
+    set_marker_aside(manager, project_dir, true);
+    bool ok = export_files_unlocked(manager, db, id, project_dir) && import_locked(manager, db, project_dir, dir, why, whylen);
+    if (ok) set_marker_aside(manager, project_dir, false);
     else {
         char a[PATH_MAX + 64], b[PATH_MAX + 64];
         snprintf(a, sizeof(a), "%s/.scribodo/store.json.set-aside", project_dir);
         snprintf(b, sizeof(b), "%s/.scribodo/store.json", project_dir);
         rename(a, b); /* back as it was */
-        store_forget_verification();
+        store_forget_verification(manager);
     }
-    store_set_importing(NULL);
+    store_set_importing(manager, NULL);
     flock(lfd, LOCK_UN);
     close(lfd);
     flock(ownerfd, LOCK_UN);
@@ -849,9 +849,9 @@ bool store_fork(const char *project_dir, char *why, size_t whylen)
     return ok;
 }
 
-bool store_restore(const char *project_dir, char *why, size_t whylen)
+bool store_restore(StoreManager *manager, const char *project_dir, char *why, size_t whylen)
 {
-    if (store_problem(project_dir, NULL, 0) != STORE_PROBLEM_MISSING) {
+    if (store_problem(manager, project_dir, NULL, 0) != STORE_PROBLEM_MISSING) {
         snprintf(why, whylen, "This project isn't missing from the store");
         return false;
     }
@@ -877,10 +877,10 @@ bool store_restore(const char *project_dir, char *why, size_t whylen)
     char marker[PATH_MAX + 64];
     snprintf(marker, sizeof(marker), "%s/store.json", dir);
     unlink(marker);
-    store_forget_verification();
+    store_forget_verification(manager);
     if (!newest[0]) {
         snprintf(why, whylen, "No saved files to restore from: the project now starts again on its documents");
         return true;
     }
-    return store_import(project_dir, why, whylen);
+    return store_import(manager, project_dir, why, whylen);
 }

@@ -18,80 +18,223 @@
 static void sha256_hex(const char *s, char out[65]);
 static double now_s(void);
 
-static DbConfig g_cfg;
-static atomic_bool g_online;
-static atomic_bool g_forced_offline;
-static _Thread_local Db *t_db;
+struct StoreManager {
+    DbConfig cfg;
+    atomic_bool online;
+    atomic_bool forced_offline;
+    atomic_uint_fast64_t generation;
+    pthread_mutex_t mutex;
+};
 
-bool store_start(const char *database, char *why, size_t whylen)
+typedef struct {
+    char dir[PATH_MAX];
+    char id[64];
+    int verdict;
+    char original[PATH_MAX];
+    double checked;
+    uint64_t generation;
+} StoreVerification;
+
+typedef struct StoreThreadContext {
+    StoreManager *manager;
+    uint64_t generation;
+    Db *db;
+    char importing[PATH_MAX];
+    double write_time;
+    StoreVerification verify;
+    struct StoreThreadContext *next;
+} StoreThreadContext;
+
+static _Thread_local StoreThreadContext *thread_contexts;
+
+StoreManager *store_manager_create(void)
 {
-    atomic_store(&g_online, false);
-    if (atomic_load(&g_forced_offline)) {
+    StoreManager *manager = calloc(1, sizeof(*manager));
+    if (!manager) return NULL;
+    atomic_init(&manager->generation, 1);
+    atomic_init(&manager->online, false);
+    atomic_init(&manager->forced_offline, false);
+    if (pthread_mutex_init(&manager->mutex, NULL) != 0) {
+        free(manager);
+        return NULL;
+    }
+    return manager;
+}
+
+static StoreThreadContext *thread_context(StoreManager *manager, bool create)
+{
+    if (!manager) return NULL;
+    StoreThreadContext **link = &thread_contexts;
+    while (*link) {
+        StoreThreadContext *context = *link;
+        if (context->manager == manager) return context;
+        link = &context->next;
+    }
+    if (!create) return NULL;
+    StoreThreadContext *context = calloc(1, sizeof(*context));
+    if (!context) return NULL;
+    context->manager = manager;
+    context->next = thread_contexts;
+    thread_contexts = context;
+    return context;
+}
+
+void store_manager_destroy(StoreManager *manager)
+{
+    if (!manager) return;
+    store_stop(manager);
+    pthread_mutex_destroy(&manager->mutex);
+    free(manager);
+}
+
+bool store_start(StoreManager *manager, const char *database, char *why, size_t whylen)
+{
+    if (!manager) return false;
+    DbConfig config;
+    if (!db_config_default(&config, why, whylen)) return false;
+    if (database) snprintf(config.database, sizeof(config.database), "%s", database);
+
+    pthread_mutex_lock(&manager->mutex);
+    atomic_store(&manager->online, false);
+    manager->cfg = config; /* probes keep targeting a requested database even if opening it fails */
+    uint64_t generation = atomic_fetch_add(&manager->generation, 1) + 1;
+    if (atomic_load(&manager->forced_offline)) {
+        pthread_mutex_unlock(&manager->mutex);
         snprintf(why, whylen, "The project store is off");
         return false;
     }
-    if (!db_config_default(&g_cfg, why, whylen)) return false;
-    if (database) snprintf(g_cfg.database, sizeof(g_cfg.database), "%s", database);
-    Db *db = db_open(&g_cfg, why, whylen);
-    if (!db) return false;
-    if (!db_migrate(db, why, whylen)) {
-        db_close(db);
+    Db *db = db_open(&config, why, whylen);
+    if (!db) {
+        pthread_mutex_unlock(&manager->mutex);
         return false;
     }
-    if (t_db) db_close(t_db);
-    t_db = db;
-    atomic_store(&g_online, true);
+    if (!db_migrate(db, why, whylen)) {
+        db_close(db);
+        pthread_mutex_unlock(&manager->mutex);
+        return false;
+    }
+    StoreThreadContext *context = thread_context(manager, true);
+    if (!context) {
+        db_close(db);
+        pthread_mutex_unlock(&manager->mutex);
+        return false;
+    }
+    if (context->db) db_close(context->db);
+    context->db = db;
+    context->generation = generation;
+    context->importing[0] = '\0';
+    context->write_time = 0;
+    context->verify.checked = 0;
+    context->verify.generation = generation;
+    atomic_store(&manager->online, true);
+    pthread_mutex_unlock(&manager->mutex);
     return true;
 }
 
-void store_stop(void)
+void store_stop(StoreManager *manager)
 {
-    atomic_store(&g_online, false);
-    store_thread_done();
+    if (!manager) return;
+    pthread_mutex_lock(&manager->mutex);
+    atomic_store(&manager->online, false);
+    atomic_fetch_add(&manager->generation, 1);
+    pthread_mutex_unlock(&manager->mutex);
+    store_thread_done(manager);
 }
 
-bool store_online(void) { return atomic_load(&g_online) && !atomic_load(&g_forced_offline); }
-const char *store_database(void) { return g_cfg.database[0] ? g_cfg.database : "scribodo"; }
-void store_set_offline(bool offline) { atomic_store(&g_forced_offline, offline); }
-
-Db *store_db(void)
+bool store_online(const StoreManager *manager)
 {
-    if (!store_online()) return NULL;
+    return manager && atomic_load(&manager->online) && !atomic_load(&manager->forced_offline);
+}
+void store_database(StoreManager *manager, char *out, size_t outlen)
+{
+    if (!out || !outlen) return;
+    if (!manager) {
+        snprintf(out, outlen, "scribodo");
+        return;
+    }
+    pthread_mutex_lock(&manager->mutex);
+    snprintf(out, outlen, "%s", manager->cfg.database[0] ? manager->cfg.database : "scribodo");
+    pthread_mutex_unlock(&manager->mutex);
+}
+void store_set_offline(StoreManager *manager, bool offline)
+{
+    if (!manager) return;
+    pthread_mutex_lock(&manager->mutex);
+    bool changed = atomic_load(&manager->forced_offline) != offline;
+    atomic_store(&manager->forced_offline, offline);
+    if (changed) atomic_fetch_add(&manager->generation, 1);
+    pthread_mutex_unlock(&manager->mutex);
+}
+
+Db *store_db(StoreManager *manager)
+{
+    if (!manager) return NULL;
+    pthread_mutex_lock(&manager->mutex);
+    if (!atomic_load(&manager->online) || atomic_load(&manager->forced_offline)) {
+        pthread_mutex_unlock(&manager->mutex);
+        return NULL;
+    }
+    StoreThreadContext *context = thread_context(manager, true);
+    if (!context) {
+        pthread_mutex_unlock(&manager->mutex);
+        return NULL;
+    }
+    uint64_t generation = atomic_load(&manager->generation);
+    if (context->generation != generation) {
+        if (context->db) db_close(context->db);
+        context->db = NULL;
+        context->generation = generation;
+        context->verify.checked = 0;
+    }
     /* A lost connection is dropped and reopened; if the database can't be
      * reached any more the store goes offline (the app retries and shows
      * the paused state) instead of failing every call while looking
      * online (red-team 008). */
-    if (t_db && db_broken(t_db)) {
-        db_close(t_db);
-        t_db = NULL;
+    if (context->db && db_broken(context->db)) {
+        db_close(context->db);
+        context->db = NULL;
     }
-    if (!t_db) {
+    if (!context->db) {
         char err[256];
-        t_db = db_open(&g_cfg, err, sizeof(err));
-        if (!t_db) atomic_store(&g_online, false);
+        context->db = db_open(&manager->cfg, err, sizeof(err));
+        if (!context->db) atomic_store(&manager->online, false);
     }
-    return t_db;
+    Db *db = context->db;
+    pthread_mutex_unlock(&manager->mutex);
+    return db;
 }
 
-bool store_probe(void)
+bool store_probe(StoreManager *manager)
 {
-    if (atomic_load(&g_forced_offline)) return false;
+    if (!manager || atomic_load(&manager->forced_offline)) return false;
     DbConfig c;
     char err[256];
     if (!db_config_default(&c, err, sizeof(err))) return false;
-    if (g_cfg.database[0]) snprintf(c.database, sizeof(c.database), "%s", g_cfg.database);
+    pthread_mutex_lock(&manager->mutex);
+    bool configured = manager->cfg.database[0] != '\0';
+    if (configured) snprintf(c.database, sizeof(c.database), "%s", manager->cfg.database);
+    pthread_mutex_unlock(&manager->mutex);
     const char *dbn = getenv("SCRIBODO_DB_NAME");
-    if (dbn) snprintf(c.database, sizeof(c.database), "%s", dbn);
+    if (!configured && dbn) snprintf(c.database, sizeof(c.database), "%s", dbn);
     c.timeout_s = 2;
     Db *db = db_open(&c, err, sizeof(err));
     if (db) db_close(db);
     return db != NULL;
 }
 
-void store_thread_done(void)
+void store_thread_done(StoreManager *manager)
 {
-    if (t_db) db_close(t_db);
-    t_db = NULL;
+    StoreThreadContext **link = &thread_contexts;
+    while (*link) {
+        StoreThreadContext *context = *link;
+        if (context->manager == manager) {
+            *link = context->next;
+            if (context->db) db_close(context->db);
+            free(context);
+            return;
+        }
+        link = &context->next;
+    }
 }
 
 /* The marker: {"project_id":"p-…","version":2,"dev":N,"ino":N}. The folder's
@@ -178,50 +321,60 @@ static bool import_in_progress(const char *project_dir)
 
 /* The thread running an import reads the files it is importing (everyone
  * else sees the project paused meanwhile). */
-static _Thread_local const char *t_importing;
-
-void store_set_importing(const char *project_dir) { t_importing = project_dir; }
-
-static _Thread_local double t_write_time;
-void store_set_write_time(double t) { t_write_time = t; }
-double store_write_time(void)
+void store_set_importing(StoreManager *manager, const char *project_dir)
 {
-    if (t_write_time > 0) return t_write_time;
+    StoreThreadContext *context = thread_context(manager, true);
+    if (context) snprintf(context->importing, sizeof(context->importing), "%s", project_dir ? project_dir : "");
+}
+
+void store_set_write_time(StoreManager *manager, double t)
+{
+    StoreThreadContext *context = thread_context(manager, true);
+    if (context) context->write_time = t;
+}
+double store_write_time(StoreManager *manager)
+{
+    StoreThreadContext *context = thread_context(manager, false);
+    if (context && context->write_time > 0) return context->write_time;
     struct timeval tv;
     gettimeofday(&tv, NULL);
     return (double)tv.tv_sec + (double)tv.tv_usec / 1e6;
 }
 
-/* Per-thread cache of the last folder verified (store_mode runs often). */
-static _Thread_local struct {
-    char dir[PATH_MAX];
-    char id[64];
-    int verdict; /* STORE_OK_VERDICT, PROBLEM_COPY, PROBLEM_MISSING */
-    char original[PATH_MAX];
-    double checked;
-} t_verify;
-
 enum { VERDICT_OK = 0 };
 
-static int verify(Db *d, const char *project_dir, const Marker *m)
+static int verify(StoreManager *manager, Db *d, const char *project_dir, const Marker *m)
 {
+    StoreThreadContext *context = thread_context(manager, true);
+    if (!context) return VERDICT_OK;
+    StoreVerification *verification = &context->verify;
+    /* Tag the verdict with the generation of the connection that produced it,
+     * not the manager's possibly newer generation. store_db() invalidates this
+     * thread's context before the next operation after a restart. */
+    uint64_t generation = context->generation;
+    if (verification->generation != generation) {
+        memset(verification, 0, sizeof(*verification));
+        verification->generation = generation;
+    }
     double t = now_s();
-    if (!strcmp(t_verify.dir, project_dir) && !strcmp(t_verify.id, m->id) && t - t_verify.checked < 30.0) return t_verify.verdict;
-    snprintf(t_verify.dir, sizeof(t_verify.dir), "%s", project_dir);
-    snprintf(t_verify.id, sizeof(t_verify.id), "%s", m->id);
-    t_verify.checked = t;
-    t_verify.original[0] = '\0';
+    if (!strcmp(verification->dir, project_dir) && !strcmp(verification->id, m->id) &&
+        t - verification->checked < 30.0)
+        return verification->verdict;
+    snprintf(verification->dir, sizeof(verification->dir), "%s", project_dir);
+    snprintf(verification->id, sizeof(verification->id), "%s", m->id);
+    verification->checked = t;
+    verification->original[0] = '\0';
     struct stat st;
-    if (stat(project_dir, &st) != 0) return t_verify.verdict = STORE_PROBLEM_MISSING;
+    if (stat(project_dir, &st) != 0) return verification->verdict = STORE_PROBLEM_MISSING;
     DbRows r;
     if (!db_query(d, "SELECT path FROM projects WHERE id = ?", (DbArg[1]){ DB_S(m->id) }, 1, &r)) {
-        t_verify.checked = 0; /* not a verdict: try again next time */
+        verification->checked = 0; /* not a verdict: try again next time */
         return VERDICT_OK;
     }
     bool found = r.nrows > 0;
-    if (found) snprintf(t_verify.original, sizeof(t_verify.original), "%s", db_cell(&r, 0, 0));
+    if (found) snprintf(verification->original, sizeof(verification->original), "%s", db_cell(&r, 0, 0));
     db_rows_free(&r);
-    if (!found) return t_verify.verdict = STORE_PROBLEM_MISSING;
+    if (!found) return verification->verdict = STORE_PROBLEM_MISSING;
     bool other_inode = m->ident && (m->dev != (unsigned long long)st.st_dev || m->ino != (unsigned long long)st.st_ino);
     if (other_inode) {
         /* Another folder with this project's marker. A copy only if the
@@ -230,15 +383,15 @@ static int verify(Db *d, const char *project_dir, const Marker *m)
         Marker om;
         struct stat ost;
         char oreal[PATH_MAX], here[PATH_MAX];
-        bool original_alive = stat(t_verify.original, &ost) == 0 && read_marker(t_verify.original, &om) &&
-                              !strcmp(om.id, m->id) && realpath(t_verify.original, oreal) &&
-                              realpath(project_dir, here) && strcmp(oreal, here) != 0;
-        if (original_alive) return t_verify.verdict = STORE_PROBLEM_COPY;
+        bool original_alive = stat(verification->original, &ost) == 0 && read_marker(verification->original, &om) &&
+                               !strcmp(om.id, m->id) && realpath(verification->original, oreal) &&
+                               realpath(project_dir, here) && strcmp(oreal, here) != 0;
+        if (original_alive) return verification->verdict = STORE_PROBLEM_COPY;
     }
     /* The same folder. Moved? Then the project follows it. */
     char real[PATH_MAX];
     if (!realpath(project_dir, real)) snprintf(real, sizeof(real), "%s", project_dir);
-    if (strcmp(real, t_verify.original) != 0) {
+    if (strcmp(real, verification->original) != 0) {
         char hash[65];
         sha256_hex(real, hash);
         /* A row that claims the new path (a project registered there earlier)
@@ -251,39 +404,45 @@ static int verify(Db *d, const char *project_dir, const Marker *m)
                NULL);
     }
     if (!m->ident || other_inode) write_marker(project_dir, m->id); /* upgrade a version 1 marker / adopt the new folder */
-    return t_verify.verdict = VERDICT_OK;
+    return verification->verdict = VERDICT_OK;
 }
 
-StoreMode store_mode(const char *project_dir, char *project_id, size_t idlen, Db **db)
+StoreMode store_mode(StoreManager *manager, const char *project_dir, char *project_id, size_t idlen, Db **db)
 {
     if (db) *db = NULL;
     Marker m;
     if (!project_dir || !project_dir[0]) return STORE_FILES;
     if (!read_marker(project_dir, &m)) {
-        if (t_importing && !strcmp(t_importing, project_dir)) return STORE_FILES;
+        StoreThreadContext *context = thread_context(manager, false);
+        if (context && !strcmp(context->importing, project_dir)) return STORE_FILES;
         return import_in_progress(project_dir) ? STORE_PAUSED : STORE_FILES;
     }
-    Db *d = store_db();
+    Db *d = store_db(manager);
     if (!d) return STORE_PAUSED;
-    if (verify(d, project_dir, &m) != VERDICT_OK) return STORE_PAUSED; /* a copy, or its project is missing */
+    if (verify(manager, d, project_dir, &m) != VERDICT_OK) return STORE_PAUSED; /* a copy, or its project is missing */
     if (project_id) snprintf(project_id, idlen, "%s", m.id);
     if (db) *db = d;
     return STORE_DB;
 }
 
-int store_problem(const char *project_dir, char *original, size_t len)
+int store_problem(StoreManager *manager, const char *project_dir, char *original, size_t len)
 {
     Marker m;
     if (original && len) original[0] = '\0';
     if (!project_dir || !read_marker(project_dir, &m)) return 0;
-    Db *d = store_db();
+    Db *d = store_db(manager);
     if (!d) return 0;
-    int v = verify(d, project_dir, &m);
-    if (original && len) snprintf(original, len, "%s", t_verify.original);
+    int v = verify(manager, d, project_dir, &m);
+    StoreThreadContext *context = thread_context(manager, false);
+    if (original && len && context) snprintf(original, len, "%s", context->verify.original);
     return v;
 }
 
-void store_forget_verification(void) { t_verify.checked = 0; }
+void store_forget_verification(StoreManager *manager)
+{
+    StoreThreadContext *context = thread_context(manager, false);
+    if (context) context->verify.checked = 0;
+}
 
 void store_new_id(char prefix, char *out, size_t outlen)
 {
@@ -321,9 +480,14 @@ static bool one_value(Db *db, const char *sql, const DbArg *args, size_t n, char
     return found;
 }
 
-bool store_project_id(const char *project_dir, bool create, char *out, size_t outlen)
+bool store_project_id(StoreManager *manager, const char *project_dir, bool create, char *out, size_t outlen)
 {
-    Db *db = store_db();
+    Db *db = store_db(manager);
+    return store_project_id_db(db, project_dir, create, out, outlen);
+}
+
+bool store_project_id_db(Db *db, const char *project_dir, bool create, char *out, size_t outlen)
+{
     if (!db) return false;
     char real[PATH_MAX], hash[65];
     if (!realpath(project_dir, real)) snprintf(real, sizeof(real), "%s", project_dir);
@@ -345,9 +509,14 @@ bool store_project_id(const char *project_dir, bool create, char *out, size_t ou
     return one_value(db, "SELECT id FROM projects WHERE path_hash = ?", h, 1, out, outlen);
 }
 
-bool store_document_id(const char *project_id, const char *name, bool create, char *out, size_t outlen)
+bool store_document_id(StoreManager *manager, const char *project_id, const char *name, bool create, char *out, size_t outlen)
 {
-    Db *db = store_db();
+    Db *db = store_db(manager);
+    return store_document_id_db(db, project_id, name, create, out, outlen);
+}
+
+bool store_document_id_db(Db *db, const char *project_id, const char *name, bool create, char *out, size_t outlen)
+{
     if (!db || strchr(name, '/')) return false;
     DbArg k[2] = { DB_S(project_id), DB_S(name) };
     if (one_value(db, "SELECT id FROM documents WHERE project_id = ? AND name = ?", k, 2, out, outlen)) return true;
@@ -359,17 +528,17 @@ bool store_document_id(const char *project_id, const char *name, bool create, ch
     return one_value(db, "SELECT id FROM documents WHERE project_id = ? AND name = ?", k, 2, out, outlen);
 }
 
-bool store_document_name(const char *document_id, char *out, size_t outlen)
+bool store_document_name(StoreManager *manager, const char *document_id, char *out, size_t outlen)
 {
-    Db *db = store_db();
+    Db *db = store_db(manager);
     if (!db) return false;
     DbArg k[1] = { DB_S(document_id) };
     return one_value(db, "SELECT name FROM documents WHERE id = ?", k, 1, out, outlen);
 }
 
-bool store_rename_document(const char *project_id, const char *from, const char *to)
+bool store_rename_document(StoreManager *manager, const char *project_id, const char *from, const char *to)
 {
-    Db *db = store_db();
+    Db *db = store_db(manager);
     if (!db) return false;
     if (!db_begin(db)) return false;
     /* A row already holding the new name belongs to an earlier, deleted

@@ -9,15 +9,16 @@
 static void *backup_job_main(void *arg)
 {
     BackupJob *job = arg;
-    job->ok = backup_project(job->tools_dir, job->project_dir, job->dest, sizeof(job->dest), job->why, sizeof(job->why));
-    store_thread_done(); /* the worker owns any store connection it opened */
+    job->ok = backup_project(job->store, job->tools_dir, job->project_dir, job->dest, sizeof(job->dest), job->why, sizeof(job->why));
+    store_thread_done(job->store); /* the worker owns any store connection it opened */
     atomic_store(&job->state, 2); /* publish the completed result */
     return NULL;
 }
 
-bool backup_job_init(BackupJob *job)
+bool backup_job_init(BackupJob *job, StoreManager *store)
 {
     memset(job, 0, sizeof(*job));
+    job->store = store;
     atomic_init(&job->state, 0);
     return pthread_mutex_init(&job->mu, NULL) == 0;
 }

@@ -9,15 +9,16 @@
 static void *entity_backfill_main(void *arg)
 {
     EntityBackfillJob *job = arg;
-    job->succeeded = project_store_entities_backfill(job->project_dir);
-    store_thread_done();
+    job->succeeded = project_store_entities_backfill(job->store, job->project_dir);
+    store_thread_done(job->store);
     atomic_store(&job->state, 2);
     return NULL;
 }
 
-bool entity_backfill_job_init(EntityBackfillJob *job)
+bool entity_backfill_job_init(EntityBackfillJob *job, StoreManager *store)
 {
     memset(job, 0, sizeof(*job));
+    job->store = store;
     atomic_init(&job->state, 0);
     return pthread_mutex_init(&job->mu, NULL) == 0;
 }

@@ -34,7 +34,7 @@ typedef struct Observer Observer;
 
 /* `server` NULL: the built-in deterministic fake (UI tests). */
 /* Borrows both services; they must outlive the observer. */
-Observer *observer_create(LlmServer *server, SemanticClient *semantic);
+Observer *observer_create(StoreManager *store, LlmServer *server, SemanticClient *semantic);
 void observer_destroy(Observer *o);
 
 /* Switch project ("" for none): cancels the current job and starts over
@@ -97,5 +97,5 @@ void observer_set_names(Observer *o, const char *author, const char *assistant);
  * the conversation or the two people in it), and the re-check of a
  * project's chat findings under the current rules. */
 bool obs_chat_finding_allowed(const FindingInfo *f, const char *desc, const char *author, const char *assistant);
-size_t obs_refilter(const char *project, const char *author, const char *assistant);
+size_t obs_refilter(StoreManager *store, const char *project, const char *author, const char *assistant);
 #endif

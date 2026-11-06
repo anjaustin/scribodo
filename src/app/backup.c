@@ -198,11 +198,11 @@ static void remove_tree(const char *path)
     run(argv, NULL, 0, NULL, 0);
 }
 
-bool backup_project(const char *tools_dir, const char *project_dir, char *dest, size_t destlen, char *why, size_t whylen)
+bool backup_project(StoreManager *manager, const char *tools_dir, const char *project_dir, char *dest, size_t destlen, char *why, size_t whylen)
 {
     if (why && whylen) why[0] = '\0';
     char pid[64];
-    StoreMode mode = store_mode(project_dir, pid, sizeof(pid), NULL);
+    StoreMode mode = store_mode(manager, project_dir, pid, sizeof(pid), NULL);
     if (mode == STORE_PAUSED) {
         snprintf(why, whylen, "Backups wait for the project store (it's paused for this project)");
         return false;
@@ -221,7 +221,7 @@ bool backup_project(const char *tools_dir, const char *project_dir, char *dest, 
         char parent[PATH_MAX + 80];
         snprintf(parent, sizeof(parent), "%.*s", (int)(strrchr(exp, '/') - exp), exp);
         mkdir(parent, 0700);
-        ok = store_export_project(pid, exp, why, whylen);
+        ok = store_export_project(manager, pid, exp, why, whylen);
     }
     char out[PATH_MAX + 64] = "", err[400] = "", target[PATH_MAX + 400];
     char stamp[32];
@@ -231,7 +231,9 @@ bool backup_project(const char *tools_dir, const char *project_dir, char *dest, 
     strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tmv);
     snprintf(target, sizeof(target), "%s/%s-%s", dir, name, stamp);
     if (ok) {
-        char *argv_db[] = { script, "--db", (char *)store_database(), "--with", exp, (char *)project_dir, target, NULL };
+        char database[64];
+        store_database(manager, database, sizeof(database));
+        char *argv_db[] = { script, "--db", database, "--with", exp, (char *)project_dir, target, NULL };
         char *argv_files[] = { script, "--no-db", (char *)project_dir, target, NULL };
         int rc = run(mode == STORE_DB ? argv_db : argv_files, out, sizeof(out), err, sizeof(err));
         ok = rc == 0 && out[0] == '/';

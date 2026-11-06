@@ -17,15 +17,17 @@
 #include "llm/observer.h"
 
 struct SemanticClient {
+    StoreManager *store;
     LlmServer *embed;
     char qkey[128];
     char qport[24];
 };
 
-SemanticClient *semantic_client_create(LlmServer *embed)
+SemanticClient *semantic_client_create(StoreManager *store, LlmServer *embed)
 {
     SemanticClient *client = calloc(1, sizeof(*client));
     if (!client) return NULL;
+    client->store = store;
     client->embed = embed;
     snprintf(client->qport, sizeof(client->qport), "tcp:6333");
     const char *port = getenv("SCRIBODO_QDRANT_PORT");
@@ -65,9 +67,11 @@ static bool qdrant(SemanticClient *client, const char *method, const char *path,
 /* One collection per project, named after the database too, so a test
  * database's collections can be removed with it and never mix with the
  * author's. */
-static void collection_for(const char *pid, char *out, size_t outlen)
+static void collection_for(SemanticClient *client, const char *pid, char *out, size_t outlen)
 {
-    snprintf(out, outlen, "%s__%s", store_database(), pid);
+    char database[64];
+    store_database(client->store, database, sizeof(database));
+    snprintf(out, outlen, "%s__%s", database, pid);
 }
 
 bool semantic_ready(SemanticClient *client)
@@ -208,7 +212,7 @@ static void hash16(const char *s, char out[17])
 static bool ensure_collection_ex(SemanticClient *client, const char *pid, bool *created)
 {
     char name[160], path[220];
-    collection_for(pid, name, sizeof(name));
+    collection_for(client, pid, name, sizeof(name));
     snprintf(path, sizeof(path), "/collections/%s", name);
     if (created) *created = false;
     cJSON *j = NULL;
@@ -279,7 +283,7 @@ static bool upsert(SemanticClient *client, Db *db, const char *pid, Pending *p, 
         cJSON_AddItemToArray(pts, pt);
     }
     char name[160], path[260];
-    collection_for(pid, name, sizeof(name));
+    collection_for(client, pid, name, sizeof(name));
     snprintf(path, sizeof(path), "/collections/%s/points?wait=true", name);
     ok = ok && qdrant(client, "PUT", path, body, NULL);
     cJSON_Delete(body);
@@ -305,7 +309,7 @@ static cJSON *payload_base(const char *pid, const char *kind, const char *text)
 static bool delete_points(SemanticClient *client, const char *pid, const char *key, const char *value)
 {
     char name[160], path[260];
-    collection_for(pid, name, sizeof(name));
+    collection_for(client, pid, name, sizeof(name));
     snprintf(path, sizeof(path), "/collections/%s/points/delete?wait=true", name);
     cJSON *body = cJSON_CreateObject();
     cJSON *must = cJSON_AddArrayToObject(cJSON_AddObjectToObject(body, "filter"), "must");
@@ -336,7 +340,7 @@ static void set_rebuild_pending(Db *db, const char *pid, bool on)
 
 bool semantic_sync_records(SemanticClient *client, const char *project_id, char *err, size_t errlen)
 {
-    Db *db = store_db();
+    Db *db = store_db(client->store);
     bool created = false;
     if (!db || !ensure_collection_ex(client, project_id, &created)) {
         snprintf(err, errlen, "The semantic index isn't available");
@@ -353,7 +357,7 @@ bool semantic_sync_records(SemanticClient *client, const char *project_id, char 
 
 static bool sync_records_impl(SemanticClient *client, const char *project_id, char *err, size_t errlen)
 {
-    Db *db = store_db();
+    Db *db = store_db(client->store);
     if (!db || !ensure_collection(client, project_id)) {
         snprintf(err, errlen, "The semantic index isn't available");
         return false;
@@ -409,7 +413,7 @@ static bool sync_records_impl(SemanticClient *client, const char *project_id, ch
 bool semantic_index_text(SemanticClient *client, const char *project_id, const char *kind, const char *document_id, const char *revision_id,
                          const char *conversation_id, long seq, size_t start, size_t len, const char *text)
 {
-    Db *db = store_db();
+    Db *db = store_db(client->store);
     if (!db || !text || !text[0] || !ensure_collection(client, project_id)) return false;
     char key[191], h[17];
     hash16(text, h);
@@ -432,7 +436,7 @@ bool semantic_index_text(SemanticClient *client, const char *project_id, const c
 
 bool semantic_prune_doc(SemanticClient *client, const char *project_id, const char *document_id, const char *const *piece_hashes, size_t n)
 {
-    Db *db = store_db();
+    Db *db = store_db(client->store);
     if (!db) return false;
     char like[120];
     snprintf(like, sizeof(like), "doc:%s:%%", document_id);
@@ -449,7 +453,7 @@ bool semantic_prune_doc(SemanticClient *client, const char *project_id, const ch
         if (current) continue;
         /* This piece is gone from the document: its point and mark go too. */
         char name[160], path[260];
-        collection_for(project_id, name, sizeof(name));
+        collection_for(client, project_id, name, sizeof(name));
         snprintf(path, sizeof(path), "/collections/%s/points/delete?wait=true", name);
         cJSON *body = cJSON_CreateObject();
         cJSON *must = cJSON_AddArrayToObject(cJSON_AddObjectToObject(body, "filter"), "must");
@@ -503,7 +507,7 @@ static size_t search_filtered(SemanticClient *client, const char *pid, const cha
     cJSON_AddBoolToObject(body, "with_payload", true);
     if (filter) cJSON_AddItemToObject(body, "filter", filter);
     char name[160], path[260];
-    collection_for(pid, name, sizeof(name));
+    collection_for(client, pid, name, sizeof(name));
     snprintf(path, sizeof(path), "/collections/%s/points/search", name);
     cJSON *res = NULL;
     bool ok = qdrant(client, "POST", path, body, &res);
@@ -577,17 +581,17 @@ size_t semantic_search(SemanticClient *client, const char *project_id, const cha
 bool semantic_drop(SemanticClient *client, const char *project_id)
 {
     char name[160], path[220];
-    collection_for(project_id, name, sizeof(name));
+    collection_for(client, project_id, name, sizeof(name));
     snprintf(path, sizeof(path), "/collections/%s", name);
     bool ok = qdrant(client, "DELETE", path, NULL, NULL);
-    Db *db = store_db();
+    Db *db = store_db(client->store);
     if (db) db_run(db, "DELETE FROM semantic_marks WHERE project_id = ?", (DbArg[1]){ DB_S(project_id) }, 1, NULL);
     return ok;
 }
 
 long semantic_rebuild(SemanticClient *client, const char *project_id, char *err, size_t errlen)
 {
-    Db *db = store_db();
+    Db *db = store_db(client->store);
     if (!db) {
         snprintf(err, errlen, "The project store is offline");
         return -1;
@@ -689,7 +693,7 @@ long semantic_rebuild(SemanticClient *client, const char *project_id, char *err,
 bool semantic_forget_collection(SemanticClient *client, const char *project_id)
 {
     char name[160], path[220];
-    collection_for(project_id, name, sizeof(name));
+    collection_for(client, project_id, name, sizeof(name));
     snprintf(path, sizeof(path), "/collections/%s", name);
     return qdrant(client, "DELETE", path, NULL, NULL);
 }

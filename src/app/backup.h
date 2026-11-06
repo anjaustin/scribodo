@@ -16,10 +16,11 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include "app/store.h"
 
 /* `tools_dir` holds backup.sh. Blocking (run it off the UI thread). On
  * success, `dest` is the backup folder. */
-bool backup_project(const char *tools_dir, const char *project_dir, char *dest, size_t destlen, char *why, size_t whylen);
+bool backup_project(StoreManager *manager, const char *tools_dir, const char *project_dir, char *dest, size_t destlen, char *why, size_t whylen);
 
 /* Blocking. On success, `restored` is the new project folder. */
 bool backup_restore_copy(const char *tools_dir, const char *backup_dir, const char *parent_dir, char *restored,

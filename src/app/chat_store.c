@@ -76,7 +76,7 @@ static bool ensure_trailing_newline(int fd)
     return last == '\n' || write(fd, "\n", 1) == 1;
 }
 
-bool chat_store_append_files(const char *project_dir, const char *id, const char *title, const ChatMessage *m)
+bool chat_store_append_files(StoreManager *manager, const char *project_dir, const char *id, const char *title, const ChatMessage *m)
 {
     char path[1200];
     if (!path_for(project_dir, id, path, sizeof(path))) return false;
@@ -90,7 +90,7 @@ bool chat_store_append_files(const char *project_dir, const char *id, const char
         cJSON_AddStringToObject(meta, "type", "meta");
         cJSON_AddNumberToObject(meta, "version", 1);
         cJSON_AddStringToObject(meta, "title", title ? title : "Chat");
-        cJSON_AddNumberToObject(meta, "created", (double)(time_t)store_write_time());
+        cJSON_AddNumberToObject(meta, "created", (double)(time_t)store_write_time(manager));
         ok = write_line(fd, meta);
         cJSON_Delete(meta);
     }
@@ -98,7 +98,7 @@ bool chat_store_append_files(const char *project_dir, const char *id, const char
     cJSON_AddStringToObject(j, "type", "message");
     cJSON_AddStringToObject(j, "role", m->role == CHAT_USER ? "user" : "assistant");
     cJSON_AddStringToObject(j, "content", m->content ? m->content : "");
-    cJSON_AddNumberToObject(j, "ts", (double)(time_t)store_write_time());
+    cJSON_AddNumberToObject(j, "ts", (double)(time_t)store_write_time(manager));
     if (m->error) cJSON_AddBoolToObject(j, "error", true);
     if (m->is_edit) cJSON_AddBoolToObject(j, "edit", true);
     if (m->via && m->via[0]) cJSON_AddStringToObject(j, "via", m->via); /* went to a remote model */
@@ -333,34 +333,34 @@ bool chat_store_load_files(const char *project_dir, const char *id, ChatMessage 
     return true;
 }
 
-bool chat_store_append(const char *project_dir, const char *id, const char *title, const ChatMessage *message)
+bool chat_store_append(StoreManager *manager, const char *project_dir, const char *id, const char *title, const ChatMessage *message)
 {
-    return project_store_chat_append(project_dir, id, title, message);
+    return project_store_chat_append(manager, project_dir, id, title, message);
 }
 
-bool chat_store_rename(const char *project_dir, const char *id, const char *title)
+bool chat_store_rename(StoreManager *manager, const char *project_dir, const char *id, const char *title)
 {
-    return project_store_chat_rename(project_dir, id, title);
+    return project_store_chat_rename(manager, project_dir, id, title);
 }
 
-bool chat_store_set_observer(const char *project_dir, const char *id, bool read)
+bool chat_store_set_observer(StoreManager *manager, const char *project_dir, const char *id, bool read)
 {
-    return project_store_chat_set_observer(project_dir, id, read);
+    return project_store_chat_set_observer(manager, project_dir, id, read);
 }
 
-size_t chat_store_list(const char *project_dir, ChatSummary **out)
+size_t chat_store_list(StoreManager *manager, const char *project_dir, ChatSummary **out)
 {
-    return project_store_chat_list(project_dir, out);
+    return project_store_chat_list(manager, project_dir, out);
 }
 
-bool chat_store_list_checked(const char *project_dir, ChatSummary **out, size_t *count)
+bool chat_store_list_checked(StoreManager *manager, const char *project_dir, ChatSummary **out, size_t *count)
 {
-    return project_store_chat_list_checked(project_dir, out, count);
+    return project_store_chat_list_checked(manager, project_dir, out, count);
 }
 
-bool chat_store_load(const char *project_dir, const char *id, ChatMessage **messages, size_t *count)
+bool chat_store_load(StoreManager *manager, const char *project_dir, const char *id, ChatMessage **messages, size_t *count)
 {
-    return project_store_chat_load(project_dir, id, messages, count);
+    return project_store_chat_load(manager, project_dir, id, messages, count);
 }
 
 void chat_store_free_messages(ChatMessage *msgs, size_t n)

@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 #include <unistd.h>
 #include <mysql.h>
 
@@ -24,9 +25,29 @@
 #include "test_util.h"
 
 static char g_name[64];
+static char g_name2[64];
+static StoreManager *g_store;
+
+typedef struct {
+    StoreManager *store;
+    const char *database;
+    bool ok;
+} ManagerThread;
+
+static void *manager_thread_main(void *context)
+{
+    ManagerThread *thread = context;
+    Db *db = store_db(thread->store);
+    DbRows rows;
+    bool queried = db && db_query(db, "SELECT DATABASE()", NULL, 0, &rows);
+    thread->ok = queried && rows.nrows == 1 && !strcmp(db_cell(&rows, 0, 0), thread->database);
+    if (queried) db_rows_free(&rows);
+    store_thread_done(thread->store);
+    return NULL;
+}
 
 /* Create the throwaway database as root and grant it to the app user. */
-static bool admin(const char *sql_fmt)
+static bool admin_name(const char *sql_fmt, const char *name)
 {
     const char *home = getenv("HOME");
     char path[1024], pw[200] = "";
@@ -41,12 +62,14 @@ static bool admin(const char *sql_fmt)
     mysql_options(m, MYSQL_OPT_CONNECT_TIMEOUT, &t);
     bool ok = mysql_real_connect(m, "127.0.0.1", "root", pw, NULL, 33061, NULL, 0) != NULL;
     char sql[512];
-    snprintf(sql, sizeof(sql), sql_fmt, g_name, g_name);
+    snprintf(sql, sizeof(sql), sql_fmt, name, name);
     ok = ok && mysql_query(m, sql) == 0;
     if (!ok) fprintf(stderr, "admin: %s\n", mysql_error(m));
     mysql_close(m);
     return ok;
 }
+
+static bool admin(const char *sql_fmt) { return admin_name(sql_fmt, g_name); }
 
 static void test_db(void)
 {
@@ -189,27 +212,27 @@ static void test_migration(void)
 static void test_store_ids(void)
 {
     char why[256];
-    CHECK(store_start(g_name, why, sizeof(why)) && store_online());
+    CHECK(store_start(g_store, g_name, why, sizeof(why)) && store_online(g_store));
     char p1[40], p2[40], d1[40], d2[40], d3[40], d4[40], name[300];
-    CHECK(store_project_id("/tmp", true, p1, sizeof(p1)) && p1[0] == 'p');
-    CHECK(store_project_id("/private/tmp", false, p2, sizeof(p2)) && !strcmp(p1, p2)); /* same real path */
-    CHECK(!store_project_id("/nonexistent-scribodo-dir", false, p2, sizeof(p2)));
-    CHECK(store_document_id(p1, "a.md", true, d1, sizeof(d1)) && d1[0] == 'd');
-    CHECK(store_document_id(p1, "a.md", true, d2, sizeof(d2)) && !strcmp(d1, d2));
+    CHECK(store_project_id(g_store, "/tmp", true, p1, sizeof(p1)) && p1[0] == 'p');
+    CHECK(store_project_id(g_store, "/private/tmp", false, p2, sizeof(p2)) && !strcmp(p1, p2)); /* same real path */
+    CHECK(!store_project_id(g_store, "/nonexistent-scribodo-dir", false, p2, sizeof(p2)));
+    CHECK(store_document_id(g_store, p1, "a.md", true, d1, sizeof(d1)) && d1[0] == 'd');
+    CHECK(store_document_id(g_store, p1, "a.md", true, d2, sizeof(d2)) && !strcmp(d1, d2));
     /* Case and accents are different names (case-sensitive volumes). */
-    CHECK(store_document_id(p1, "A.md", true, d3, sizeof(d3)) && strcmp(d1, d3));
-    CHECK(store_document_id(p1, "\xC3\xA9.md", true, d4, sizeof(d4)) && store_document_id(p1, "e.md", true, d2, sizeof(d2)) &&
+    CHECK(store_document_id(g_store, p1, "A.md", true, d3, sizeof(d3)) && strcmp(d1, d3));
+    CHECK(store_document_id(g_store, p1, "\xC3\xA9.md", true, d4, sizeof(d4)) && store_document_id(g_store, p1, "e.md", true, d2, sizeof(d2)) &&
           strcmp(d4, d2));
-    CHECK(!store_document_id(p1, "../x.md", true, d2, sizeof(d2)));
+    CHECK(!store_document_id(g_store, p1, "../x.md", true, d2, sizeof(d2)));
     /* A rename keeps the id; a stale row with the new name is moved aside. */
-    CHECK(store_document_id(p1, "b.md", true, d2, sizeof(d2)));
-    CHECK(store_rename_document(p1, "a.md", "b.md"));
-    CHECK(store_document_name(d1, name, sizeof(name)) && !strcmp(name, "b.md"));
-    CHECK(store_document_name(d2, name, sizeof(name)) && strncmp(name, "b.md (earlier", 13) == 0);
-    CHECK(store_document_id(p1, "b.md", false, d3, sizeof(d3)) && !strcmp(d3, d1));
+    CHECK(store_document_id(g_store, p1, "b.md", true, d2, sizeof(d2)));
+    CHECK(store_rename_document(g_store, p1, "a.md", "b.md"));
+    CHECK(store_document_name(g_store, d1, name, sizeof(name)) && !strcmp(name, "b.md"));
+    CHECK(store_document_name(g_store, d2, name, sizeof(name)) && strncmp(name, "b.md (earlier", 13) == 0);
+    CHECK(store_document_id(g_store, p1, "b.md", false, d3, sizeof(d3)) && !strcmp(d3, d1));
     /* A connection the server drops (restart, timeout) is noticed and
      * reopened on next use (red-team 008). */
-    Db *db = store_db();
+    Db *db = store_db(g_store);
     DbRows r;
     CHECK(db && db_query(db, "SELECT CONNECTION_ID()", NULL, 0, &r) && r.nrows == 1);
     char kill_sql[64];
@@ -217,24 +240,88 @@ static void test_store_ids(void)
     db_rows_free(&r);
     CHECK(admin(kill_sql));
     CHECK(!db_query(db, "SELECT 1", NULL, 0, &r) && db_broken(db));
-    Db *again = store_db();
-    CHECK(again && store_online() && db_query(again, "SELECT 1", NULL, 0, &r) && r.nrows == 1);
+    Db *again = store_db(g_store);
+    CHECK(again && store_online(g_store) && db_query(again, "SELECT 1", NULL, 0, &r) && r.nrows == 1);
     if (again) db_rows_free(&r);
-    CHECK(store_document_id(p1, "b.md", false, d3, sizeof(d3)) && !strcmp(d3, d1));
-    store_stop();
-    store_set_offline(true);
-    CHECK(!store_start(g_name, why, sizeof(why)) && !store_online() && store_db() == NULL);
-    store_set_offline(false);
+    CHECK(store_document_id(g_store, p1, "b.md", false, d3, sizeof(d3)) && !strcmp(d3, d1));
+    store_stop(g_store);
+    store_set_offline(g_store, true);
+    CHECK(!store_start(g_store, g_name, why, sizeof(why)) && !store_online(g_store) && store_db(g_store) == NULL);
+    store_set_offline(g_store, false);
+}
+
+static void test_store_managers(void)
+{
+    StoreManager *a = store_manager_create(), *b = store_manager_create();
+    char why[256] = "";
+    CHECK(a && b);
+    CHECK(store_start(a, g_name, why, sizeof(why)));
+    CHECK(store_start(b, g_name2, why, sizeof(why)));
+
+    DbRows rows;
+    Db *adb = store_db(a), *bdb = store_db(b);
+    CHECK(adb && bdb && adb != bdb);
+    CHECK(db_query(adb, "SELECT DATABASE()", NULL, 0, &rows) && !strcmp(db_cell(&rows, 0, 0), g_name));
+    db_rows_free(&rows);
+    CHECK(db_query(bdb, "SELECT DATABASE()", NULL, 0, &rows) && !strcmp(db_cell(&rows, 0, 0), g_name2));
+    db_rows_free(&rows);
+
+    store_set_offline(a, true);
+    CHECK(!store_online(a) && store_online(b) && store_db(a) == NULL && store_db(b) == bdb);
+    store_set_offline(a, false);
+
+    ManagerThread one = { a, g_name, false }, two = { b, g_name2, false };
+    pthread_t ta, tb;
+    CHECK(pthread_create(&ta, NULL, manager_thread_main, &one) == 0);
+    CHECK(pthread_create(&tb, NULL, manager_thread_main, &two) == 0);
+    pthread_join(ta, NULL);
+    pthread_join(tb, NULL);
+    CHECK(one.ok && two.ok);
+
+    char project[PATH_MAX], pid[40];
+    snprintf(project, sizeof(project), "%s/scribodo-manager-%d", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp", (int)getpid());
+    mkdir(project, 0755);
+    CHECK(store_project_id(a, project, true, pid, sizeof(pid)) && store_mark_imported(project, pid));
+    CHECK(store_mode(a, project, NULL, 0, NULL) == STORE_DB);
+    CHECK(store_mode(b, project, NULL, 0, NULL) == STORE_PAUSED &&
+          store_problem(b, project, NULL, 0) == STORE_PROBLEM_MISSING);
+
+    char real[PATH_MAX];
+    CHECK(realpath(project, real) != NULL);
+    CHECK(db_run(bdb,
+                 "INSERT INTO projects (id,name,path,path_hash,created_at,updated_at) VALUES (?,?,?,?,1,1)",
+                 (DbArg[4]){ DB_S(pid), DB_S("manager"), DB_S(real), DB_S("manager-generation-test") }, 4, NULL));
+    /* Restarting advances the lifecycle generation and invalidates b's
+     * cached missing verdict without disturbing a. */
+    CHECK(store_start(b, g_name2, why, sizeof(why)));
+    CHECK(store_mode(b, project, NULL, 0, NULL) == STORE_DB && store_mode(a, project, NULL, 0, NULL) == STORE_DB);
+
+    char missing[64], configured[64];
+    snprintf(missing, sizeof(missing), "scribodo_missing_%d", (int)getpid());
+    CHECK(!store_start(b, missing, why, sizeof(why)) && !store_online(b));
+    store_database(b, configured, sizeof(configured));
+    CHECK(!strcmp(configured, missing) && !store_probe(b));
+    CHECK(store_start(b, g_name2, why, sizeof(why)));
+
+    char marker[PATH_MAX + 32];
+    snprintf(marker, sizeof(marker), "%s/.scribodo/store.json", project);
+    unlink(marker);
+    char metadata[PATH_MAX + 16];
+    snprintf(metadata, sizeof(metadata), "%s/.scribodo", project);
+    rmdir(metadata);
+    rmdir(project);
+    store_manager_destroy(a);
+    store_manager_destroy(b);
 }
 
 /* The store backends: revisions, records with sources, and chats, all by id. */
 static void test_backends(void)
 {
     char why[256];
-    CHECK(store_start(g_name, why, sizeof(why)));
-    Db *db = store_db();
+    CHECK(store_start(g_store, g_name, why, sizeof(why)));
+    Db *db = store_db(g_store);
     char pid[40];
-    CHECK(db && store_project_id("/private/var", true, pid, sizeof(pid)));
+    CHECK(db && store_project_id(g_store, "/private/var", true, pid, sizeof(pid)));
     /* Revisions: deduplicated against the newest; a source snapshot reuses any. */
     bool rec = false;
     char r1[40] = "", r2[40] = "", r3[40] = "";
@@ -277,7 +364,7 @@ static void test_backends(void)
     char fid[40];
     store_new_id('f', fid, sizeof(fid));
     CHECK(sdb_record_append(db, pid, REC_FINDING, fid, "new", "Possible conflict.", &src, 1, &fi, true, NULL));
-    CHECK(store_rename_document(pid, "ch1.md", "Chapter One.md"));
+    CHECK(store_rename_document(g_store, pid, "ch1.md", "Chapter One.md"));
     Record *recs = NULL;
     size_t nr = sdb_record_list(db, pid, REC_CANON, &recs);
     CHECK(nr == 1 && recs[0].nversions == 2 && !strcmp(record_current(&recs[0])->status, "retracted"));
@@ -298,7 +385,7 @@ static void test_backends(void)
     /* Another project's ids are never linked (red-team 008): its revision,
      * its chat and its records come through as plain quotes. */
     char other[40];
-    CHECK(store_project_id("/private/var/empty", true, other, sizeof(other)));
+    CHECK(store_project_id(g_store, "/private/var/empty", true, other, sizeof(other)));
     char ofid[40];
     store_new_id('f', ofid, sizeof(ofid));
     SourceRef xs = src; /* r1 is pid's revision, of a document named ch1.md there */
@@ -317,7 +404,7 @@ static void test_backends(void)
     ChatMessage u = { .role = CHAT_USER, .content = "compare", .docs = "Chapter One.md\nnotes.md" };
     ChatMessage a = { .role = CHAT_ASSISTANT, .content = "They differ.", .via = "Frontier \xC2\xB7 api.example.com" };
     CHECK(sdb_chat_append(db, pid, "20261104-150000-abcd", "Compare", &u) && sdb_chat_append(db, pid, "20261104-150000-abcd", "x", &a));
-    CHECK(store_rename_document(pid, "notes.md", "Notes.md"));
+    CHECK(store_rename_document(g_store, pid, "notes.md", "Notes.md"));
     {
         char ofid2[40];
         store_new_id('f', ofid2, sizeof(ofid2));
@@ -354,11 +441,11 @@ static void test_backends(void)
     free(cs);
     /* Another project can't touch this one's chat. */
     char pid2[40];
-    CHECK(store_project_id("/private/etc", true, pid2, sizeof(pid2)));
+    CHECK(store_project_id(g_store, "/private/etc", true, pid2, sizeof(pid2)));
     CHECK(!sdb_chat_append(db, pid2, "20261104-150000-abcd", "x", &a) && !sdb_chat_rename(db, pid2, "20261104-150000-abcd", "x"));
     CHECK(sdb_chat_load(db, pid2, "20261104-150000-abcd", &msgs, &nm) && nm == 0);
     chat_store_free_messages(msgs, nm);
-    store_stop();
+    store_stop(g_store);
 }
 
 typedef struct {
@@ -374,8 +461,8 @@ static void *run_export(void *arg)
 {
     ExportCall *call = arg;
     atomic_store(&call->started, true);
-    call->ok = store_export_project(call->project_id, call->directory, call->why, sizeof(call->why));
-    store_thread_done();
+    call->ok = store_export_project(g_store, call->project_id, call->directory, call->why, sizeof(call->why));
+    store_thread_done(g_store);
     atomic_store(&call->done, true);
     return NULL;
 }
@@ -385,7 +472,7 @@ static void *run_export(void *arg)
 static void test_import(void)
 {
     char why[256];
-    CHECK(store_start(g_name, why, sizeof(why)));
+    CHECK(store_start(g_store, g_name, why, sizeof(why)));
     char proj[512], doc[600];
     snprintf(proj, sizeof(proj), "%s/scribodo-import-%d", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp", (int)getpid());
     mkdir(proj, 0755);
@@ -394,30 +481,30 @@ static void test_import(void)
     fputs("Zoë kept the letter.\n", f);
     fclose(f);
     /* Not in the store yet: everything below goes to files. */
-    CHECK(store_mode(proj, NULL, 0, NULL) == STORE_FILES);
-    ProjectStoreInspection inspection = project_store_inspect(proj);
+    CHECK(store_mode(g_store, proj, NULL, 0, NULL) == STORE_FILES);
+    ProjectStoreInspection inspection = project_store_inspect(g_store, proj);
     CHECK((inspection.capabilities & PROJECT_STORE_CAP_STRUCTURED_WRITE) &&
           !(inspection.capabilities & PROJECT_STORE_CAP_ENTITIES) && inspection.blocked_by == PROJECT_STORE_BLOCK_NONE);
     bool rec;
-    store_set_write_time(1700000000.25); /* written long ago: exports must keep that */
-    CHECK(revisions_record(proj, doc, "first draft", "save", NULL, &rec) && rec);
+    store_set_write_time(g_store, 1700000000.25); /* written long ago: exports must keep that */
+    CHECK(revisions_record(g_store, proj, doc, "first draft", "save", NULL, &rec) && rec);
     char snap[160];
-    CHECK(revisions_snapshot(proj, doc, "Zoë kept the letter.\n", snap, sizeof(snap)));
+    CHECK(revisions_snapshot(g_store, proj, doc, "Zoë kept the letter.\n", snap, sizeof(snap)));
     SourceRef src = { .kind = SRC_DOC, .start = 0, .len = 3, .quote = "Zoë" };
     snprintf(src.doc, sizeof(src.doc), "ch1.md");
     snprintf(src.revision, sizeof(src.revision), "%s", snap);
     char nid[40], cid[40];
     records_new_id(REC_NOTE, nid, sizeof(nid));
     records_new_id(REC_CANON, cid, sizeof(cid));
-    CHECK(records_append(proj, REC_NOTE, nid, "active", "Check the date.", &src, 1, NULL));
-    CHECK(records_append(proj, REC_NOTE, nid, "active", "Check the date (1911?).", &src, 1, NULL));
-    CHECK(records_append(proj, REC_CANON, cid, "committed", "Zoë's eyes are green.", NULL, 0, NULL));
-    store_set_write_time(0);
+    CHECK(records_append(g_store, proj, REC_NOTE, nid, "active", "Check the date.", &src, 1, NULL));
+    CHECK(records_append(g_store, proj, REC_NOTE, nid, "active", "Check the date (1911?).", &src, 1, NULL));
+    CHECK(records_append(g_store, proj, REC_CANON, cid, "committed", "Zoë's eyes are green.", NULL, 0, NULL));
+    store_set_write_time(g_store, 0);
     const time_t revs_ts_oldest = 1700000000, note_ts = 1700000000;
     char cmd0[1400];
     ChatMessage u = { .role = CHAT_USER, .content = "hello", .docs = "ch1.md" };
     ChatMessage a = { .role = CHAT_ASSISTANT, .content = "hi" };
-    CHECK(chat_store_append(proj, "20261104-160000-abcd", "Greeting", &u) && chat_store_append(proj, "20261104-160000-abcd", "x", &a));
+    CHECK(chat_store_append(g_store, proj, "20261104-160000-abcd", "Greeting", &u) && chat_store_append(g_store, proj, "20261104-160000-abcd", "x", &a));
     /* A rename made before the import. */
     char doc2[600];
     snprintf(doc2, sizeof(doc2), "%s/Chapter One.md", proj);
@@ -427,7 +514,7 @@ static void test_import(void)
     snprintf(rv_new, sizeof(rv_new), "%s/.scribodo/revisions/Chapter One.md", proj);
     CHECK(rename(rv_old, rv_new) == 0);
     CHECK(renames_record(proj, "ch1.md", "Chapter One.md"));
-    CHECK(chat_store_set_observer(proj, "20261104-160000-abcd", false)); /* carried into the store */
+    CHECK(chat_store_set_observer(g_store, proj, "20261104-160000-abcd", false)); /* carried into the store */
     cJSON *ost = cJSON_CreateObject();
     cJSON *odocs = cJSON_AddObjectToObject(ost, "docs");
     cJSON *ohashes = cJSON_AddArrayToObject(odocs, "Chapter One.md");
@@ -436,22 +523,22 @@ static void test_import(void)
     cJSON *ochat = cJSON_AddObjectToObject(ochats, "20261104-160000-abcd");
     cJSON_AddNumberToObject(ochat, "n", 2);
     cJSON_AddNumberToObject(ochat, "off", 17);
-    CHECK(project_store_observer_state_save(proj, ost));
+    CHECK(project_store_observer_state_save(g_store, proj, ost));
     cJSON_Delete(ost);
-    CHECK(project_store_observer_rules_set(proj, "feedfacecafebeef"));
-    cJSON *stale_file = project_store_observer_state_load(proj);
-    ost = project_store_observer_state_load(proj);
-    CHECK(stale_file && ost && project_store_observer_state_save(proj, ost));
-    CHECK(stale_file && !project_store_observer_state_save(proj, stale_file));
+    CHECK(project_store_observer_rules_set(g_store, proj, "feedfacecafebeef"));
+    cJSON *stale_file = project_store_observer_state_load(g_store, proj);
+    ost = project_store_observer_state_load(g_store, proj);
+    CHECK(stale_file && ost && project_store_observer_state_save(g_store, proj, ost));
+    CHECK(stale_file && !project_store_observer_state_save(g_store, proj, stale_file));
     cJSON_Delete(ost);
     cJSON_Delete(stale_file);
 
     why[0] = '\0';
-    CHECK(store_import(proj, why, sizeof(why)));
+    CHECK(store_import(g_store, proj, why, sizeof(why)));
     if (why[0]) fprintf(stderr, "    %s\n", why);
-    CHECK(store_mode(proj, NULL, 0, NULL) == STORE_DB);
+    CHECK(store_mode(g_store, proj, NULL, 0, NULL) == STORE_DB);
     EntityBackfillJob backfill;
-    CHECK(entity_backfill_job_init(&backfill));
+    CHECK(entity_backfill_job_init(&backfill, g_store));
     CHECK(entity_backfill_job_start(&backfill, proj));
     CHECK(entity_backfill_job_busy(&backfill) && !entity_backfill_job_start(&backfill, proj));
     bool backfill_ok = false, backfill_done = false;
@@ -461,22 +548,22 @@ static void test_import(void)
     }
     CHECK(backfill_done && backfill_ok && !entity_backfill_job_busy(&backfill));
     entity_backfill_job_destroy(&backfill);
-    inspection = project_store_inspect(proj);
+    inspection = project_store_inspect(g_store, proj);
     CHECK((inspection.capabilities & (PROJECT_STORE_CAP_STRUCTURED_WRITE | PROJECT_STORE_CAP_ENTITIES |
                                       PROJECT_STORE_CAP_SEMANTIC | PROJECT_STORE_CAP_LINKED_DOCUMENTS)) ==
           (PROJECT_STORE_CAP_STRUCTURED_WRITE | PROJECT_STORE_CAP_ENTITIES |
            PROJECT_STORE_CAP_SEMANTIC | PROJECT_STORE_CAP_LINKED_DOCUMENTS));
-    CHECK(store_import(proj, why, sizeof(why))); /* again: nothing to do */
+    CHECK(store_import(g_store, proj, why, sizeof(why))); /* again: nothing to do */
     /* The same APIs now read the store. */
     Revision *revs = NULL;
-    size_t nr = revisions_list(proj, doc2, &revs);
+    size_t nr = revisions_list(g_store, proj, doc2, &revs);
     CHECK(nr == 2);
-    char *t = nr ? revisions_load(proj, doc2, &revs[nr - 1]) : NULL;
+    char *t = nr ? revisions_load(g_store, proj, doc2, &revs[nr - 1]) : NULL;
     CHECK(t && !strcmp(t, "first draft"));
     free(t);
     free(revs);
     Record *notes = NULL;
-    size_t nn = records_list(proj, REC_NOTE, &notes);
+    size_t nn = records_list(g_store, proj, REC_NOTE, &notes);
     CHECK(nn == 1 && notes[0].nversions == 2 && !strcmp(record_current(&notes[0])->content, "Check the date (1911?)."));
     CHECK(nn == 1 && record_current(&notes[0])->nsources == 1 &&
           !strcmp(record_current(&notes[0])->sources[0].doc, "Chapter One.md") && /* the rename, resolved to the id */
@@ -484,33 +571,33 @@ static void test_import(void)
     records_free(notes, nn);
     ChatMessage *msgs = NULL;
     size_t nm = 0;
-    CHECK(chat_store_load(proj, "20261104-160000-abcd", &msgs, &nm) && nm == 2 && msgs[0].docs &&
+    CHECK(chat_store_load(g_store, proj, "20261104-160000-abcd", &msgs, &nm) && nm == 2 && msgs[0].docs &&
           !strcmp(msgs[0].docs, "Chapter One.md"));
     chat_store_free_messages(msgs, nm);
     {
         ChatSummary *il = NULL;
-        size_t in = chat_store_list(proj, &il);
+        size_t in = chat_store_list(g_store, proj, &il);
         CHECK(in == 1 && il[0].observer_ignore); /* the setting came along */
         free(il);
     }
-    ost = project_store_observer_state_load(proj);
+    ost = project_store_observer_state_load(g_store, proj);
     CHECK(ost && cJSON_GetArraySize(cJSON_GetObjectItem(cJSON_GetObjectItem(ost, "docs"), "Chapter One.md")) == 1);
     CHECK(ost && cJSON_GetNumberValue(cJSON_GetObjectItem(
                      cJSON_GetObjectItem(cJSON_GetObjectItem(ost, "chats"), "20261104-160000-abcd"), "off")) == 17);
     cJSON_Delete(ost);
     char rules[17];
-    CHECK(project_store_observer_rules_get(proj, rules) && !strcmp(rules, "feedfacecafebeef"));
-    cJSON *stale_db = project_store_observer_state_load(proj);
-    ost = project_store_observer_state_load(proj);
-    CHECK(stale_db && ost && project_store_observer_state_save(proj, ost));
-    CHECK(stale_db && !project_store_observer_state_save(proj, stale_db));
+    CHECK(project_store_observer_rules_get(g_store, proj, rules) && !strcmp(rules, "feedfacecafebeef"));
+    cJSON *stale_db = project_store_observer_state_load(g_store, proj);
+    ost = project_store_observer_state_load(g_store, proj);
+    CHECK(stale_db && ost && project_store_observer_state_save(g_store, proj, ost));
+    CHECK(stale_db && !project_store_observer_state_save(g_store, proj, stale_db));
     cJSON_Delete(ost);
     cJSON_Delete(stale_db);
     /* Exported as files (what an in-app backup carries): original times,
      * and sources that point at the exported snapshots. */
     {
         char pidx[40], ex[600], exdoc[700];
-        CHECK(store_mode(proj, pidx, sizeof(pidx), NULL) == STORE_DB);
+        CHECK(store_mode(g_store, proj, pidx, sizeof(pidx), NULL) == STORE_DB);
         snprintf(ex, sizeof(ex), "%s-export", proj);
         snprintf(cmd0, sizeof(cmd0), "rm -rf '%s'", ex);
         system(cmd0);
@@ -537,11 +624,11 @@ static void test_import(void)
         CHECK(export_rc == 0 && export_call.ok);
         snprintf(exdoc, sizeof(exdoc), "%s/Chapter One.md", ex);
         Revision *erevs = NULL;
-        size_t ne = revisions_list(ex, exdoc, &erevs);
+        size_t ne = revisions_list(g_store, ex, exdoc, &erevs);
         CHECK(ne == nr && ne && erevs[ne - 1].ts == revs_ts_oldest); /* the first draft keeps its time */
         free(erevs);
         Record *en = NULL;
-        size_t nen = records_list(ex, REC_NOTE, &en);
+        size_t nen = records_list(g_store, ex, REC_NOTE, &en);
         CHECK(nen == 1 && en[0].nversions == 2 && en[0].versions[0].ts == note_ts &&
               record_current(&en[0])->nsources == 1 && record_current(&en[0])->sources[0].revision[0] != '\0');
         if (nen && record_current(&en[0])->nsources) {
@@ -551,24 +638,24 @@ static void test_import(void)
             CHECK(stat(snapfile, &sst) == 0); /* a real exported snapshot */
         }
         records_free(en, nen);
-        ost = project_store_observer_state_load(ex);
+        ost = project_store_observer_state_load(g_store, ex);
         CHECK(ost && cJSON_GetArraySize(cJSON_GetObjectItem(cJSON_GetObjectItem(ost, "docs"), "Chapter One.md")) == 1);
         cJSON_Delete(ost);
-        CHECK(project_store_observer_rules_get(ex, rules) && !strcmp(rules, "feedfacecafebeef"));
+        CHECK(project_store_observer_rules_get(g_store, ex, rules) && !strcmp(rules, "feedfacecafebeef"));
         snprintf(cmd0, sizeof(cmd0), "rm -rf '%s'", ex);
         system(cmd0);
     }
-    ost = project_store_observer_state_load(proj);
+    ost = project_store_observer_state_load(g_store, proj);
     CHECK(ost != NULL);
     if (ost) cJSON_DeleteItemFromObjectCaseSensitive(cJSON_GetObjectItem(ost, "chats"), "20261104-160000-abcd");
-    CHECK(ost && project_store_observer_state_save(proj, ost));
+    CHECK(ost && project_store_observer_state_save(g_store, proj, ost));
     cJSON_Delete(ost);
-    ost = project_store_observer_state_load(proj);
+    ost = project_store_observer_state_load(g_store, proj);
     CHECK(ost && !cJSON_GetObjectItem(cJSON_GetObjectItem(ost, "chats"), "20261104-160000-abcd"));
     cJSON_Delete(ost);
     /* New writes go to the store; the old files were set aside, not deleted. */
-    CHECK(records_append(proj, REC_NOTE, nid, "active", "v3", NULL, 0, NULL));
-    nn = records_list(proj, REC_NOTE, &notes);
+    CHECK(records_append(g_store, proj, REC_NOTE, nid, "active", "v3", NULL, 0, NULL));
+    nn = records_list(g_store, proj, REC_NOTE, &notes);
     CHECK(nn == 1 && notes[0].nversions == 3);
     records_free(notes, nn);
     char legacy_glob[700];
@@ -590,7 +677,7 @@ static void test_import(void)
     snprintf(bad_state, sizeof(bad_state), "%s/state.json", bad_dir);
     f = fopen(bad_state, "wb");
     if (f) { fputs("{\"docs\":[],\"chats\":{}}", f); fclose(f); }
-    CHECK(!store_import(bad, why, sizeof(why)) && store_mode(bad, NULL, 0, NULL) == STORE_FILES);
+    CHECK(!store_import(g_store, bad, why, sizeof(why)) && store_mode(g_store, bad, NULL, 0, NULL) == STORE_FILES);
     static const char *const malformed_states[] = {
         "{\"docs\":{},\"chats\":{},\"_version\":9007199254740991}",
         "{\"docs\":{},\"chats\":{\"chat\":{\"n\":1.5,\"off\":0}}}",
@@ -599,44 +686,44 @@ static void test_import(void)
     for (size_t i = 0; i < sizeof(malformed_states) / sizeof(malformed_states[0]); i++) {
         f = fopen(bad_state, "wb");
         if (f) { fputs(malformed_states[i], f); fclose(f); }
-        CHECK(!store_import(bad, why, sizeof(why)) && store_mode(bad, NULL, 0, NULL) == STORE_FILES);
+        CHECK(!store_import(g_store, bad, why, sizeof(why)) && store_mode(g_store, bad, NULL, 0, NULL) == STORE_FILES);
     }
     f = fopen(bad_state, "wb");
     if (f) { fputs("{\"docs\":{},\"chats\":{},\"_version\":9007199254740990}", f); fclose(f); }
-    CHECK(store_import(bad, why, sizeof(why)));
-    cJSON *max_version = project_store_observer_state_load(bad);
-    CHECK(max_version && project_store_observer_state_save(bad, max_version));
+    CHECK(store_import(g_store, bad, why, sizeof(why)));
+    cJSON *max_version = project_store_observer_state_load(g_store, bad);
+    CHECK(max_version && project_store_observer_state_save(g_store, bad, max_version));
     cJSON_Delete(max_version);
-    max_version = project_store_observer_state_load(bad);
-    CHECK(max_version && !project_store_observer_state_save(bad, max_version));
+    max_version = project_store_observer_state_load(g_store, bad);
+    CHECK(max_version && !project_store_observer_state_save(g_store, bad, max_version));
     cJSON_Delete(max_version);
     snprintf(cmd0, sizeof(cmd0), "rm -rf '%s'", bad);
     system(cmd0);
     /* With the database down, a moved project pauses instead of using files. */
-    store_stop();
-    CHECK(store_mode(proj, NULL, 0, NULL) == STORE_PAUSED);
-    inspection = project_store_inspect(proj);
+    store_stop(g_store);
+    CHECK(store_mode(g_store, proj, NULL, 0, NULL) == STORE_PAUSED);
+    inspection = project_store_inspect(g_store, proj);
     CHECK(!inspection.capabilities && inspection.blocked_by == PROJECT_STORE_BLOCK_OFFLINE);
     int paused_ver = 99;
-    CHECK(!records_append(proj, REC_NOTE, nid, "active", "while paused", NULL, 0, &paused_ver) && paused_ver == 0);
-    CHECK(records_list(proj, REC_NOTE, &notes) == 0);
+    CHECK(!records_append(g_store, proj, REC_NOTE, nid, "active", "while paused", NULL, 0, &paused_ver) && paused_ver == 0);
+    CHECK(records_list(g_store, proj, REC_NOTE, &notes) == 0);
     bool paused_recorded = true;
     char paused_snap[64] = "stale";
     Revision *paused_revs = (Revision *)1;
-    CHECK(!revisions_record(proj, doc, "offline", "save", NULL, &paused_recorded) && !paused_recorded);
-    CHECK(!revisions_snapshot(proj, doc, "offline", paused_snap, sizeof(paused_snap)) && !paused_snap[0]);
-    CHECK(revisions_list(proj, doc, &paused_revs) == 0 && paused_revs == NULL);
+    CHECK(!revisions_record(g_store, proj, doc, "offline", "save", NULL, &paused_recorded) && !paused_recorded);
+    CHECK(!revisions_snapshot(g_store, proj, doc, "offline", paused_snap, sizeof(paused_snap)) && !paused_snap[0]);
+    CHECK(revisions_list(g_store, proj, doc, &paused_revs) == 0 && paused_revs == NULL);
     ChatSummary *paused_chats = (ChatSummary *)1;
     ChatMessage *paused_msgs = (ChatMessage *)1;
     size_t paused_nmsgs = 99;
-    CHECK(chat_store_list(proj, &paused_chats) == 0 && paused_chats == NULL);
-    CHECK(!chat_store_load(proj, cid, &paused_msgs, &paused_nmsgs) && paused_msgs == NULL && paused_nmsgs == 0);
-    CHECK(project_store_observer_state_load(proj) == NULL);
+    CHECK(chat_store_list(g_store, proj, &paused_chats) == 0 && paused_chats == NULL);
+    CHECK(!chat_store_load(g_store, proj, cid, &paused_msgs, &paused_nmsgs) && paused_msgs == NULL && paused_nmsgs == 0);
+    CHECK(project_store_observer_state_load(g_store, proj) == NULL);
     ost = cJSON_CreateObject();
-    CHECK(!project_store_observer_state_save(proj, ost));
+    CHECK(!project_store_observer_state_save(g_store, proj, ost));
     cJSON_Delete(ost);
-    CHECK(!project_store_observer_rules_get(proj, rules) && !rules[0]);
-    CHECK(!project_store_observer_rules_set(proj, "deadbeefdeadbeef"));
+    CHECK(!project_store_observer_rules_get(g_store, proj, rules) && !rules[0]);
+    CHECK(!project_store_observer_rules_set(g_store, proj, "deadbeefdeadbeef"));
     char cmd[700];
     snprintf(cmd, sizeof(cmd), "rm -rf '%s'", proj);
     system(cmd);
@@ -657,7 +744,7 @@ static void write_file(const char *path, const char *text)
 static size_t note_count(const char *proj)
 {
     Record *r = NULL;
-    size_t n = records_list(proj, REC_NOTE, &r);
+    size_t n = records_list(g_store, proj, REC_NOTE, &r);
     records_free(r, n);
     return n;
 }
@@ -681,8 +768,8 @@ static void *run_import(void *arg)
 {
     ImportCall *call = arg;
     atomic_store(&call->started, true);
-    call->ok = store_import(call->project_dir, call->why, sizeof(call->why));
-    store_thread_done();
+    call->ok = store_import(g_store, call->project_dir, call->why, sizeof(call->why));
+    store_thread_done(g_store);
     atomic_store(&call->done, true);
     return NULL;
 }
@@ -691,15 +778,15 @@ static void *run_fork(void *arg)
 {
     ForkCall *call = arg;
     while (!atomic_load(call->go)) sched_yield();
-    call->ok = store_fork(call->project_dir, call->why, sizeof(call->why));
-    store_thread_done();
+    call->ok = store_fork(g_store, call->project_dir, call->why, sizeof(call->why));
+    store_thread_done(g_store);
     return NULL;
 }
 
 static void test_import_safety(void)
 {
     char why[256];
-    CHECK(store_start(g_name, why, sizeof(why)));
+    CHECK(store_start(g_store, g_name, why, sizeof(why)));
     const char *tmp = getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp";
     char a[512], b[512], doc[700], cmd[1200];
     snprintf(a, sizeof(a), "%s/scribodo-safe-a-%d", tmp, (int)getpid());
@@ -711,8 +798,8 @@ static void test_import_safety(void)
     write_file(doc, "One.\n");
     char nid[40];
     records_new_id(REC_NOTE, nid, sizeof(nid));
-    CHECK(records_append(a, REC_NOTE, nid, "active", "original note", NULL, 0, NULL));
-    CHECK(revisions_record(a, doc, "One.\n", "save", NULL, NULL));
+    CHECK(records_append(g_store, a, REC_NOTE, nid, "active", "original note", NULL, 0, NULL));
+    CHECK(revisions_record(g_store, a, doc, "One.\n", "save", NULL, NULL));
 
     /* Copied before either was moved into the store: both import the same
      * snapshot files, and each must get its own History. */
@@ -727,15 +814,15 @@ static void test_import_safety(void)
     snprintf(ownerp, sizeof(ownerp), "%s/.scribodo/import.owner.lock", a);
     int fd = open(ownerp, O_RDWR | O_CREAT, 0644);
     CHECK(fd >= 0 && flock(fd, LOCK_EX | LOCK_NB) == 0);
-    CHECK(!store_import(a, why, sizeof(why)) && strstr(why, "another window"));
+    CHECK(!store_import(g_store, a, why, sizeof(why)) && strstr(why, "another window"));
     flock(fd, LOCK_UN);
     close(fd);
-    CHECK(store_mode(a, NULL, 0, NULL) == STORE_FILES);
+    CHECK(store_mode(g_store, a, NULL, 0, NULL) == STORE_FILES);
 
     /* A stale row for this path (an earlier project here, marker lost) is
      * superseded, not reused. */
     char stale[40], pa[40];
-    CHECK(store_project_id(a, true, stale, sizeof(stale)));
+    CHECK(store_project_id(g_store, a, true, stale, sizeof(stale)));
 
     /* An elected importer waits for an in-flight shared file operation rather
      * than failing it as a competing importer. Once it drains, import wins. */
@@ -752,22 +839,22 @@ static void test_import_safety(void)
     CHECK(import_rc == 0 && atomic_load(&call.started));
     usleep(50000);
     CHECK(import_rc == 0 && !atomic_load(&call.done));
-    CHECK(store_mode(a, NULL, 0, NULL) == STORE_FILES);
+    CHECK(store_mode(g_store, a, NULL, 0, NULL) == STORE_FILES);
     flock(fd, LOCK_UN);
     close(fd);
     if (import_rc == 0) pthread_join(importer, NULL);
     CHECK(import_rc == 0 && call.ok);
-    CHECK(store_mode(a, pa, sizeof(pa), NULL) == STORE_DB && strcmp(pa, stale) != 0);
+    CHECK(store_mode(g_store, a, pa, sizeof(pa), NULL) == STORE_DB && strcmp(pa, stale) != 0);
     CHECK(note_count(a) == 1);
-    CHECK(store_import(d0, why, sizeof(why)));
+    CHECK(store_import(g_store, d0, why, sizeof(why)));
     char pd[40], docd[700];
-    CHECK(store_mode(d0, pd, sizeof(pd), NULL) == STORE_DB && strcmp(pd, pa) != 0);
+    CHECK(store_mode(g_store, d0, pd, sizeof(pd), NULL) == STORE_DB && strcmp(pd, pa) != 0);
     snprintf(docd, sizeof(docd), "%s/ch1.md", d0);
     Revision *drevs = NULL;
-    CHECK(revisions_list(d0, docd, &drevs) == 1);
+    CHECK(revisions_list(g_store, d0, docd, &drevs) == 1);
     free(drevs);
     drevs = NULL;
-    CHECK(revisions_list(a, doc, &drevs) == 1);
+    CHECK(revisions_list(g_store, a, doc, &drevs) == 1);
     free(drevs);
     CHECK(note_count(d0) == 1);
     snprintf(cmd, sizeof(cmd), "rm -rf '%s'", d0);
@@ -781,10 +868,10 @@ static void test_import_safety(void)
      * project; the original is untouched by the copy's writes. */
     snprintf(cmd, sizeof(cmd), "cp -R '%s' '%s'", a, b);
     CHECK(system(cmd) == 0);
-    store_forget_verification();
+    store_forget_verification(g_store);
     char orig[1024];
-    CHECK(store_mode(b, NULL, 0, NULL) == STORE_PAUSED);
-    CHECK(store_problem(b, orig, sizeof(orig)) == STORE_PROBLEM_COPY);
+    CHECK(store_mode(g_store, b, NULL, 0, NULL) == STORE_PAUSED);
+    CHECK(store_problem(g_store, b, orig, sizeof(orig)) == STORE_PROBLEM_COPY);
     atomic_bool fork_go = false;
     ForkCall forks[2] = { { .project_dir = b, .go = &fork_go }, { .project_dir = b, .go = &fork_go } };
     pthread_t fork_threads[2];
@@ -796,26 +883,26 @@ static void test_import_safety(void)
     if (fork_rc[1] == 0) pthread_join(fork_threads[1], NULL);
     CHECK(fork_rc[0] == 0 && fork_rc[1] == 0 && forks[0].ok != forks[1].ok);
     char pb[40];
-    CHECK(store_mode(b, pb, sizeof(pb), NULL) == STORE_DB && strcmp(pa, pb) != 0);
+    CHECK(store_mode(g_store, b, pb, sizeof(pb), NULL) == STORE_DB && strcmp(pa, pb) != 0);
     CHECK(note_count(b) == 1);
     Record *r = NULL;
-    size_t n = records_list(b, REC_NOTE, &r);
+    size_t n = records_list(g_store, b, REC_NOTE, &r);
     CHECK(n == 1 && strcmp(r[0].id, nid) != 0 && !strcmp(record_current(&r[0])->content, "original note"));
     char bnid[40];
     snprintf(bnid, sizeof(bnid), "%s", n ? r[0].id : "");
     records_free(r, n);
-    CHECK(records_append(b, REC_NOTE, bnid, "active", "copy's edit", NULL, 0, NULL));
-    n = records_list(a, REC_NOTE, &r);
+    CHECK(records_append(g_store, b, REC_NOTE, bnid, "active", "copy's edit", NULL, 0, NULL));
+    n = records_list(g_store, a, REC_NOTE, &r);
     CHECK(n == 1 && !strcmp(record_current(&r[0])->content, "original note"));
     records_free(r, n);
     char docb[700];
     snprintf(docb, sizeof(docb), "%s/ch1.md", b);
     Revision *revs = NULL;
-    n = revisions_list(b, docb, &revs);
+    n = revisions_list(g_store, b, docb, &revs);
     CHECK(n == 1);
     free(revs);
-    store_forget_verification();
-    CHECK(store_mode(a, NULL, 0, NULL) == STORE_DB); /* the original is still itself */
+    store_forget_verification(g_store);
+    CHECK(store_mode(g_store, a, NULL, 0, NULL) == STORE_DB); /* the original is still itself */
 
     /* Moved to another volume (or restored from a backup): a new inode, but
      * the original is gone, so it is the project, not a copy. */
@@ -823,29 +910,29 @@ static void test_import_safety(void)
     snprintf(c, sizeof(c), "%s/scribodo-safe-c-%d", tmp, (int)getpid());
     snprintf(cmd, sizeof(cmd), "rm -rf '%s' && cp -R '%s' '%s' && rm -rf '%s'", c, b, c, b);
     CHECK(system(cmd) == 0);
-    store_forget_verification();
+    store_forget_verification(g_store);
     char pc[40];
-    CHECK(store_mode(c, pc, sizeof(pc), NULL) == STORE_DB && !strcmp(pc, pb));
-    CHECK(store_problem(c, NULL, 0) == 0);
-    n = records_list(c, REC_NOTE, &r);
+    CHECK(store_mode(g_store, c, pc, sizeof(pc), NULL) == STORE_DB && !strcmp(pc, pb));
+    CHECK(store_problem(g_store, c, NULL, 0) == 0);
+    n = records_list(g_store, c, REC_NOTE, &r);
     CHECK(n == 1 && !strcmp(record_current(&r[0])->content, "copy's edit"));
     records_free(r, n);
     snprintf(cmd, sizeof(cmd), "cp -R '%s' '%s'", c, b); /* and a copy of it again is a copy */
     CHECK(system(cmd) == 0);
-    store_forget_verification();
-    CHECK(store_problem(b, NULL, 0) == STORE_PROBLEM_COPY);
+    store_forget_verification(g_store);
+    CHECK(store_problem(g_store, b, NULL, 0) == STORE_PROBLEM_COPY);
     snprintf(cmd, sizeof(cmd), "rm -rf '%s'", c);
     system(cmd);
 
     /* The project's rows disappear (store reset): paused as missing, then
      * restored from the set-aside files. */
-    Db *db = store_db();
+    Db *db = store_db(g_store);
     CHECK(db_run(db, "DELETE FROM projects WHERE id = ?", (DbArg[1]){ DB_S(pa) }, 1, NULL));
-    store_forget_verification();
-    CHECK(store_mode(a, NULL, 0, NULL) == STORE_PAUSED && store_problem(a, NULL, 0) == STORE_PROBLEM_MISSING);
-    CHECK(store_restore(a, why, sizeof(why)));
+    store_forget_verification(g_store);
+    CHECK(store_mode(g_store, a, NULL, 0, NULL) == STORE_PAUSED && store_problem(g_store, a, NULL, 0) == STORE_PROBLEM_MISSING);
+    CHECK(store_restore(g_store, a, why, sizeof(why)));
     char pa2[40];
-    CHECK(store_mode(a, pa2, sizeof(pa2), NULL) == STORE_DB && strcmp(pa2, pa) != 0);
+    CHECK(store_mode(g_store, a, pa2, sizeof(pa2), NULL) == STORE_DB && strcmp(pa2, pa) != 0);
     CHECK(note_count(a) == 1);
     snprintf(cmd, sizeof(cmd), "rm -rf '%s' '%s'", a, b);
     system(cmd);
@@ -887,11 +974,11 @@ static void test_entities(void)
     entity_norm("Ångström", norm, 3); /* room for "å" only: never half of "n…" or of a character */
     CHECK(!strcmp(norm, "\xC3\xA5"));
 
-    CHECK(store_start(g_name, why, sizeof(why)));
-    Db *db = store_db();
+    CHECK(store_start(g_store, g_name, why, sizeof(why)));
+    Db *db = store_db(g_store);
     char pid[40], other[40];
-    CHECK(store_project_id("/private/var/db", true, pid, sizeof(pid)));
-    CHECK(store_project_id("/private/var/log", true, other, sizeof(other)));
+    CHECK(store_project_id(g_store, "/private/var/db", true, pid, sizeof(pid)));
+    CHECK(store_project_id(g_store, "/private/var/log", true, other, sizeof(other)));
     char f1[40], f2[40], f3[40], f4[40], f5[40], f6[40];
     CHECK(add_finding(db, pid, f1, "entity", "Zoë", "", "", "Zoë is mentioned."));
     CHECK(add_finding(db, pid, f2, "relationship", "Zoë's", "sister of", "Mara", "Zoë is Mara's sister."));
@@ -956,7 +1043,7 @@ static void test_entities(void)
     /* Names look like names (the real model gives phrases as subjects);
      * a first name joins the one full name it starts. */
     char p3[40], g[40];
-    CHECK(store_project_id("/private/var/run", true, p3, sizeof(p3)));
+    CHECK(store_project_id(g_store, "/private/var/run", true, p3, sizeof(p3)));
     CHECK(add_finding(db, p3, g, "event", "Dvořák confronts Zoë about being late", "", "", "x."));
     CHECK(add_finding(db, p3, g, "event", "Zoë's eyes narrowing", "", "", "x."));
     CHECK(add_finding(db, p3, g, "entity", "the sea", "", "", "x."));
@@ -977,7 +1064,7 @@ static void test_entities(void)
     n = sdb_entity_list(db, p3, &e);
     CHECK(find_entity(e, n, "Anna") && find_entity(e, n, "Anna Berg") && find_entity(e, n, "Anna Lund"));
     entity_list_free(e, n);
-    store_stop();
+    store_stop(g_store);
 }
 
 /* Red-team 009: folding during a relationship, imports that contain one,
@@ -991,7 +1078,7 @@ typedef struct {
 static void *race_main(void *arg)
 {
     RaceArg *a = arg;
-    Db *db = store_db(); /* this thread's own connection */
+    Db *db = store_db(g_store); /* this thread's own connection */
     for (int i = 0; db && i < a->n; i++) {
         FindingInfo f = { 0 };
         snprintf(f.type, sizeof(f.type), "relationship");
@@ -1000,17 +1087,17 @@ static void *race_main(void *arg)
         snprintf(f.object, sizeof(f.object), "Bert%c%c", 'A' + i % 26, 'a' + i / 26);
         sdb_entities_from_finding(db, a->pid, a->ids[i], &f);
     }
-    store_thread_done();
+    store_thread_done(g_store);
     return NULL;
 }
 
 static void test_entities_redteam(void)
 {
     char why[256];
-    CHECK(store_start(g_name, why, sizeof(why)));
-    Db *db = store_db();
+    CHECK(store_start(g_store, g_name, why, sizeof(why)));
+    Db *db = store_db(g_store);
     char p5[40], g[40];
-    CHECK(store_project_id("/private/var/folders", true, p5, sizeof(p5)));
+    CHECK(store_project_id(g_store, "/private/var/folders", true, p5, sizeof(p5)));
     /* "Zoë" exists; a relationship names "Zoë" and "Zoë Ångström". */
     CHECK(add_finding(db, p5, g, "entity", "Zoë", "", "", "x."));
     CHECK(add_finding(db, p5, g, "relationship", "Zoë", "is called", "Zoë Ångström", "x."));
@@ -1024,7 +1111,7 @@ static void test_entities_redteam(void)
     /* Directly: the graph update for such a finding succeeds. */
     {
         char p8[40], rf[40];
-        CHECK(store_project_id("/private/var/select", true, p8, sizeof(p8)));
+        CHECK(store_project_id(g_store, "/private/var/select", true, p8, sizeof(p8)));
         CHECK(add_finding(db, p8, g, "entity", "Ilse", "", "", "x."));
         store_new_id('f', rf, sizeof(rf));
         CHECK(sdb_record_append(db, p8, REC_FINDING, rf, "new", "x.", NULL, 0, NULL, true, NULL)); /* no hook */
@@ -1052,16 +1139,16 @@ static void test_entities_redteam(void)
     char i1[40], i2[40];
     records_new_id(REC_FINDING, i1, sizeof(i1));
     records_new_id(REC_FINDING, i2, sizeof(i2));
-    CHECK(records_append_ex(proj, REC_FINDING, i1, "new", "Zoë.", NULL, 0, &f1, NULL));
-    CHECK(records_append_ex(proj, REC_FINDING, i2, "new", "Zoë's full name.", NULL, 0, &f2, NULL));
+    CHECK(records_append_ex(g_store, proj, REC_FINDING, i1, "new", "Zoë.", NULL, 0, &f1, NULL));
+    CHECK(records_append_ex(g_store, proj, REC_FINDING, i2, "new", "Zoë's full name.", NULL, 0, &f2, NULL));
     why[0] = '\0';
-    CHECK(store_import(proj, why, sizeof(why)));
+    CHECK(store_import(g_store, proj, why, sizeof(why)));
     if (why[0]) fprintf(stderr, "    %s\n", why);
     system(cmd);
 
     /* Two connections link the same findings: one link each. */
     char p6[40];
-    CHECK(store_project_id("/private/var/audit", true, p6, sizeof(p6)));
+    CHECK(store_project_id(g_store, "/private/var/audit", true, p6, sizeof(p6)));
     static char ids[60][40];
     for (int i = 0; i < 60; i++) {
         FindingInfo f = { 0 };
@@ -1083,14 +1170,14 @@ static void test_entities_redteam(void)
     db_rows_free(&r);
     /* Greek and Cyrillic names are names too. */
     char p7[40];
-    CHECK(store_project_id("/private/var/spool", true, p7, sizeof(p7)));
+    CHECK(store_project_id(g_store, "/private/var/spool", true, p7, sizeof(p7)));
     CHECK(add_finding(db, p7, g, "entity", "Σοφία", "", "", "x."));
     CHECK(add_finding(db, p7, g, "entity", "ΣΟΦΊΑ", "", "", "x.") || true);
     CHECK(add_finding(db, p7, g, "entity", "Наташа", "", "", "x."));
     n = sdb_entity_list(db, p7, &e);
     CHECK(find_entity(e, n, "Σοφία") && find_entity(e, n, "Наташа"));
     entity_list_free(e, n);
-    store_stop();
+    store_stop(g_store);
 }
 
 /* Semantic retrieval against the local Qdrant (fake embedder): committed
@@ -1099,14 +1186,14 @@ static void test_entities_redteam(void)
 static void test_semantic(void)
 {
     char why[256] = "";
-    CHECK(store_start(g_name, why, sizeof(why)));
-    SemanticClient *semantic = semantic_client_create(NULL);
+    CHECK(store_start(g_store, g_name, why, sizeof(why)));
+    SemanticClient *semantic = semantic_client_create(g_store, NULL);
     CHECK(semantic != NULL);
     CHECK(semantic_ready(semantic));
     char pid[40];
-    CHECK(store_project_id("/private/var/tmp", true, pid, sizeof(pid)));
+    CHECK(store_project_id(g_store, "/private/var/tmp", true, pid, sizeof(pid)));
     semantic_drop(semantic, pid);
-    Db *db = store_db();
+    Db *db = store_db(g_store);
     char c1[40], c2[40], c3[40], n1[40];
     store_new_id('c', c1, sizeof(c1));
     store_new_id('c', c2, sizeof(c2));
@@ -1178,7 +1265,7 @@ static void test_semantic(void)
     LlmServerConfig dead;
     llm_server_embed_config(&dead, "");
     LlmServer *down = llm_server_create(&dead); /* never started: not ready */
-    SemanticClient *unready = semantic_client_create(down);
+    SemanticClient *unready = semantic_client_create(g_store, down);
     CHECK(unready != NULL);
     CHECK(semantic_forget_collection(unready, pid));
     CHECK(!semantic_sync_records(unready, pid, why, sizeof(why)));
@@ -1194,18 +1281,28 @@ static void test_semantic(void)
     llm_server_destroy(down);
     semantic_drop(semantic, pid);
     semantic_client_destroy(semantic);
-    store_stop();
+    store_stop(g_store);
 }
 
 int main(void)
 {
+    g_store = store_manager_create();
+    if (!g_store) return 1;
     snprintf(g_name, sizeof(g_name), "scribodo_test_%d", (int)getpid());
-    if (!admin("CREATE DATABASE %s CHARACTER SET utf8mb4") || !admin("GRANT ALL ON %s.* TO 'scribodo'@'%%'")) {
+    snprintf(g_name2, sizeof(g_name2), "scribodo_test_%d_b", (int)getpid());
+    if (!admin("CREATE DATABASE %s CHARACTER SET utf8mb4") || !admin("GRANT ALL ON %s.* TO 'scribodo'@'%%'") ||
+        !admin_name("CREATE DATABASE %s CHARACTER SET utf8mb4", g_name2) ||
+        !admin_name("GRANT ALL ON %s.* TO 'scribodo'@'%%'", g_name2)) {
         fprintf(stderr, "dbtest: can't set up a test database (is tools/services.sh up?)\n");
         return 1;
     }
-    TestCase tests[] = { { "db", test_db }, { "migration", test_migration }, { "store_ids", test_store_ids }, { "backends", test_backends }, { "import", test_import }, { "import_safety", test_import_safety }, { "entities", test_entities }, { "entities_redteam", test_entities_redteam }, { "semantic", test_semantic } };
-    int rc = run_tests(tests, 9);
+    TestCase tests[] = { { "db", test_db }, { "migration", test_migration }, { "store_ids", test_store_ids },
+                         { "store_managers", test_store_managers }, { "backends", test_backends },
+                         { "import", test_import }, { "import_safety", test_import_safety }, { "entities", test_entities },
+                         { "entities_redteam", test_entities_redteam }, { "semantic", test_semantic } };
+    int rc = run_tests(tests, 10);
     admin("DROP DATABASE %s");
+    admin_name("DROP DATABASE %s", g_name2);
+    store_manager_destroy(g_store);
     return rc;
 }

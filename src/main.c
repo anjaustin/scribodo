@@ -222,6 +222,7 @@ typedef struct {
     /* The project store (MariaDB; docs/STORE-001-design.md) */
     bool store_wanted;            /* use the store (off for UI scripts unless SCRIBODO_STORE=db) */
     char store_why[256];          /* why it's offline */
+    StoreManager *store;
     ServiceSupervisor services;
     /* A backup running in the background (Explorer: PROJECT). */
     BackupJob backup;
@@ -305,7 +306,7 @@ static void set_status(App *app, const char *msg)
  * file name in `fallback` would mislead. */
 static const char *store_says(App *app, const char *fallback)
 {
-    ProjectStoreInspection inspection = project_store_inspect(app->project_dir);
+    ProjectStoreInspection inspection = project_store_inspect(app->store, app->project_dir);
     if (!(inspection.capabilities & PROJECT_STORE_CAP_STRUCTURED_WRITE)) {
         if (inspection.blocked_by == PROJECT_STORE_BLOCK_COPY)
             return "This folder is a copy of another project: this wasn't saved. Make it its own project first (Explorer).";
@@ -336,13 +337,13 @@ static bool refresh_lists(App *app)
 {
     app->lists_refreshed = GetTime();
     ExplorerSnapshot next;
-    if (!explorer_snapshot_build(&next, app->project_dir, app->explorer.generation + 1, app->session.generation))
+    if (!explorer_snapshot_build(&next, app->store, app->project_dir, app->explorer.generation + 1, app->session.generation))
         return false;
     explorer_snapshot_destroy(&app->explorer);
     app->explorer = next;
     free(app->revs);
     app->revs = NULL;
-    app->nrevs = editor_path(app->editor) ? revisions_list(app->project_dir, editor_path(app->editor), &app->revs) : 0;
+    app->nrevs = editor_path(app->editor) ? revisions_list(app->store, app->project_dir, editor_path(app->editor), &app->revs) : 0;
     static const struct { const char *origin, *label; } names[] = {
         { "save", "Saved" }, { "ai-edit", "AI edit" }, { "before-ai-edit", "Before AI edit" },
         { "restore", "Restored" }, { "before-restore", "Before restore" },
@@ -381,7 +382,7 @@ static void refresh_entities(App *app)
     entity_list_free(app->ents, app->nents);
     app->ents = NULL;
     app->nents = 0;
-    if (!app->project_dir[0] || !project_store_entities_available(app->project_dir)) {
+    if (!app->project_dir[0] || !project_store_entities_available(app->store, app->project_dir)) {
         entity_detail_free(&app->ent);
         app->ent_open[0] = '\0';
         return;
@@ -389,18 +390,18 @@ static void refresh_entities(App *app)
     /* Findings from before the graph existed are folded in once per
      * project, off the UI thread (red-team 009). */
     if (!entity_backfill_job_busy(&app->graph_job) && strcmp(app->graph_tried, app->project_dir) != 0 &&
-        !project_store_entities_built(app->project_dir)) {
+        !project_store_entities_built(app->store, app->project_dir)) {
         snprintf(app->graph_tried, sizeof(app->graph_tried), "%s", app->project_dir);
         (void)entity_backfill_job_start(&app->graph_job, app->project_dir);
     }
-    app->nents = project_store_entity_list(app->project_dir, &app->ents);
+    app->nents = project_store_entity_list(app->store, app->project_dir, &app->ents);
     for (size_t i = 0; i < app->nents && i < ENT_SHOW; i++) {
         char name[64];
         utf8_clip(name, sizeof(name), app->ents[i].name, 48);
         snprintf(app->ent_labels[i], sizeof(app->ent_labels[i]), "%s \xC2\xB7 %d", name, app->ents[i].mentions);
     }
     entity_detail_free(&app->ent);
-    if (app->ent_open[0] && !project_store_entity_detail(app->project_dir, app->ent_open, &app->ent)) app->ent_open[0] = '\0';
+    if (app->ent_open[0] && !project_store_entity_detail(app->store, app->project_dir, app->ent_open, &app->ent)) app->ent_open[0] = '\0';
     for (size_t i = 0; i < app->ent.nrows && i < ENT_ROWS; i++) {
         const EntityDetailRow *r = &app->ent.rows[i];
         char a[100], b[80];
@@ -431,7 +432,7 @@ static void open_source(App *app, const SourceRef *s);
 static void open_finding_source(App *app, const char *finding_id)
 {
     Record *r = NULL;
-    size_t n = records_list(app->project_dir, REC_FINDING, &r);
+    size_t n = records_list(app->store, app->project_dir, REC_FINDING, &r);
     SourceRef *copy = NULL;
     for (size_t i = 0; i < n && !copy; i++)
         if (!strcmp(r[i].id, finding_id)) {
@@ -451,8 +452,8 @@ static void refresh_records(App *app)
     app->notes = app->canon = NULL;
     app->nnotes = app->ncanon = 0;
     if (!app->project_dir[0]) return;
-    app->nnotes = records_list(app->project_dir, REC_NOTE, &app->notes);
-    app->ncanon = records_list(app->project_dir, REC_CANON, &app->canon);
+    app->nnotes = records_list(app->store, app->project_dir, REC_NOTE, &app->notes);
+    app->ncanon = records_list(app->store, app->project_dir, REC_CANON, &app->canon);
     for (size_t i = 0; i < app->nnotes && i < REC_SHOW; i++) {
         const RecordVersion *v = record_current(&app->notes[i]);
         if (!strcmp(v->status, "deleted")) app->note_labels[i][0] = '\0'; /* hidden; still in the log */
@@ -504,16 +505,16 @@ static void store_try_later(App *app)
 static void store_begin(App *app)
 {
     app->store_why[0] = '\0';
-    if (store_start(getenv("SCRIBODO_DB_NAME"), app->store_why, sizeof(app->store_why))) return;
+    if (store_start(app->store, getenv("SCRIBODO_DB_NAME"), app->store_why, sizeof(app->store_why))) return;
     store_try_later(app); /* start the services / keep probing in the background */
 }
 
 /* A project opened while the store is up is moved into it once. */
 static void store_adopt_project(App *app)
 {
-    if (!app->project_dir[0] || !store_online() || !store_needs_import(app->project_dir)) return;
+    if (!app->project_dir[0] || !store_online(app->store) || !store_needs_import(app->store, app->project_dir)) return;
     char why[256] = "";
-    if (store_import(app->project_dir, why, sizeof(why))) {
+    if (store_import(app->store, app->project_dir, why, sizeof(why))) {
         app->store_just_moved = true;
         set_status(app, "This project is now kept in the project store (its old files are in .scribodo/legacy-\xE2\x80\xA6)");
         app->lists_dirty = true;
@@ -530,9 +531,9 @@ static void store_adopt_project(App *app)
 static void store_resolve_problem(App *app)
 {
     char why[256] = "";
-    int problem = store_problem(app->project_dir, NULL, 0);
-    bool ok = problem == STORE_PROBLEM_COPY ? store_fork(app->project_dir, why, sizeof(why))
-            : problem == STORE_PROBLEM_MISSING ? store_restore(app->project_dir, why, sizeof(why))
+    int problem = store_problem(app->store, app->project_dir, NULL, 0);
+    bool ok = problem == STORE_PROBLEM_COPY ? store_fork(app->store, app->project_dir, why, sizeof(why))
+            : problem == STORE_PROBLEM_MISSING ? store_restore(app->store, app->project_dir, why, sizeof(why))
                                                 : false;
     if (ok)
         set_status(app, why[0] ? why
@@ -643,7 +644,7 @@ static void set_chat_observer(App *app, const char *id, bool read)
 {
     char cid[40];
     snprintf(cid, sizeof(cid), "%s", id); /* the list is refreshed below */
-    if (!chat_store_set_observer(app->project_dir, cid, read)) {
+    if (!chat_store_set_observer(app->store, app->project_dir, cid, read)) {
         set_status(app, store_says(app, "Couldn't save that setting for the chat"));
         return;
     }
@@ -694,7 +695,7 @@ static bool record_revision(App *app, const char *origin, const char *note)
 {
     if (!app->project_dir[0] || !editor_path(app->editor)) return true; /* no history to keep */
     char *text = editor_text_utf8(app->editor);
-    bool ok = text && revisions_record(app->project_dir, editor_path(app->editor), text, origin, note, NULL);
+    bool ok = text && revisions_record(app->store, app->project_dir, editor_path(app->editor), text, origin, note, NULL);
     free(text);
     if (!ok) set_status(app, store_says(app, "Could not record a revision in .scribodo/revisions"));
     app->lists_dirty = true;
@@ -751,7 +752,7 @@ static void restore_revision(App *app, const Revision *r)
         set_status(app, "This document is read-only");
         return;
     }
-    char *text = revisions_load(app->project_dir, editor_path(app->editor), r);
+    char *text = revisions_load(app->store, app->project_dir, editor_path(app->editor), r);
     if (!text) {
         set_status(app, "That revision could not be read (missing or damaged)");
         return;
@@ -960,7 +961,7 @@ static bool set_aside_history(App *app, const char *name, bool linked_documents)
          * another name; the new document gets its own id. */
         char aside[300];
         snprintf(aside, sizeof(aside), "%s (earlier %ld)", name, (long)time(NULL));
-        return project_store_document_set_aside(app->project_dir, name, aside);
+        return project_store_document_set_aside(app->store, app->project_dir, name, aside);
     }
     char rev[PATH_MAX + 300];
     snprintf(rev, sizeof(rev), "%s/.scribodo/revisions/%s", app->project_dir, name);
@@ -1193,7 +1194,7 @@ static bool finish_prompt(App *app, const char *typed)
         utf8_clip(title, sizeof(title), typed, 150);
         typed = title;
         if (strcmp(app->prompt_project, app->project_dir) != 0) return true; /* project changed: nothing done */
-        if (!chat_store_rename(app->project_dir, app->menu_chat, typed)) {
+        if (!chat_store_rename(app->store, app->project_dir, app->menu_chat, typed)) {
             prompt_set_error(app->prompt, "Couldn't rename that chat");
             return false;
         }
@@ -1228,7 +1229,7 @@ static bool finish_prompt(App *app, const char *typed)
     }
     if (tag == PT_NEW_DOC) {
         ProjectStoreGuard guard;
-        if (!project_store_guard_begin(app->project_dir, &guard)) {
+        if (!project_store_guard_begin(app->store, app->project_dir, &guard)) {
             prompt_set_error(app->prompt, "New documents wait for the project store (notes, canon, chats and History are paused)");
             return false;
         }
@@ -1262,7 +1263,7 @@ static bool finish_prompt(App *app, const char *typed)
         return false;
     }
     ProjectStoreGuard guard;
-    if (!project_store_guard_begin(app->project_dir, &guard)) {
+    if (!project_store_guard_begin(app->store, app->project_dir, &guard)) {
         /* The store keys history by document; a rename it doesn't see would
          * disconnect the document from its History and sources. */
         prompt_set_error(app->prompt, "Renaming waits for the project store (it's offline)");
@@ -1277,7 +1278,7 @@ static bool finish_prompt(App *app, const char *typed)
         /* One update: the document keeps its id, so its History, sources,
          * attachments and observer state all follow. */
         char problems[160] = "";
-        if (!project_store_document_rename(app->project_dir, app->rename_from, name)) {
+        if (!project_store_document_rename(app->store, app->project_dir, app->rename_from, name)) {
             /* Never leave the file renamed without its record: that would cut
              * the document off from its History and sources. */
             renamex_np(full, old_full, self ? 0 : RENAME_EXCL);
@@ -1339,7 +1340,7 @@ static void import_documents(App *app)
         return;
     }
     ProjectStoreGuard guard;
-    if (!project_store_guard_begin(app->project_dir, &guard)) {
+    if (!project_store_guard_begin(app->store, app->project_dir, &guard)) {
         dialogs_free_paths(paths, n);
         set_status(app, "Importing waits for the project store (notes, canon, chats and History are paused)");
         return;
@@ -1518,7 +1519,7 @@ static void on_message_done(ChatSession *s, size_t index, void *ctx)
     }
     if (copy.role == CHAT_ASSISTANT && !copy.error && !copy.is_edit && index >= 1) names_check(app, index);
     if (!app->chat_project[0]) { free(copy.content); return; }
-    if (!chat_store_append(app->chat_project, app->chat_id, app->chat_title, &copy))
+    if (!chat_store_append(app->store, app->chat_project, app->chat_id, app->chat_title, &copy))
         set_status(app, store_says(app, "Could not save the chat to .scribodo/chats"));
     else if (app->observer && copy.role == CHAT_ASSISTANT)
         observer_poke(app->observer); /* a finished exchange is stored */
@@ -1544,7 +1545,7 @@ static void adopt_chat(App *app)
     chat_unlock(app->chat);
     bool ok = copy != NULL;
     for (size_t i = 0; ok && i < n; i++)
-        ok = copy[i].content && chat_store_append(app->chat_project, app->chat_id, app->chat_title, &copy[i]);
+        ok = copy[i].content && chat_store_append(app->store, app->chat_project, app->chat_id, app->chat_title, &copy[i]);
     for (size_t i = 0; copy && i < n; i++) free(copy[i].content);
     free(copy);
     set_status(app, ok ? "Chat saved to this project" : store_says(app, "Could not save the chat to .scribodo/chats"));
@@ -1670,7 +1671,7 @@ static void open_chat(App *app, const ChatSummary *c)
     }
     ChatMessage *msgs;
     size_t n;
-    if (!chat_store_load(app->project_dir, c->id, &msgs, &n) || !chat_load_messages(app->chat, msgs, n)) {
+    if (!chat_store_load(app->store, app->project_dir, c->id, &msgs, &n) || !chat_load_messages(app->chat, msgs, n)) {
         set_status(app, "Could not open that chat");
         return;
     }
@@ -1727,7 +1728,7 @@ static bool save_note(App *app)
     size_t ns;
     const SourceRef *src = record_view_sources(v, &ns);
     int ver = 0;
-    bool ok = app->project_dir[0] && records_append(app->project_dir, REC_NOTE, id, "active", text, src, ns, &ver);
+    bool ok = app->project_dir[0] && records_append(app->store, app->project_dir, REC_NOTE, id, "active", text, src, ns, &ver);
     if (ok) {
         record_view_stored(v, id, ver, "active", text);
         set_status(app, "Note saved");
@@ -1793,7 +1794,7 @@ static bool selection_source(App *app, SourceRef *s)
     size_t lo = a < c ? a : c, hi = a < c ? c : a;
     if (!editor_path(app->editor) || !app->project_dir[0] || hi == lo) return false;
     char *full = editor_text_utf8(app->editor);
-    bool ok = full && revisions_snapshot(app->project_dir, editor_path(app->editor), full, s->revision, sizeof(s->revision));
+    bool ok = full && revisions_snapshot(app->store, app->project_dir, editor_path(app->editor), full, s->revision, sizeof(s->revision));
     free(full);
     if (!ok) {
         set_status(app, "Could not record the source text in .scribodo/revisions");
@@ -1824,7 +1825,7 @@ static void note_from_selection(App *app)
         char id[40];
         records_new_id(REC_NOTE, id, sizeof(id));
         int ver = 0;
-        if (records_append(app->project_dir, REC_NOTE, id, "active", s.quote, &s, 1, &ver)) {
+        if (records_append(app->store, app->project_dir, REC_NOTE, id, "active", s.quote, &s, 1, &ver)) {
             record_view_stored(v, id, ver, "active", s.quote);
             set_status(app, "Saved as a note \xC2\xB7 edit it below");
         } else {
@@ -1872,7 +1873,7 @@ static void record_from_reply(App *app, long index, bool canon)
             char id[40];
             records_new_id(REC_NOTE, id, sizeof(id));
             int ver = 0;
-            if (records_append(app->project_dir, REC_NOTE, id, "active", text, &s, 1, &ver)) {
+            if (records_append(app->store, app->project_dir, REC_NOTE, id, "active", text, &s, 1, &ver)) {
                 record_view_stored(app->record, id, ver, "active", text);
                 set_status(app, "Saved the reply as a note");
             } else {
@@ -1968,7 +1969,7 @@ static void store_canon(App *app, const char *status, bool use_editor_text)
     size_t ns;
     const SourceRef *src = record_view_sources(v, &ns);
     int ver = 0;
-    if (app->project_dir[0] && records_append(app->project_dir, REC_CANON, id, status, text, src, ns, &ver)) {
+    if (app->project_dir[0] && records_append(app->store, app->project_dir, REC_CANON, id, status, text, src, ns, &ver)) {
         bool first = !record_view_id(v)[0];
         record_view_stored(v, id, ver, status, text);
         if (first && app->canon_finding[0]) { /* the finding it came from is now committed */
@@ -2006,7 +2007,7 @@ static void record_action(App *app, RecordAction act)
         size_t ns;
         const SourceRef *src = record_view_sources(v, &ns);
         bool ok = !record_view_id(v)[0] ||
-                  records_append(app->project_dir, REC_NOTE, record_view_id(v), "deleted", text ? text : "", src, ns, NULL);
+                  records_append(app->store, app->project_dir, REC_NOTE, record_view_id(v), "deleted", text ? text : "", src, ns, NULL);
         free(text);
         if (ok) {
             record_view_close(v);
@@ -2042,7 +2043,7 @@ static void refresh_findings(App *app)
 {
     records_free(app->flist, app->nflist);
     app->flist = NULL;
-    app->nflist = app->project_dir[0] ? records_list(app->project_dir, REC_FINDING, &app->flist) : 0;
+    app->nflist = app->project_dir[0] ? records_list(app->store, app->project_dir, REC_FINDING, &app->flist) : 0;
     findings_view_set(app->findings, app->flist, app->nflist, app->canon, app->ncanon);
     size_t fresh = 0;
     for (size_t i = 0; i < app->nflist; i++) fresh += !strcmp(record_current(&app->flist[i])->status, "new");
@@ -2092,7 +2093,7 @@ static void finding_action(App *app, FindingAction act, const char *id)
         char nid[40];
         records_new_id(REC_NOTE, nid, sizeof(nid));
         int ver = 0;
-        if (!records_append(app->project_dir, REC_NOTE, nid, "active", v->content, v->sources, v->nsources, &ver)) {
+        if (!records_append(app->store, app->project_dir, REC_NOTE, nid, "active", v->content, v->sources, v->nsources, &ver)) {
             set_status(app, store_says(app, "Could not save the note to .scribodo/notes.jsonl"));
             break;
         }
@@ -2305,7 +2306,7 @@ static int draw_attach_row(App *app, Rectangle r)
 static void send_chat(App *app, char *text)
 {
     if (app->project_dir[0] &&
-        !(project_store_inspect(app->project_dir).capabilities & PROJECT_STORE_CAP_STRUCTURED_WRITE)) {
+        !(project_store_inspect(app->store, app->project_dir).capabilities & PROJECT_STORE_CAP_STRUCTURED_WRITE)) {
         set_status(app, app->store_problem == STORE_PROBLEM_COPY      ? "Chat is paused: this folder is a copy (make it its own project in the Explorer)"
                         : app->store_problem == STORE_PROBLEM_MISSING ? "Chat is paused: this project is missing from the store (restore it in the Explorer)"
                                                                       : "Chat is paused while the project store is offline (nothing would be saved)");
@@ -2484,21 +2485,21 @@ static void update_labels(App *app)
                  app->remote.name, app->remote.host);
     if (remote_on) snprintf(app->remote_badge, sizeof(app->remote_badge), "\xE2\x86\x97 sent to %s", app->remote.host);
     else app->remote_badge[0] = '\0';
-    app->store_inspection = project_store_inspect(app->project_dir);
+    app->store_inspection = project_store_inspect(app->store, app->project_dir);
     app->store_problem = app->store_inspection.blocked_by == PROJECT_STORE_BLOCK_COPY      ? STORE_PROBLEM_COPY
                          : app->store_inspection.blocked_by == PROJECT_STORE_BLOCK_MISSING ? STORE_PROBLEM_MISSING
                                                                                            : 0;
-    if (app->store_problem) store_problem(app->project_dir, app->store_original, sizeof(app->store_original));
+    if (app->store_problem) store_problem(app->store, app->project_dir, app->store_original, sizeof(app->store_original));
     if (!app->store_wanted) {
         app->store_label[0] = '\0';
     } else if (service_supervisor_busy(&app->services)) {
         snprintf(app->store_label, sizeof(app->store_label), "\xE2\x97\x8F Starting the project store\xE2\x80\xA6");
         app->store_color = COL_WARN;
-    } else if (store_online() && app->store_problem) {
+    } else if (store_online(app->store) && app->store_problem) {
         snprintf(app->store_label, sizeof(app->store_label), "\xE2\x97\x8F Project store \xC2\xB7 %s",
                  app->store_problem == STORE_PROBLEM_COPY ? "this folder is a copy" : "project missing");
         app->store_color = COL_ERR;
-    } else if (store_online()) {
+    } else if (store_online(app->store)) {
         snprintf(app->store_label, sizeof(app->store_label), "\xE2\x97\x8F Project store");
         app->store_color = COL_OK;
     } else {
@@ -2947,7 +2948,9 @@ static void app_destroy(App *app)
     semantic_client_destroy(app->semantic);
     app->semantic = NULL;
     if (app->services_initialized) (void)service_supervisor_destroy(&app->services);
-    store_stop();
+    store_stop(app->store);
+    store_manager_destroy(app->store);
+    app->store = NULL;
     findings_view_destroy(app->findings);
     records_free(app->flist, app->nflist);
     entity_list_free(app->ents, app->nents);
@@ -2971,12 +2974,17 @@ static void app_destroy(App *app)
 int main(int argc, char **argv)
 {
     static App app;
+    app.store = store_manager_create();
+    if (!app.store) return 1;
     frame_view_model_init(&app.frame);
     project_session_init(&app.session);
     explorer_snapshot_init(&app.explorer);
     chat_controller_init(&app.chat_controller);
     reviewed_edit_controller_init(&app.reviewed_edit);
-    if (!entity_backfill_job_init(&app.graph_job)) return 1;
+    if (!entity_backfill_job_init(&app.graph_job, app.store)) {
+        app_destroy(&app);
+        return 1;
+    }
     app.graph_job_initialized = true;
     if (!name_detection_job_init(&app.names_job, NULL)) {
         app_destroy(&app);
@@ -3007,13 +3015,13 @@ int main(int argc, char **argv)
     SetExitKey(KEY_NULL); /* Esc must never quit a writing app */
     SetTargetFPS(60);
 
-    if (!backup_job_init(&app.backup)) {
+    if (!backup_job_init(&app.backup, app.store)) {
         fprintf(stderr, "scribodo: couldn't initialise the backup worker\n");
         app_destroy(&app);
         return 1;
     }
     app.backup_initialized = true;
-    if (!service_supervisor_init(&app.services)) {
+    if (!service_supervisor_init(&app.services, app.store)) {
         fprintf(stderr, "scribodo: couldn't initialise the service supervisor\n");
         app_destroy(&app);
         return 1;
@@ -3073,7 +3081,7 @@ int main(int argc, char **argv)
         app.embed = llm_server_create(&ecfg);
         if (app.embed) llm_server_start(app.embed);
     }
-    app.semantic = semantic_client_create(app.embed);
+    app.semantic = semantic_client_create(app.store, app.embed);
     ChatSession *owned_chat = chat_create(app.llm);
     name_detection_job_set_server(&app.names_job, app.llm);
     /* TLS secrets are never written out for a remote model's traffic. */
@@ -3095,7 +3103,7 @@ int main(int argc, char **argv)
     if (!reviewed_edit_controller_adopt(&app.reviewed_edit, app.editor, review)) review_destroy(review);
     app.record = record_view_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI]);
     app.prompt = prompt_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI]);
-    app.observer = observer_create(app.llm, app.semantic);
+    app.observer = observer_create(app.store, app.llm, app.semantic);
     app.findings = findings_view_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI]);
     app.findings_version = UINT64_MAX;
     /* UI scripts start with the observer off (deterministic files); a
@@ -3208,7 +3216,7 @@ int main(int argc, char **argv)
         if (app.embed) llm_server_tick(app.embed);
         /* While the store is wanted but offline, probe every 15 s; when it
          * answers, connect (on this thread), adopt the project, refresh. */
-        if (app.store_wanted && !store_online() && !service_supervisor_busy(&app.services) && GetTime() >= app.store_next_probe) {
+        if (app.store_wanted && !store_online(app.store) && !service_supervisor_busy(&app.services) && GetTime() >= app.store_next_probe) {
             app.store_next_probe = GetTime() + 15.0;
             store_try_later(&app);
         }
@@ -3217,9 +3225,9 @@ int main(int argc, char **argv)
             if (service_result.command_attempted && service_result.command_succeeded) app.services_started = true;
             if (service_result.reachable) {
                 app.store_why[0] = '\0';
-                store_start(getenv("SCRIBODO_DB_NAME"), app.store_why, sizeof(app.store_why));
+                store_start(app.store, getenv("SCRIBODO_DB_NAME"), app.store_why, sizeof(app.store_why));
             }
-            if (store_online()) {
+            if (store_online(app.store)) {
                 store_adopt_project(&app);
                 app.lists_dirty = true;
                 app.findings_version = UINT64_MAX;
@@ -3268,7 +3276,7 @@ int main(int argc, char **argv)
         /* Changes made here mark the lists at once; this catches the rest
          * (files added in Finder, other windows). Store queries cost more
          * than a directory read, so they're polled less often. */
-        double every = (project_store_inspect(app.project_dir).capabilities & PROJECT_STORE_CAP_SLOW_REFRESH) ? 10.0 : 3.0;
+        double every = (project_store_inspect(app.store, app.project_dir).capabilities & PROJECT_STORE_CAP_SLOW_REFRESH) ? 10.0 : 3.0;
         if (GetTime() - app.lists_refreshed > every) app.lists_dirty = true;
 
         /* Close requests: never lose unsaved prose silently. */

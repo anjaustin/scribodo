@@ -32,6 +32,7 @@
 #include "test_util.h"
 
 static char g_dir[512];
+static StoreManager *g_store;
 
 typedef struct {
     BackupJob *job;
@@ -190,13 +191,13 @@ static void test_backup_pipes(void)
     }
     setenv("SCRIBODO_BACKUPS", backups, 1);
     char dest[1000] = "", why[400] = "";
-    CHECK(backup_project(tools, project, dest, sizeof(dest), why, sizeof(why)));
+    CHECK(backup_project(g_store, tools, project, dest, sizeof(dest), why, sizeof(why)));
     CHECK(!strcmp(dest, expected));
 
     /* The async wrapper owns copied inputs, rejects overlapping starts, and
      * delivers each joined result once. */
     BackupJob job;
-    CHECK(backup_job_init(&job));
+    CHECK(backup_job_init(&job, g_store));
     atomic_bool go = false;
     BackupStarter starters[2] = {
         { .job = &job, .tools = tools, .project = project, .go = &go },
@@ -229,7 +230,7 @@ static void test_backup_pipes(void)
     char too_long[PATH_MAX + 1];
     memset(too_long, 'x', sizeof(too_long) - 1);
     too_long[sizeof(too_long) - 1] = '\0';
-    CHECK(backup_job_init(&job));
+    CHECK(backup_job_init(&job, g_store));
     CHECK(!backup_job_start(&job, too_long, project) && !backup_job_busy(&job));
     CHECK(backup_job_destroy(&job));
 
@@ -241,7 +242,7 @@ static void test_backup_pipes(void)
         fclose(f);
         chmod(script, 0700);
     }
-    CHECK(backup_job_init(&job));
+    CHECK(backup_job_init(&job, g_store));
     CHECK(backup_job_start(&job, tools, project));
     struct timespec destroy_before, destroy_after;
     clock_gettime(CLOCK_MONOTONIC, &destroy_before);
@@ -264,7 +265,7 @@ static void test_backup_pipes(void)
     setenv("SCRIBODO_BACKUP_TIMEOUT_SECONDS", "1", 1);
     struct timespec before, after;
     clock_gettime(CLOCK_MONOTONIC, &before);
-    CHECK(!backup_project(tools, project, dest, sizeof(dest), why, sizeof(why)));
+    CHECK(!backup_project(g_store, tools, project, dest, sizeof(dest), why, sizeof(why)));
     clock_gettime(CLOCK_MONOTONIC, &after);
     double elapsed = (double)(after.tv_sec - before.tv_sec) + (double)(after.tv_nsec - before.tv_nsec) / 1e9;
     CHECK(elapsed < 5.0 && strstr(why, "failed"));
@@ -288,7 +289,7 @@ static void test_service_supervisor(void)
     }
 
     ServiceSupervisor supervisor;
-    CHECK(service_supervisor_init(&supervisor));
+    CHECK(service_supervisor_init(&supervisor, g_store));
     CHECK(service_supervisor_start(&supervisor, tools, true));
     CHECK(service_supervisor_busy(&supervisor));
     CHECK(!service_supervisor_start(&supervisor, tools, false));
@@ -309,7 +310,7 @@ static void test_service_supervisor(void)
     errno = 0;
     CHECK(child_pid > 0 && kill(child_pid, 0) != 0 && errno == ESRCH);
 
-    CHECK(service_supervisor_init(&supervisor));
+    CHECK(service_supervisor_init(&supervisor, g_store));
     CHECK(service_supervisor_start(&supervisor, tools, false));
     ServiceSupervisorResult result;
     bool delivered = false;
@@ -410,8 +411,8 @@ static void test_chat_store(void)
     chat_store_new_id(id, sizeof(id));
     ChatMessage u = { .role = CHAT_USER, .content = "Who is Zoë Ångström?\nTwo lines." };
     ChatMessage a = { .role = CHAT_ASSISTANT, .content = "The keeper’s granddaughter." };
-    CHECK(chat_store_append(g_dir, id, "Who is Zoë", &u));
-    CHECK(chat_store_append(g_dir, id, "ignored", &a));
+    CHECK(chat_store_append(g_store, g_dir, id, "Who is Zoë", &u));
+    CHECK(chat_store_append(g_store, g_dir, id, "ignored", &a));
     /* Simulate a crash mid-write: a torn final line must be skipped. */
     char path[1200];
     snprintf(path, sizeof(path), "%s/.scribodo/chats/%s.jsonl", g_dir, id);
@@ -420,15 +421,15 @@ static void test_chat_store(void)
     fclose(f);
     ChatMessage *msgs;
     size_t n;
-    CHECK(chat_store_load(g_dir, id, &msgs, &n));
+    CHECK(chat_store_load(g_store, g_dir, id, &msgs, &n));
     CHECK(n == 2 && msgs[0].role == CHAT_USER && !strcmp(msgs[0].content, u.content));
     CHECK(msgs[1].role == CHAT_ASSISTANT && !strcmp(msgs[1].content, a.content));
     chat_store_free_messages(msgs, n);
     ChatSummary *list;
-    size_t k = chat_store_list(g_dir, &list);
+    size_t k = chat_store_list(g_store, g_dir, &list);
     CHECK(k >= 1 && !strcmp(list[0].title, "Who is Zoë"));
     free(list);
-    CHECK(!chat_store_append(g_dir, "../../etc/passwd", "x", &u)); /* ids can't escape */
+    CHECK(!chat_store_append(g_store, g_dir, "../../etc/passwd", "x", &u)); /* ids can't escape */
 }
 
 typedef struct { int done; } DoneCtx;
@@ -635,22 +636,22 @@ static void test_records(void)
 
     /* A document source points at an immutable snapshot of the text. */
     char snap[160], snap2[160];
-    CHECK(revisions_snapshot(proj, doc, "Zoë kept the letter.", snap, sizeof(snap)) && strstr(snap, "-source.md"));
-    CHECK(revisions_snapshot(proj, doc, "Zoë kept the letter.", snap2, sizeof(snap2)) && !strcmp(snap, snap2)); /* reused */
+    CHECK(revisions_snapshot(g_store, proj, doc, "Zoë kept the letter.", snap, sizeof(snap)) && strstr(snap, "-source.md"));
+    CHECK(revisions_snapshot(g_store, proj, doc, "Zoë kept the letter.", snap2, sizeof(snap2)) && !strcmp(snap, snap2)); /* reused */
     /* An older text is reused from History, not re-added on top of it. */
     bool rec2 = false;
     usleep(2000);
-    CHECK(revisions_record(proj, doc, "Zoë burned the letter.", "save", NULL, &rec2) && rec2);
+    CHECK(revisions_record(g_store, proj, doc, "Zoë burned the letter.", "save", NULL, &rec2) && rec2);
     char snap3[160];
-    CHECK(revisions_snapshot(proj, doc, "Zoë kept the letter.", snap3, sizeof(snap3)) && !strcmp(snap3, snap));
+    CHECK(revisions_snapshot(g_store, proj, doc, "Zoë kept the letter.", snap3, sizeof(snap3)) && !strcmp(snap3, snap));
     Revision *rv = NULL;
-    size_t nrv = revisions_list(proj, doc, &rv);
+    size_t nrv = revisions_list(g_store, proj, doc, &rv);
     CHECK(nrv == 2 && !strcmp(rv[0].origin, "save"));
     free(rv);
     Revision *revs;
-    size_t nr = revisions_list(proj, doc, &revs);
+    size_t nr = revisions_list(g_store, proj, doc, &revs);
     CHECK(nr == 2);
-    char *txt = nr ? revisions_load(proj, doc, &revs[1]) : NULL;
+    char *txt = nr ? revisions_load(g_store, proj, doc, &revs[1]) : NULL;
     CHECK(txt && !strcmp(txt, "Zoë kept the letter."));
     free(txt);
     free(revs);
@@ -667,19 +668,19 @@ static void test_records(void)
     records_new_id(REC_CANON, cid2, sizeof(cid2));
     CHECK(nid[0] == 'n' && cid[0] == 'c');
     int ver = 0;
-    CHECK(records_append(proj, REC_NOTE, nid, "active", "Check the letter's date.", &src, 1, &ver) && ver == 1);
-    CHECK(records_append(proj, REC_NOTE, nid, "active", "Check the letter's date (1911?).", &src, 1, &ver) && ver == 2);
-    CHECK(records_append(proj, REC_CANON, cid, "committed", "Zoë's grandmother wrote the letter.", &chat, 1, &ver) && ver == 1);
-    CHECK(records_append(proj, REC_CANON, cid2, "committed", "The lighthouse is on Ytre Sula.", NULL, 0, &ver) && ver == 1);
-    CHECK(records_append(proj, REC_CANON, cid, "committed", "Zoë's great-grandmother wrote the letter.", &chat, 1, &ver) && ver == 2);
-    CHECK(records_append(proj, REC_CANON, cid, "retracted", "Zoë's great-grandmother wrote the letter.", &chat, 1, &ver) && ver == 3);
+    CHECK(records_append(g_store, proj, REC_NOTE, nid, "active", "Check the letter's date.", &src, 1, &ver) && ver == 1);
+    CHECK(records_append(g_store, proj, REC_NOTE, nid, "active", "Check the letter's date (1911?).", &src, 1, &ver) && ver == 2);
+    CHECK(records_append(g_store, proj, REC_CANON, cid, "committed", "Zoë's grandmother wrote the letter.", &chat, 1, &ver) && ver == 1);
+    CHECK(records_append(g_store, proj, REC_CANON, cid2, "committed", "The lighthouse is on Ytre Sula.", NULL, 0, &ver) && ver == 1);
+    CHECK(records_append(g_store, proj, REC_CANON, cid, "committed", "Zoë's great-grandmother wrote the letter.", &chat, 1, &ver) && ver == 2);
+    CHECK(records_append(g_store, proj, REC_CANON, cid, "retracted", "Zoë's great-grandmother wrote the letter.", &chat, 1, &ver) && ver == 3);
     /* Ids are never paths. */
     ver = 99;
-    CHECK(!records_append(proj, REC_NOTE, "../x", "active", "x", NULL, 0, &ver) && ver == 0);
-    CHECK(!records_append(proj, REC_NOTE, "", "active", "x", NULL, 0, NULL));
+    CHECK(!records_append(g_store, proj, REC_NOTE, "../x", "active", "x", NULL, 0, &ver) && ver == 0);
+    CHECK(!records_append(g_store, proj, REC_NOTE, "", "active", "x", NULL, 0, NULL));
 
     Record *notes = NULL, *canon = NULL;
-    size_t nn = records_list(proj, REC_NOTE, &notes), nc = records_list(proj, REC_CANON, &canon);
+    size_t nn = records_list(g_store, proj, REC_NOTE, &notes), nc = records_list(g_store, proj, REC_CANON, &canon);
     CHECK(nn == 1 && notes[0].nversions == 2);
     if (nn == 1) {
         const RecordVersion *v = record_current(&notes[0]);
@@ -714,8 +715,8 @@ static void test_records(void)
     records_new_id(REC_NOTE, nid2, sizeof(nid2));
     SourceRef bad = { .kind = SRC_DOC, .quote = "q" };
     snprintf(bad.doc, sizeof(bad.doc), "../../etc/passwd");
-    CHECK(records_append(proj, REC_NOTE, nid2, "active", "after the tear", &bad, 1, &ver) && ver == 1);
-    nn = records_list(proj, REC_NOTE, &notes);
+    CHECK(records_append(g_store, proj, REC_NOTE, nid2, "active", "after the tear", &bad, 1, &ver) && ver == 1);
+    nn = records_list(g_store, proj, REC_NOTE, &notes);
     CHECK(nn == 2 && !strcmp(notes[0].id, nid2) && !strcmp(record_current(&notes[0])->content, "after the tear"));
     CHECK(nn == 2 && record_current(&notes[0])->nsources == 0);
     records_free(notes, nn);
@@ -723,7 +724,7 @@ static void test_records(void)
     f = fopen(path, "ab");
     fputs("{\"id\":\"n-hand\",\"status\":\"active\",\"content\":\"by hand\",\"sources\":[{\"kind\":\"doc\",\"quote\":\"q\"}]}\n", f);
     fclose(f);
-    nn = records_list(proj, REC_NOTE, &notes);
+    nn = records_list(g_store, proj, REC_NOTE, &notes);
     CHECK(nn == 3 && !strcmp(notes[0].id, "n-hand") && record_current(&notes[0])->ver == 0 &&
           record_current(&notes[0])->nsources == 1 && record_current(&notes[0])->sources[0].start == 0);
     records_free(notes, nn);
@@ -732,13 +733,13 @@ static void test_records(void)
     f = fopen(ridx, "ab");
     fputs("{\"file\":\"x.md\",\"origin\":\"save\"}\n", f);
     fclose(f);
-    nr = revisions_list(proj, doc, &revs);
+    nr = revisions_list(g_store, proj, doc, &revs);
     CHECK(nr == 3 && revs[0].ts == 0 && revs[0].bytes == 0);
     free(revs);
     /* No project history yet: an empty list, not an error. */
     char empty[800];
     snprintf(empty, sizeof(empty), "%s/none", g_dir);
-    CHECK(records_list(empty, REC_CANON, &canon) == 0 && canon == NULL);
+    CHECK(records_list(g_store, empty, REC_CANON, &canon) == 0 && canon == NULL);
 }
 
 /* ---- observer ----------------------------------------------------------------------- */
@@ -814,7 +815,7 @@ static bool wait_jobs(Observer *o, unsigned want, double secs)
 static size_t count_findings(const char *proj, const char *type, const char *status, Record **out)
 {
     Record *list = NULL;
-    size_t n = records_list(proj, REC_FINDING, &list), k = 0;
+    size_t n = records_list(g_store, proj, REC_FINDING, &list), k = 0;
     for (size_t i = 0; i < n; i++) {
         const RecordVersion *v = record_current(&list[i]);
         if ((!type || !strcmp(v->finding.type, type)) && (!status || !strcmp(v->status, status))) k++;
@@ -835,9 +836,9 @@ static void test_observer_run(void)
     fclose(f);
     char cid[40];
     records_new_id(REC_CANON, cid, sizeof(cid));
-    CHECK(records_append(proj, REC_CANON, cid, "committed", "Zo\xC3\xAB's eyes are green.", NULL, 0, NULL));
+    CHECK(records_append(g_store, proj, REC_CANON, cid, "committed", "Zo\xC3\xAB's eyes are green.", NULL, 0, NULL));
 
-    Observer *o = observer_create(NULL, NULL);
+    Observer *o = observer_create(g_store, NULL, NULL);
     CHECK(o != NULL);
     if (!o) return;
     observer_set_project(o, proj);
@@ -845,7 +846,7 @@ static void test_observer_run(void)
     Record *list = NULL;
     size_t total = count_findings(proj, NULL, NULL, &list);
     CHECK(total >= 3);
-    size_t nlist = records_list(proj, REC_FINDING, &list) ;
+    size_t nlist = records_list(g_store, proj, REC_FINDING, &list) ;
     bool zoe = false, conflict = false, sourced = true;
     for (size_t i = 0; i < nlist; i++) {
         const RecordVersion *v = record_current(&list[i]);
@@ -882,7 +883,7 @@ static void test_observer_run(void)
     done = observer_jobs_done(o);
     observer_set_chat_active(o, true);
     ChatMessage m = { .role = CHAT_USER, .content = "Should Ingrid know about the Letter?" };
-    CHECK(chat_store_append(proj, "20261104-120000-abcd", "t", &m));
+    CHECK(chat_store_append(g_store, proj, "20261104-120000-abcd", "t", &m));
     observer_poke(o);
     usleep(800000);
     char st[200];
@@ -891,7 +892,7 @@ static void test_observer_run(void)
     observer_set_chat_active(o, false);
     CHECK(wait_jobs(o, done + 1, 10));
     Record *l2 = NULL;
-    size_t n2 = records_list(proj, REC_FINDING, &l2);
+    size_t n2 = records_list(g_store, proj, REC_FINDING, &l2);
     bool chat_src = false;
     for (size_t i = 0; i < n2; i++) {
         const RecordVersion *v = record_current(&l2[i]);
@@ -914,7 +915,7 @@ static void test_observer_run(void)
     observer_poke(o);
     CHECK(wait_jobs(o, done + 1, 10));
     Record *l3 = NULL;
-    size_t n3 = records_list(proj, REC_FINDING, &l3);
+    size_t n3 = records_list(g_store, proj, REC_FINDING, &l3);
     bool invented = false;
     for (size_t i = 0; i < n3; i++)
         invented = invented || strstr(record_current(&l3[i])->content, "sails away") || strstr(record_current(&l3[i])->content, "murderer");
@@ -939,7 +940,7 @@ static void test_observer_run(void)
 static bool has_finding(const char *proj, const char *needle, Record *out_copy_src)
 {
     Record *list = NULL;
-    size_t n = records_list(proj, REC_FINDING, &list);
+    size_t n = records_list(g_store, proj, REC_FINDING, &list);
     bool found = false;
     for (size_t i = 0; i < n && !found; i++) {
         const RecordVersion *v = record_current(&list[i]);
@@ -960,7 +961,7 @@ static void test_observer_redteam(void)
     char proj[700], path[800];
     snprintf(proj, sizeof(proj), "%s/obs-rt", g_dir);
     mkdir(proj, 0755);
-    Observer *o = observer_create(NULL, NULL);
+    Observer *o = observer_create(g_store, NULL, NULL);
     if (!o) return;
 
     /* A 7 KB paragraph: names near its end are read, piece by piece. */
@@ -1011,7 +1012,7 @@ static void test_observer_redteam(void)
     CHECK(!has_finding(proj, "Canon says", NULL));
     char cid[40];
     records_new_id(REC_CANON, cid, sizeof(cid));
-    CHECK(records_append(proj, REC_CANON, cid, "committed", "Mara's coat is red.", NULL, 0, NULL));
+    CHECK(records_append(g_store, proj, REC_CANON, cid, "committed", "Mara's coat is red.", NULL, 0, NULL));
     f = fopen(path, "ab");
     fputs("\r\nMara's coat is blue. The rain fell.\r\n", f);
     fclose(f);
@@ -1024,13 +1025,13 @@ static void test_observer_redteam(void)
      * to the end. */
     ChatMessage u = { .role = CHAT_USER, .content = "Tighten this." , .is_edit = true };
     ChatMessage a = { .role = CHAT_ASSISTANT, .content = "Then Rasmus came.", .is_edit = true };
-    CHECK(chat_store_append(proj, "20261104-130000-aaaa", "t", &u) && chat_store_append(proj, "20261104-130000-aaaa", "t", &a));
+    CHECK(chat_store_append(g_store, proj, "20261104-130000-aaaa", "t", &u) && chat_store_append(g_store, proj, "20261104-130000-aaaa", "t", &a));
     char *longmsg = malloc(9000);
     size_t k = 0;
     while (k < 8000) k += (size_t)snprintf(longmsg + k, 9000 - k, "the wind was cold and grey. ");
     snprintf(longmsg + k, 9000 - k, "Later Ulrika sang.");
     ChatMessage b = { .role = CHAT_ASSISTANT, .content = longmsg };
-    CHECK(chat_store_append(proj, "20261104-130000-aaaa", "t", &b));
+    CHECK(chat_store_append(g_store, proj, "20261104-130000-aaaa", "t", &b));
     free(longmsg);
     done = observer_jobs_done(o);
     observer_poke(o);
@@ -1162,7 +1163,7 @@ static void test_recent_and_renames(void)
     f = fopen(path, "wb");
     fputs("Brin waited.\n", f);
     fclose(f);
-    Observer *o = observer_create(NULL, NULL);
+    Observer *o = observer_create(g_store, NULL, NULL);
     observer_set_project(o, b);
     CHECK(wait_jobs(o, 1, 10));
     observer_rename_doc(o, a, "a.md", "renamed.md"); /* made in A while B is open */
@@ -1323,14 +1324,14 @@ static void test_revisions(void)
     char doc[700];
     snprintf(doc, sizeof(doc), "%s/Chapter One.md", g_dir);
     bool rec = false;
-    CHECK(revisions_record(g_dir, doc, "first draft", "save", NULL, &rec) && rec);
-    CHECK(revisions_record(g_dir, doc, "first draft", "save", NULL, &rec) && !rec); /* identical: skipped */
+    CHECK(revisions_record(g_store, g_dir, doc, "first draft", "save", NULL, &rec) && rec);
+    CHECK(revisions_record(g_store, g_dir, doc, "first draft", "save", NULL, &rec) && !rec); /* identical: skipped */
     usleep(2000);
-    CHECK(revisions_record(g_dir, doc, "second draft", "ai-edit", "tighten", &rec) && rec);
+    CHECK(revisions_record(g_store, g_dir, doc, "second draft", "ai-edit", "tighten", &rec) && rec);
     Revision *list;
-    size_t n = revisions_list(g_dir, doc, &list);
+    size_t n = revisions_list(g_store, g_dir, doc, &list);
     CHECK(n == 2 && !strcmp(list[0].origin, "ai-edit") && !strcmp(list[0].note, "tighten")); /* newest first */
-    char *t0 = revisions_load(g_dir, doc, &list[0]), *t1 = revisions_load(g_dir, doc, &list[1]);
+    char *t0 = revisions_load(g_store, g_dir, doc, &list[0]), *t1 = revisions_load(g_store, g_dir, doc, &list[1]);
     CHECK(t0 && !strcmp(t0, "second draft") && t1 && !strcmp(t1, "first draft"));
     free(t0);
     free(t1);
@@ -1342,8 +1343,8 @@ static void test_revisions(void)
     unlink(lock_path);
     chmod(history_dir, 0555);
     Revision *read_only = NULL;
-    size_t read_only_n = revisions_list(g_dir, doc, &read_only);
-    char *read_only_text = read_only_n ? revisions_load(g_dir, doc, &read_only[0]) : NULL;
+    size_t read_only_n = revisions_list(g_store, g_dir, doc, &read_only);
+    char *read_only_text = read_only_n ? revisions_load(g_store, g_dir, doc, &read_only[0]) : NULL;
     CHECK(read_only_n == 2 && read_only_text && !strcmp(read_only_text, "second draft"));
     free(read_only_text);
     free(read_only);
@@ -1354,11 +1355,11 @@ static void test_revisions(void)
     FILE *f = fopen(path, "wb");
     fputs("tampered", f);
     fclose(f);
-    CHECK(revisions_load(g_dir, doc, &list[1]) == NULL);
+    CHECK(revisions_load(g_store, g_dir, doc, &list[1]) == NULL);
     /* Path tricks in an index entry are refused. */
     Revision evil = list[0];
     snprintf(evil.file, sizeof(evil.file), "../../../etc/passwd");
-    CHECK(revisions_load(g_dir, doc, &evil) == NULL);
+    CHECK(revisions_load(g_store, g_dir, doc, &evil) == NULL);
     free(list);
 }
 
@@ -1583,8 +1584,8 @@ static void test_torn_line_recovery(void)
     ChatMessage a = { .role = CHAT_USER, .content = "first" };
     ChatMessage b = { .role = CHAT_ASSISTANT, .content = "second" };
     ChatMessage c = { .role = CHAT_USER, .content = "after the crash" };
-    CHECK(chat_store_append(g_dir, id, "t", &a));
-    CHECK(chat_store_append(g_dir, id, "t", &b));
+    CHECK(chat_store_append(g_store, g_dir, id, "t", &a));
+    CHECK(chat_store_append(g_store, g_dir, id, "t", &b));
     /* Crash mid-write: a torn record with no newline. */
     char path[1200];
     snprintf(path, sizeof(path), "%s/.scribodo/chats/%s.jsonl", g_dir, id);
@@ -1592,7 +1593,7 @@ static void test_torn_line_recovery(void)
     fputs("{\"type\":\"message\",\"role\":\"assi", f);
     fclose(f);
     /* The next session appends: must start on a fresh line. */
-    CHECK(chat_store_append(g_dir, id, "t", &c));
+    CHECK(chat_store_append(g_store, g_dir, id, "t", &c));
     /* Write side: the new record is a line of its own that parses by itself
      * (load-side recovery alone would hide a missing separator). */
     f = fopen(path, "rb");
@@ -1603,7 +1604,7 @@ static void test_torn_line_recovery(void)
     CHECK(lj && !strcmp(cJSON_GetObjectItem(lj, "content")->valuestring, "after the crash"));
     cJSON_Delete(lj);
     ChatMessage *msgs; size_t n;
-    CHECK(chat_store_load(g_dir, id, &msgs, &n));
+    CHECK(chat_store_load(g_store, g_dir, id, &msgs, &n));
     CHECK(n == 3 && !strcmp(msgs[2].content, "after the crash"));
     chat_store_free_messages(msgs, n);
     /* Files from before the fix (a record glued onto a torn line) recover too. */
@@ -1614,7 +1615,7 @@ static void test_torn_line_recovery(void)
     fputs("{\"type\":\"meta\",\"version\":1,\"title\":\"t\"}\n{\"type\":\"message\",\"role\":\"us"
           "{\"type\":\"message\",\"role\":\"user\",\"content\":\"glued\"}\n", f);
     fclose(f);
-    CHECK(chat_store_load(g_dir, id2, &msgs, &n));
+    CHECK(chat_store_load(g_store, g_dir, id2, &msgs, &n));
     CHECK(n == 1 && !strcmp(msgs[0].content, "glued"));
     chat_store_free_messages(msgs, n);
 }
@@ -1940,10 +1941,10 @@ static void test_remote(void)
     char proj[600];
     snprintf(proj, sizeof(proj), "%s/remote-proj", g_dir);
     mkdir(proj, 0755);
-    for (int i = 0; i < 4; i++) CHECK(chat_store_append(proj, "20261104-120000-abcd", "Remote", &saved[i]));
+    for (int i = 0; i < 4; i++) CHECK(chat_store_append(g_store, proj, "20261104-120000-abcd", "Remote", &saved[i]));
     ChatMessage *back = NULL;
     size_t nb = 0;
-    CHECK(chat_store_load(proj, "20261104-120000-abcd", &back, &nb) && nb == 4 && back[0].via && back[1].via &&
+    CHECK(chat_store_load(g_store, proj, "20261104-120000-abcd", &back, &nb) && nb == 4 && back[0].via && back[1].via &&
           !strcmp(back[1].via, "Frontier \xC2\xB7 127.0.0.1") && !back[2].via && !back[3].via);
     chat_store_free_messages(back, nb);
     chat_lock(s);
@@ -2137,9 +2138,9 @@ static void test_project_session_and_explorer_snapshot(void)
     file = fopen(path, "wb");
     if (file) fclose(file);
     ChatMessage message = { .role = CHAT_USER, .content = "hello" };
-    CHECK(chat_store_append(project, "20261105-120000-abcd", "A chat", &message));
+    CHECK(chat_store_append(g_store, project, "20261105-120000-abcd", "A chat", &message));
     ExplorerSnapshot first;
-    CHECK(explorer_snapshot_build(&first, project, 7, 1));
+    CHECK(explorer_snapshot_build(&first, g_store, project, 7, 1));
     CHECK(first.ndocs == 2 && first.nchats == 1 && !strcasecmp(first.docs[0], "a.txt"));
     CHECK(explorer_snapshot_doc(&first, 7, 1, 1) != NULL && explorer_snapshot_doc(&first, 8, 1, 1) == NULL);
     CHECK(explorer_snapshot_doc(&first, 7, 2, 1) == NULL); /* old rows cannot act in a new project */
@@ -2148,12 +2149,12 @@ static void test_project_session_and_explorer_snapshot(void)
     file = fopen(path, "wb");
     if (file) fclose(file);
     ExplorerSnapshot second;
-    CHECK(explorer_snapshot_build(&second, project, 8, 1));
+    CHECK(explorer_snapshot_build(&second, g_store, project, 8, 1));
     CHECK(first.ndocs == 2 && second.ndocs == 3); /* refresh never mutates the drawn snapshot */
     explorer_snapshot_destroy(&first);
     explorer_snapshot_destroy(&second);
     ExplorerSnapshot failed;
-    CHECK(!explorer_snapshot_build(&failed, "/a/project/that/does/not/exist", 9, 2));
+    CHECK(!explorer_snapshot_build(&failed, g_store, "/a/project/that/does/not/exist", 9, 2));
     explorer_snapshot_destroy(&failed);
 }
 
@@ -2202,18 +2203,18 @@ static void test_observer_rules_and_refilter(void)
         snprintf(fi.subject, sizeof(fi.subject), "%s", rows[i].subject);
         records_new_id(REC_FINDING, ids[i], sizeof(ids[i]));
         ids[i][strlen(ids[i]) - 1] = (char)('0' + i); /* distinct within one second */
-        CHECK(records_append_ex(proj, REC_FINDING, ids[i], rows[i].status, rows[i].desc, rows[i].src, 1, &fi, NULL));
+        CHECK(records_append_ex(g_store, proj, REC_FINDING, ids[i], rows[i].status, rows[i].desc, rows[i].src, 1, &fi, NULL));
     }
-    CHECK(obs_refilter(proj, "Tripp", "Maz") == 2);
+    CHECK(obs_refilter(g_store, proj, "Tripp", "Maz") == 2);
     Record *r = NULL;
-    size_t n = records_list(proj, REC_FINDING, &r);
+    size_t n = records_list(g_store, proj, REC_FINDING, &r);
     for (int i = 0; i < 5; i++)
         for (size_t k = 0; k < n; k++)
             if (!strcmp(r[k].id, ids[i])) CHECK(!strcmp(record_current(&r[k])->status, rows[i].expect));
     records_free(r, n);
-    CHECK(obs_refilter(proj, "Tripp", "Maz") == 0); /* idempotent */
+    CHECK(obs_refilter(g_store, proj, "Tripp", "Maz") == 0); /* idempotent */
     /* Names cleared: the greeting stays filtered (conversation), Tripp comes back. */
-    CHECK(obs_refilter(proj, "", "") == 1);
+    CHECK(obs_refilter(g_store, proj, "", "") == 1);
 }
 
 /* The author's model settings (user testing): ranges, steps, and the
@@ -2314,6 +2315,8 @@ int main(int argc, char **argv)
     const char *base = getenv("TMPDIR");
     snprintf(g_dir, sizeof(g_dir), "%s/scribodo-llm-XXXXXX", base && *base ? base : "/tmp");
     if (!mkdtemp(g_dir)) return 1;
+    g_store = store_manager_create();
+    if (!g_store) return 1;
     bool live = argc > 1 && !strcmp(argv[1], "--live");
     TestCase unit[] = {
         { "neutralize", test_neutralize },
@@ -2360,5 +2363,6 @@ int main(int argc, char **argv)
     char cmd[600];
     snprintf(cmd, sizeof(cmd), "rm -rf '%s'", g_dir);
     if (system(cmd) != 0) fprintf(stderr, "warning: could not remove %s\n", g_dir);
+    store_manager_destroy(g_store);
     return rc;
 }

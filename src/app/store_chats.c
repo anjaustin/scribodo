@@ -56,7 +56,7 @@ bool sdb_chat_append(Db *db, const char *project_id, const char *id, const char 
         char *copy = strdup(m->docs);
         for (char *save = NULL, *nm = copy ? strtok_r(copy, "\n", &save) : NULL; ok && nm; nm = strtok_r(NULL, "\n", &save)) {
             char doc[40];
-            if (!store_document_id(project_id, nm, true, doc, sizeof(doc))) continue;
+            if (!store_document_id_db(db, project_id, nm, true, doc, sizeof(doc))) continue;
             DbArg d[3] = { DB_S(doc), DB_S(id), DB_I(seq) };
             ok = db_run(db,
                         "INSERT IGNORE INTO message_documents (message_id, document_id)"

@@ -63,6 +63,7 @@ static void findings_unlock(int fd)
 }
 
 struct Observer {
+    StoreManager *store;
     LlmServer *server;
     SemanticClient *semantic;
     pthread_t thread;
@@ -682,14 +683,14 @@ static bool backend_judge(Observer *o, const char *canon, const char *statement,
 
 /* ---- state ------------------------------------------------------------------------ */
 
-static cJSON *state_load(const char *project)
+static cJSON *state_load(StoreManager *store, const char *project)
 {
-    return project_store_observer_state_load(project);
+    return project_store_observer_state_load(store, project);
 }
 
-static bool state_save(const char *project, cJSON *state)
+static bool state_save(StoreManager *store, const char *project, cJSON *state)
 {
-    return project_store_observer_state_save(project, state);
+    return project_store_observer_state_save(store, project, state);
 }
 
 static bool hash_seen(cJSON *arr, uint64_t h)
@@ -846,7 +847,7 @@ static bool in_list(char **names, size_t n, const char *s)
 
 /* The next unread piece of stored text, or false if all is read. Also
  * prunes state for paragraphs, documents and chats that no longer exist. */
-static bool find_job(const char *project, cJSON *st, Job *j)
+static bool find_job(StoreManager *store, const char *project, cJSON *st, Job *j)
 {
     memset(j, 0, sizeof(*j));
     cJSON *docs = cJSON_GetObjectItem(st, "docs"), *chats = cJSON_GetObjectItem(st, "chats");
@@ -952,7 +953,7 @@ static bool find_job(const char *project, cJSON *st, Job *j)
 
     /* Chats: what follows the position already read. */
     ChatSummary *list = NULL;
-    size_t nc = chat_store_list(project, &list);
+    size_t nc = chat_store_list(store, project, &list);
     for (cJSON *it = chats ? chats->child : NULL, *next; it; it = next) { /* forget deleted chats */
         next = it->next;
         bool present = false;
@@ -963,7 +964,7 @@ static bool find_job(const char *project, cJSON *st, Job *j)
         if (list[i].observer_ignore) continue; /* the author said not to read it */
         ChatMessage *msgs = NULL;
         size_t n = 0;
-        if (!chat_store_load(project, list[i].id, &msgs, &n)) continue;
+        if (!chat_store_load(store, project, list[i].id, &msgs, &n)) continue;
         cJSON *pos = cJSON_GetObjectItem(chats, list[i].id);
         size_t from = 0, from_off = 0;
         if (cJSON_IsNumber(pos) && pos->valuedouble >= 0) from = (size_t)pos->valuedouble; /* older state */
@@ -1178,14 +1179,14 @@ static void rules_signature(const char *author, const char *assistant, char out[
     snprintf(out, 17, "%016llx", (unsigned long long)h);
 }
 
-static bool rules_get(const char *project, char out[17])
+static bool rules_get(StoreManager *store, const char *project, char out[17])
 {
-    return project_store_observer_rules_get(project, out);
+    return project_store_observer_rules_get(store, project, out);
 }
 
-static bool rules_set(const char *project, const char *sig)
+static bool rules_set(StoreManager *store, const char *project, const char *sig)
 {
-    return project_store_observer_rules_set(project, sig);
+    return project_store_observer_rules_set(store, project, sig);
 }
 
 /* Re-check every chat finding against the current rules: ones that no
@@ -1193,12 +1194,12 @@ static bool rules_set(const char *project, const char *sig)
  * filtered ones that qualify again are restored. Decisions the author made
  * (saved, committed, dismissed) are never touched. Returns how many
  * changed. */
-size_t obs_refilter(const char *project, const char *author, const char *assistant)
+size_t obs_refilter(StoreManager *store, const char *project, const char *author, const char *assistant)
 {
     int lock = findings_lock(project);
     if (lock < 0) return 0;
     Record *recs = NULL;
-    size_t n = records_list(project, REC_FINDING, &recs), changed = 0;
+    size_t n = records_list(store, project, REC_FINDING, &recs), changed = 0;
     for (size_t i = 0; i < n; i++) {
         const RecordVersion *v = record_current(&recs[i]);
         bool from_chat = v->nsources && v->sources[0].kind == SRC_CHAT;
@@ -1208,7 +1209,7 @@ size_t obs_refilter(const char *project, const char *author, const char *assista
         bool allowed = obs_chat_finding_allowed(&v->finding, v->content, author, assistant);
         const char *to = is_new && !allowed ? "filtered" : is_filtered && allowed ? "new" : NULL;
         if (!to) continue;
-        if (records_append_ex(project, REC_FINDING, recs[i].id, to, v->content, v->sources, v->nsources, &v->finding, NULL))
+        if (records_append_ex(store, project, REC_FINDING, recs[i].id, to, v->content, v->sources, v->nsources, &v->finding, NULL))
             changed++;
     }
     records_free(recs, n);
@@ -1370,9 +1371,9 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSO
     /* Deduplicate against stored findings (and within this batch). */
     int findings_fd = findings_lock(project);
     Record *existing = NULL, *canon = NULL, *notes = NULL;
-    size_t ne = findings_fd >= 0 ? records_list(project, REC_FINDING, &existing) : 0;
+    size_t ne = findings_fd >= 0 ? records_list(o->store, project, REC_FINDING, &existing) : 0;
     findings_unlock(findings_fd);
-    size_t ncanon = records_list(project, REC_CANON, &canon), nnotes = records_list(project, REC_NOTE, &notes);
+    size_t ncanon = records_list(o->store, project, REC_CANON, &canon), nnotes = records_list(o->store, project, REC_NOTE, &notes);
     for (size_t i = 0; i < nc; i++) {
         char key[400], other[400];
         finding_key(cands[i].type, cands[i].info.subject, cands[i].info.relation, cands[i].info.object, cands[i].desc, key,
@@ -1394,7 +1395,7 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSO
     /* Projects in the store get semantic retrieval when the index is up;
      * canon and notes are synced into it first (cheap when unchanged). */
     char sem_pid[64] = "";
-    bool use_sem = o->semantic && project_store_feature_key(project, PROJECT_STORE_CAP_SEMANTIC, sem_pid, sizeof(sem_pid)) &&
+    bool use_sem = o->semantic && project_store_feature_key(o->store, project, PROJECT_STORE_CAP_SEMANTIC, sem_pid, sizeof(sem_pid)) &&
                    semantic_ready(o->semantic);
     if (use_sem) {
         char serr[200];
@@ -1506,7 +1507,7 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSO
     for (size_t i = 0; i < nc; i++) any = any || cands[i].keep;
     if (ok && any && j->is_doc) {
         char revision[160] = "";
-        ok = revisions_snapshot(project, j->path, j->src, revision, sizeof(revision));
+        ok = revisions_snapshot(o->store, project, j->path, j->src, revision, sizeof(revision));
         for (size_t i = 0; i < nc; i++) snprintf(cands[i].src.revision, sizeof(cands[i].src.revision), "%s", revision);
     }
     pthread_mutex_lock(&o->mu);
@@ -1521,7 +1522,7 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSO
              * between our first deduplication read and append. */
             records_free(existing, ne);
             existing = NULL;
-            ne = records_list(project, REC_FINDING, &existing);
+            ne = records_list(o->store, project, REC_FINDING, &existing);
             for (size_t i = 0; i < nc; i++)
                 if (cands[i].keep && candidate_already_exists(&cands[i], existing, ne)) cands[i].keep = false;
             for (size_t c = 0; c < nconf; c++) {
@@ -1545,7 +1546,7 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSO
             if (!cands[i].keep) continue;
             char id[40];
             records_new_id(REC_FINDING, id, sizeof(id));
-            if (!records_create_ex(project, REC_FINDING, id, "new", cands[i].desc, &cands[i].src, 1, &cands[i].info))
+            if (!records_create_ex(o->store, project, REC_FINDING, id, "new", cands[i].desc, &cands[i].src, 1, &cands[i].info))
                 io_failed = true;
         }
         for (size_t c = 0; findings_fd >= 0 && c < nconf; c++) {
@@ -1558,16 +1559,16 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSO
             fi.related_text = conflicts[c].canon_text;
             char id[40];
             records_new_id(REC_FINDING, id, sizeof(id));
-            if (!records_create_ex(project, REC_FINDING, id, "new", conflicts[c].check, &cd->src, 1, &fi)) io_failed = true;
+            if (!records_create_ex(o->store, project, REC_FINDING, id, "new", conflicts[c].check, &cd->src, 1, &fi)) io_failed = true;
         }
         findings_unlock(findings_fd);
         /* Index what was read (documents as draft text, chats as chat), and
          * drop the document's points for pieces it no longer has. */
         if (use_sem) {
             char did[40] = "";
-            if (j->is_doc) store_document_id(sem_pid, j->name, true, did, sizeof(did));
+            if (j->is_doc) store_document_id(o->store, sem_pid, j->name, true, did, sizeof(did));
             char rev[160] = "";
-            if (j->is_doc) revisions_snapshot(project, j->path, j->src, rev, sizeof(rev));
+            if (j->is_doc) revisions_snapshot(o->store, project, j->path, j->src, rev, sizeof(rev));
             for (size_t q = 0; q < j->nsegs; q++) {
                 const Seg *sg = &j->segs[q];
                 char *piece = dupn(j->chunk + sg->chunk_off, sg->len);
@@ -1605,7 +1606,7 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSO
         } else {
             set_chat_progress(cJSON_GetObjectItem(st, "chats"), j->name, j->msg_to, j->off_to);
         }
-        if (!io_failed && !state_save(project, st)) io_failed = true;
+        if (!io_failed && !state_save(o->store, project, st)) io_failed = true;
         ok = !io_failed;
     }
     for (size_t i = 0; i < nc; i++) {
@@ -1666,7 +1667,7 @@ static void *worker(void *arg)
             char pid[64], err[200] = "";
             long n = -1;
             set_status(o, "Rebuilding the semantic index\xE2\x80\xA6");
-            if (project_store_feature_key(project, PROJECT_STORE_CAP_SEMANTIC, pid, sizeof(pid)))
+            if (project_store_feature_key(o->store, project, PROJECT_STORE_CAP_SEMANTIC, pid, sizeof(pid)))
                 n = semantic_rebuild(o->semantic, pid, err, sizeof(err));
             else snprintf(err, sizeof(err), "this project isn't in the project store");
             char msg[300];
@@ -1680,7 +1681,7 @@ static void *worker(void *arg)
             pthread_mutex_unlock(&o->mu);
             continue;
         }
-        cJSON *st = state_load(project);
+        cJSON *st = state_load(o->store, project);
         if (!st) { /* the project store is down: wait, and say so */
             pthread_mutex_lock(&o->mu);
             o->running = false;
@@ -1716,9 +1717,9 @@ static void *worker(void *arg)
          * made: re-check them, so the software repairs what it recorded. */
         char sig[17], had[17];
         rules_signature(author, assistant, sig);
-        if (rules_get(project, had) && strcmp(had, sig) != 0) {
-            size_t changed = obs_refilter(project, author, assistant);
-            rules_set(project, sig);
+        if (rules_get(o->store, project, had) && strcmp(had, sig) != 0) {
+            size_t changed = obs_refilter(o->store, project, author, assistant);
+            rules_set(o->store, project, sig);
             if (changed) {
                 pthread_mutex_lock(&o->mu);
                 o->version++; /* the findings list and the graph refresh */
@@ -1726,8 +1727,8 @@ static void *worker(void *arg)
             }
         }
         Job j;
-        if (!find_job(project, st, &j)) {
-            bool saved = state_save(project, st); /* pruned state; blank text marked read */
+        if (!find_job(o->store, project, st, &j)) {
+            bool saved = state_save(o->store, project, st); /* pruned state; blank text marked read */
             cJSON_Delete(st);
             pthread_mutex_lock(&o->mu);
             if (gen == o->gen) snprintf(o->status, sizeof(o->status), "%s", saved ? "Up to date" : "Can't write .scribodo/observer/state.json");
@@ -1770,14 +1771,15 @@ static void *worker(void *arg)
         }
         pthread_mutex_unlock(&o->mu);
     }
-    store_thread_done(); /* this thread's database connection, if any */
+    store_thread_done(o->store); /* this thread's database connection, if any */
     return NULL;
 }
 
-Observer *observer_create(LlmServer *server, SemanticClient *semantic)
+Observer *observer_create(StoreManager *store, LlmServer *server, SemanticClient *semantic)
 {
     Observer *o = calloc(1, sizeof(Observer));
     if (!o) return NULL;
+    o->store = store;
     o->server = server;
     o->semantic = semantic;
     o->enabled = true;
@@ -1928,20 +1930,22 @@ unsigned observer_jobs_done(Observer *o)
 
 bool observer_set_finding_status(Observer *o, const char *project_dir, const char *id, const char *status)
 {
+    if (!o) return false;
     int lock = findings_lock(project_dir);
     if (lock < 0) return false;
     Record *list = NULL;
-    size_t n = records_list(project_dir, REC_FINDING, &list);
+    size_t n = records_list(o->store, project_dir, REC_FINDING, &list);
     bool ok = false;
     for (size_t i = 0; i < n; i++) {
         if (strcmp(list[i].id, id)) continue;
         const RecordVersion *v = record_current(&list[i]);
-        ok = records_append_ex(project_dir, REC_FINDING, id, status, v->content, v->sources, v->nsources, &v->finding, NULL);
+        ok = records_append_ex(o->store, project_dir, REC_FINDING, id, status, v->content, v->sources, v->nsources,
+                               &v->finding, NULL);
         break;
     }
     records_free(list, n);
     findings_unlock(lock);
-    if (ok && o) {
+    if (ok) {
         pthread_mutex_lock(&o->mu);
         o->version++;
         pthread_mutex_unlock(&o->mu);

@@ -26,6 +26,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <time.h>
+#include "app/store.h"
 
 typedef enum { REC_NOTE = 0, REC_CANON = 1, REC_FINDING = 2 } RecordKind;
 typedef enum { SRC_DOC = 0, SRC_CHAT = 1 } SourceKind;
@@ -77,19 +78,19 @@ void records_new_id(RecordKind kind, char *out, size_t outlen);
 
 /* Append a new version of record `id` (its number is one past the newest).
  * Returns false on I/O failure or an invalid id; *ver_out gets the number. */
-bool records_append(const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
+bool records_append(StoreManager *manager, const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
                     const SourceRef *sources, size_t nsources, int *ver_out);
 /* As records_append, with finding details (NULL for notes and canon). */
-bool records_append_ex(const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
+bool records_append_ex(StoreManager *manager, const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
                        const SourceRef *sources, size_t nsources, const FindingInfo *finding, int *ver_out);
 
 /* A new record (version 1) under an id just made by records_new_id(),
  * without reading the log. */
-bool records_create_ex(const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
+bool records_create_ex(StoreManager *manager, const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
                        const SourceRef *sources, size_t nsources, const FindingInfo *finding);
 
 /* All records, most recently changed first. Caller frees with records_free. */
-size_t records_list(const char *project_dir, RecordKind kind, Record **out);
+size_t records_list(StoreManager *manager, const char *project_dir, RecordKind kind, Record **out);
 /* The file store's records, whatever the project's mode (the importer). */
 size_t records_list_files(const char *project_dir, RecordKind kind, Record **out);
 void records_free(Record *r, size_t n);

@@ -20,6 +20,7 @@ typedef struct ProjectStore ProjectStore;
 typedef struct ProjectStoreOps ProjectStoreOps;
 
 struct ProjectStore {
+    StoreManager *manager;
     const ProjectStoreOps *ops;
     const char *project_dir;
     char project_id[64];
@@ -54,7 +55,7 @@ static bool file_records_append(ProjectStore *store, RecordKind kind, const char
                                 const char *content, const SourceRef *sources, size_t nsources,
                                 const FindingInfo *finding, bool fresh, int *ver_out)
 {
-    return records_append_files(store->project_dir, kind, id, status, content, sources, nsources, finding, fresh, ver_out);
+    return records_append_files(store->manager, store->project_dir, kind, id, status, content, sources, nsources, finding, fresh, ver_out);
 }
 
 static size_t db_records_list(ProjectStore *store, RecordKind kind, Record **out)
@@ -91,13 +92,13 @@ static size_t file_revisions_list(ProjectStore *store, const char *doc_path, Rev
 static bool file_revisions_record(ProjectStore *store, const char *doc_path, const char *text, const char *origin,
                                   const char *note, bool *recorded)
 {
-    return revisions_record_files(store->project_dir, doc_path, text, origin, note, recorded);
+    return revisions_record_files(store->manager, store->project_dir, doc_path, text, origin, note, recorded);
 }
 
 static bool file_revisions_snapshot(ProjectStore *store, const char *doc_path, const char *text,
                                     char *file_out, size_t file_len)
 {
-    return revisions_snapshot_files(store->project_dir, doc_path, text, file_out, file_len);
+    return revisions_snapshot_files(store->manager, store->project_dir, doc_path, text, file_out, file_len);
 }
 
 static char *file_revisions_load(ProjectStore *store, const char *doc_path, const Revision *revision)
@@ -153,7 +154,7 @@ static char *paused_revisions_load(ProjectStore *store, const char *doc_path, co
 
 static bool file_chat_append(ProjectStore *store, const char *id, const char *title, const ChatMessage *message)
 {
-    return chat_store_append_files(store->project_dir, id, title, message);
+    return chat_store_append_files(store->manager, store->project_dir, id, title, message);
 }
 
 static bool file_chat_rename(ProjectStore *store, const char *id, const char *title)
@@ -299,20 +300,21 @@ static const ProjectStoreOps paused_ops = {
     .observer_rules_get = paused_observer_rules_get, .observer_rules_set = paused_observer_rules_set
 };
 
-static void resolve(const char *project_dir, ProjectStore *out)
+static void resolve(StoreManager *manager, const char *project_dir, ProjectStore *out)
 {
     memset(out, 0, sizeof(*out));
+    out->manager = manager;
     out->project_dir = project_dir;
-    StoreMode mode = store_mode(project_dir, out->project_id, sizeof(out->project_id), &out->db);
+    StoreMode mode = store_mode(manager, project_dir, out->project_id, sizeof(out->project_id), &out->db);
     out->ops = mode == STORE_DB ? &db_ops : mode == STORE_PAUSED ? &paused_ops : &file_ops;
 }
 
-ProjectStoreInspection project_store_inspect(const char *project_dir)
+ProjectStoreInspection project_store_inspect(StoreManager *manager, const char *project_dir)
 {
     ProjectStoreInspection inspection = { 0 };
     if (!project_dir || !project_dir[0]) return inspection;
     ProjectStore store;
-    resolve(project_dir, &store);
+    resolve(manager, project_dir, &store);
     if (store.ops == &file_ops) {
         inspection.capabilities = PROJECT_STORE_CAP_STRUCTURED_WRITE;
         return inspection;
@@ -323,9 +325,9 @@ ProjectStoreInspection project_store_inspect(const char *project_dir)
                                   PROJECT_STORE_CAP_SLOW_REFRESH;
         return inspection;
     }
-    if (!store_online()) inspection.blocked_by = PROJECT_STORE_BLOCK_OFFLINE;
+    if (!store_online(manager)) inspection.blocked_by = PROJECT_STORE_BLOCK_OFFLINE;
     else {
-        int problem = store_problem(project_dir, NULL, 0);
+        int problem = store_problem(manager, project_dir, NULL, 0);
         inspection.blocked_by = problem == STORE_PROBLEM_COPY      ? PROJECT_STORE_BLOCK_COPY
                                 : problem == STORE_PROBLEM_MISSING ? PROJECT_STORE_BLOCK_MISSING
                                                                    : PROJECT_STORE_BLOCK_TRANSITION;
@@ -342,18 +344,18 @@ static unsigned capabilities_for(const ProjectStore *store)
     return 0;
 }
 
-bool project_store_guard_begin(const char *project_dir, ProjectStoreGuard *guard)
+bool project_store_guard_begin(StoreManager *manager, const char *project_dir, ProjectStoreGuard *guard)
 {
     if (!guard) return false;
     guard->file_lock = -1;
     guard->capabilities = 0;
     if (!project_dir || !project_dir[0]) return false;
     ProjectStore store;
-    resolve(project_dir, &store);
+    resolve(manager, project_dir, &store);
     if (store.ops == &file_ops) {
         guard->file_lock = project_store_file_lock_shared(project_dir);
         if (guard->file_lock < 0) return false;
-        resolve(project_dir, &store);
+        resolve(manager, project_dir, &store);
     }
     guard->capabilities = capabilities_for(&store);
     if (!(guard->capabilities & PROJECT_STORE_CAP_STRUCTURED_WRITE)) {
@@ -372,14 +374,14 @@ void project_store_guard_end(ProjectStoreGuard *guard)
     guard->capabilities = 0;
 }
 
-bool project_store_feature_key(const char *project_dir, unsigned capability, char *key, size_t keylen)
+bool project_store_feature_key(StoreManager *manager, const char *project_dir, unsigned capability, char *key, size_t keylen)
 {
     if (key && keylen) key[0] = '\0';
     if (!project_dir || !project_dir[0] || !key || !keylen ||
         (capability != PROJECT_STORE_CAP_SEMANTIC && capability != PROJECT_STORE_CAP_ENTITIES))
         return false;
     ProjectStore store;
-    resolve(project_dir, &store);
+    resolve(manager, project_dir, &store);
     if (store.ops != &db_ops) return false;
     snprintf(key, keylen, "%s", store.project_id);
     return key[0] != '\0';
@@ -412,23 +414,23 @@ void project_store_file_unlock(int fd)
     close(fd);
 }
 
-static int begin_operation(const char *project_dir, ProjectStore *store)
+static int begin_operation(StoreManager *manager, const char *project_dir, ProjectStore *store)
 {
-    resolve(project_dir, store);
+    resolve(manager, project_dir, store);
     if (store->ops != &file_ops) return -1;
     int lock = project_store_file_lock_shared(project_dir);
-    if (lock >= 0) resolve(project_dir, store);
+    if (lock >= 0) resolve(manager, project_dir, store);
     return lock;
 }
 
-size_t project_store_records_list(const char *project_dir, RecordKind kind, Record **out)
+size_t project_store_records_list(StoreManager *manager, const char *project_dir, RecordKind kind, Record **out)
 {
     if (!project_dir || !project_dir[0]) {
         *out = NULL;
         return 0;
     }
     ProjectStore store;
-    int lock = begin_operation(project_dir, &store);
+    int lock = begin_operation(manager, project_dir, &store);
     if (store.ops == &file_ops) {
         if (lock < 0) {
             *out = NULL;
@@ -440,13 +442,13 @@ size_t project_store_records_list(const char *project_dir, RecordKind kind, Reco
     return n;
 }
 
-bool project_store_records_append(const char *project_dir, RecordKind kind, const char *id, const char *status,
+bool project_store_records_append(StoreManager *manager, const char *project_dir, RecordKind kind, const char *id, const char *status,
                                    const char *content, const SourceRef *sources, size_t nsources,
                                    const FindingInfo *finding, bool fresh, int *ver_out)
 {
     if (!project_dir || !project_dir[0]) return false;
     ProjectStore store;
-    int lock = begin_operation(project_dir, &store);
+    int lock = begin_operation(manager, project_dir, &store);
     if (store.ops == &file_ops && lock < 0) return false;
     bool ok = store.ops->records_append(&store, kind, id, status, content, sources, nsources, finding, fresh, ver_out);
     project_store_file_unlock(lock);
@@ -454,103 +456,103 @@ bool project_store_records_append(const char *project_dir, RecordKind kind, cons
 }
 
 
-size_t project_store_revisions_list(const char *project_dir, const char *doc_path, Revision **out)
+size_t project_store_revisions_list(StoreManager *manager, const char *project_dir, const char *doc_path, Revision **out)
 {
     *out = NULL;
     if (!project_dir || !project_dir[0]) return 0;
     ProjectStore store;
-    int lock = begin_operation(project_dir, &store);
+    int lock = begin_operation(manager, project_dir, &store);
     if (store.ops == &file_ops && lock < 0) return 0;
     size_t n = store.ops->revisions_list(&store, doc_path, out);
     project_store_file_unlock(lock);
     return n;
 }
 
-bool project_store_revisions_record(const char *project_dir, const char *doc_path, const char *text,
+bool project_store_revisions_record(StoreManager *manager, const char *project_dir, const char *doc_path, const char *text,
                                     const char *origin, const char *note, bool *recorded)
 {
     if (recorded) *recorded = false;
     if (!project_dir || !project_dir[0]) return false;
     ProjectStore store;
-    int lock = begin_operation(project_dir, &store);
+    int lock = begin_operation(manager, project_dir, &store);
     if (store.ops == &file_ops && lock < 0) return false;
     bool ok = store.ops->revisions_record(&store, doc_path, text, origin, note, recorded);
     project_store_file_unlock(lock);
     return ok;
 }
 
-bool project_store_revisions_snapshot(const char *project_dir, const char *doc_path, const char *text,
+bool project_store_revisions_snapshot(StoreManager *manager, const char *project_dir, const char *doc_path, const char *text,
                                       char *file_out, size_t file_len)
 {
     if (file_out && file_len) file_out[0] = '\0';
     if (!project_dir || !project_dir[0] || !file_out || !file_len) return false;
     ProjectStore store;
-    int lock = begin_operation(project_dir, &store);
+    int lock = begin_operation(manager, project_dir, &store);
     if (store.ops == &file_ops && lock < 0) return false;
     bool ok = store.ops->revisions_snapshot(&store, doc_path, text, file_out, file_len);
     project_store_file_unlock(lock);
     return ok;
 }
 
-char *project_store_revisions_load(const char *project_dir, const char *doc_path, const Revision *revision)
+char *project_store_revisions_load(StoreManager *manager, const char *project_dir, const char *doc_path, const Revision *revision)
 {
     if (!project_dir || !project_dir[0]) return NULL;
     ProjectStore store;
-    int lock = begin_operation(project_dir, &store);
+    int lock = begin_operation(manager, project_dir, &store);
     if (store.ops == &file_ops && lock < 0) return NULL;
     char *text = store.ops->revisions_load(&store, doc_path, revision);
     project_store_file_unlock(lock);
     return text;
 }
 
-bool project_store_chat_append(const char *project_dir, const char *id, const char *title, const ChatMessage *message)
+bool project_store_chat_append(StoreManager *manager, const char *project_dir, const char *id, const char *title, const ChatMessage *message)
 {
     if (!project_dir || !project_dir[0]) return false;
     ProjectStore store;
-    int lock = begin_operation(project_dir, &store);
+    int lock = begin_operation(manager, project_dir, &store);
     if (store.ops == &file_ops && lock < 0) return false;
     bool ok = store.ops->chat_append(&store, id, title, message);
     project_store_file_unlock(lock);
     return ok;
 }
 
-bool project_store_chat_rename(const char *project_dir, const char *id, const char *title)
+bool project_store_chat_rename(StoreManager *manager, const char *project_dir, const char *id, const char *title)
 {
     if (!project_dir || !project_dir[0]) return false;
     ProjectStore store;
-    int lock = begin_operation(project_dir, &store);
+    int lock = begin_operation(manager, project_dir, &store);
     if (store.ops == &file_ops && lock < 0) return false;
     bool ok = store.ops->chat_rename(&store, id, title);
     project_store_file_unlock(lock);
     return ok;
 }
 
-bool project_store_chat_set_observer(const char *project_dir, const char *id, bool read)
+bool project_store_chat_set_observer(StoreManager *manager, const char *project_dir, const char *id, bool read)
 {
     if (!project_dir || !project_dir[0]) return false;
     ProjectStore store;
-    int lock = begin_operation(project_dir, &store);
+    int lock = begin_operation(manager, project_dir, &store);
     if (store.ops == &file_ops && lock < 0) return false;
     bool ok = store.ops->chat_set_observer(&store, id, read);
     project_store_file_unlock(lock);
     return ok;
 }
 
-size_t project_store_chat_list(const char *project_dir, ChatSummary **out)
+size_t project_store_chat_list(StoreManager *manager, const char *project_dir, ChatSummary **out)
 {
     size_t count = 0;
-    (void)project_store_chat_list_checked(project_dir, out, &count);
+    (void)project_store_chat_list_checked(manager, project_dir, out, &count);
     return count;
 }
 
-bool project_store_chat_list_checked(const char *project_dir, ChatSummary **out, size_t *count)
+bool project_store_chat_list_checked(StoreManager *manager, const char *project_dir, ChatSummary **out, size_t *count)
 {
     if (!out || !count) return false;
     *out = NULL;
     *count = 0;
     if (!project_dir || !project_dir[0]) return false;
     ProjectStore store;
-    int lock = begin_operation(project_dir, &store);
+    int lock = begin_operation(manager, project_dir, &store);
     if (store.ops == &file_ops && lock < 0) return false;
     bool ok = store.ops == &file_ops ? chat_store_list_files_checked(store.project_dir, out, count)
               : store.ops == &db_ops ? sdb_chat_list_checked(store.db, store.project_id, out, count)
@@ -559,111 +561,111 @@ bool project_store_chat_list_checked(const char *project_dir, ChatSummary **out,
     return ok;
 }
 
-bool project_store_chat_load(const char *project_dir, const char *id, ChatMessage **messages, size_t *count)
+bool project_store_chat_load(StoreManager *manager, const char *project_dir, const char *id, ChatMessage **messages, size_t *count)
 {
     *messages = NULL;
     *count = 0;
     if (!project_dir || !project_dir[0]) return false;
     ProjectStore store;
-    int lock = begin_operation(project_dir, &store);
+    int lock = begin_operation(manager, project_dir, &store);
     if (store.ops == &file_ops && lock < 0) return false;
     bool ok = store.ops->chat_load(&store, id, messages, count);
     project_store_file_unlock(lock);
     return ok;
 }
 
-cJSON *project_store_observer_state_load(const char *project_dir)
+cJSON *project_store_observer_state_load(StoreManager *manager, const char *project_dir)
 {
     if (!project_dir || !project_dir[0]) return NULL;
     ProjectStore store;
-    int lock = begin_operation(project_dir, &store);
+    int lock = begin_operation(manager, project_dir, &store);
     if (store.ops == &file_ops && lock < 0) return NULL;
     cJSON *state = store.ops->observer_state_load(&store);
     project_store_file_unlock(lock);
     return state;
 }
 
-bool project_store_observer_state_save(const char *project_dir, cJSON *state)
+bool project_store_observer_state_save(StoreManager *manager, const char *project_dir, cJSON *state)
 {
     if (!project_dir || !project_dir[0] || !state) return false;
     ProjectStore store;
-    int lock = begin_operation(project_dir, &store);
+    int lock = begin_operation(manager, project_dir, &store);
     if (store.ops == &file_ops && lock < 0) return false;
     bool ok = store.ops->observer_state_save(&store, state);
     project_store_file_unlock(lock);
     return ok;
 }
 
-bool project_store_observer_rules_get(const char *project_dir, char signature[17])
+bool project_store_observer_rules_get(StoreManager *manager, const char *project_dir, char signature[17])
 {
     if (signature) signature[0] = '\0';
     if (!project_dir || !project_dir[0] || !signature) return false;
     ProjectStore store;
-    int lock = begin_operation(project_dir, &store);
+    int lock = begin_operation(manager, project_dir, &store);
     if (store.ops == &file_ops && lock < 0) return false;
     bool ok = store.ops->observer_rules_get(&store, signature);
     project_store_file_unlock(lock);
     return ok;
 }
 
-bool project_store_observer_rules_set(const char *project_dir, const char *signature)
+bool project_store_observer_rules_set(StoreManager *manager, const char *project_dir, const char *signature)
 {
     if (!project_dir || !project_dir[0] || !signature) return false;
     ProjectStore store;
-    int lock = begin_operation(project_dir, &store);
+    int lock = begin_operation(manager, project_dir, &store);
     if (store.ops == &file_ops && lock < 0) return false;
     bool ok = store.ops->observer_rules_set(&store, signature);
     project_store_file_unlock(lock);
     return ok;
 }
 
-bool project_store_document_set_aside(const char *project_dir, const char *name, const char *aside)
+bool project_store_document_set_aside(StoreManager *manager, const char *project_dir, const char *name, const char *aside)
 {
     ProjectStore store;
-    resolve(project_dir, &store);
+    resolve(manager, project_dir, &store);
     if (store.ops != &db_ops) return false;
     char id[40];
-    if (!store_document_id(store.project_id, name, false, id, sizeof(id))) return true;
-    return store_rename_document(store.project_id, name, aside);
+    if (!store_document_id(manager, store.project_id, name, false, id, sizeof(id))) return true;
+    return store_rename_document(manager, store.project_id, name, aside);
 }
 
-bool project_store_document_rename(const char *project_dir, const char *from, const char *to)
+bool project_store_document_rename(StoreManager *manager, const char *project_dir, const char *from, const char *to)
 {
     ProjectStore store;
-    resolve(project_dir, &store);
-    return store.ops == &db_ops && store_rename_document(store.project_id, from, to);
+    resolve(manager, project_dir, &store);
+    return store.ops == &db_ops && store_rename_document(manager, store.project_id, from, to);
 }
 
-bool project_store_entities_available(const char *project_dir)
+bool project_store_entities_available(StoreManager *manager, const char *project_dir)
 {
-    return (project_store_inspect(project_dir).capabilities & PROJECT_STORE_CAP_ENTITIES) != 0;
+    return (project_store_inspect(manager, project_dir).capabilities & PROJECT_STORE_CAP_ENTITIES) != 0;
 }
 
-bool project_store_entities_built(const char *project_dir)
+bool project_store_entities_built(StoreManager *manager, const char *project_dir)
 {
     ProjectStore store;
-    resolve(project_dir, &store);
+    resolve(manager, project_dir, &store);
     return store.ops == &db_ops && sdb_entities_built(store.db, store.project_id);
 }
 
-bool project_store_entities_backfill(const char *project_dir)
+bool project_store_entities_backfill(StoreManager *manager, const char *project_dir)
 {
     ProjectStore store;
-    resolve(project_dir, &store);
+    resolve(manager, project_dir, &store);
     return store.ops == &db_ops && sdb_entities_backfill(store.db, store.project_id);
 }
 
-size_t project_store_entity_list(const char *project_dir, EntityRow **out)
+size_t project_store_entity_list(StoreManager *manager, const char *project_dir, EntityRow **out)
 {
     *out = NULL;
     ProjectStore store;
-    resolve(project_dir, &store);
+    resolve(manager, project_dir, &store);
     return store.ops == &db_ops ? sdb_entity_list(store.db, store.project_id, out) : 0;
 }
 
-bool project_store_entity_detail(const char *project_dir, const char *entity_id, EntityDetail *out)
+bool project_store_entity_detail(StoreManager *manager, const char *project_dir, const char *entity_id, EntityDetail *out)
 {
     ProjectStore store;
-    resolve(project_dir, &store);
+    resolve(manager, project_dir, &store);
     return store.ops == &db_ops && sdb_entity_detail(store.db, store.project_id, entity_id, out);
 }

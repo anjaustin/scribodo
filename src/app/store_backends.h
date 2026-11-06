@@ -39,15 +39,15 @@ bool sdb_chat_set_observer(Db *db, const char *project_id, const char *id, bool 
 
 /* Move a project's .scribodo/ files into the store (see store_import.c).
  * True if it is in the store afterwards (or already was). */
-bool store_import(const char *project_dir, char *why, size_t whylen);
-bool store_needs_import(const char *project_dir);
+bool store_import(StoreManager *manager, const char *project_dir, char *why, size_t whylen);
+bool store_needs_import(StoreManager *manager, const char *project_dir);
 /* A copied folder becomes its own project (the original's data, new ids). */
-bool store_fork(const char *project_dir, char *why, size_t whylen);
+bool store_fork(StoreManager *manager, const char *project_dir, char *why, size_t whylen);
 /* The project's store data written as files into `dir` (its .scribodo/),
  * with original times: what a backup carries for an in-app restore. */
-bool store_export_project(const char *project_id, const char *dir, char *why, size_t whylen);
+bool store_export_project(StoreManager *manager, const char *project_id, const char *dir, char *why, size_t whylen);
 /* A project whose store record is missing is restored from its newest
  * set-aside files (or starts again on its documents if there are none). */
-bool store_restore(const char *project_dir, char *why, size_t whylen);
+bool store_restore(StoreManager *manager, const char *project_dir, char *why, size_t whylen);
 
 #endif

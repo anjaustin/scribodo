@@ -157,9 +157,9 @@ static uint64_t id_hash(const char *s)
     return h;
 }
 
-size_t records_list(const char *project_dir, RecordKind kind, Record **out)
+size_t records_list(StoreManager *manager, const char *project_dir, RecordKind kind, Record **out)
 {
-    return project_store_records_list(project_dir, kind, out);
+    return project_store_records_list(manager, project_dir, kind, out);
 }
 
 size_t records_list_files(const char *project_dir, RecordKind kind, Record **out)
@@ -283,36 +283,36 @@ size_t records_list_files(const char *project_dir, RecordKind kind, Record **out
     return m;
 }
 
-bool records_append(const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
+bool records_append(StoreManager *manager, const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
                     const SourceRef *sources, size_t nsources, int *ver_out)
 {
-    return records_append_ex(project_dir, kind, id, status, content, sources, nsources, NULL, ver_out);
+    return records_append_ex(manager, project_dir, kind, id, status, content, sources, nsources, NULL, ver_out);
 }
 
-static bool append_impl(const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
+static bool append_impl(StoreManager *manager, const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
                         const SourceRef *sources, size_t nsources, const FindingInfo *finding, int *ver_out, bool fresh);
 
-bool records_append_ex(const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
+bool records_append_ex(StoreManager *manager, const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
                        const SourceRef *sources, size_t nsources, const FindingInfo *finding, int *ver_out)
 {
-    return append_impl(project_dir, kind, id, status, content, sources, nsources, finding, ver_out, false);
+    return append_impl(manager, project_dir, kind, id, status, content, sources, nsources, finding, ver_out, false);
 }
 
-bool records_create_ex(const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
+bool records_create_ex(StoreManager *manager, const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
                        const SourceRef *sources, size_t nsources, const FindingInfo *finding)
 {
-    return append_impl(project_dir, kind, id, status, content, sources, nsources, finding, NULL, true);
+    return append_impl(manager, project_dir, kind, id, status, content, sources, nsources, finding, NULL, true);
 }
 
-static bool append_impl(const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
+static bool append_impl(StoreManager *manager, const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
                          const SourceRef *sources, size_t nsources, const FindingInfo *finding, int *ver_out, bool fresh)
 {
     if (ver_out) *ver_out = 0;
     if (!valid_id(id)) return false;
-    return project_store_records_append(project_dir, kind, id, status, content, sources, nsources, finding, fresh, ver_out);
+    return project_store_records_append(manager, project_dir, kind, id, status, content, sources, nsources, finding, fresh, ver_out);
 }
 
-bool records_append_files(const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
+bool records_append_files(StoreManager *manager, const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
                           const SourceRef *sources, size_t nsources, const FindingInfo *finding, bool fresh, int *ver_out)
 {
     char path[1200];
@@ -332,7 +332,7 @@ bool records_append_files(const char *project_dir, RecordKind kind, const char *
     cJSON *j = cJSON_CreateObject();
     cJSON_AddStringToObject(j, "id", id);
     cJSON_AddNumberToObject(j, "ver", ver);
-    cJSON_AddNumberToObject(j, "ts", (double)(time_t)store_write_time());
+    cJSON_AddNumberToObject(j, "ts", (double)(time_t)store_write_time(manager));
     cJSON_AddStringToObject(j, "status", status);
     cJSON_AddStringToObject(j, "content", content ? content : "");
     cJSON *arr = cJSON_AddArrayToObject(j, "sources");

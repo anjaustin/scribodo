@@ -74,7 +74,7 @@ bool sdb_record_append(Db *db, const char *project_id, RecordKind kind, const ch
         char doc[40] = "";
         const char *rev = NULL, *conv = NULL;
         if (s->kind == SRC_DOC) {
-            if (!strchr(s->doc, '/') && s->doc[0]) store_document_id(project_id, s->doc, true, doc, sizeof(doc));
+            if (!strchr(s->doc, '/') && s->doc[0]) store_document_id_db(db, project_id, s->doc, true, doc, sizeof(doc));
             /* the snapshot must be of this very document */
             if (exists(db, "SELECT id FROM revisions WHERE id = ? AND document_id = ?", s->revision, doc)) rev = s->revision;
         } else if (exists(db, "SELECT id FROM conversations WHERE id = ? AND project_id = ?", s->chat, project_id)) {

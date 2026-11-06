@@ -36,7 +36,7 @@ bool sdb_revision_record(Db *db, const char *project_id, const char *doc_path, c
 {
     if (recorded) *recorded = false;
     char doc[40];
-    if (!store_document_id(project_id, base_name(doc_path), true, doc, sizeof(doc))) return false;
+    if (!store_document_id_db(db, project_id, base_name(doc_path), true, doc, sizeof(doc))) return false;
     char hash[17];
     hash16(text, hash);
     if (!db_begin(db)) return false;
@@ -80,7 +80,7 @@ size_t sdb_revision_list(Db *db, const char *project_id, const char *doc_path, R
 {
     *out = NULL;
     char doc[40];
-    if (!store_document_id(project_id, base_name(doc_path), false, doc, sizeof(doc))) return 0;
+    if (!store_document_id_db(db, project_id, base_name(doc_path), false, doc, sizeof(doc))) return 0;
     DbRows r;
     if (!db_query(db,
                   "SELECT id, origin, note, hash, created_at, CHAR_LENGTH(content) FROM revisions WHERE document_id = ? "
@@ -106,7 +106,7 @@ size_t sdb_revision_list(Db *db, const char *project_id, const char *doc_path, R
 char *sdb_revision_load(Db *db, const char *project_id, const char *doc_path, const Revision *rev)
 {
     char doc[40];
-    if (!store_document_id(project_id, base_name(doc_path), false, doc, sizeof(doc))) return NULL;
+    if (!store_document_id_db(db, project_id, base_name(doc_path), false, doc, sizeof(doc))) return NULL;
     DbRows r;
     /* The revision must belong to this document. */
     if (!db_query(db, "SELECT content, hash FROM revisions WHERE id = ? AND document_id = ?",

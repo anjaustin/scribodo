@@ -20,7 +20,7 @@ typedef struct {
 } ExplorerSnapshot;
 
 void explorer_snapshot_init(ExplorerSnapshot *snapshot);
-bool explorer_snapshot_build(ExplorerSnapshot *next, const char *project_dir, uint64_t generation,
+bool explorer_snapshot_build(ExplorerSnapshot *next, StoreManager *store, const char *project_dir, uint64_t generation,
                              uint64_t project_generation);
 void explorer_snapshot_destroy(ExplorerSnapshot *snapshot);
 const char *explorer_snapshot_doc(const ExplorerSnapshot *snapshot, uint64_t generation, uint64_t project_generation,

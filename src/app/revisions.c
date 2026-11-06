@@ -169,7 +169,7 @@ size_t revisions_list_files(const char *project_dir, const char *doc_path, Revis
     return count;
 }
 
-static bool record_impl(const char *project_dir, const char *doc_path, const char *text, const char *origin,
+static bool record_impl(StoreManager *manager, const char *project_dir, const char *doc_path, const char *text, const char *origin,
                         const char *note, bool *recorded, char *file_out, size_t file_len)
 {
     if (recorded) *recorded = false;
@@ -192,7 +192,7 @@ static bool record_impl(const char *project_dir, const char *doc_path, const cha
     free(list);
     if (same) return true; /* identical to the newest revision */
 
-    double wt = store_write_time(); /* now, or an export's original time */
+    double wt = store_write_time(manager); /* now, or an export's original time */
     struct timeval tv = { .tv_sec = (time_t)wt, .tv_usec = (suseconds_t)((wt - (double)(time_t)wt) * 1e6) };
     struct tm tmv;
     time_t now = tv.tv_sec;
@@ -245,23 +245,23 @@ static bool record_impl(const char *project_dir, const char *doc_path, const cha
     return ok;
 }
 
-bool revisions_record_files(const char *project_dir, const char *doc_path, const char *text, const char *origin,
+bool revisions_record_files(StoreManager *manager, const char *project_dir, const char *doc_path, const char *text, const char *origin,
                             const char *note, bool *recorded)
 {
     int lock = revision_lock(project_dir, doc_path, true, LOCK_EX);
     if (lock < 0) return false;
-    bool ok = record_impl(project_dir, doc_path, text, origin, note, recorded, NULL, 0);
+    bool ok = record_impl(manager, project_dir, doc_path, text, origin, note, recorded, NULL, 0);
     revision_unlock(lock);
     return ok;
 }
 
-bool revisions_snapshot_files(const char *project_dir, const char *doc_path, const char *text,
+bool revisions_snapshot_files(StoreManager *manager, const char *project_dir, const char *doc_path, const char *text,
                               char *file_out, size_t file_len)
 {
     if (file_len) file_out[0] = '\0';
     int lock = revision_lock(project_dir, doc_path, true, LOCK_EX);
     if (lock < 0) return false;
-    bool ok = record_impl(project_dir, doc_path, text, "source", NULL, NULL, file_out, file_len) && file_out[0];
+    bool ok = record_impl(manager, project_dir, doc_path, text, "source", NULL, NULL, file_out, file_len) && file_out[0];
     revision_unlock(lock);
     return ok;
 }
@@ -292,25 +292,25 @@ char *revisions_load_files(const char *project_dir, const char *doc_path, const 
     return text;
 }
 
-size_t revisions_list(const char *project_dir, const char *doc_path, Revision **out)
+size_t revisions_list(StoreManager *manager, const char *project_dir, const char *doc_path, Revision **out)
 {
-    return project_store_revisions_list(project_dir, doc_path, out);
+    return project_store_revisions_list(manager, project_dir, doc_path, out);
 }
 
-bool revisions_record(const char *project_dir, const char *doc_path, const char *text, const char *origin,
+bool revisions_record(StoreManager *manager, const char *project_dir, const char *doc_path, const char *text, const char *origin,
                       const char *note, bool *recorded)
 {
     if (recorded) *recorded = false;
-    return project_store_revisions_record(project_dir, doc_path, text, origin, note, recorded);
+    return project_store_revisions_record(manager, project_dir, doc_path, text, origin, note, recorded);
 }
 
-bool revisions_snapshot(const char *project_dir, const char *doc_path, const char *text, char *file_out, size_t file_len)
+bool revisions_snapshot(StoreManager *manager, const char *project_dir, const char *doc_path, const char *text, char *file_out, size_t file_len)
 {
     if (file_out && file_len) file_out[0] = '\0';
-    return project_store_revisions_snapshot(project_dir, doc_path, text, file_out, file_len);
+    return project_store_revisions_snapshot(manager, project_dir, doc_path, text, file_out, file_len);
 }
 
-char *revisions_load(const char *project_dir, const char *doc_path, const Revision *r)
+char *revisions_load(StoreManager *manager, const char *project_dir, const char *doc_path, const Revision *r)
 {
-    return project_store_revisions_load(project_dir, doc_path, r);
+    return project_store_revisions_load(manager, project_dir, doc_path, r);
 }

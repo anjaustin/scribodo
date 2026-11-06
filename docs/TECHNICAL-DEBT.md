@@ -94,20 +94,21 @@ and shutdown ambiguity.
 
 ## P1 — Hidden process-global state
 
-**Status:** Open
+**Status:** Complete
 **Why now:** configuration and lifecycle dependencies are established by call
 order, limiting parallel tests and future independent application instances.
 
 ### Evidence
 
-- `store.c` owns global configuration/online state and thread-local connection,
-  import, timestamp and verification state.
-- `semantic.c`, `recent.c` and `input.c` hold process-global configuration.
-- Revisions and findings use process-global mutexes.
+- Store configuration and lifecycle state now belong to an explicit
+  `StoreManager`; manager-keyed thread contexts own connections, import state,
+  timestamp overrides and verification caches.
+- Semantic and recent persistence are owned services.
+- Revision and finding serialization uses per-project advisory locks.
 
 ### Migration plan
 
-- [ ] Introduce an owned `StoreManager`; keep connections thread-local within
+- [x] Introduce an owned `StoreManager`; keep connections thread-local within
       that manager.
 - [x] Introduce `SemanticClient` and clear borrowed embedder ownership.
 - [x] Introduce `RecentStore`.
@@ -135,7 +136,7 @@ order, limiting parallel tests and future independent application instances.
 
 ## P1 — CI omits high-value verification
 
-**Status:** In progress
+**Status:** Blocked on external infrastructure and repository policy
 **Why now:** the repository already owns strong race, database and UI tests, but
 several are optional developer actions rather than merge gates.
 
@@ -146,7 +147,8 @@ several are optional developer actions rather than merge gates.
 - [x] ASan/UBSan.
 - [x] TSan.
 - [ ] MariaDB/Qdrant integration (`make dbtest`).
-- [ ] Scripted UI (`make uitest`).
+- [x] Scripted UI canary (`make uitest`, non-blocking while runner stability is
+      established).
 - [ ] Store UI (`make uitest-db`).
 - [ ] Scheduled backup, remote and offline acceptance suites.
 
@@ -161,12 +163,16 @@ never pass.
 
 - [x] Make `make tsan` self-contained on a clean checkout.
 - [x] Run TSan in CI.
-- [ ] Canary `make uitest` on hosted macOS; upload `build/ui` and `build/hangs`
+- [x] Canary `make uitest` on hosted macOS; upload `build/ui` and `build/hangs`
       on failure, then make it required after proving stable.
 - [ ] Provision a trusted, serialized bare-metal macOS runner with Docker for
       `dbtest` and `uitest-db`, or build a pinned native-service harness.
 - [ ] Run real-model, backup, remote and offline suites on a scheduled/manual
       trusted runner.
+
+Required-check enforcement and direct-push prevention also require repository
+branch-protection or ruleset administration. The workflow can publish checks,
+but this repository policy cannot be established from a source commit alone.
 
 ### Acceptance criteria
 
@@ -236,3 +242,22 @@ Do not treat these as remediation targets without a changed product decision:
   and emit complete responses instead of depending on single `recv`/`send` calls.
 - Verification: build, unit/headless, ASan/UBSan, TSan, database, base UI and
   store UI suites passed locally; controller ownership review found no blockers.
+
+### 2026-11-05 — explicit store ownership and hosted UI canary
+
+- Added an owned `StoreManager` and propagated it through project routing,
+  persistence APIs, semantic/observer services, import/export/backup, workers,
+  Explorer snapshots, application composition and tests.
+- Keyed thread-local connections and transient store state by manager, with
+  lifecycle generations that invalidate stale connections and verification
+  results. Lifecycle/open transitions are serialized, failed retargets retain
+  the requested probe destination, and forced-offline state is manager-local.
+- Added same-thread and cross-thread dual-manager coverage, forced-offline and
+  database isolation, repeated-start invalidation and verification-cache
+  isolation.
+- Added a non-blocking hosted `make uitest` canary with UI and hang artifacts on
+  failure. Database/store UI and scheduled acceptance gates remain blocked on a
+  trusted macOS service runner or pinned native-service harness; required-check
+  enforcement remains blocked on repository administration.
+- Verification: build and headless tests, ASan/UBSan, TSan (574 checks),
+  database integration (397 checks), base UI and store UI passed locally.

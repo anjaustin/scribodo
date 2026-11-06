@@ -17,6 +17,7 @@
 #include <time.h>
 
 #include "llm/chat.h"
+#include "app/store.h"
 
 typedef struct {
     char id[40];
@@ -34,20 +35,20 @@ void chat_store_new_id(char *out, size_t outlen);
 
 /* Append one message; writes the meta line first if the file is new.
  * `title` is used only for a new file. */
-bool chat_store_append(const char *project_dir, const char *id, const char *title, const ChatMessage *m);
+bool chat_store_append(StoreManager *manager, const char *project_dir, const char *id, const char *title, const ChatMessage *m);
 
 /* Rename a stored conversation (a title line is appended). */
-bool chat_store_rename(const char *project_dir, const char *id, const char *title);
+bool chat_store_rename(StoreManager *manager, const char *project_dir, const char *id, const char *title);
 /* Whether the observer reads this chat (the author's choice; a line is
  * appended to the chat's file, or the store updated). */
-bool chat_store_set_observer(const char *project_dir, const char *id, bool read);
+bool chat_store_set_observer(StoreManager *manager, const char *project_dir, const char *id, bool read);
 
 /* List conversations, newest first. Caller frees *out. */
-size_t chat_store_list(const char *project_dir, ChatSummary **out);
-bool chat_store_list_checked(const char *project_dir, ChatSummary **out, size_t *count);
+size_t chat_store_list(StoreManager *manager, const char *project_dir, ChatSummary **out);
+bool chat_store_list_checked(StoreManager *manager, const char *project_dir, ChatSummary **out, size_t *count);
 
 /* Load a conversation's messages. Caller frees with chat_store_free_messages. */
-bool chat_store_load(const char *project_dir, const char *id, ChatMessage **msgs, size_t *n);
+bool chat_store_load(StoreManager *manager, const char *project_dir, const char *id, ChatMessage **msgs, size_t *n);
 void chat_store_free_messages(ChatMessage *msgs, size_t n);
 
 #endif

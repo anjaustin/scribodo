@@ -73,14 +73,15 @@ static void *service_supervisor_main(void *arg)
         int n = snprintf(tool, sizeof(tool), "%s/services.sh", supervisor->tools_dir);
         if (n > 0 && (size_t)n < sizeof(tool)) supervisor->result.command_succeeded = run_services(supervisor, tool);
     }
-    if (!atomic_load(&supervisor->cancel)) supervisor->result.reachable = store_probe();
+    if (!atomic_load(&supervisor->cancel)) supervisor->result.reachable = store_probe(supervisor->store);
     atomic_store(&supervisor->state, 2);
     return NULL;
 }
 
-bool service_supervisor_init(ServiceSupervisor *supervisor)
+bool service_supervisor_init(ServiceSupervisor *supervisor, StoreManager *store)
 {
     memset(supervisor, 0, sizeof(*supervisor));
+    supervisor->store = store;
     atomic_init(&supervisor->state, 0);
     atomic_init(&supervisor->cancel, false);
     return pthread_mutex_init(&supervisor->mu, NULL) == 0;

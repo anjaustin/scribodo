@@ -20,6 +20,7 @@
 #include <stddef.h>
 
 #include "llm/server.h"
+#include "app/store.h"
 
 #define SEM_DIM 1024
 /* The longest text embedded, in bytes (longer ones by their start). The
@@ -29,7 +30,7 @@
 typedef struct SemanticClient SemanticClient;
 
 /* Owns Qdrant configuration; borrows the embedding server (NULL: fake). */
-SemanticClient *semantic_client_create(LlmServer *embed);
+SemanticClient *semantic_client_create(StoreManager *store, LlmServer *embed);
 void semantic_client_destroy(SemanticClient *client);
 /* Whether retrieval is available right now (Qdrant reachable and, for the
  * real embedder, its server ready). */

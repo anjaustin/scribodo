@@ -11,6 +11,7 @@
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include "app/store.h"
 
 typedef struct {
     pthread_t thread;
@@ -21,9 +22,10 @@ typedef struct {
     char dest[PATH_MAX + 64];
     char why[400];
     bool ok;
+    StoreManager *store;
 } BackupJob;
 
-bool backup_job_init(BackupJob *job);
+bool backup_job_init(BackupJob *job, StoreManager *store);
 bool backup_job_start(BackupJob *job, const char *tools_dir, const char *project_dir);
 bool backup_job_busy(const BackupJob *job);
 /* Deliver a completed result exactly once, after joining its worker. */

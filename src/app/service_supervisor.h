@@ -6,6 +6,7 @@
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdbool.h>
+#include "app/store.h"
 
 typedef struct {
     bool command_attempted;
@@ -21,9 +22,10 @@ typedef struct {
     char tools_dir[PATH_MAX];
     bool start_services;
     ServiceSupervisorResult result;
+    StoreManager *store;
 } ServiceSupervisor;
 
-bool service_supervisor_init(ServiceSupervisor *supervisor);
+bool service_supervisor_init(ServiceSupervisor *supervisor, StoreManager *store);
 bool service_supervisor_start(ServiceSupervisor *supervisor, const char *tools_dir, bool start_services);
 bool service_supervisor_busy(const ServiceSupervisor *supervisor);
 bool service_supervisor_poll(ServiceSupervisor *supervisor, ServiceSupervisorResult *result);

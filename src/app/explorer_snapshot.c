@@ -18,7 +18,7 @@ void explorer_snapshot_init(ExplorerSnapshot *snapshot)
     if (snapshot) memset(snapshot, 0, sizeof(*snapshot));
 }
 
-bool explorer_snapshot_build(ExplorerSnapshot *next, const char *project_dir, uint64_t generation,
+bool explorer_snapshot_build(ExplorerSnapshot *next, StoreManager *store, const char *project_dir, uint64_t generation,
                              uint64_t project_generation)
 {
     if (!next) return false;
@@ -62,7 +62,7 @@ bool explorer_snapshot_build(ExplorerSnapshot *next, const char *project_dir, ui
         }
         qsort(next->docs, next->ndocs, sizeof(next->docs[0]), compare_names);
     }
-    if (!chat_store_list_checked(project_dir, &next->chats, &next->nchats)) {
+    if (!chat_store_list_checked(store, project_dir, &next->chats, &next->nchats)) {
         explorer_snapshot_destroy(next);
         return false;
     }
