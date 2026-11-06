@@ -25,6 +25,26 @@ cJSON *json_parse(const char *text)
     return json_parse_checked(text, &allocation_error);
 }
 
+cJSON *json_parse_complete(const char *text, size_t n)
+{
+    /* cJSON strings cannot represent embedded NULs without truncating values
+     * or aliasing field names. Reject them before interpreting any fields. */
+    if (!text || !n || memchr(text, 0, n) || json_has_nul_escape(text, n)) return NULL;
+    if (pthread_mutex_lock(&parse_mutex) != 0) return NULL;
+    json_vendor_reset_allocation_error();
+    const char *end = NULL;
+    cJSON *tree = cJSON_ParseWithLengthOpts(text, n, &end, false);
+    pthread_mutex_unlock(&parse_mutex);
+    if (tree) {
+        while (end < text + n && (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n')) end++;
+        if (end != text + n) {
+            cJSON_Delete(tree);
+            tree = NULL;
+        }
+    }
+    return tree;
+}
+
 bool json_has_nul_escape(const char *text, size_t n)
 {
     for (size_t i = 0; i + 1 < n; i++) {

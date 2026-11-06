@@ -137,13 +137,88 @@ static bool remote_cfg(RemoteConfig *c, const char *url, const char *key, int mo
     return remote_parse(json, c, err, errlen);
 }
 
+static bool write_private(const char *path, const char *text)
+{
+    FILE *f = fopen(path, "wb");
+    bool ok = f && fputs(text, f) >= 0;
+    if (f) ok = fclose(f) == 0 && ok;
+    return ok && chmod(path, 0600) == 0;
+}
+
+static void test_remote_json_boundaries(void)
+{
+    RemoteConfig c;
+    char err[200], json[2000], key[700];
+    snprintf(key, sizeof(key), "%s/strict-key", g_dir);
+    CHECK(write_private(key, "sk-test"));
+    const char *models[] = { "m", "m\\u0000hidden" };
+    const char *tails[] = { " \t\r\n", " garbage", " {}" };
+    for (size_t i = 0; i < 2; i++) {
+        for (size_t k = 0; k < 3; k++) {
+            snprintf(json, sizeof(json), "{\"base_url\":\"https://api.example.com/v1\",\"model\":\"%s\",\"api_key_file\":\"%s\"}%s",
+                     models[i], key, tails[k]);
+            bool ok = remote_parse(json, &c, err, sizeof(err));
+            CHECK(i == 0 && k == 0 ? ok && !strcmp(c.key, "sk-test") : !ok && err[0] && !c.key[0]);
+        }
+    }
+    /* cJSON's decoded strings must not alias an input path or a field name. */
+    snprintf(json, sizeof(json), "{\"base_url\":\"https://api.example.com/v1\",\"model\":\"m\",\"api_key_file\":\"%s\\u0000other\"}", key);
+    CHECK(!remote_parse(json, &c, err, sizeof(err)) && err[0] && !c.key[0]);
+    snprintf(json, sizeof(json), "{\"base_url\":\"https://api.example.com/v1\",\"model\":\"m\\\\u0000literal\",\"api_key_file\":\"%s\"}", key);
+    CHECK(remote_parse(json, &c, err, sizeof(err)) && !strcmp(c.model, "m\\u0000literal"));
+    snprintf(json, sizeof(json), "{\"base_url\\u0000other\":\"https://api.example.com/v1\",\"model\":\"m\",\"api_key_file\":\"%s\"}", key);
+    CHECK(!remote_parse(json, &c, err, sizeof(err)) && err[0] && !c.key[0]);
+    char oversized_path[2000];
+    memset(oversized_path, 'x', sizeof(oversized_path) - 1);
+    oversized_path[sizeof(oversized_path) - 1] = '\0';
+    setenv("SCRIBODO_REMOTE_CONFIG", oversized_path, 1);
+    CHECK(!remote_load(&c, err, sizeof(err)) && strstr(err, "path is too long") && !c.key[0]);
+    unsetenv("SCRIBODO_REMOTE_CONFIG");
+    char model[200];
+    memset(model, 'x', sizeof(model) - 1);
+    model[sizeof(model) - 1] = '\0';
+    snprintf(json, sizeof(json), "{\"base_url\":\"https://api.example.com/v1\",\"model\":\"%s\",\"api_key_file\":\"%s\"}", model, key);
+    err[0] = '\0';
+    CHECK(!remote_parse(json, &c, err, sizeof(err)) && err[0] && !c.key[0]);
+}
+
+static void test_remote_service_secret_aliases(void)
+{
+    char dir[700], secret[800], alias[800], hardlink[800], ordinary[800], json[1800], err[200];
+    const char *env = getenv("SCRIBODO_SECRETS");
+    char *saved = env ? strdup(env) : NULL;
+    snprintf(dir, sizeof(dir), "%s/custom-services", g_dir);
+    CHECK(mkdir(dir, 0700) == 0);
+    snprintf(secret, sizeof(secret), "%s/qdrant_api_key", dir);
+    snprintf(alias, sizeof(alias), "%s/key-alias", g_dir);
+    snprintf(hardlink, sizeof(hardlink), "%s/key-hardlink", g_dir);
+    snprintf(ordinary, sizeof(ordinary), "%s/ordinary-key", g_dir);
+    CHECK(write_private(secret, "local-service-only"));
+    CHECK(write_private(ordinary, "remote-provider-only"));
+    CHECK(symlink(secret, alias) == 0);
+    CHECK(link(secret, hardlink) == 0);
+    setenv("SCRIBODO_SECRETS", dir, 1);
+    const char *paths[] = { secret, alias, hardlink, ordinary };
+    RemoteConfig c;
+    for (size_t i = 0; i < 4; i++) {
+        snprintf(json, sizeof(json), "{\"base_url\":\"https://api.example.com/v1\",\"model\":\"m\",\"api_key_file\":\"%s\"}", paths[i]);
+        bool ok = remote_parse(json, &c, err, sizeof(err));
+        CHECK(i == 3 ? ok && !strcmp(c.key, "remote-provider-only") : !ok && strstr(err, "service secrets") && !c.key[0]);
+    }
+    if (saved) setenv("SCRIBODO_SECRETS", saved, 1);
+    else unsetenv("SCRIBODO_SECRETS");
+    free(saved);
+}
+
 static void test_remote_file_reads(void)
 {
-    char path[700], link[700], cfg[700], key[700], json[1600];
+    char path[700], link[700], cfg[700], key[700], json[1600], dangling[700];
     snprintf(path, sizeof(path), "%s/config-fifo", g_dir);
     snprintf(link, sizeof(link), "%s/config-link", g_dir);
     CHECK(mkfifo(path, 0600) == 0);
     CHECK(symlink(path, link) == 0);
+    snprintf(dangling, sizeof(dangling), "%s/dangling-config", g_dir);
+    CHECK(symlink("missing-remote-config", dangling) == 0);
     snprintf(cfg, sizeof(cfg), "%s/file-config.json", g_dir);
     snprintf(key, sizeof(key), "%s/file-key", g_dir);
     snprintf(json, sizeof(json), "{\"base_url\":\"https://api.example.com/v1\",\"model\":\"m\",\"api_key_file\":\"%s\"}", path);
@@ -152,7 +227,7 @@ static void test_remote_file_reads(void)
     if (!f) return;
     fputs(json, f);
     fclose(f);
-    const char *paths[] = { path, link, g_dir, cfg };
+    const char *paths[] = { path, link, g_dir, cfg, dangling };
     /* Bound each regression independently: the old fopen blocks on the FIFO. */
     for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
         pid_t pid = fork();
@@ -387,7 +462,10 @@ static void test_remote(void)
 int main(void)
 {
     if (!test_state_fixture_init(g_dir, sizeof(g_dir), &g_store)) return 1;
-    const TestCase tests[] = { { "remote_file_reads", test_remote_file_reads }, { "remote", test_remote } };
+    const TestCase tests[] = { { "remote_file_reads", test_remote_file_reads },
+                              { "remote_json_boundaries", test_remote_json_boundaries },
+                              { "remote_service_secret_aliases", test_remote_service_secret_aliases },
+                              { "remote", test_remote } };
     int result = run_tests(tests, sizeof(tests) / sizeof(tests[0]));
     test_state_fixture_destroy(g_dir, g_store);
     return result;

@@ -81,7 +81,7 @@ watchdog timeout:
 8. Remove the remote file-size limit.
 9. Ignore embedded NULs in remote files.
 
-## Verification
+## Initial remediation verification
 
 - Fresh application build and complete headless suite: passed (22,590 C checks
   and 11 Python tests on this run).
@@ -100,3 +100,69 @@ Raw evidence is kept locally in `build/remediation-*.log`. This establishes the
 documented failure contracts, not exhaustive proof against every allocation,
 filesystem or hardware failure. Local filesystem metadata is not an adversarial
 authentication boundary.
+
+## Adversarial follow-up on `720f5b0`
+
+### Complete bytes were not necessarily complete JSON
+
+The regular-file reader checked the complete file, but cJSON's default parser
+still accepted a valid JSON prefix followed by garbage or another JSON value.
+Escaped NULs could also truncate values or alias field names after decoding. The
+same problem affected embedding bodies, including a raw NUL followed by hidden
+bytes in a complete HTTP response.
+
+The initial adversarial tests produced eight remote configuration assertions
+and four embedding assertions on this boundary, before remediation. A separate
+`json_parse_complete(text, n)` boundary now uses the existing parser mutex,
+consumes an exact byte span and rejects raw/decoded NULs or trailing non-whitespace
+bytes. Exact spans do not require an accessible terminator; ASan exercises that
+contract. Literal escaped backslashes and trailing JSON whitespace remain valid.
+Only the configuration and embedding adapters adopt it; legacy crash-torn log
+parsing is intentionally unchanged.
+
+Configuration parse failures now always supply a reason for over-width model or
+URL fields, and over-width configuration paths fail rather than silently
+truncate. A dangling configuration symlink is an error, not silently equivalent
+to an absent file.
+
+### Service-secret exclusion missed configured roots and hard links
+
+The old exclusion used the default service pathname and a literal path substring.
+Three new assertions reproduced acceptance of a fake service key from a custom
+`SCRIBODO_SECRETS` root, its symlink alias and a hard link outside the root.
+
+The check now inspects the actual opened key descriptor, canonical default and
+configured service roots, and device/inode identities of the known credential
+files (`db_password`, `db_root_password`, `qdrant_api_key`, `qdrant.env`). It fails
+closed if required metadata cannot be checked. No service credential contents
+are read. This protects against accidental selection and ordinary aliases, not
+deliberate same-user filesystem tampering or an undiscovered future credential
+filename outside the service directory.
+
+### Follow-up mutation and verification evidence
+
+The original nine compiled mutation checks are retained. Six additional scratch
+mutations remove complete-input consumption, decoded-NUL rejection, the service
+secret guard, descriptor identity comparison, dangling-link diagnosis or the
+configuration-path length guard. The final compiled rerun and serialized native
+acceptance evidence is recorded below. Raw follow-up evidence is in
+`build/redteam2-*.log`.
+
+- All 15 mutations were compiled and caught by assertions (exit 1); none was
+  counted as caught because of a build failure, crash or watchdog timeout.
+- Fresh application/headless build: 22,639 C checks and 11 Python tests passed.
+- ASan/UBSan, TSan, normal and sanitized database integration: passed.
+- Dependency checks and static analysis of all four changed production modules:
+  passed; no analyzer diagnostics.
+- An ASan/UBSan probe placed 20,000 randomized non-terminated spans immediately
+  before an inaccessible guard page, plus valid JSON/trailing-content controls;
+  it passed without an out-of-span read or sanitizer report.
+- Final serialized native UI, store UI, backup/restore, stand-in remote provider,
+  case-sensitive rename and offline real-model acceptance: all passed (42 script
+  runs, 628 expectations), including live BF16 chat and real embeddings with
+  outside-network access denied.
+
+A second source-level pass reviewed buffer reservation before stb mutation,
+request/response allocation ownership, bounded parsing and parser locking,
+descriptor validation and service-root/path alias handling. It found no further
+confirmed defect within this scope. The residual limits above still apply.

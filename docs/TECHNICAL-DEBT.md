@@ -591,3 +591,26 @@ Do not treat these as remediation targets without a changed product decision:
   still clear undo history if recording that edit runs out of memory; the
   inconsistent history is deliberately discarded rather than replayed. The
   pre-existing sample-document edit remains excluded.
+
+### 2026-11-06 — failure-path adversarial follow-up and publication
+
+- Committed the initial validated remediation as `720f5b0`, then added
+  adversarial regressions for complete JSON consumption and service-secret alias
+  exclusion. The pre-fix follow-up run failed 11 remote and four embedding
+  assertions; no crash or timeout was counted as a valid regression result.
+- Added a serialized complete-input JSON boundary for configuration and embedding
+  adapters without changing legacy crash-torn log parsing. Trailing bytes,
+  extra JSON values and NUL-decoded field/value aliases are refused. Dangling
+  configuration links and path/field truncation have explicit error paths.
+- Checked opened key descriptors against canonical configured/default service
+  roots and known credential device/inode identities, refusing hard-link aliases
+  and unverifiable metadata before reading credential contents.
+- A second scoped review found no further confirmed defect. All 15 compiled
+  mutation checks were caught by assertions. A guarded-span ASan/UBSan probe
+  exercised 20,000 random non-terminated inputs without an out-of-span read.
+- Final validation passed: fresh application/headless build (22,639 C checks and
+  11 Python tests), ASan/UBSan, TSan, normal/sanitized database integration,
+  dependency checks, four-module static analysis, and serialized native/recovery/
+  offline acceptance (42 script runs, 628 expectations, including real models).
+- Evidence and residual limits remain in `docs/REDTEAM-013-failure-paths.md`.
+  The unrelated sample-document edit is neither modified nor included in commits.

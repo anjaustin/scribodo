@@ -10,6 +10,9 @@
 #include <stddef.h>
 
 cJSON *json_parse(const char *text);
+/* Exact byte span: no trailing JSON/garbage or raw/decoded NULs. The span need
+ * not have a terminator. Keep legacy crash-torn log parsing separate. */
+cJSON *json_parse_complete(const char *text, size_t n);
 /* Distinguish malformed crash-torn input from allocation failure. */
 cJSON *json_parse_checked(const char *text, bool *allocation_error);
 bool json_has_nul_escape(const char *text, size_t n);

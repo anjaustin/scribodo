@@ -17,6 +17,39 @@
 
 #include "core/json.h"
 
+/* Paths catch ordinary mistakes; descriptor identity also catches a hard link
+ * outside the service directory. No service credential contents are read. */
+static bool service_secret(const char *path, const struct stat *opened)
+{
+    if (strstr(path, "/Scribodo/services/")) return true;
+    char defaults[PATH_MAX];
+    int n = snprintf(defaults, sizeof(defaults), "%s/Library/Application Support/Scribodo/services",
+                     getenv("HOME") ? getenv("HOME") : "");
+    if (n < 0 || (size_t)n >= sizeof(defaults)) return true;
+    const char *roots[] = { defaults, getenv("SCRIBODO_SECRETS") };
+    const char *names[] = { "db_password", "db_root_password", "qdrant_api_key", "qdrant.env" };
+    for (size_t i = 0; i < sizeof(roots) / sizeof(roots[0]); i++) {
+        if (!roots[i] || !roots[i][0]) continue;
+        char canonical[PATH_MAX];
+        if (realpath(roots[i], canonical)) {
+            size_t len = strlen(canonical);
+            if (!strncmp(path, canonical, len) && (path[len] == '/' || path[len] == '\0' || len == 1)) return true;
+        }
+        for (size_t k = 0; k < sizeof(names) / sizeof(names[0]); k++) {
+            char candidate[PATH_MAX + 64];
+            n = snprintf(candidate, sizeof(candidate), "%s/%s", roots[i], names[k]);
+            if (n < 0 || (size_t)n >= sizeof(candidate)) return true;
+            struct stat st;
+            if (stat(candidate, &st) == 0) {
+                if (st.st_dev == opened->st_dev && st.st_ino == opened->st_ino) return true;
+            } else if (errno != ENOENT && errno != ENOTDIR) {
+                return true; /* Can't verify the credential exclusion safely. */
+            }
+        }
+    }
+    return false;
+}
+
 /* Validate the opened descriptor, not a prior stat of a pathname. O_NONBLOCK
  * prevents a FIFO from hanging startup; only complete, stable regular files
  * are accepted. No truncation of configuration or credentials is safe. */
@@ -26,7 +59,12 @@ static char *slurp(const char *path, size_t max, bool key, char *err, size_t err
     int fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
     if (fd < 0) {
         /* An absent config is normal; other failures must be visible. */
-        if (key || errno != ENOENT) snprintf(err, errlen, "Couldn't open %s", label);
+        bool missing = !key && errno == ENOENT;
+        if (missing) {
+            struct stat link;
+            missing = lstat(path, &link) != 0 && errno == ENOENT;
+        }
+        if (!missing) snprintf(err, errlen, "Couldn't open %s", label);
         return NULL;
     }
     struct stat before, after;
@@ -38,6 +76,11 @@ static char *slurp(const char *path, size_t max, bool key, char *err, size_t err
     if (before.st_uid != getuid() || (before.st_mode & (key ? 077 : 022))) {
         snprintf(err, errlen, key ? "The API key file must be yours and private (chmod 600)" :
                                    "remote.json must be yours and not writable by others (chmod 600)");
+        close(fd);
+        return NULL;
+    }
+    if (key && service_secret(path, &before)) {
+        snprintf(err, errlen, "The API key file can't be one of Scribodo's own service secrets (or couldn't be checked)");
         close(fd);
         return NULL;
     }
@@ -107,7 +150,8 @@ static bool parse_url(const char *url, char *host, size_t hostlen, char *err, si
 bool remote_parse(const char *json, RemoteConfig *c, char *err, size_t errlen)
 {
     memset(c, 0, sizeof(*c));
-    cJSON *j = json_parse(json);
+    if (errlen) err[0] = '\0';
+    cJSON *j = json ? json_parse_complete(json, strlen(json)) : NULL;
     if (!cJSON_IsObject(j)) {
         snprintf(err, errlen, "remote.json isn't valid JSON");
         cJSON_Delete(j);
@@ -118,7 +162,10 @@ bool remote_parse(const char *json, RemoteConfig *c, char *err, size_t errlen)
                 *ctx = cJSON_GetObjectItem(j, "context_tokens");
     bool ok = cJSON_IsString(url) && cJSON_IsString(model) && cJSON_IsString(kf) && model->valuestring[0];
     if (!ok) snprintf(err, errlen, "remote.json needs base_url, model and api_key_file");
-    ok = ok && strlen(url->valuestring) < sizeof(c->base_url) && strlen(model->valuestring) < sizeof(c->model);
+    if (ok && (strlen(url->valuestring) >= sizeof(c->base_url) || strlen(model->valuestring) >= sizeof(c->model))) {
+        snprintf(err, errlen, "remote.json base_url or model is too long");
+        ok = false;
+    }
     ok = ok && parse_url(url->valuestring, c->host, sizeof(c->host), err, errlen);
     if (ok) {
         snprintf(c->name, sizeof(c->name), "%s", cJSON_IsString(name) && name->valuestring[0] ? name->valuestring : c->host);
@@ -130,13 +177,9 @@ bool remote_parse(const char *json, RemoteConfig *c, char *err, size_t errlen)
         /* The key: from a private file of the author's, never from
          * remote.json itself, and never one of Scribodo's own secrets (which
          * would then go to the provider as the key). */
-        char real[PATH_MAX] = "", secrets[PATH_MAX];
-        snprintf(secrets, sizeof(secrets), "%s/Library/Application Support/Scribodo/services/", getenv("HOME") ? getenv("HOME") : "");
+        char real[PATH_MAX] = "";
         if (!realpath(kf->valuestring, real)) {
             snprintf(err, errlen, "The API key file doesn't exist");
-            ok = false;
-        } else if (!strncmp(real, secrets, strlen(secrets)) || strstr(real, "/Scribodo/services/")) {
-            snprintf(err, errlen, "The API key file can't be one of Scribodo's own service secrets");
             ok = false;
         } else {
             /* Permit a maximum-length key plus a conventional CRLF, but never
@@ -174,8 +217,12 @@ bool remote_load(RemoteConfig *c, char *err, size_t errlen)
     memset(c, 0, sizeof(*c));
     char path[1024];
     const char *env = getenv("SCRIBODO_REMOTE_CONFIG");
-    if (env) snprintf(path, sizeof(path), "%s", env);
-    else snprintf(path, sizeof(path), "%s/Library/Application Support/Scribodo/remote.json", getenv("HOME") ? getenv("HOME") : "");
+    int n = env ? snprintf(path, sizeof(path), "%s", env) :
+                  snprintf(path, sizeof(path), "%s/Library/Application Support/Scribodo/remote.json", getenv("HOME") ? getenv("HOME") : "");
+    if (n < 0 || (size_t)n >= sizeof(path)) {
+        snprintf(err, errlen, "The remote configuration path is too long");
+        return false;
+    }
     char *json = slurp(path, 64 * 1024, false, err, errlen);
     if (!json) return false;
     bool ok = remote_parse(json, c, err, errlen);

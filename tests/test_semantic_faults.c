@@ -18,6 +18,7 @@ typedef struct {
     int inputs;
     char path[104];
     const char *response;
+    size_t response_len;
     atomic_bool stop;
     atomic_int bad_requests;
     pthread_t thread;
@@ -71,16 +72,17 @@ static void *serve(void *arg)
         if (!valid) atomic_fetch_add(&s->bad_requests, 1);
         cJSON_Delete(j);
         const char *response = valid ? s->response : "{}";
+        size_t response_len = valid ? s->response_len : 2;
         char header[256];
         int n = snprintf(header, sizeof(header), "HTTP/1.1 %s\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n",
-                         valid ? "200 OK" : "400 Bad Request", strlen(response));
-        if (send_all(fd, header, (size_t)n)) send_all(fd, response, strlen(response));
+                         valid ? "200 OK" : "400 Bad Request", response_len);
+        if (send_all(fd, header, (size_t)n)) send_all(fd, response, response_len);
         close(fd);
     }
     return NULL;
 }
 
-static bool start(EmbedStub *s, const char *response, int inputs, LlmServer **server, SemanticClient **client)
+static bool start_bytes(EmbedStub *s, const char *response, size_t response_len, int inputs, LlmServer **server, SemanticClient **client)
 {
     memset(s, 0, sizeof(*s));
     atomic_init(&s->stop, false);
@@ -91,6 +93,7 @@ static bool start(EmbedStub *s, const char *response, int inputs, LlmServer **se
     int len = snprintf(s->path, sizeof(s->path), "%s/embed.sock", root);
     if (len < 0 || (size_t)len >= sizeof(s->path)) return false;
     s->response = response;
+    s->response_len = response_len;
     s->fd = socket(AF_UNIX, SOCK_STREAM, 0);
     struct sockaddr_un addr = { .sun_family = AF_UNIX };
     snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", s->path);
@@ -116,6 +119,11 @@ fail:
     return false;
 }
 
+static bool start(EmbedStub *s, const char *response, int inputs, LlmServer **server, SemanticClient **client)
+{
+    return start_bytes(s, response, strlen(response), inputs, server, client);
+}
+
 static void stop(EmbedStub *s, LlmServer *server, SemanticClient *client)
 {
     atomic_store(&s->stop, true);
@@ -137,6 +145,28 @@ static bool unchanged(const float *out)
 {
     for (int i = 0; i < SEM_DIM; i++) if (out[i] != 42.0f) return false;
     return true;
+}
+
+static void complete_json_spans(void)
+{
+    /* An exact span need not have an accessible terminator. */
+    const char span[2] = { '{', '}' };
+    cJSON *j = json_parse_complete(span, sizeof(span));
+    CHECK(cJSON_IsObject(j));
+    cJSON_Delete(j);
+    const char *valid[] = { "{}", "{} \t\r\n", "[]", "true", "1", "\"text\"", "{\"literal\":\"\\\\u0000\"}" };
+    for (size_t i = 0; i < sizeof(valid) / sizeof(valid[0]); i++) {
+        j = json_parse_complete(valid[i], strlen(valid[i]));
+        CHECK(j);
+        cJSON_Delete(j);
+    }
+    const char *invalid[] = { "{} trailing", "{}{}", "{\"a\\u0000b\":1}", "{\"a\":\"b\\u0000c\"}", "", "{", "{}\0hidden" };
+    for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); i++) {
+        size_t len = i == 6 ? 9 : strlen(invalid[i]);
+        j = json_parse_complete(invalid[i], len);
+        CHECK(!j);
+        cJSON_Delete(j);
+    }
 }
 
 static void embedding_allocations(void)
@@ -231,14 +261,43 @@ static void embedding_batches(void)
     }
 }
 
+static void embedding_json_boundaries(void)
+{
+    for (int mode = 0; mode < 5; mode++) {
+        char response[8192];
+        vector_json(response, sizeof(response), mode == 4 ? "\"index\\u0000other\":0," : "\"index\":0,", "3", SEM_DIM);
+        size_t len = strlen(response);
+        const char *tail = mode == 0 ? " \t\r\n" : mode == 1 ? " garbage" : mode == 2 ? " {}" : "hidden";
+        if (mode != 4) {
+            if (mode == 3) response[len++] = '\0';
+            memcpy(response + len, tail, strlen(tail));
+            len += strlen(tail);
+        }
+        EmbedStub stub;
+        LlmServer *server = NULL;
+        SemanticClient *client = NULL;
+        CHECK(start_bytes(&stub, response, len, 1, &server, &client));
+        if (!client) return;
+        const char *text = "Mara";
+        float out[SEM_DIM];
+        for (int d = 0; d < SEM_DIM; d++) out[d] = 42;
+        char err[256] = "";
+        bool ok = semantic_embed(client, &text, 1, false, out, err, sizeof(err));
+        CHECK(mode == 0 ? ok && out[0] == 1.0f : !ok && err[0] && unchanged(out));
+        stop(&stub, server, client);
+    }
+}
+
 int main(void)
 {
     if (!test_state_fixture_init(root, sizeof(root), &store)) return 1;
     /* Never read the author's service secrets. */
     setenv("SCRIBODO_SECRETS", root, 1);
-    const TestCase tests[] = { { "embedding_allocations", embedding_allocations },
+    const TestCase tests[] = { { "complete_json_spans", complete_json_spans },
+                              { "embedding_allocations", embedding_allocations },
                               { "embedding_responses", embedding_responses },
-                              { "embedding_batches", embedding_batches } };
+                              { "embedding_batches", embedding_batches },
+                              { "embedding_json_boundaries", embedding_json_boundaries } };
     int rc = run_tests(tests, sizeof(tests) / sizeof(tests[0]));
     test_state_fixture_destroy(root, store);
     return rc;

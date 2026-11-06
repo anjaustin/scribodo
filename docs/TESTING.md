@@ -28,6 +28,15 @@
   checks FIFO symlinks, non-regular files, complete configuration/key reads,
   embedded NULs, oversized files and key-length/CRLF boundaries. Only genuinely
   absent configuration is silently treated as unconfigured.
+- `remote_json_boundaries`, `embedding_json_boundaries` and
+  `complete_json_spans` check complete-input parsing, including trailing garbage,
+  a second JSON value, NUL-decoded field/path aliases, literal escaped backslashes
+  and exact non-terminated byte spans. These adapters use `json_parse_complete`;
+  legacy crash-torn logs retain their separate parsing behavior.
+- `remote_service_secret_aliases` uses fake local credentials to check a custom
+  `SCRIBODO_SECRETS` directory, symlink aliases and hard links outside that
+  directory. The opened key descriptor is compared against known credential
+  identities; secret contents are never read for this check.
 - Both allocation binaries run in `make test` and `make sanitize`; the threaded
   embedding stand-in also runs in `make tsan`. Fault injection is not compiled
   into the application. Dated baseline and mutation evidence is recorded in

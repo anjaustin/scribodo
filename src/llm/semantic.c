@@ -193,7 +193,7 @@ bool semantic_embed(SemanticClient *client, const char *const *texts, size_t n, 
                                    NULL, NULL, 120000, &r) &&
               r.status == 200 && r.body;
     free(body);
-    cJSON *j = ok ? json_parse(r.body) : NULL;
+    cJSON *j = ok ? json_parse_complete(r.body, r.len) : NULL;
     if (!ok) snprintf(err, errlen, "Embedding request failed (%d %s)", r.status, r.error);
     http_result_free(&r);
     cJSON *data = cJSON_GetObjectItem(j, "data"), *item;
