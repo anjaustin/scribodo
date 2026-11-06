@@ -196,16 +196,25 @@ static bool record_impl(StoreManager *manager, const char *project_dir, const ch
     size_t n = 0;
     if (!list_impl(project_dir, doc_path, &list, &n)) return false;
     bool same = n > 0 && !strcmp(list[0].hash, hash);
-    if (same && file_out) snprintf(file_out, file_len, "%s", list[0].file);
+    size_t reuse = 0;
     /* A snapshot for a source may reuse any revision with exactly this text:
      * an older text must never become the newest History entry. */
     for (size_t i = 1; !same && file_out && i < n; i++)
         if (!strcmp(list[i].hash, hash)) {
-            snprintf(file_out, file_len, "%s", list[i].file);
+            reuse = i;
             same = true;
         }
+    if (same) {
+        char existing[1700];
+        snprintf(existing, sizeof(existing), "%s/%s", dir, list[reuse].file);
+        char *saved = slurp(existing);
+        bool intact = saved && !strcmp(saved, text);
+        free(saved);
+        if (intact && file_out) snprintf(file_out, file_len, "%s", list[reuse].file);
+        free(list);
+        return intact; /* an index hash alone cannot establish a usable snapshot */
+    }
     free(list);
-    if (same) return true; /* identical to the newest revision */
 
     double wt = store_write_time(manager); /* now, or an export's original time */
     struct timeval tv = { .tv_sec = (time_t)wt, .tv_usec = (suseconds_t)((wt - (double)(time_t)wt) * 1e6) };

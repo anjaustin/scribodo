@@ -512,3 +512,14 @@ Do not treat these as remediation targets without a changed product decision:
 - Headless, database, ASan/UBSan (headless and database), TSan, and dependency
   validation passed. Full native/offline acceptance is running before publication.
   Scope, evidence and limits: `docs/REDTEAM-012-marker-snapshots.md`.
+- Second iteration reproduced false-success reuse of missing/damaged snapshots.
+  Reuse now verifies actual content under the revision lock, including older
+  source snapshots. Missing/damaged, repaired and older-candidate regressions
+  pass. Ten compiled mutations were caught. Final headless (3,552 adapter checks
+  plus 680 isolated allocation checks), database (590 repository checks plus 37
+  core checks), ASan/UBSan and TSan reruns passed after this change.
+- Final production-code rerun of `make all uitest uitest-db backuptest remotetest
+  offlinetest` passed, including real BF16 chat and embedding workflows under
+  network isolation. Final scoped diff review found no further unresolved issue;
+  all ten mutation checks passed. Publishing uses required PR checks without
+  changing branch protections. The pre-existing sample-document edit is excluded.

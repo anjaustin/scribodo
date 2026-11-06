@@ -23,6 +23,14 @@ Date: 2026-11-06. Reviewed baseline: `8d3494b`.
    occupied and inspection errors as failures. A bounded search is deliberate:
    refusing a save to History is preferable to overwriting an immutable snapshot.
 
+3. **Snapshot reuse trusted only the index.** A matching index hash reported
+   successful snapshot capture or duplicate History recording even if the actual
+   file was missing or damaged. A subsequent review iteration reproduced both
+   false successes. Reuse now reads the candidate under the existing revision
+   lock and requires exact content equality. Failure returns no snapshot filename.
+   Tests cover missing/damaged latest snapshots, successful repair, and reuse of
+   a missing older snapshot after newer History has been recorded.
+
 ## Adversarial validation
 
 - `snapshot_name_exhaustion` fills all 1,000 candidates, checks failure and the
@@ -33,17 +41,25 @@ Date: 2026-11-06. Reviewed baseline: `8d3494b`.
 - `import_revision_identity` additionally round-trips revisions through export
   and import with sequence order opposing wall-clock time. This passed without
   an additional production change.
-- Nine temporary compiled mutations were caught by assertions: the seven from
+- Ten temporary compiled mutations were caught by assertions: the seven from
   red-team 011, restoring the exhaustion overwrite, and restoring baseline fork
-  marker withdrawal. Crashes/timeouts were not counted as catches. The mutation
+  marker withdrawal, plus bypassing snapshot-content verification.
+  Crashes/timeouts were not counted as catches. The mutation
   harness does not edit working sources.
 
-## Limits
+## Final validation
 
-Headless tests (including 680 allocation-fault checks), database integration,
-ASan/UBSan headless and database integration, TSan, dependency reporting and diff
-checks passed. Full native/offline acceptance is recorded in the session log once
-the run completes.
+After the second remediation iteration, all of the following passed:
+
+- `make test dbtest`: 3,552 adapter checks, 680 allocation-fault checks,
+  590 repository checks and 37 database core checks, plus the other headless suites.
+- `make sanitize`, sanitized `dbtest`, and `make tsan`.
+- `make all uitest uitest-db backuptest remotetest offlinetest`: native UI,
+  copy/fork, backup/restore, stand-in remote provider, network denial/loopback
+  controls, real chat/edit/observer, real embeddings and model crash recovery.
+- Ten compiled mutations, dependency reporting, and diff whitespace checks.
+
+## Limits
 
 This review covers the changed persistence/recovery paths and adjacent snapshot
 allocation behavior, not every application feature. Filesystem fingerprints are

@@ -59,6 +59,8 @@ separately by `make model`; acceptance never needs to select a quantized fallbac
 [`REDTEAM-012-marker-snapshots.md`](REDTEAM-012-marker-snapshots.md) records the
 retained-copy-marker regression, the 1,000-name snapshot exhaustion test, and the
 non-monotonic-clock export/import check.
+`snapshot_reuse_integrity` covers missing/damaged candidates, repair, and missing
+older-source snapshots; reuse cannot succeed from an index hash alone.
 
 ## Automated trusted acceptance
 

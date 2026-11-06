@@ -899,6 +899,31 @@ static void test_records(void)
 }
 
 /* ---- observer ----------------------------------------------------------------------- */
+static void test_snapshot_reuse_integrity(void)
+{
+    char project[700], doc[800], file[160], path[1000];
+    snprintf(project, sizeof(project), "%s/snapshot-reuse", g_dir);
+    CHECK(mkdir(project, 0755) == 0);
+    snprintf(doc, sizeof(doc), "%s/chapter.md", project);
+    CHECK(revisions_snapshot(g_store, project, doc, "Keep this", file, sizeof(file)));
+    snprintf(path, sizeof(path), "%s/.scribodo/revisions/chapter.md/%s", project, file);
+    CHECK(unlink(path) == 0);
+    CHECK(!revisions_snapshot(g_store, project, doc, "Keep this", file, sizeof(file)) && !file[0]);
+    bool recorded = true;
+    CHECK(!revisions_record(g_store, project, doc, "Keep this", "save", NULL, &recorded) && !recorded);
+    FILE *f = fopen(path, "wb");
+    CHECK(f != NULL);
+    if (f) { CHECK(fputs("Damaged", f) >= 0); CHECK(fclose(f) == 0); }
+    CHECK(!revisions_snapshot(g_store, project, doc, "Keep this", file, sizeof(file)) && !file[0]);
+    f = fopen(path, "wb");
+    CHECK(f != NULL);
+    if (f) { CHECK(fputs("Keep this", f) >= 0); CHECK(fclose(f) == 0); }
+    CHECK(revisions_snapshot(g_store, project, doc, "Keep this", file, sizeof(file)) && file[0]);
+    CHECK(revisions_record(g_store, project, doc, "Newer text", "save", NULL, NULL));
+    CHECK(unlink(path) == 0);
+    CHECK(!revisions_snapshot(g_store, project, doc, "Keep this", file, sizeof(file)) && !file[0]);
+}
+
 static void test_snapshot_name_exhaustion(void)
 {
     char project[700], doc[800], path[1000];
@@ -1984,6 +2009,7 @@ int main(int argc, char **argv)
         { "records", test_records },
         { "file_history_read_failures", test_file_history_read_failures },
         { "snapshot_name_exhaustion", test_snapshot_name_exhaustion },
+        { "snapshot_reuse_integrity", test_snapshot_reuse_integrity },
         { "observer_run", test_observer_run },
         { "observer_redteam", test_observer_redteam },
         { "recent_and_renames", test_recent_and_renames },

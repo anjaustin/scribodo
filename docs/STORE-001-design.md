@@ -84,6 +84,8 @@ Forks keep the original copy marker until atomic replacement with the committed
 target marker; they never temporarily expose file-backed authority. Snapshot
 recording refuses exhausted timestamp/origin names instead of overwriting an
 existing snapshot. See `REDTEAM-012-marker-snapshots.md`.
+Reusing a snapshot also requires reading and matching its actual content, not
+just trusting the index hash; a missing or damaged candidate fails the operation.
 
 ## Backups (SOW §7)
 
