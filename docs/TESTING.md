@@ -11,6 +11,15 @@
 | `make uitest-real` | `tests/ui/real-*.scribo`: the real model through the real UI | Yes |
 | `make dependency-report` | Verifies committed submodule gitlinks against clean checkouts, container digests and OSV advisories; lists available upstream updates without failing on them | No |
 
+## Automated trusted acceptance
+
+The repository-scoped `scribodo-mac-studio` runner executes database and UI
+acceptance only for repository-owner events; fork pull-request code is never sent
+to it. Each job uses a disposable `scribodo-ci` Compose project, temporary secrets,
+ports 33062/6334 and always-run volume cleanup. Manual/scheduled runs additionally
+exercise `make backuptest remotetest`. Adding a write collaborator requires review
+of this owner-only trust policy first.
+
 ## Hang protection
 
 Two layers make sure we never wait on a hung process:

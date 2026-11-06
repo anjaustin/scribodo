@@ -169,8 +169,16 @@ become required on this runner class.
 A repository-scoped ARM64 runner named `scribodo-mac-studio` now runs as a user
 LaunchAgent on the trusted development Mac. Docker Desktop supplies the pinned
 MariaDB/Qdrant services and the logged-in WindowServer supplies UI execution.
-`.github/workflows/acceptance.yml` refuses fork pull-request code; trusted jobs
-are serialized and upload UI/hang diagnostics on failure.
+`.github/workflows/acceptance.yml` accepts only repository-owner dispatch, refuses
+fork pull-request code, serializes jobs and uploads UI/hang diagnostics on failure.
+The repository currently has no other collaborators; adding one requires review
+of this trust policy before that account receives write access.
+
+Acceptance uses a disposable `scribodo-ci` Compose project, job-temporary secrets,
+alternate loopback ports and always-run volume cleanup, so it neither reads normal
+application service credentials nor shares the development stack. Repository
+Actions policy permits only GitHub-owned actions and requires immutable SHA pins.
+Runner metadata, credentials and work directories are owner-only on disk.
 
 ### Migration plan
 
@@ -391,3 +399,18 @@ Do not treat these as remediation targets without a changed product decision:
   aborts/retries rather than acting on incomplete records.
 - Enabled `main` branch protection with required pull requests, linear history,
   administrator enforcement, and hosted plus trusted acceptance checks.
+
+### 2026-11-06 — trusted-runner red-team remediation
+
+- Found that the first acceptance workflow shared the normal Compose identity,
+  ports, volumes and long-lived Scribodo service credentials. Acceptance now uses
+  a disposable project on ports 33062/6334 with job-temporary secrets and purges
+  containers and volumes even after failure.
+- Propagated Compose project and Qdrant port configuration through service,
+  backup, restore and disaster-recovery tools; database administration tests now
+  honor both configured ports and secret roots. The isolated DB, store UI, backup
+  and remote-provider suites pass together and leave no containers or volumes.
+- Restricted persistent-runner dispatch to the repository owner as well as
+  excluding forks. Verified that the owner is the repository's only collaborator.
+- Enforced repository-level SHA pinning and GitHub-owned Actions only, and changed
+  runner credentials, metadata and work directories to owner-only permissions.

@@ -51,13 +51,14 @@ step "a file not in the backup's list is refused"; tools/restore.sh "$bk-craft" 
 craft; ln -s /etc/hosts "$bk-craft/files/book/link.md"; resum
 step "a link in the backup is refused"; tools/restore.sh "$bk-craft" --db $other --replace --to "$work/c2" >/dev/null 2>&1; r=$?; [ $r != 0 ] && [ ! -e "$work/c2" ]; ok $?
 export PATH="$HOME/.docker/bin:$PATH"
-dbexists() { docker compose -f docker/compose.yml exec -T mariadb sh -c 'MYSQL_PWD="$(cat /run/secrets/db_root_password)" mariadb -uroot -N -e "SHOW DATABASES LIKE \"$1\""' sh "$1" | grep -c .; }
+compose() { docker compose -p "${SCRIBODO_COMPOSE_PROJECT:-scribodo}" -f docker/compose.yml "$@"; }
+dbexists() { compose exec -T mariadb sh -c 'MYSQL_PWD="$(cat /run/secrets/db_root_password)" mariadb -uroot -N -e "SHOW DATABASES LIKE \"$1\""' sh "$1" | grep -c .; }
 craft; printf -- '-- MariaDB dump 10.19\nCREATE DATABASE scribodo_test_pwned;\n-- Dump completed\n' | gzip > "$bk-craft/db.sql.gz"; resum
 step "a dump can't create another database"
 tools/restore.sh "$bk-craft" --db $other --replace --to "$work/c3" >/dev/null 2>&1; r=$?; [ $r != 0 ] && [ "$(dbexists scribodo_test_pwned)" = 0 ] && [ ! -e "$work/c3" ]; ok $?
 tools/services.sh testdb drop scribodo_test_pwned >/dev/null 2>&1
 # (\! would run inside the database container: that's where to look.)
-incontainer() { docker compose -f docker/compose.yml exec -T mariadb sh -c "$1"; }
+incontainer() { compose exec -T mariadb sh -c "$1"; }
 incontainer 'rm -f /tmp/scribodo_pwned'
 craft; printf -- '-- MariaDB dump 10.19\n\\! touch /tmp/scribodo_pwned\n-- Dump completed\n' | gzip > "$bk-craft/db.sql.gz"; resum
 step "a dump with a shell escape is refused"
@@ -68,9 +69,10 @@ step "a dump that isn't mariadb-dump output is refused"; tools/restore.sh "$bk-c
 step "a database other than scribodo[_test_*] is refused"; tools/restore.sh "$bk" --db mysql --replace --to "$work/c5" >/dev/null 2>&1; r=$?; [ $r != 0 ]; ok $?
 # The index of a restored database is dropped (it described later data).
 key="$(cat "${SCRIBODO_SECRETS:-$HOME/Library/Application Support/Scribodo/services}/qdrant_api_key")"
+qport="${SCRIBODO_QDRANT_PORT:-6333}"
 curl -s -o /dev/null -X PUT -H @<(printf 'Authorization: Bearer %s\n' "$key") -H 'Content-Type: application/json' \
-    -d '{"vectors":{"size":4,"distance":"Cosine"}}' "http://127.0.0.1:6333/collections/${other}__pstale"
+    -d '{"vectors":{"size":4,"distance":"Cosine"}}' "http://127.0.0.1:$qport/collections/${other}__pstale"
 tools/restore.sh "$bk" --db $other --replace --to "$work/c6" >/dev/null 2>&1
-left=$(curl -s -H @<(printf 'Authorization: Bearer %s\n' "$key") http://127.0.0.1:6333/collections | grep -c "${other}__pstale")
+left=$(curl -s -H @<(printf 'Authorization: Bearer %s\n' "$key") "http://127.0.0.1:$qport/collections" | grep -c "${other}__pstale")
 step "--replace drops the restored database's stale index"; [ "$left" = 0 ]; ok $?
 exit $fail

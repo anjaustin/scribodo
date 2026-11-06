@@ -19,9 +19,16 @@ concurrency:
 jobs:
   acceptance:
     name: Trusted database and UI acceptance
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: >-
+      github.actor == github.repository_owner &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, macOS, ARM64, scribodo-trusted]
     timeout-minutes: 90
+    env:
+      SCRIBODO_COMPOSE_PROJECT: scribodo-ci
+      SCRIBODO_DB_PORT: "33062"
+      SCRIBODO_QDRANT_PORT: "6334"
+      SCRIBODO_SECRETS: ${{ runner.temp }}/scribodo-services
     steps:
       - name: Check out pinned dependencies
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
@@ -50,6 +57,10 @@ jobs:
       - name: Run scheduled recovery acceptance
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: make backuptest remotetest
+
+      - name: Remove disposable services and volumes
+        if: always()
+        run: tools/services.sh purge
 
       - name: Upload failure diagnostics
         if: failure()
