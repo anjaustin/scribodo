@@ -32,8 +32,8 @@
 
 typedef struct Observer Observer;
 
-/* `server` NULL: the built-in deterministic fake (UI tests). */
-/* Borrows both services; they must outlive the observer. */
+/* `store` is required. `server` may be NULL for the deterministic fake used by
+ * UI tests. All supplied dependencies are borrowed until observer_destroy(). */
 Observer *observer_create(StoreManager *store, LlmServer *server, SemanticClient *semantic);
 void observer_destroy(Observer *o);
 

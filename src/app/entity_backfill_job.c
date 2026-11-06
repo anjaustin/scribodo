@@ -17,6 +17,7 @@ static void *entity_backfill_main(void *arg)
 
 bool entity_backfill_job_init(EntityBackfillJob *job, StoreManager *store)
 {
+    if (!job || !store) return false;
     memset(job, 0, sizeof(*job));
     job->store = store;
     atomic_init(&job->state, 0);

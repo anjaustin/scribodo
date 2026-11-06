@@ -15,6 +15,7 @@ typedef struct {
     StoreManager *store;
 } EntityBackfillJob;
 
+/* `store` is required and borrowed until entity_backfill_job_destroy(). */
 bool entity_backfill_job_init(EntityBackfillJob *job, StoreManager *store);
 bool entity_backfill_job_start(EntityBackfillJob *job, const char *project_dir);
 bool entity_backfill_job_poll(EntityBackfillJob *job, bool *succeeded);

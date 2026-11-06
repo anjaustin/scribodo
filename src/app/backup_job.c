@@ -17,6 +17,7 @@ static void *backup_job_main(void *arg)
 
 bool backup_job_init(BackupJob *job, StoreManager *store)
 {
+    if (!job || !store) return false;
     memset(job, 0, sizeof(*job));
     job->store = store;
     atomic_init(&job->state, 0);

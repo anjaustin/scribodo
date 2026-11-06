@@ -16,6 +16,7 @@
 #include "../src/app/backup.h"
 #include "../src/app/backup_job.h"
 #include "../src/app/service_supervisor.h"
+#include "../src/app/entity_backfill_job.h"
 #include "../src/app/name_detection_job.h"
 #include "../src/app/project_session.h"
 #include "../src/app/explorer_snapshot.h"
@@ -2310,6 +2311,18 @@ static void test_memfit(void)
     CHECK(!strcmp(gb, "5.4 GB"));
 }
 
+static void test_owned_store_dependencies(void)
+{
+    BackupJob backup;
+    EntityBackfillJob backfill;
+    ServiceSupervisor services;
+    CHECK(!backup_job_init(&backup, NULL));
+    CHECK(!entity_backfill_job_init(&backfill, NULL));
+    CHECK(!service_supervisor_init(&services, NULL));
+    CHECK(semantic_client_create(NULL, NULL) == NULL);
+    CHECK(observer_create(NULL, NULL, NULL) == NULL);
+}
+
 int main(int argc, char **argv)
 {
     const char *base = getenv("TMPDIR");
@@ -2328,6 +2341,7 @@ int main(int argc, char **argv)
         { "project_session_and_explorer_snapshot", test_project_session_and_explorer_snapshot },
         { "model_settings", test_model_settings },
         { "memfit", test_memfit },
+        { "owned_store_dependencies", test_owned_store_dependencies },
         { "observer_rules_refilter", test_observer_rules_and_refilter },
         { "http_decoder", test_http_decoder },
         { "sse_parsing", test_sse_parsing },

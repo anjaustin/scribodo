@@ -29,7 +29,8 @@
 
 typedef struct SemanticClient SemanticClient;
 
-/* Owns Qdrant configuration; borrows the embedding server (NULL: fake). */
+/* Owns Qdrant configuration. `store` is required; the embedding server may be
+ * NULL for the fake backend. Both dependencies are borrowed. */
 SemanticClient *semantic_client_create(StoreManager *store, LlmServer *embed);
 void semantic_client_destroy(SemanticClient *client);
 /* Whether retrieval is available right now (Qdrant reachable and, for the

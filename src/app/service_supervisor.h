@@ -25,6 +25,7 @@ typedef struct {
     StoreManager *store;
 } ServiceSupervisor;
 
+/* `store` is required and borrowed until service_supervisor_destroy(). */
 bool service_supervisor_init(ServiceSupervisor *supervisor, StoreManager *store);
 bool service_supervisor_start(ServiceSupervisor *supervisor, const char *tools_dir, bool start_services);
 bool service_supervisor_busy(const ServiceSupervisor *supervisor);

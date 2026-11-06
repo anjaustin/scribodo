@@ -22,7 +22,8 @@
 typedef struct StoreManager StoreManager;
 
 StoreManager *store_manager_create(void);
-/* All borrowed workers must be joined before destruction. */
+/* Stops the manager and closes this thread's connection. All borrowed workers
+ * must be joined (and therefore have closed their connections) first. */
 void store_manager_destroy(StoreManager *manager);
 
 /* Try to connect and migrate (UI thread, at launch). Returns whether the

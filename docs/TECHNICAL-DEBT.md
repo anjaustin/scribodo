@@ -147,9 +147,9 @@ several are optional developer actions rather than merge gates.
 - [x] ASan/UBSan.
 - [x] TSan.
 - [ ] MariaDB/Qdrant integration (`make dbtest`).
-- [ ] Scripted UI (`make uitest`); a non-blocking hosted canary is wired, but
-      the hosted runner has no display session in which Raylib can create a
-      window.
+- [ ] Scripted UI (`make uitest`); the hosted canary trial proved the runner has
+      no display session in which Raylib can create a window, so the permanently
+      failing job was retired rather than consuming capacity without coverage.
 - [ ] Store UI (`make uitest-db`).
 - [ ] Scheduled backup, remote and offline acceptance suites.
 
@@ -167,8 +167,9 @@ become required on this runner class.
 
 - [x] Make `make tsan` self-contained on a clean checkout.
 - [x] Run TSan in CI.
-- [x] Canary `make uitest` on hosted macOS; upload `build/ui` and `build/hangs`
-      on failure, then make it required after proving stable.
+- [x] Trial `make uitest` on hosted macOS with `build/ui` and `build/hangs`
+      failure artifacts; retire the trial after it proved the runner class has
+      no usable display.
 - [ ] Provision a trusted, serialized bare-metal macOS runner with Docker for
       `dbtest` and `uitest-db`, or build a pinned native-service harness.
 - [ ] Run real-model, backup, remote and offline suites on a scheduled/manual
@@ -266,5 +267,17 @@ Do not treat these as remediation targets without a changed product decision:
   and scheduled acceptance gates remain blocked on a trusted macOS runner or
   pinned native-service harness; required-check enforcement remains blocked on
   repository administration.
-- Verification: build and headless tests, ASan/UBSan, TSan (574 checks),
+- Verification: build and headless tests, ASan/UBSan, TSan (579 checks),
   database integration (397 checks), base UI and store UI passed locally.
+
+### 2026-11-05 — StoreManager red-team follow-up
+
+- Made every owned service and worker that borrows `StoreManager` reject a null
+  dependency instead of silently degrading to file-only/default behavior.
+- Retired the hosted UI canary after two artifact-producing runs consistently
+  failed before script execution because the runner had no display. The durable
+  register retains that verified infrastructure constraint without creating a
+  permanently failing, non-gating job.
+- Verification: build and headless suites (including 579 LLM checks),
+  ASan/UBSan, TSan (579 checks), database integration (397 checks), base UI and
+  store UI passed locally.

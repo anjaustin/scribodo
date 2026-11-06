@@ -25,6 +25,7 @@ struct SemanticClient {
 
 SemanticClient *semantic_client_create(StoreManager *store, LlmServer *embed)
 {
+    if (!store) return NULL;
     SemanticClient *client = calloc(1, sizeof(*client));
     if (!client) return NULL;
     client->store = store;

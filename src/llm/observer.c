@@ -1777,6 +1777,7 @@ static void *worker(void *arg)
 
 Observer *observer_create(StoreManager *store, LlmServer *server, SemanticClient *semantic)
 {
+    if (!store) return NULL;
     Observer *o = calloc(1, sizeof(Observer));
     if (!o) return NULL;
     o->store = store;

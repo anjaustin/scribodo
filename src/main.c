@@ -2948,7 +2948,6 @@ static void app_destroy(App *app)
     semantic_client_destroy(app->semantic);
     app->semantic = NULL;
     if (app->services_initialized) (void)service_supervisor_destroy(&app->services);
-    store_stop(app->store);
     store_manager_destroy(app->store);
     app->store = NULL;
     findings_view_destroy(app->findings);

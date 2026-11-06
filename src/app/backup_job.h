@@ -25,6 +25,7 @@ typedef struct {
     StoreManager *store;
 } BackupJob;
 
+/* `store` is required and borrowed until backup_job_destroy(). */
 bool backup_job_init(BackupJob *job, StoreManager *store);
 bool backup_job_start(BackupJob *job, const char *tools_dir, const char *project_dir);
 bool backup_job_busy(const BackupJob *job);

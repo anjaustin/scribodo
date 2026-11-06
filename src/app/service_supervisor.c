@@ -80,6 +80,7 @@ static void *service_supervisor_main(void *arg)
 
 bool service_supervisor_init(ServiceSupervisor *supervisor, StoreManager *store)
 {
+    if (!supervisor || !store) return false;
     memset(supervisor, 0, sizeof(*supervisor));
     supervisor->store = store;
     atomic_init(&supervisor->state, 0);
