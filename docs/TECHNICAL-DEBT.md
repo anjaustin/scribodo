@@ -15,6 +15,52 @@ evidence and session log when a remediation lands.
 - **Blocked** — the next step needs infrastructure or a decision.
 - **Done** — acceptance criteria are met; retain the entry as history.
 
+## Accepted residual risks — persistence review and direct-push workflow
+
+**Recorded:** 2026-11-06
+**Status:** Open; follow-up considerations, not known release blockers.
+**Review reference:** `b40dcb0`; see `REDTEAM-011-legacy-fork.md` and
+`REDTEAM-012-marker-snapshots.md` for evidence and scope.
+
+### CI reports after direct pushes
+
+The repository now permits direct pushes to `main`. CI still runs on pushes, but
+PR and required-status-check gating were removed. A failing change can therefore
+reach `main` before CI reports it. Force-push, branch-deletion and linear-history
+protections remain enabled.
+
+- **Mitigation:** validate locally before pushing, check the resulting CI run,
+  and promptly fix failures with a follow-up commit.
+- **Future consideration:** restore pre-merge gating if contributors or release
+  requirements grow; reassess this workflow before relying on `main` for releases.
+
+### Power-loss recovery testing is not exhaustive
+
+Regression, restart, fault-injection, sanitizer and mutation tests cover the
+documented recovery paths. They do not simulate process death or power loss at
+every filesystem operation, nor every filesystem/hardware durability behavior.
+
+- **Future work:** add deterministic interruption points around journal writes,
+  transaction commits, marker replacement and archival cleanup. Verify restart
+  behavior and authority preservation at each boundary, distinguishing process
+  termination tests from actual power-loss/durability testing.
+
+### Snapshot fingerprints are not a tampering boundary
+
+Fork snapshot fingerprints use filesystem metadata to detect ordinary changes
+during retry/recovery. They do not authenticate content against deliberate local
+tampering; metadata can be preserved or manipulated.
+
+- **Current assumption:** local project metadata is not an adversarial trust
+  boundary. Existing fingerprint checks must not be described as authentication.
+- **Future consideration:** if the threat model expands, evaluate content
+  digests, trusted manifests and safe path handling together. A digest stored
+  beside writable content alone does not protect against an attacker who can
+  rewrite both.
+
+No unresolved finding remained within the completed review's scope. This does
+not establish universal correctness or remove the limitations above.
+
 ## P1 — Storage policy leaks across layers
 
 **Status:** Done
