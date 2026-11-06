@@ -538,14 +538,25 @@ bool project_store_chat_set_observer(const char *project_dir, const char *id, bo
 
 size_t project_store_chat_list(const char *project_dir, ChatSummary **out)
 {
+    size_t count = 0;
+    (void)project_store_chat_list_checked(project_dir, out, &count);
+    return count;
+}
+
+bool project_store_chat_list_checked(const char *project_dir, ChatSummary **out, size_t *count)
+{
+    if (!out || !count) return false;
     *out = NULL;
-    if (!project_dir || !project_dir[0]) return 0;
+    *count = 0;
+    if (!project_dir || !project_dir[0]) return false;
     ProjectStore store;
     int lock = begin_operation(project_dir, &store);
-    if (store.ops == &file_ops && lock < 0) return 0;
-    size_t n = store.ops->chat_list(&store, out);
+    if (store.ops == &file_ops && lock < 0) return false;
+    bool ok = store.ops == &file_ops ? chat_store_list_files_checked(store.project_dir, out, count)
+              : store.ops == &db_ops ? sdb_chat_list_checked(store.db, store.project_id, out, count)
+                                     : true;
     project_store_file_unlock(lock);
-    return n;
+    return ok;
 }
 
 bool project_store_chat_load(const char *project_dir, const char *id, ChatMessage **messages, size_t *count)

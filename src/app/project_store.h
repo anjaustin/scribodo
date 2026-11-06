@@ -60,6 +60,7 @@ bool project_store_chat_append(const char *project_dir, const char *id, const ch
 bool project_store_chat_rename(const char *project_dir, const char *id, const char *title);
 bool project_store_chat_set_observer(const char *project_dir, const char *id, bool read);
 size_t project_store_chat_list(const char *project_dir, ChatSummary **out);
+bool project_store_chat_list_checked(const char *project_dir, ChatSummary **out, size_t *count);
 bool project_store_chat_load(const char *project_dir, const char *id, ChatMessage **messages, size_t *count);
 
 cJSON *project_store_observer_state_load(const char *project_dir);

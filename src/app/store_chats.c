@@ -71,14 +71,19 @@ bool sdb_chat_append(Db *db, const char *project_id, const char *id, const char 
     return ok;
 }
 
-size_t sdb_chat_list(Db *db, const char *project_id, ChatSummary **out)
+bool sdb_chat_list_checked(Db *db, const char *project_id, ChatSummary **out, size_t *count)
 {
     *out = NULL;
+    *count = 0;
     DbRows r;
     if (!db_query(db, "SELECT id, title, updated_at, observer_ignore FROM conversations WHERE project_id = ? ORDER BY updated_at DESC",
                   (DbArg[1]){ DB_S(project_id) }, 1, &r))
-        return 0;
+        return false;
     ChatSummary *list = r.nrows ? calloc(r.nrows, sizeof(ChatSummary)) : NULL;
+    if (r.nrows && !list) {
+        db_rows_free(&r);
+        return false;
+    }
     size_t n = 0;
     for (size_t i = 0; list && i < r.nrows; i++) {
         ChatSummary *c = &list[n++];
@@ -89,7 +94,15 @@ size_t sdb_chat_list(Db *db, const char *project_id, ChatSummary **out)
     }
     db_rows_free(&r);
     *out = list;
-    return n;
+    *count = n;
+    return true;
+}
+
+size_t sdb_chat_list(Db *db, const char *project_id, ChatSummary **out)
+{
+    size_t count = 0;
+    (void)sdb_chat_list_checked(db, project_id, out, &count);
+    return count;
 }
 
 bool sdb_chat_load(Db *db, const char *project_id, const char *id, ChatMessage **msgs, size_t *n)

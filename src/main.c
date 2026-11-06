@@ -44,6 +44,8 @@
 #include "app/service_supervisor.h"
 #include "app/entity_backfill_job.h"
 #include "app/name_detection_job.h"
+#include "app/project_session.h"
+#include "app/explorer_snapshot.h"
 #include "app/profile.h"
 #include "app/model_settings.h"
 #include "llm/memfit.h"
@@ -93,7 +95,7 @@ static const Clay_Color COL_OK      = RGB(0x4E, 0xC9, 0x8B);
 static const Clay_Color COL_ERR     = RGB(0xE5, 0x73, 0x73);
 
 #define SPLITTER_W 5
-#define MAX_DOCS 200
+#define MAX_DOCS EXPLORER_MAX_DOCS
 
 /* Revisions listed in History (newest first). */
 #define REV_SHOW 100
@@ -122,11 +124,19 @@ typedef struct {
     ChatSession *chat;
     ChatView *chat_view;
     /* A conversation belongs to the project it started in, even if the author
-     * opens a document elsewhere while a reply is still streaming. */
-    char chat_project[PATH_MAX];
-    bool clear_chat_when_idle;
-    char chat_id[40];
-    char chat_title[160];
+     * opens a document elsewhere while a reply is still streaming. The
+     * anonymous view keeps call sites readable while ProjectSession owns it. */
+    union {
+        ProjectSession session;
+        struct {
+            char project_dir[PATH_MAX];
+            char chat_project[PATH_MAX];
+            bool clear_chat_when_idle;
+            char chat_id[40];
+            char chat_title[160];
+            uint64_t session_generation;
+        };
+    };
 
     /* Reviewed AI edits */
     ReviewView *review;
@@ -213,10 +223,20 @@ typedef struct {
     bool record_close_armed;     /* a discard of uncommitted canon text was asked for... */
     double record_close_armed_at; /* ...at this time (a second press within 5 s confirms) */
 
-    /* Project (the folder holding the open document) */
-    char project_dir[PATH_MAX];
-    char *docs[MAX_DOCS];
-    size_t ndocs;
+    /* Immutable document/chat rows currently represented by Clay ids. */
+    union {
+        ExplorerSnapshot explorer;
+        struct {
+            char *docs[MAX_DOCS];
+            size_t ndocs;
+            ChatSummary *chats;
+            char (*chat_labels)[200];
+            size_t nchats;
+            uint64_t explorer_generation;
+            uint64_t explorer_project_generation;
+        };
+    };
+    uint64_t drawn_explorer_generation;
     /* The chat model's settings, and the panel that edits them. */
     ModelSettings model, model_edit;
     bool settings_open;
@@ -235,9 +255,6 @@ typedef struct {
     char suggest_author[64], suggest_assistant[64];
     char declined_author[64], declined_assistant[64];
     char suggest_text[300];
-    ChatSummary *chats;
-    char (*chat_labels)[200]; /* the CHATS rows (title, and whether the observer reads it) */
-    size_t nchats;
     double lists_refreshed;
     bool lists_dirty; /* refreshed between click handling and layout (stable hit-testing) */
 
@@ -302,43 +319,18 @@ static const char *base_name(const char *path)
 
 /* ---- project lists ------------------------------------------------------------- */
 
-static int cmp_str(const void *a, const void *b) { return strcasecmp(*(char *const *)a, *(char *const *)b); }
-
 static void refresh_records(App *app);
 static void refresh_findings(App *app);
 static void refresh_entities(App *app);
 
-static void refresh_lists(App *app)
+static bool refresh_lists(App *app)
 {
-    for (size_t i = 0; i < app->ndocs; i++) free(app->docs[i]);
-    app->ndocs = 0;
-    free(app->chats);
-    app->chats = NULL;
-    app->nchats = 0;
     app->lists_refreshed = GetTime();
-    if (!app->project_dir[0]) return;
-    DIR *d = opendir(app->project_dir);
-    if (d) {
-        struct dirent *ent;
-        while ((ent = readdir(d)) != NULL && app->ndocs < MAX_DOCS) {
-            size_t n = strlen(ent->d_name);
-            if (ent->d_name[0] == '.') continue;
-            bool ctl = false; /* a name with a line break would break records and requests */
-            for (const unsigned char *c = (const unsigned char *)ent->d_name; *c && !ctl; c++) ctl = *c < 0x20;
-            if (ctl) continue;
-            if ((n > 3 && !strcasecmp(ent->d_name + n - 3, ".md")) || (n > 4 && !strcasecmp(ent->d_name + n - 4, ".txt")) ||
-                (n > 9 && !strcasecmp(ent->d_name + n - 9, ".markdown")))
-                app->docs[app->ndocs++] = strdup(ent->d_name);
-        }
-        closedir(d);
-        qsort(app->docs, app->ndocs, sizeof(char *), cmp_str);
-    }
-    app->nchats = chat_store_list(app->project_dir, &app->chats);
-    free(app->chat_labels);
-    app->chat_labels = app->nchats ? calloc(app->nchats, sizeof(*app->chat_labels)) : NULL;
-    for (size_t i = 0; app->chat_labels && i < app->nchats; i++)
-        snprintf(app->chat_labels[i], sizeof(app->chat_labels[i]), "%s%s", app->chats[i].title,
-                 app->chats[i].observer_ignore ? " \xC2\xB7 not observed" : "");
+    ExplorerSnapshot next;
+    if (!explorer_snapshot_build(&next, app->project_dir, app->explorer.generation + 1, app->session.generation))
+        return false;
+    explorer_snapshot_destroy(&app->explorer);
+    app->explorer = next;
     free(app->revs);
     app->revs = NULL;
     app->nrevs = editor_path(app->editor) ? revisions_list(app->project_dir, editor_path(app->editor), &app->revs) : 0;
@@ -359,6 +351,7 @@ static void refresh_lists(App *app)
     }
     refresh_records(app);
     refresh_findings(app); /* against the current canon; also refreshes the entities */
+    return true;
 }
 
 /* First line of a record, shortened, as an Explorer label. */
@@ -471,7 +464,13 @@ static void set_project(App *app, const char *real)
         /* A prompt or menu was for the old project's files. */
         if (app->prompt) prompt_close(app->prompt);
         app->menu.active = false;
-        snprintf(app->project_dir, sizeof(app->project_dir), "%s", real);
+        (void)project_session_set_project(&app->session, real);
+        ExplorerSnapshot empty;
+        explorer_snapshot_init(&empty);
+        empty.generation = app->explorer.generation + 1;
+        empty.project_generation = app->session.generation;
+        explorer_snapshot_destroy(&app->explorer);
+        app->explorer = empty;
         /* Into the store first, so the observer never starts reading (and
          * writing) the files an import is about to set aside. */
         store_adopt_project(app);
@@ -1583,9 +1582,9 @@ static void on_message_done(ChatSession *s, size_t index, void *ctx)
  * 003: it used to be cleared, silently losing the author's text). */
 static void adopt_chat(App *app)
 {
-    snprintf(app->chat_project, sizeof(app->chat_project), "%s", app->project_dir);
     if (!app->chat_id[0]) chat_store_new_id(app->chat_id, sizeof(app->chat_id));
     if (!app->chat_title[0]) snprintf(app->chat_title, sizeof(app->chat_title), "Chat");
+    project_session_bind_chat(&app->session, app->project_dir, app->chat_id, app->chat_title);
     chat_lock(app->chat);
     size_t n = chat_count(app->chat);
     ChatMessage *copy = calloc(n ? n : 1, sizeof(ChatMessage));
@@ -1715,9 +1714,7 @@ static void new_chat(App *app)
         return;
     }
     chat_clear(app->chat);
-    app->chat_id[0] = '\0';
-    app->chat_title[0] = '\0';
-    app->chat_project[0] = '\0';
+    project_session_clear_chat(&app->session);
     attach_reset(app);
     app->focus = FOCUS_CHAT;
 }
@@ -1751,9 +1748,7 @@ static void open_chat(App *app, const ChatSummary *c)
         break;
     }
     chat_store_free_messages(msgs, n);
-    snprintf(app->chat_id, sizeof(app->chat_id), "%s", c->id);
-    snprintf(app->chat_title, sizeof(app->chat_title), "%s", c->title);
-    snprintf(app->chat_project, sizeof(app->chat_project), "%s", app->project_dir);
+    project_session_bind_chat(&app->session, app->project_dir, c->id, c->title);
     chat_view_scroll_to_end(app->chat_view);
 }
 
@@ -2377,11 +2372,11 @@ static void send_chat(App *app, char *text)
     }
     if (!app->chat_id[0]) {
         chat_store_new_id(app->chat_id, sizeof(app->chat_id));
-        snprintf(app->chat_project, sizeof(app->chat_project), "%s", app->project_dir);
         /* Title: the first line of the first message, shortened. */
         size_t line = strcspn(text, "\n");
         size_t n = utf8_clip(app->chat_title, sizeof(app->chat_title) - 4, text, line < 48 ? line : 48);
         if (strlen(text) > n) strcat(app->chat_title, "\xE2\x80\xA6");
+        project_session_bind_chat(&app->session, app->project_dir, app->chat_id, app->chat_title);
     }
     /* The attached documents, read now (by reference: nothing is copied
      * into the project). An edit request uses the edited document alone. */
@@ -2575,6 +2570,7 @@ static void update_labels(App *app)
 
 static Clay_RenderCommandArray build_layout(App *app)
 {
+    app->drawn_explorer_generation = app->explorer.generation;
     update_labels(app);
     Clay_BeginLayout();
     CLAY({ .id = CLAY_ID("Root"),
@@ -3016,9 +3012,8 @@ static void app_destroy(App *app)
     llm_server_destroy(app->llm);
     llm_server_destroy(app->embed);
     editor_destroy(app->editor);
-    for (size_t i = 0; i < app->ndocs; i++) free(app->docs[i]);
-    free(app->chats);
-    free(app->chat_labels);
+    explorer_snapshot_destroy(&app->explorer);
+    project_session_destroy(&app->session);
     for (int i = 0; i < FONT_COUNT; i++) sfont_unload(&app->fonts[i]);
     free(app->clay_buf);
     app->clay_buf = NULL;
@@ -3032,6 +3027,8 @@ static void app_destroy(App *app)
 int main(int argc, char **argv)
 {
     static App app;
+    project_session_init(&app.session);
+    explorer_snapshot_init(&app.explorer);
     if (!entity_backfill_job_init(&app.graph_job)) return 1;
     app.graph_job_initialized = true;
     if (!name_detection_job_init(&app.names_job, NULL)) {
@@ -3306,7 +3303,7 @@ int main(int argc, char **argv)
                 adopt_chat(&app);
             } else if (strcmp(app.chat_project, app.project_dir) != 0) {
                 chat_clear(app.chat);
-                app.chat_id[0] = app.chat_title[0] = app.chat_project[0] = '\0';
+                project_session_clear_chat(&app.session);
                 attach_reset(&app); /* the old project's documents aren't this one's */
             }
         }
@@ -3382,15 +3379,23 @@ int main(int argc, char **argv)
                 char full[PATH_MAX + 256];
                 for (size_t i = 0; i < app.ndocs; i++)
                     if (Clay_PointerOver(CLAY_IDI("DocItem", (uint32_t)i))) {
-                        snprintf(full, sizeof(full), "%s/%s", app.project_dir, app.docs[i]);
-                        drop_path(&app, full);
-                        app.focus = FOCUS_DOC;
+                        const char *doc = explorer_snapshot_doc(&app.explorer, app.drawn_explorer_generation,
+                                                                app.session.generation, i);
+                        if (doc) {
+                            snprintf(full, sizeof(full), "%s/%s", app.project_dir, doc);
+                            drop_path(&app, full);
+                            app.focus = FOCUS_DOC;
+                        }
                         break;
                     }
                 for (size_t i = 0; i < app.nchats; i++)
                     if (Clay_PointerOver(CLAY_IDI("ChatItem", (uint32_t)i))) {
-                        open_chat(&app, &app.chats[i]);
-                        app.focus = FOCUS_CHAT;
+                        const ChatSummary *chat = explorer_snapshot_chat(&app.explorer, app.drawn_explorer_generation,
+                                                                         app.session.generation, i);
+                        if (chat) {
+                            open_chat(&app, chat);
+                            app.focus = FOCUS_CHAT;
+                        }
                         break;
                     }
                 for (size_t i = 0; i < app.nrevs && i < REV_SHOW; i++)
@@ -3460,18 +3465,24 @@ int main(int argc, char **argv)
         if (!modal && IsMouseButtonPressed(MOUSE_BUTTON_RIGHT) && Clay_PointerOver(CLAY_ID("Explorer"))) {
             for (size_t i = 0; i < app.nchats; i++)
                 if (Clay_PointerOver(CLAY_IDI("ChatItem", (uint32_t)i))) {
+                    const ChatSummary *chat = explorer_snapshot_chat(&app.explorer, app.drawn_explorer_generation,
+                                                                     app.session.generation, i);
+                    if (!chat) break;
                     static char reads_item[64];
                     snprintf(reads_item, sizeof(reads_item), "%s Observer reads this chat",
-                             app.chats[i].observer_ignore ? "  " : "\xE2\x9C\x93");
+                             chat->observer_ignore ? "  " : "\xE2\x9C\x93");
                     const char *items[] = { "Rename\xE2\x80\xA6", reads_item };
-                    snprintf(app.menu_chat, sizeof(app.menu_chat), "%s", app.chats[i].id);
+                    snprintf(app.menu_chat, sizeof(app.menu_chat), "%s", chat->id);
                     menu_open(&app.menu, MT_CHAT, (int)i, mouse, items, 2);
                     break;
                 }
             for (size_t i = 0; i < app.ndocs; i++)
                 if (Clay_PointerOver(CLAY_IDI("DocItem", (uint32_t)i))) {
+                    const char *doc = explorer_snapshot_doc(&app.explorer, app.drawn_explorer_generation,
+                                                            app.session.generation, i);
+                    if (!doc) break;
                     static const char *const items[] = { "Rename\xE2\x80\xA6", "Reveal in Finder" };
-                    snprintf(app.menu_doc, sizeof(app.menu_doc), "%s", app.docs[i]); /* by name: the list may re-sort */
+                    snprintf(app.menu_doc, sizeof(app.menu_doc), "%s", doc); /* copied: later snapshots may re-sort */
                     menu_open(&app.menu, MT_DOC, (int)i, mouse, items, 2);
                     break;
                 }
@@ -3533,8 +3544,7 @@ int main(int argc, char **argv)
         /* Refresh lists only now: clicks above were hit-tested against the
          * lists as last drawn, so a re-sort can never redirect a click. */
         if (app.lists_dirty) {
-            refresh_lists(&app);
-            app.lists_dirty = false;
+            if (refresh_lists(&app)) app.lists_dirty = false;
         }
         Clay_RenderCommandArray cmds = build_layout(&app);
         app.editor_rect = ELEMENT_RECT("Editor");

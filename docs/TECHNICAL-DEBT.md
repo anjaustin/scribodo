@@ -78,7 +78,7 @@ and shutdown ambiguity.
 - [x] Extract a joinable `ServiceSupervisor`; remove detached worker access to
        `App`.
 - [x] Extract entity-backfill and name-detection jobs separately.
-- [ ] Introduce project/session and Explorer snapshot ownership.
+- [x] Introduce project/session and Explorer snapshot ownership.
 - [ ] Extract chat and reviewed-edit controllers.
 - [ ] Separate a read-only frame view model from layout construction.
 - [x] Establish one `app_destroy()` path for full and partial initialization.
@@ -211,3 +211,5 @@ Do not treat these as remediation targets without a changed product decision:
   strict import validation, and complete observer backup/restore coverage.
 - Extracted entity backfill and name detection into owned, joinable jobs and
   centralized normal/partial shutdown in an idempotent `app_destroy()` path.
+- Added owned project/session state and immutable, generation-tagged Explorer
+  snapshots so refreshes cannot retarget document or chat hit tests.

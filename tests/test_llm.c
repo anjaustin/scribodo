@@ -17,6 +17,8 @@
 #include "../src/app/backup_job.h"
 #include "../src/app/service_supervisor.h"
 #include "../src/app/name_detection_job.h"
+#include "../src/app/project_session.h"
+#include "../src/app/explorer_snapshot.h"
 #include "../src/app/chat_store.h"
 #include "../src/app/recent.h"
 #include "../src/app/records.h"
@@ -2033,6 +2035,48 @@ static void test_name_detection_job(void)
     CHECK(!name_detection_job_busy(&job));
 }
 
+static void test_project_session_and_explorer_snapshot(void)
+{
+    ProjectSession session;
+    project_session_init(&session);
+    CHECK(project_session_set_project(&session, "/tmp/book") && session.generation == 1);
+    CHECK(!project_session_set_project(&session, "/tmp/book") && session.generation == 1);
+    project_session_bind_chat(&session, session.project_dir, "chat-1", "Opening");
+    CHECK(!strcmp(session.chat_project, "/tmp/book") && !strcmp(session.chat_id, "chat-1"));
+    project_session_clear_chat(&session);
+    CHECK(!session.chat_project[0] && !session.chat_id[0] && !session.chat_title[0]);
+    project_session_destroy(&session);
+
+    char project[600], path[700];
+    snprintf(project, sizeof(project), "%s/explorer-snapshot", g_dir);
+    mkdir(project, 0755);
+    snprintf(path, sizeof(path), "%s/B.md", project);
+    FILE *file = fopen(path, "wb");
+    if (file) fclose(file);
+    snprintf(path, sizeof(path), "%s/a.txt", project);
+    file = fopen(path, "wb");
+    if (file) fclose(file);
+    ChatMessage message = { .role = CHAT_USER, .content = "hello" };
+    CHECK(chat_store_append(project, "20261105-120000-abcd", "A chat", &message));
+    ExplorerSnapshot first;
+    CHECK(explorer_snapshot_build(&first, project, 7, 1));
+    CHECK(first.ndocs == 2 && first.nchats == 1 && !strcasecmp(first.docs[0], "a.txt"));
+    CHECK(explorer_snapshot_doc(&first, 7, 1, 1) != NULL && explorer_snapshot_doc(&first, 8, 1, 1) == NULL);
+    CHECK(explorer_snapshot_doc(&first, 7, 2, 1) == NULL); /* old rows cannot act in a new project */
+    CHECK(explorer_snapshot_chat(&first, 7, 1, 0) != NULL && explorer_snapshot_chat(&first, 8, 1, 0) == NULL);
+    snprintf(path, sizeof(path), "%s/0.md", project);
+    file = fopen(path, "wb");
+    if (file) fclose(file);
+    ExplorerSnapshot second;
+    CHECK(explorer_snapshot_build(&second, project, 8, 1));
+    CHECK(first.ndocs == 2 && second.ndocs == 3); /* refresh never mutates the drawn snapshot */
+    explorer_snapshot_destroy(&first);
+    explorer_snapshot_destroy(&second);
+    ExplorerSnapshot failed;
+    CHECK(!explorer_snapshot_build(&failed, "/a/project/that/does/not/exist", 9, 2));
+    explorer_snapshot_destroy(&failed);
+}
+
 /* The chat rules with names, and repairing what older rules recorded. */
 static void test_observer_rules_and_refilter(void)
 {
@@ -2198,6 +2242,7 @@ int main(int argc, char **argv)
         { "observer_chat_filter", test_observer_chat_filter },
         { "names_detect", test_names_detect },
         { "name_detection_job", test_name_detection_job },
+        { "project_session_and_explorer_snapshot", test_project_session_and_explorer_snapshot },
         { "model_settings", test_model_settings },
         { "memfit", test_memfit },
         { "observer_rules_refilter", test_observer_rules_and_refilter },

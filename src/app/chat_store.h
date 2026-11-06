@@ -44,6 +44,7 @@ bool chat_store_set_observer(const char *project_dir, const char *id, bool read)
 
 /* List conversations, newest first. Caller frees *out. */
 size_t chat_store_list(const char *project_dir, ChatSummary **out);
+bool chat_store_list_checked(const char *project_dir, ChatSummary **out, size_t *count);
 
 /* Load a conversation's messages. Caller frees with chat_store_free_messages. */
 bool chat_store_load(const char *project_dir, const char *id, ChatMessage **msgs, size_t *n);

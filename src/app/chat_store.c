@@ -182,17 +182,25 @@ static int by_updated_desc(const void *a, const void *b)
     return (y->updated_nsec > x->updated_nsec) - (y->updated_nsec < x->updated_nsec);
 }
 
-size_t chat_store_list_files(const char *project_dir, ChatSummary **out)
+bool chat_store_list_files_checked(const char *project_dir, ChatSummary **out, size_t *count)
 {
     *out = NULL;
+    *count = 0;
     char dir[1100];
-    if (!chat_store_dir(project_dir, dir, sizeof(dir))) return 0;
+    if (!chat_store_dir(project_dir, dir, sizeof(dir))) return false;
     DIR *d = opendir(dir);
-    if (!d) return 0;
+    if (!d) return errno == ENOENT;
     size_t n = 0, cap = 0;
     ChatSummary *list = NULL;
     struct dirent *ent;
-    while ((ent = readdir(d)) != NULL) {
+    bool read_ok = true;
+    for (;;) {
+        errno = 0;
+        ent = readdir(d);
+        if (!ent) {
+            read_ok = errno == 0;
+            break;
+        }
         size_t len = strlen(ent->d_name);
         if (len < 7 || strcmp(ent->d_name + len - 6, ".jsonl") != 0 || len - 6 >= sizeof(list->id)) continue;
         char path[1300];
@@ -202,7 +210,11 @@ size_t chat_store_list_files(const char *project_dir, ChatSummary **out)
         if (n == cap) {
             cap = cap ? cap * 2 : 16;
             ChatSummary *l = realloc(list, cap * sizeof(ChatSummary));
-            if (!l) break;
+            if (!l) {
+                free(list);
+                closedir(d);
+                return false;
+            }
             list = l;
         }
         ChatSummary *c = &list[n];
@@ -236,10 +248,22 @@ size_t chat_store_list_files(const char *project_dir, ChatSummary **out)
         }
         n++;
     }
-    closedir(d);
+    bool ok = closedir(d) == 0 && read_ok;
+    if (!ok) {
+        free(list);
+        return false;
+    }
     qsort(list, n, sizeof(ChatSummary), by_updated_desc);
     *out = list;
-    return n;
+    *count = n;
+    return true;
+}
+
+size_t chat_store_list_files(const char *project_dir, ChatSummary **out)
+{
+    size_t count = 0;
+    (void)chat_store_list_files_checked(project_dir, out, &count);
+    return count;
 }
 
 bool chat_store_load_files(const char *project_dir, const char *id, ChatMessage **msgs, size_t *n)
@@ -327,6 +351,11 @@ bool chat_store_set_observer(const char *project_dir, const char *id, bool read)
 size_t chat_store_list(const char *project_dir, ChatSummary **out)
 {
     return project_store_chat_list(project_dir, out);
+}
+
+bool chat_store_list_checked(const char *project_dir, ChatSummary **out, size_t *count)
+{
+    return project_store_chat_list_checked(project_dir, out, count);
 }
 
 bool chat_store_load(const char *project_dir, const char *id, ChatMessage **messages, size_t *count)
