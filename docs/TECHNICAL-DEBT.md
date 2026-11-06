@@ -136,7 +136,8 @@ order, limiting parallel tests and future independent application instances.
 
 ## P1 — CI omits high-value verification
 
-**Status:** Blocked on external infrastructure and repository policy
+**Status:** Done for build, sanitizer, race, database and UI merge coverage;
+real-model/offline acceptance remains an explicit manual operation
 **Why now:** the repository already owns strong race, database and UI tests, but
 several are optional developer actions rather than merge gates.
 
@@ -146,12 +147,14 @@ several are optional developer actions rather than merge gates.
 - [x] Unit/headless tests.
 - [x] ASan/UBSan.
 - [x] TSan.
-- [ ] MariaDB/Qdrant integration (`make dbtest`).
-- [ ] Scripted UI (`make uitest`); the hosted canary trial proved the runner has
+- [x] MariaDB/Qdrant integration (`make dbtest`) on the trusted Mac runner.
+- [x] Scripted UI (`make uitest`) on the trusted Mac runner; the hosted canary proved the runner has
       no display session in which Raylib can create a window, so the permanently
       failing job was retired rather than consuming capacity without coverage.
-- [ ] Store UI (`make uitest-db`).
-- [ ] Scheduled backup, remote and offline acceptance suites.
+- [x] Store UI (`make uitest-db`) on the trusted Mac runner.
+- [x] Scheduled/manual backup and remote-provider acceptance suites.
+- [ ] Real-model/offline acceptance remains manual because it requires the local
+      model asset and a deliberately network-isolated sandbox.
 
 ### Infrastructure constraint
 
@@ -163,6 +166,12 @@ these runners have no usable display session: every script stopped at window
 creation. Failure artifacts were uploaded successfully, but the UI job cannot
 become required on this runner class.
 
+A repository-scoped ARM64 runner named `scribodo-mac-studio` now runs as a user
+LaunchAgent on the trusted development Mac. Docker Desktop supplies the pinned
+MariaDB/Qdrant services and the logged-in WindowServer supplies UI execution.
+`.github/workflows/acceptance.yml` refuses fork pull-request code; trusted jobs
+are serialized and upload UI/hang diagnostics on failure.
+
 ### Migration plan
 
 - [x] Make `make tsan` self-contained on a clean checkout.
@@ -170,14 +179,14 @@ become required on this runner class.
 - [x] Trial `make uitest` on hosted macOS with `build/ui` and `build/hangs`
       failure artifacts; retire the trial after it proved the runner class has
       no usable display.
-- [ ] Provision a trusted, serialized bare-metal macOS runner with Docker for
-      `dbtest` and `uitest-db`, or build a pinned native-service harness.
-- [ ] Run real-model, backup, remote and offline suites on a scheduled/manual
-      trusted runner.
+- [x] Provision a trusted, serialized bare-metal macOS runner with Docker for
+      `dbtest`, `uitest` and `uitest-db`.
+- [x] Run backup and remote-provider suites on scheduled/manual trusted runs.
+- [ ] Keep real-model/offline verification manual until model asset provisioning
+      and sandbox policy are made reproducible on the runner.
 
-Required-check enforcement and direct-push prevention also require repository
-branch-protection or ruleset administration. The workflow can publish checks,
-but this repository policy cannot be established from a source commit alone.
+Repository administration now enforces pull requests, linear history and the
+hosted build/sanitizer/TSan checks plus trusted acceptance on `main`.
 
 ### Acceptance criteria
 
@@ -192,7 +201,7 @@ but this repository policy cannot be established from a source commit alone.
 | Observer monolith | Done | Text analysis, deterministic/model backends and job discovery/state pruning are separate modules; `observer.c` retains candidate application plus worker synchronization, cancellation and generations. | Keep worker ownership cohesive unless a narrower interface emerges. |
 | Test monoliths | Done | Pure observer/DB suites, stateful components and remote/network behavior run independently; shared fixtures own temporary roots and stores, and database core/migrations are a separately registered suite. | Add future subsystem tests to the narrowest existing binary. |
 | Documentation drift | Done | Living guides no longer encode volatile source locations or assertion totals; dated red-team reports retain their point-in-time evidence. | Keep contracts current and reserve numeric evidence for dated reports. |
-| Weakly typed DB rows | Done | Production code has no direct indexed-cell reads; repository decoders validate shape, nullability, type and domain. Checked record/revision list failures propagate through `ProjectStore`, with compatibility count wrappers retained. | Require local decoders and checked routing for every new query. |
+| Weakly typed DB rows | Done | Production code has no direct indexed-cell reads; repository decoders validate shape, nullability, type and domain. Checked record/revision list failures propagate through `ProjectStore`; compatibility count wrappers remain source-compatible but have no production callers. | Require local decoders and checked routing for every new query. |
 | Manual dependency maintenance | Done | `make dependency-report` and a weekly workflow inventory submodules and images, verify immutable pins, and query OSV by vendored commit. | Review informational upstream updates and remediate any report failure. |
 
 ## Intentional pre-alpha tradeoffs
@@ -368,3 +377,17 @@ Do not treat these as remediation targets without a changed product decision:
   pending for a later retry.
 - Added checked-list corruption regressions for over-width revision origins and
   record statuses, plus an observer discovery-error regression.
+
+### 2026-11-06 — trusted acceptance and enforced checks
+
+- Registered a repository-scoped ARM64 macOS runner backed by the development
+  Mac's Docker Desktop and graphical login session.
+- Added serialized trusted acceptance for database integration and base/store UI
+  suites on pushes and repository-owned pull requests. Fork pull-request code is
+  never dispatched to the persistent runner; scheduled/manual runs also exercise
+  backup and stand-in remote-provider recovery.
+- Migrated every production record/revision list call to checked APIs. UI loads
+  now report failure rather than presenting false empty state, and observer work
+  aborts/retries rather than acting on incomplete records.
+- Enabled `main` branch protection with required pull requests, linear history,
+  administrator enforcement, and hosted plus trusted acceptance checks.

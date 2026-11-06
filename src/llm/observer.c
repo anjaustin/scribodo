@@ -327,7 +327,11 @@ size_t obs_refilter(StoreManager *store, const char *project, const char *author
     int lock = findings_lock(project);
     if (lock < 0) return 0;
     Record *recs = NULL;
-    size_t n = records_list(store, project, REC_FINDING, &recs), changed = 0;
+    size_t n = 0, changed = 0;
+    if (!records_list_checked(store, project, REC_FINDING, &recs, &n)) {
+        findings_unlock(lock);
+        return 0;
+    }
     for (size_t i = 0; i < n; i++) {
         const RecordVersion *v = record_current(&recs[i]);
         bool from_chat = v->nsources && v->sources[0].kind == SRC_CHAT;
@@ -499,9 +503,23 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, ObserverJob 
     /* Deduplicate against stored findings (and within this batch). */
     int findings_fd = findings_lock(project);
     Record *existing = NULL, *canon = NULL, *notes = NULL;
-    size_t ne = findings_fd >= 0 ? records_list(o->store, project, REC_FINDING, &existing) : 0;
+    size_t ne = 0, ncanon = 0, nnotes = 0;
+    bool lists_ok = findings_fd >= 0 && records_list_checked(o->store, project, REC_FINDING, &existing, &ne);
     findings_unlock(findings_fd);
-    size_t ncanon = records_list(o->store, project, REC_CANON, &canon), nnotes = records_list(o->store, project, REC_NOTE, &notes);
+    lists_ok = lists_ok && records_list_checked(o->store, project, REC_CANON, &canon, &ncanon) &&
+               records_list_checked(o->store, project, REC_NOTE, &notes, &nnotes);
+    if (!lists_ok) {
+        for (size_t i = 0; i < nc; i++) {
+            free(cands[i].desc);
+            free(cands[i].src.quote);
+            free(cands[i].info.related_text);
+        }
+        records_free(existing, ne);
+        records_free(canon, ncanon);
+        records_free(notes, nnotes);
+        if (io_out) *io_out = true;
+        return false;
+    }
     for (size_t i = 0; i < nc; i++) {
         char key[400], other[400];
         finding_key(cands[i].type, cands[i].info.subject, cands[i].info.relation, cands[i].info.object, cands[i].desc, key,
@@ -650,10 +668,10 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, ObserverJob 
              * between our first deduplication read and append. */
             records_free(existing, ne);
             existing = NULL;
-            ne = records_list(o->store, project, REC_FINDING, &existing);
+            if (!records_list_checked(o->store, project, REC_FINDING, &existing, &ne)) io_failed = true;
             for (size_t i = 0; i < nc; i++)
-                if (cands[i].keep && candidate_already_exists(&cands[i], existing, ne)) cands[i].keep = false;
-            for (size_t c = 0; c < nconf; c++) {
+                if (!io_failed && cands[i].keep && candidate_already_exists(&cands[i], existing, ne)) cands[i].keep = false;
+            for (size_t c = 0; !io_failed && c < nconf; c++) {
                 Cand *candidate = &cands[conflicts[c].cand];
                 for (size_t e = 0; e < ne; e++) {
                     const RecordVersion *version = record_current(&existing[e]);
@@ -670,14 +688,14 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, ObserverJob 
                 }
             }
         }
-        for (size_t i = 0; findings_fd >= 0 && i < nc; i++) {
+        for (size_t i = 0; !io_failed && findings_fd >= 0 && i < nc; i++) {
             if (!cands[i].keep) continue;
             char id[40];
             records_new_id(REC_FINDING, id, sizeof(id));
             if (!records_create_ex(o->store, project, REC_FINDING, id, "new", cands[i].desc, &cands[i].src, 1, &cands[i].info))
                 io_failed = true;
         }
-        for (size_t c = 0; findings_fd >= 0 && c < nconf; c++) {
+        for (size_t c = 0; !io_failed && findings_fd >= 0 && c < nconf; c++) {
             if (conflicts[c].cand == SIZE_MAX) continue;
             Cand *cd = &cands[conflicts[c].cand];
             FindingInfo fi = { 0 };
@@ -1075,7 +1093,11 @@ bool observer_set_finding_status(Observer *o, const char *project_dir, const cha
     int lock = findings_lock(project_dir);
     if (lock < 0) return false;
     Record *list = NULL;
-    size_t n = records_list(o->store, project_dir, REC_FINDING, &list);
+    size_t n = 0;
+    if (!records_list_checked(o->store, project_dir, REC_FINDING, &list, &n)) {
+        findings_unlock(lock);
+        return false;
+    }
     bool ok = false;
     for (size_t i = 0; i < n; i++) {
         if (strcmp(list[i].id, id)) continue;

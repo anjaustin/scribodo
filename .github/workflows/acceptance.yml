@@ -1,0 +1,62 @@
+name: Trusted acceptance
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "31 12 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trusted-acceptance
+  cancel-in-progress: false
+
+jobs:
+  acceptance:
+    name: Trusted database and UI acceptance
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, macOS, ARM64, scribodo-trusted]
+    timeout-minutes: 90
+    steps:
+      - name: Check out pinned dependencies
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          submodules: recursive
+
+      - name: Configure native tools
+        run: |
+          echo "$HOME/.docker/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
+          brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
+          echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+
+      - name: Start pinned local services
+        run: tools/services.sh up
+
+      - name: Build and run database integration
+        run: make all test dbtest
+
+      - name: Run scripted UI acceptance
+        run: make uitest
+
+      - name: Run store UI acceptance
+        run: make uitest-db
+
+      - name: Run scheduled recovery acceptance
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: make backuptest remotetest
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: trusted-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build/ui
+            build/hangs
+          if-no-files-found: ignore

@@ -343,7 +343,10 @@ static bool refresh_lists(App *app)
     app->explorer = next;
     free(app->revs);
     app->revs = NULL;
-    app->nrevs = editor_path(app->editor) ? revisions_list(app->store, app->project_dir, editor_path(app->editor), &app->revs) : 0;
+    app->nrevs = 0;
+    if (editor_path(app->editor) &&
+        !revisions_list_checked(app->store, app->project_dir, editor_path(app->editor), &app->revs, &app->nrevs))
+        return false;
     static const struct { const char *origin, *label; } names[] = {
         { "save", "Saved" }, { "ai-edit", "AI edit" }, { "before-ai-edit", "Before AI edit" },
         { "restore", "Restored" }, { "before-restore", "Before restore" },
@@ -432,7 +435,11 @@ static void open_source(App *app, const SourceRef *s);
 static void open_finding_source(App *app, const char *finding_id)
 {
     Record *r = NULL;
-    size_t n = records_list(app->store, app->project_dir, REC_FINDING, &r);
+    size_t n = 0;
+    if (!records_list_checked(app->store, app->project_dir, REC_FINDING, &r, &n)) {
+        set_status(app, "Couldn't load findings from the project store");
+        return;
+    }
     SourceRef *copy = NULL;
     for (size_t i = 0; i < n && !copy; i++)
         if (!strcmp(r[i].id, finding_id)) {
@@ -452,8 +459,15 @@ static void refresh_records(App *app)
     app->notes = app->canon = NULL;
     app->nnotes = app->ncanon = 0;
     if (!app->project_dir[0]) return;
-    app->nnotes = records_list(app->store, app->project_dir, REC_NOTE, &app->notes);
-    app->ncanon = records_list(app->store, app->project_dir, REC_CANON, &app->canon);
+    bool notes_ok = records_list_checked(app->store, app->project_dir, REC_NOTE, &app->notes, &app->nnotes);
+    bool canon_ok = records_list_checked(app->store, app->project_dir, REC_CANON, &app->canon, &app->ncanon);
+    if (!notes_ok || !canon_ok) {
+        records_free(app->notes, app->nnotes);
+        records_free(app->canon, app->ncanon);
+        app->notes = app->canon = NULL;
+        app->nnotes = app->ncanon = 0;
+        set_status(app, "Couldn't load records from the project store");
+    }
     for (size_t i = 0; i < app->nnotes && i < REC_SHOW; i++) {
         const RecordVersion *v = record_current(&app->notes[i]);
         if (!strcmp(v->status, "deleted")) app->note_labels[i][0] = '\0'; /* hidden; still in the log */
@@ -2043,7 +2057,10 @@ static void refresh_findings(App *app)
 {
     records_free(app->flist, app->nflist);
     app->flist = NULL;
-    app->nflist = app->project_dir[0] ? records_list(app->store, app->project_dir, REC_FINDING, &app->flist) : 0;
+    app->nflist = 0;
+    if (app->project_dir[0] &&
+        !records_list_checked(app->store, app->project_dir, REC_FINDING, &app->flist, &app->nflist))
+        set_status(app, "Couldn't load findings from the project store");
     findings_view_set(app->findings, app->flist, app->nflist, app->canon, app->ncanon);
     size_t fresh = 0;
     for (size_t i = 0; i < app->nflist; i++) fresh += !strcmp(record_current(&app->flist[i])->status, "new");
