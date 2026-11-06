@@ -288,11 +288,11 @@ Do not treat these as remediation targets without a changed product decision:
 - Added an owned dependency report for submodule pins, upstream availability,
   container tag/digest integrity and OSV commit advisories, plus a weekly/manual
   workflow that publishes the Markdown result.
-- Updated the pinned checkout action to its Node 24 release and advanced cJSON to
-  its current post-1.7.19 revision after the first report identified six
-  advisories on the previous pin. Scribodo does not compile `cJSON_Utils` or call
-  `cJSON_Compare`, and its supported 64-bit target is not exposed to the reported
-  32-bit print overflow; the newer pin also includes upstream depth and utility
+- Updated the pinned checkout and artifact actions to their Node 24 releases,
+  and advanced cJSON to its current post-1.7.19 revision after the first report
+  identified six advisories on the previous pin. Scribodo does not compile
+  `cJSON_Utils` or call `cJSON_Compare`, and its supported 64-bit target is not
+  exposed to the reported 32-bit print overflow; the newer pin also includes upstream depth and utility
   hardening.
 - Added checked `DbRows` shape, nullability and numeric conversions with focused
   overflow/malformed-value tests, then moved the chat repository to local typed
