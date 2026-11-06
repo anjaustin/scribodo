@@ -55,25 +55,37 @@ def submodules(offline: bool) -> tuple[list[list[str]], list[dict], list[str]]:
         url = config[section]["url"]
         checkout = ROOT / path
         try:
+            tree = run("git", "ls-tree", "HEAD", "--", path).split()
+            if len(tree) < 3 or tree[0] != "160000" or tree[1] != "commit":
+                raise RuntimeError("superproject entry is not a gitlink")
+            pinned = tree[2]
             current = run("git", "rev-parse", "HEAD", cwd=checkout)
             label = run("git", "describe", "--tags", "--always", cwd=checkout)
-        except (OSError, subprocess.CalledProcessError) as exc:
+            modified = bool(run("git", "status", "--porcelain", "--untracked-files=no", cwd=checkout))
+        except (OSError, RuntimeError, subprocess.CalledProcessError) as exc:
             errors.append(f"{path}: cannot read checked-out pin ({exc})")
             rows.append([path, "error", "error", "error"])
             continue
 
         upstream = "not checked"
         status = "offline"
+        if current != pinned:
+            errors.append(f"{path}: checkout {current} differs from committed gitlink {pinned}")
+            status = "checkout mismatch"
+        elif modified:
+            errors.append(f"{path}: tracked files differ from the pinned commit")
+            status = "modified checkout"
         if not offline:
             try:
                 upstream = run("git", "ls-remote", url, "HEAD").split()[0]
-                status = "current" if upstream == current else "update available"
+                if status not in ("checkout mismatch", "modified checkout"):
+                    status = "current" if upstream == pinned else "update available"
             except (OSError, subprocess.CalledProcessError, IndexError) as exc:
                 errors.append(f"{path}: cannot resolve upstream HEAD ({exc})")
                 upstream = "error"
                 status = "error"
             try:
-                result, _ = request_json("https://api.osv.dev/v1/query", {"commit": current})
+                result, _ = request_json("https://api.osv.dev/v1/query", {"commit": pinned})
                 for advisory in result.get("vulns", []):
                     advisories.append(
                         {
@@ -84,7 +96,8 @@ def submodules(offline: bool) -> tuple[list[list[str]], list[dict], list[str]]:
                     )
             except Exception as exc:  # network/protocol errors must make the scheduled report visible
                 errors.append(f"{path}: OSV query failed ({exc})")
-        rows.append([path, f"`{label}` / `{current[:12]}`", f"`{upstream[:12]}`" if upstream not in ("error", "not checked") else upstream, status])
+        pin = f"`{label}` / `{pinned[:12]}`" if current == pinned else f"`{pinned[:12]}` (checkout `{current[:12]}`)"
+        rows.append([path, pin, f"`{upstream[:12]}`" if upstream not in ("error", "not checked") else upstream, status])
     return rows, advisories, errors
 
 
@@ -160,7 +173,7 @@ def render(offline: bool) -> tuple[str, bool]:
     lines.extend(
         [
             "",
-            "> Update availability is informational. This report fails only for invalid or moved pins, lookup failures, or confirmed advisories.",
+            "> Update availability is informational. This report fails only for invalid, mismatched, modified or moved pins, lookup failures, or confirmed advisories.",
             "",
         ]
     )

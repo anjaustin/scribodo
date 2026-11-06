@@ -45,23 +45,27 @@ static bool bool_cell(const DbRows *rows, size_t row, size_t col, bool *out)
 
 static bool chat_summary_row(const DbRows *rows, size_t row, ChatSummaryRow *out)
 {
-    return db_rows_has_columns(rows, 4) && db_cell_text(rows, row, 0, &out->id) &&
+    bool ok = db_rows_has_columns(rows, 4) && db_cell_text(rows, row, 0, &out->id) &&
            db_cell_text(rows, row, 1, &out->title) && db_cell_double(rows, row, 2, &out->updated) &&
            bool_cell(rows, row, 3, &out->observer_ignore);
+    return ok && out->updated >= 0 && out->updated < 0x1p63 &&
+           strlen(out->id) < sizeof(((ChatSummary *)0)->id) && strlen(out->title) < sizeof(((ChatSummary *)0)->title);
 }
 
 static bool chat_message_row(const DbRows *rows, size_t row, ChatMessageRow *out)
 {
-    return db_rows_has_columns(rows, 8) && db_cell_i64(rows, row, 0, &out->seq) &&
+    bool ok = db_rows_has_columns(rows, 8) && db_cell_i64(rows, row, 0, &out->seq) &&
            db_cell_text(rows, row, 1, &out->role) && db_cell_text(rows, row, 2, &out->content) &&
            bool_cell(rows, row, 3, &out->error) && bool_cell(rows, row, 4, &out->is_edit) &&
            bool_cell(rows, row, 5, &out->truncated) && db_cell_nullable(rows, row, 6, &out->via) &&
            db_cell_double(rows, row, 7, &out->created_at);
+    return ok && out->seq >= 0 && out->created_at >= 0 && out->created_at < 0x1p63;
 }
 
 static bool chat_document_row(const DbRows *rows, size_t row, int64_t *seq, const char **name)
 {
-    return db_rows_has_columns(rows, 2) && db_cell_i64(rows, row, 0, seq) && db_cell_text(rows, row, 1, name);
+    return db_rows_has_columns(rows, 2) && db_cell_i64(rows, row, 0, seq) && *seq >= 0 &&
+           db_cell_text(rows, row, 1, name);
 }
 
 static void chat_messages_free_partial(ChatMessage *messages, size_t count)
@@ -116,6 +120,7 @@ bool sdb_chat_append(Db *db, const char *project_id, const char *id, const char 
     /* The documents this message was sent with. */
     if (ok && m->docs && m->docs[0]) {
         char *copy = strdup(m->docs);
+        if (!copy) ok = false;
         for (char *save = NULL, *nm = copy ? strtok_r(copy, "\n", &save) : NULL; ok && nm; nm = strtok_r(NULL, "\n", &save)) {
             char doc[40];
             if (!store_document_id_db(db, project_id, nm, true, doc, sizeof(doc))) continue;
@@ -196,19 +201,24 @@ bool sdb_chat_load(Db *db, const char *project_id, const char *id, ChatMessage *
         return false;
     }
     bool ok = db_rows_has_columns(&r, 8) && db_rows_has_columns(&d, 2);
+    int64_t previous_document_seq = -1;
     for (size_t i = 0; ok && i < d.nrows; i++) {
         int64_t seq;
         const char *name;
-        ok = chat_document_row(&d, i, &seq, &name);
+        ok = chat_document_row(&d, i, &seq, &name) && seq >= previous_document_seq;
+        if (ok) previous_document_seq = seq;
     }
     size_t row_count = r.nrows;
     ChatMessage *list = ok && row_count ? calloc(row_count, sizeof(ChatMessage)) : NULL;
     if (row_count && !list) ok = false;
     size_t k2 = 0;
+    int64_t previous_message_seq = -1;
     for (size_t i = 0; ok && i < row_count; i++) {
         ChatMessageRow row;
-        ok = chat_message_row(&r, i, &row) && (!strcmp(row.role, "user") || !strcmp(row.role, "assistant"));
+        ok = chat_message_row(&r, i, &row) && row.seq > previous_message_seq &&
+             (!strcmp(row.role, "user") || !strcmp(row.role, "assistant"));
         if (!ok) break;
+        previous_message_seq = row.seq;
         ChatMessage *m = &list[*n];
         m->role = !strcmp(row.role, "user") ? CHAT_USER : CHAT_ASSISTANT;
         m->content = strdup(row.content);
@@ -243,15 +253,15 @@ bool sdb_chat_load(Db *db, const char *project_id, const char *id, ChatMessage *
                 strcat(m->docs, name);
             }
         } else if (len > 1) ok = false;
-        while (ok && k2 < d.nrows) {
+        if (ok && k2 < d.nrows) {
             int64_t document_seq;
             const char *name;
             ok = chat_document_row(&d, k2, &document_seq, &name);
-            if (!ok || document_seq > seq) break;
-            k2++;
+            ok = ok && document_seq > seq;
         }
         if (ok) (*n)++;
     }
+    if (ok && k2 != d.nrows) ok = false;
     db_rows_free(&r);
     db_rows_free(&d);
     if (!ok) {

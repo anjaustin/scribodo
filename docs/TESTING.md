@@ -9,7 +9,7 @@
 | `make dbtest` | MariaDB/Qdrant integration in throwaway databases (`tools/services.sh up` first) | No |
 | `make llmtest` | The model adapter end to end against the real `llama-server`: verification, stale-socket start-up, auth, streaming, injection neutralization, crash and restart | No |
 | `make uitest-real` | `tests/ui/real-*.scribo`: the real model through the real UI | Yes |
-| `make dependency-report` | Verifies submodule pins, container digests and OSV advisories; lists available upstream updates without failing on them | No |
+| `make dependency-report` | Verifies committed submodule gitlinks against clean checkouts, container digests and OSV advisories; lists available upstream updates without failing on them | No |
 
 ## Hang protection
 

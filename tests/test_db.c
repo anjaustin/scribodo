@@ -439,6 +439,32 @@ static void test_backends(void)
     size_t nc = sdb_chat_list(db, pid, &cs);
     CHECK(nc == 1 && !strcmp(cs[0].title, "Comparing chapters"));
     free(cs);
+    /* Checked decoders reject schema-valid values that cannot safely fit the
+     * public domain structs, and never return partial output. */
+    CHECK(db_run(db, "UPDATE conversations SET updated_at = -1 WHERE id = ?",
+                 (DbArg[1]){ DB_S("20261104-150000-abcd") }, 1, NULL));
+    cs = (ChatSummary *)1;
+    nc = 99;
+    CHECK(!sdb_chat_list_checked(db, pid, &cs, &nc) && cs == NULL && nc == 0);
+    CHECK(db_run(db, "UPDATE conversations SET updated_at = 9223372036854775808 WHERE id = ?",
+                 (DbArg[1]){ DB_S("20261104-150000-abcd") }, 1, NULL));
+    cs = (ChatSummary *)1;
+    nc = 99;
+    CHECK(!sdb_chat_list_checked(db, pid, &cs, &nc) && cs == NULL && nc == 0);
+    CHECK(db_run(db, "UPDATE conversations SET updated_at = 10, title = REPEAT('x', 160) WHERE id = ?",
+                 (DbArg[1]){ DB_S("20261104-150000-abcd") }, 1, NULL));
+    cs = (ChatSummary *)1;
+    nc = 99;
+    CHECK(!sdb_chat_list_checked(db, pid, &cs, &nc) && cs == NULL && nc == 0);
+    CHECK(db_run(db, "UPDATE conversations SET title = 'Comparing chapters' WHERE id = ?",
+                 (DbArg[1]){ DB_S("20261104-150000-abcd") }, 1, NULL));
+    CHECK(db_run(db, "UPDATE messages SET created_at = -1 WHERE conversation_id = ? AND seq = 1",
+                 (DbArg[1]){ DB_S("20261104-150000-abcd") }, 1, NULL));
+    msgs = (ChatMessage *)1;
+    nm = 99;
+    CHECK(!sdb_chat_load(db, pid, "20261104-150000-abcd", &msgs, &nm) && msgs == NULL && nm == 0);
+    CHECK(db_run(db, "UPDATE messages SET created_at = 10 WHERE conversation_id = ? AND seq = 1",
+                 (DbArg[1]){ DB_S("20261104-150000-abcd") }, 1, NULL));
     /* Another project can't touch this one's chat. */
     char pid2[40];
     CHECK(store_project_id(g_store, "/private/etc", true, pid2, sizeof(pid2)));

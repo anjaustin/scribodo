@@ -76,14 +76,14 @@ static bool record_version_row(const DbRows *rows, size_t row, RecordVersionRow 
     return db_rows_has_columns(rows, 13) && db_cell_text(rows, row, 0, &out->id) &&
            int_cell(rows, row, 1, &out->ver) && out->ver > 0 &&
            db_cell_double(rows, row, 2, &out->created_at) && out->created_at >= 0 &&
-           out->created_at <= (double)INT64_MAX && db_cell_text(rows, row, 3, &out->status) &&
+           out->created_at < 0x1p63 && db_cell_text(rows, row, 3, &out->status) &&
            db_cell_text(rows, row, 4, &out->content) && db_cell_nullable(rows, row, 5, &out->finding_type) &&
            db_cell_nullable(rows, row, 6, &out->subject) && db_cell_nullable(rows, row, 7, &out->relation) &&
            db_cell_nullable(rows, row, 8, &out->object) && db_cell_nullable(rows, row, 9, &out->related_id) &&
            db_cell_nullable(rows, row, 10, &out->related_text) &&
            db_cell_double(rows, row, 11, &out->record_created_at) && out->record_created_at >= 0 &&
-           out->record_created_at <= (double)SIZE_MAX / 1e6 && db_cell_double(rows, row, 12, &out->changed_at) &&
-           out->changed_at >= 0 && out->changed_at <= (double)INT64_MAX;
+           out->record_created_at < 0x1p64 / 1e6 && db_cell_double(rows, row, 12, &out->changed_at) &&
+           out->changed_at >= 0 && out->changed_at < 0x1p63;
 }
 
 static bool source_row(const DbRows *rows, size_t row, SourceRow *out)

@@ -44,7 +44,7 @@ static bool revision_row(const DbRows *rows, size_t row, RevisionRow *out)
     bool ok = db_rows_has_columns(rows, 6) && db_cell_text(rows, row, 0, &out->id) &&
            db_cell_text(rows, row, 1, &out->origin) && db_cell_text(rows, row, 2, &out->note) &&
            db_cell_text(rows, row, 3, &out->hash) && db_cell_double(rows, row, 4, &out->created_at) &&
-           db_cell_u64(rows, row, 5, &out->bytes) && out->created_at >= 0 && out->created_at <= (double)INT64_MAX &&
+           db_cell_u64(rows, row, 5, &out->bytes) && out->created_at >= 0 && out->created_at < 0x1p63 &&
            out->bytes <= SIZE_MAX;
     return ok && strlen(out->id) < sizeof(((Revision *)0)->file) &&
            strlen(out->origin) < sizeof(((Revision *)0)->origin) && strlen(out->note) < sizeof(((Revision *)0)->note) &&

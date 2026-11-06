@@ -192,7 +192,7 @@ but this repository policy cannot be established from a source commit alone.
 | Observer monolith | In progress | `src/llm/observer.c` still combines pure text analysis, model calls, persisted state, jobs and worker orchestration. | Extract cohesive internals without exposing mutable worker state. |
 | Test monoliths | In progress | Pure DB-row, observer-text and observer-fake suites now build independently; `test_llm.c` and `test_db.c` still span multiple stateful subsystems. | Extract shared stateful fixtures, then split the remaining integration suites without weakening targets. |
 | Documentation drift | Done | Living guides no longer encode volatile source locations or assertion totals; dated red-team reports retain their point-in-time evidence. | Keep contracts current and reserve numeric evidence for dated reports. |
-| Weakly typed DB rows | In progress | Shared conversions and local decoders now cover schema versions, chats, revisions and records; observer, entity and import repositories still read indexed strings directly. | Continue repository-local decoder migration, starting with observer/entity reads. |
+| Weakly typed DB rows | In progress | Shared conversions and local decoders now cover schema versions, chats, revisions and records; observer, entity and import repositories still read indexed strings directly. Count-returning revision/record list APIs also cannot yet distinguish an empty result from decode failure. | Continue repository-local decoder migration, starting with observer/entity reads, then add checked list variants at the routing boundary. |
 | Manual dependency maintenance | Done | `make dependency-report` and a weekly workflow inventory submodules and images, verify immutable pins, and query OSV by vendored commit. | Review informational upstream updates and remediate any report failure. |
 
 ## Intentional pre-alpha tradeoffs
@@ -313,3 +313,25 @@ Do not treat these as remediation targets without a changed product decision:
   callback counter that otherwise forced the test's full watchdog fallback.
 - Verification: build/headless, MariaDB/Qdrant integration, ASan/UBSan, TSan,
   dependency reporting, base UI and store UI suites passed locally.
+
+### 2026-11-06 — P2 decoder red-team remediation
+
+- Found that syntactically checked chat values could still overflow integral
+  domain conversions, silently truncate fixed-size summary fields, or leave
+  related document rows incompletely consumed. Added exact exclusive numeric
+  bounds, field-fit checks, ordered non-negative sequences and complete relation
+  consumption, with database corruption tests that assert no partial output.
+- Hardened `DbRows` shape, cleanup and query-allocation arithmetic against
+  multiplication and buffer-size overflow. Boundary tests cover malformed
+  synthetic shapes and the exactly out-of-range `2^63` timestamp.
+- Made attachment-copy allocation failure roll back the chat transaction instead
+  of silently committing a message without its requested document references.
+- Found that dependency reporting treated a submodule's ambient checkout as the
+  repository pin. It now enforces committed gitlink equality and a clean tracked
+  checkout, while upstream availability remains informational. A deliberately
+  mismatched cJSON checkout was detected and the original pin restored.
+- Increased accepted test-socket I/O deadlines from two to ten seconds: teardown
+  remains bounded without imposing an unnecessarily narrow sanitizer deadline.
+- Remaining limitation: legacy count-returning revision and record list APIs
+  still collapse decode failure and an empty result; this remains explicit P2
+  work rather than being claimed complete.

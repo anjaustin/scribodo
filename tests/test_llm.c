@@ -1754,7 +1754,7 @@ static void *rstub_main(void *arg)
         if (c < 0) continue;
         int one = 1;
         setsockopt(c, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
-        struct timeval io_timeout = { .tv_sec = 2 };
+        struct timeval io_timeout = { .tv_sec = 10 };
         setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, &io_timeout, sizeof(io_timeout));
         setsockopt(c, SOL_SOCKET, SO_SNDTIMEO, &io_timeout, sizeof(io_timeout));
         /* Read headers and the whole body (Content-Length). */

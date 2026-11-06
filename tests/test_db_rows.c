@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "app/db.h"
@@ -18,6 +19,15 @@ static void test_shape_and_text(void)
     CHECK(!db_cell_nullable(&rows, 2, 0, &value));
     CHECK(!db_cell_nullable(&rows, 0, 2, &value));
     CHECK(!db_cell_nullable(NULL, 0, 0, &value));
+
+    DbRows overflow = { .nrows = SIZE_MAX, .ncols = 2, .cells = malloc(sizeof(char *)) };
+    CHECK(overflow.cells != NULL && !db_rows_has_columns(&overflow, 2));
+    db_rows_free(&overflow);
+    CHECK(overflow.cells == NULL && overflow.nrows == 0 && overflow.ncols == 0);
+    DbRows missing = { .nrows = 1, .ncols = 1, .cells = NULL };
+    CHECK(!db_rows_has_columns(&missing, 1));
+    db_rows_free(&missing);
+    CHECK(missing.nrows == 0 && missing.ncols == 0);
 }
 
 static void test_integers(void)

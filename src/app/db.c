@@ -210,14 +210,17 @@ bool db_run(Db *db, const char *sql, const DbArg *args, size_t nargs, uint64_t *
 void db_rows_free(DbRows *r)
 {
     if (!r) return;
-    for (size_t i = 0; i < r->nrows * r->ncols; i++) free(r->cells[i]);
+    size_t count = 0;
+    if (r->cells && (!r->ncols || r->nrows <= SIZE_MAX / r->ncols)) count = r->nrows * r->ncols;
+    for (size_t i = 0; i < count; i++) free(r->cells[i]);
     free(r->cells);
     memset(r, 0, sizeof(*r));
 }
 
 bool db_rows_has_columns(const DbRows *r, size_t expected)
 {
-    return r && r->ncols == expected && (r->nrows == 0 || r->cells);
+    return r && r->ncols == expected &&
+           (r->nrows == 0 || (r->cells && r->ncols && r->nrows <= SIZE_MAX / r->ncols));
 }
 
 bool db_cell_nullable(const DbRows *r, size_t row, size_t col, const char **out)
@@ -308,8 +311,13 @@ bool db_query(Db *db, const char *sql, const DbArg *args, size_t nargs, DbRows *
             break;
         }
         if (out->nrows == cap) {
-            cap = cap ? cap * 2 : 16;
-            char **cells = realloc(out->cells, cap * ncols * sizeof(char *));
+            size_t next = cap ? cap * 2 : 16;
+            if (next < cap || ncols > SIZE_MAX / next / sizeof(char *)) {
+                ok = false;
+                break;
+            }
+            cap = next;
+            char **cells = realloc(out->cells, cap * ncols * sizeof(*cells));
             if (!cells) {
                 ok = false;
                 break;
@@ -326,6 +334,10 @@ bool db_query(Db *db, const char *sql, const DbArg *args, size_t nargs, DbRows *
             if (nulls[c]) continue;
             /* Numeric columns report no length until converted: always fetch
              * into a real buffer, and again if the value is longer. */
+            if (lens[c] == ULONG_MAX) {
+                row_ok = false;
+                break;
+            }
             unsigned long size = lens[c] > 64 ? lens[c] : 64, got = 0;
             char *v = malloc(size + 1);
             MYSQL_BIND one = { 0 };
@@ -340,6 +352,11 @@ bool db_query(Db *db, const char *sql, const DbArg *args, size_t nargs, DbRows *
                     break;
                 }
                 if (got <= size) break;
+                if (got == ULONG_MAX) {
+                    free(v);
+                    v = NULL;
+                    break;
+                }
                 size = got;
                 char *nv = realloc(v, size + 1);
                 if (!nv) {
