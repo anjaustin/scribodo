@@ -13,6 +13,7 @@
 #include "app/records_internal.h"
 #include "app/revisions_internal.h"
 #include "app/chat_store_internal.h"
+#include "app/observer_store_internal.h"
 #include "app/store_backends.h"
 
 typedef struct ProjectStore ProjectStore;
@@ -38,6 +39,10 @@ struct ProjectStoreOps {
     bool (*chat_set_observer)(ProjectStore *, const char *, bool);
     size_t (*chat_list)(ProjectStore *, ChatSummary **);
     bool (*chat_load)(ProjectStore *, const char *, ChatMessage **, size_t *);
+    cJSON *(*observer_state_load)(ProjectStore *);
+    bool (*observer_state_save)(ProjectStore *, cJSON *);
+    bool (*observer_rules_get)(ProjectStore *, char[17]);
+    bool (*observer_rules_set)(ProjectStore *, const char *);
 };
 
 static size_t file_records_list(ProjectStore *store, RecordKind kind, Record **out)
@@ -217,20 +222,81 @@ static bool paused_chat_load(ProjectStore *store, const char *id, ChatMessage **
     return false;
 }
 
+static cJSON *file_observer_state_load(ProjectStore *store)
+{
+    return observer_state_load_files(store->project_dir);
+}
+
+static bool file_observer_state_save(ProjectStore *store, cJSON *state)
+{
+    return observer_state_save_files(store->project_dir, state);
+}
+
+static bool file_observer_rules_get(ProjectStore *store, char signature[17])
+{
+    return observer_rules_get_files(store->project_dir, signature);
+}
+
+static bool file_observer_rules_set(ProjectStore *store, const char *signature)
+{
+    return observer_rules_set_files(store->project_dir, signature);
+}
+
+static cJSON *db_observer_state_load(ProjectStore *store)
+{
+    return observer_state_load_db(store->db, store->project_id);
+}
+
+static bool db_observer_state_save(ProjectStore *store, cJSON *state)
+{
+    return observer_state_save_db(store->db, store->project_id, state);
+}
+
+static bool db_observer_rules_get(ProjectStore *store, char signature[17])
+{
+    return observer_rules_get_db(store->db, store->project_id, signature);
+}
+
+static bool db_observer_rules_set(ProjectStore *store, const char *signature)
+{
+    return observer_rules_set_db(store->db, store->project_id, signature);
+}
+
+static cJSON *paused_observer_state_load(ProjectStore *store) { return NULL; }
+static bool paused_observer_state_save(ProjectStore *store, cJSON *state) { return false; }
+static bool paused_observer_rules_get(ProjectStore *store, char signature[17])
+{
+    signature[0] = '\0';
+    return false;
+}
+static bool paused_observer_rules_set(ProjectStore *store, const char *signature) { return false; }
+
 static const ProjectStoreOps file_ops = {
-    file_records_list, file_records_append, file_revisions_list, file_revisions_record,
-    file_revisions_snapshot, file_revisions_load, file_chat_append, file_chat_rename,
-    file_chat_set_observer, file_chat_list, file_chat_load
+    .records_list = file_records_list, .records_append = file_records_append,
+    .revisions_list = file_revisions_list, .revisions_record = file_revisions_record,
+    .revisions_snapshot = file_revisions_snapshot, .revisions_load = file_revisions_load,
+    .chat_append = file_chat_append, .chat_rename = file_chat_rename,
+    .chat_set_observer = file_chat_set_observer, .chat_list = file_chat_list, .chat_load = file_chat_load,
+    .observer_state_load = file_observer_state_load, .observer_state_save = file_observer_state_save,
+    .observer_rules_get = file_observer_rules_get, .observer_rules_set = file_observer_rules_set
 };
 static const ProjectStoreOps db_ops = {
-    db_records_list, db_records_append, db_revisions_list, db_revisions_record,
-    db_revisions_snapshot, db_revisions_load, db_chat_append, db_chat_rename,
-    db_chat_set_observer, db_chat_list, db_chat_load
+    .records_list = db_records_list, .records_append = db_records_append,
+    .revisions_list = db_revisions_list, .revisions_record = db_revisions_record,
+    .revisions_snapshot = db_revisions_snapshot, .revisions_load = db_revisions_load,
+    .chat_append = db_chat_append, .chat_rename = db_chat_rename,
+    .chat_set_observer = db_chat_set_observer, .chat_list = db_chat_list, .chat_load = db_chat_load,
+    .observer_state_load = db_observer_state_load, .observer_state_save = db_observer_state_save,
+    .observer_rules_get = db_observer_rules_get, .observer_rules_set = db_observer_rules_set
 };
 static const ProjectStoreOps paused_ops = {
-    paused_records_list, paused_records_append, paused_revisions_list, paused_revisions_record,
-    paused_revisions_snapshot, paused_revisions_load, paused_chat_append, paused_chat_rename,
-    paused_chat_set_observer, paused_chat_list, paused_chat_load
+    .records_list = paused_records_list, .records_append = paused_records_append,
+    .revisions_list = paused_revisions_list, .revisions_record = paused_revisions_record,
+    .revisions_snapshot = paused_revisions_snapshot, .revisions_load = paused_revisions_load,
+    .chat_append = paused_chat_append, .chat_rename = paused_chat_rename,
+    .chat_set_observer = paused_chat_set_observer, .chat_list = paused_chat_list, .chat_load = paused_chat_load,
+    .observer_state_load = paused_observer_state_load, .observer_state_save = paused_observer_state_save,
+    .observer_rules_get = paused_observer_rules_get, .observer_rules_set = paused_observer_rules_set
 };
 
 static void resolve(const char *project_dir, ProjectStore *out)
@@ -239,6 +305,84 @@ static void resolve(const char *project_dir, ProjectStore *out)
     out->project_dir = project_dir;
     StoreMode mode = store_mode(project_dir, out->project_id, sizeof(out->project_id), &out->db);
     out->ops = mode == STORE_DB ? &db_ops : mode == STORE_PAUSED ? &paused_ops : &file_ops;
+}
+
+ProjectStoreInspection project_store_inspect(const char *project_dir)
+{
+    ProjectStoreInspection inspection = { 0 };
+    if (!project_dir || !project_dir[0]) return inspection;
+    ProjectStore store;
+    resolve(project_dir, &store);
+    if (store.ops == &file_ops) {
+        inspection.capabilities = PROJECT_STORE_CAP_STRUCTURED_WRITE;
+        return inspection;
+    }
+    if (store.ops == &db_ops) {
+        inspection.capabilities = PROJECT_STORE_CAP_STRUCTURED_WRITE | PROJECT_STORE_CAP_LINKED_DOCUMENTS |
+                                  PROJECT_STORE_CAP_ENTITIES | PROJECT_STORE_CAP_SEMANTIC |
+                                  PROJECT_STORE_CAP_SLOW_REFRESH;
+        return inspection;
+    }
+    if (!store_online()) inspection.blocked_by = PROJECT_STORE_BLOCK_OFFLINE;
+    else {
+        int problem = store_problem(project_dir, NULL, 0);
+        inspection.blocked_by = problem == STORE_PROBLEM_COPY      ? PROJECT_STORE_BLOCK_COPY
+                                : problem == STORE_PROBLEM_MISSING ? PROJECT_STORE_BLOCK_MISSING
+                                                                   : PROJECT_STORE_BLOCK_TRANSITION;
+    }
+    return inspection;
+}
+
+static unsigned capabilities_for(const ProjectStore *store)
+{
+    if (store->ops == &file_ops) return PROJECT_STORE_CAP_STRUCTURED_WRITE;
+    if (store->ops == &db_ops)
+        return PROJECT_STORE_CAP_STRUCTURED_WRITE | PROJECT_STORE_CAP_LINKED_DOCUMENTS |
+               PROJECT_STORE_CAP_ENTITIES | PROJECT_STORE_CAP_SEMANTIC | PROJECT_STORE_CAP_SLOW_REFRESH;
+    return 0;
+}
+
+bool project_store_guard_begin(const char *project_dir, ProjectStoreGuard *guard)
+{
+    if (!guard) return false;
+    guard->file_lock = -1;
+    guard->capabilities = 0;
+    if (!project_dir || !project_dir[0]) return false;
+    ProjectStore store;
+    resolve(project_dir, &store);
+    if (store.ops == &file_ops) {
+        guard->file_lock = project_store_file_lock_shared(project_dir);
+        if (guard->file_lock < 0) return false;
+        resolve(project_dir, &store);
+    }
+    guard->capabilities = capabilities_for(&store);
+    if (!(guard->capabilities & PROJECT_STORE_CAP_STRUCTURED_WRITE)) {
+        project_store_file_unlock(guard->file_lock);
+        guard->file_lock = -1;
+        return false;
+    }
+    return true;
+}
+
+void project_store_guard_end(ProjectStoreGuard *guard)
+{
+    if (!guard) return;
+    project_store_file_unlock(guard->file_lock);
+    guard->file_lock = -1;
+    guard->capabilities = 0;
+}
+
+bool project_store_feature_key(const char *project_dir, unsigned capability, char *key, size_t keylen)
+{
+    if (key && keylen) key[0] = '\0';
+    if (!project_dir || !project_dir[0] || !key || !keylen ||
+        (capability != PROJECT_STORE_CAP_SEMANTIC && capability != PROJECT_STORE_CAP_ENTITIES))
+        return false;
+    ProjectStore store;
+    resolve(project_dir, &store);
+    if (store.ops != &db_ops) return false;
+    snprintf(key, keylen, "%s", store.project_id);
+    return key[0] != '\0';
 }
 
 /* File operations share the import lock. An importer takes it exclusively,
@@ -415,4 +559,100 @@ bool project_store_chat_load(const char *project_dir, const char *id, ChatMessag
     bool ok = store.ops->chat_load(&store, id, messages, count);
     project_store_file_unlock(lock);
     return ok;
+}
+
+cJSON *project_store_observer_state_load(const char *project_dir)
+{
+    if (!project_dir || !project_dir[0]) return NULL;
+    ProjectStore store;
+    int lock = begin_operation(project_dir, &store);
+    if (store.ops == &file_ops && lock < 0) return NULL;
+    cJSON *state = store.ops->observer_state_load(&store);
+    project_store_file_unlock(lock);
+    return state;
+}
+
+bool project_store_observer_state_save(const char *project_dir, cJSON *state)
+{
+    if (!project_dir || !project_dir[0] || !state) return false;
+    ProjectStore store;
+    int lock = begin_operation(project_dir, &store);
+    if (store.ops == &file_ops && lock < 0) return false;
+    bool ok = store.ops->observer_state_save(&store, state);
+    project_store_file_unlock(lock);
+    return ok;
+}
+
+bool project_store_observer_rules_get(const char *project_dir, char signature[17])
+{
+    if (signature) signature[0] = '\0';
+    if (!project_dir || !project_dir[0] || !signature) return false;
+    ProjectStore store;
+    int lock = begin_operation(project_dir, &store);
+    if (store.ops == &file_ops && lock < 0) return false;
+    bool ok = store.ops->observer_rules_get(&store, signature);
+    project_store_file_unlock(lock);
+    return ok;
+}
+
+bool project_store_observer_rules_set(const char *project_dir, const char *signature)
+{
+    if (!project_dir || !project_dir[0] || !signature) return false;
+    ProjectStore store;
+    int lock = begin_operation(project_dir, &store);
+    if (store.ops == &file_ops && lock < 0) return false;
+    bool ok = store.ops->observer_rules_set(&store, signature);
+    project_store_file_unlock(lock);
+    return ok;
+}
+
+bool project_store_document_set_aside(const char *project_dir, const char *name, const char *aside)
+{
+    ProjectStore store;
+    resolve(project_dir, &store);
+    if (store.ops != &db_ops) return false;
+    char id[40];
+    if (!store_document_id(store.project_id, name, false, id, sizeof(id))) return true;
+    return store_rename_document(store.project_id, name, aside);
+}
+
+bool project_store_document_rename(const char *project_dir, const char *from, const char *to)
+{
+    ProjectStore store;
+    resolve(project_dir, &store);
+    return store.ops == &db_ops && store_rename_document(store.project_id, from, to);
+}
+
+bool project_store_entities_available(const char *project_dir)
+{
+    return (project_store_inspect(project_dir).capabilities & PROJECT_STORE_CAP_ENTITIES) != 0;
+}
+
+bool project_store_entities_built(const char *project_dir)
+{
+    ProjectStore store;
+    resolve(project_dir, &store);
+    return store.ops == &db_ops && sdb_entities_built(store.db, store.project_id);
+}
+
+bool project_store_entities_backfill(const char *project_dir)
+{
+    ProjectStore store;
+    resolve(project_dir, &store);
+    return store.ops == &db_ops && sdb_entities_backfill(store.db, store.project_id);
+}
+
+size_t project_store_entity_list(const char *project_dir, EntityRow **out)
+{
+    *out = NULL;
+    ProjectStore store;
+    resolve(project_dir, &store);
+    return store.ops == &db_ops ? sdb_entity_list(store.db, store.project_id, out) : 0;
+}
+
+bool project_store_entity_detail(const char *project_dir, const char *entity_id, EntityDetail *out)
+{
+    ProjectStore store;
+    resolve(project_dir, &store);
+    return store.ops == &db_ops && sdb_entity_detail(store.db, store.project_id, entity_id, out);
 }

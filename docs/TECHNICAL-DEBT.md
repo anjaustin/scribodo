@@ -5,7 +5,7 @@ work. It records debt rather than individual defects. Update the status,
 evidence and session log when a remediation lands.
 
 **Last reviewed:** 2026-11-05
-**Baseline:** `6558310` (`Harden storage, backup, and remote boundaries`)
+**Baseline:** `a9652c7` (`Route project stores and own service startup`)
 **Status:** pre-alpha; macOS on Apple Silicon is the MVP target
 
 ## Status legend
@@ -17,7 +17,7 @@ evidence and session log when a remediation lands.
 
 ## P1 — Storage policy leaks across layers
 
-**Status:** In progress
+**Status:** Done
 **Why now:** each structured feature otherwise repeats file/database/paused
 dispatch and teaches UI/domain code about persistence topology.
 
@@ -45,10 +45,10 @@ dispatch and teaches UI/domain code about persistence topology.
 - [x] Route records list/create/append through the seam.
 - [x] Route revisions through the seam.
 - [x] Route chats through the seam.
-- [ ] Route observer state and rules through the seam.
-- [ ] Add capability/blocking inspection for UI and semantic/entity features.
-- [ ] Remove direct `store_mode()` calls from ordinary UI/domain workflows.
-- [ ] Leave import, recovery and backup transition orchestration until last.
+- [x] Route observer state and rules through the seam.
+- [x] Add capability/blocking inspection for UI and semantic/entity features.
+- [x] Remove direct `store_mode()` calls from ordinary UI/domain workflows.
+- [x] Leave import, recovery and backup transition orchestration until last.
 
 ### Acceptance criteria
 
@@ -205,3 +205,7 @@ Do not treat these as remediation targets without a changed product decision:
   serialized copy-fork authority changes.
 - Replaced the detached service worker with a joinable, cancellable
   `ServiceSupervisor` that owns copied inputs and structured results.
+- Routed observer state/rules and entity access through `ProjectStore`, added
+  capability/blocking inspection, and removed ordinary UI/domain mode checks.
+- Added guarded root-document mutations, observer-state optimistic versions,
+  strict import validation, and complete observer backup/restore coverage.

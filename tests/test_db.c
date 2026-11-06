@@ -13,7 +13,9 @@
 #include "../src/app/store.h"
 #include "../src/app/store_backends.h"
 #include "../src/app/store_entities.h"
+#include "../src/app/project_store.h"
 #include "../src/llm/semantic.h"
+#include "cJSON.h"
 #include <fcntl.h>
 #include <sys/file.h>
 #include <sys/stat.h>
@@ -392,6 +394,9 @@ static void test_import(void)
     fclose(f);
     /* Not in the store yet: everything below goes to files. */
     CHECK(store_mode(proj, NULL, 0, NULL) == STORE_FILES);
+    ProjectStoreInspection inspection = project_store_inspect(proj);
+    CHECK((inspection.capabilities & PROJECT_STORE_CAP_STRUCTURED_WRITE) &&
+          !(inspection.capabilities & PROJECT_STORE_CAP_ENTITIES) && inspection.blocked_by == PROJECT_STORE_BLOCK_NONE);
     bool rec;
     store_set_write_time(1700000000.25); /* written long ago: exports must keep that */
     CHECK(revisions_record(proj, doc, "first draft", "save", NULL, &rec) && rec);
@@ -422,11 +427,33 @@ static void test_import(void)
     CHECK(rename(rv_old, rv_new) == 0);
     CHECK(renames_record(proj, "ch1.md", "Chapter One.md"));
     CHECK(chat_store_set_observer(proj, "20261104-160000-abcd", false)); /* carried into the store */
+    cJSON *ost = cJSON_CreateObject();
+    cJSON *odocs = cJSON_AddObjectToObject(ost, "docs");
+    cJSON *ohashes = cJSON_AddArrayToObject(odocs, "Chapter One.md");
+    cJSON_AddItemToArray(ohashes, cJSON_CreateString("0123456789abcdef"));
+    cJSON *ochats = cJSON_AddObjectToObject(ost, "chats");
+    cJSON *ochat = cJSON_AddObjectToObject(ochats, "20261104-160000-abcd");
+    cJSON_AddNumberToObject(ochat, "n", 2);
+    cJSON_AddNumberToObject(ochat, "off", 17);
+    CHECK(project_store_observer_state_save(proj, ost));
+    cJSON_Delete(ost);
+    CHECK(project_store_observer_rules_set(proj, "feedfacecafebeef"));
+    cJSON *stale_file = project_store_observer_state_load(proj);
+    ost = project_store_observer_state_load(proj);
+    CHECK(stale_file && ost && project_store_observer_state_save(proj, ost));
+    CHECK(stale_file && !project_store_observer_state_save(proj, stale_file));
+    cJSON_Delete(ost);
+    cJSON_Delete(stale_file);
 
     why[0] = '\0';
     CHECK(store_import(proj, why, sizeof(why)));
     if (why[0]) fprintf(stderr, "    %s\n", why);
     CHECK(store_mode(proj, NULL, 0, NULL) == STORE_DB);
+    inspection = project_store_inspect(proj);
+    CHECK((inspection.capabilities & (PROJECT_STORE_CAP_STRUCTURED_WRITE | PROJECT_STORE_CAP_ENTITIES |
+                                      PROJECT_STORE_CAP_SEMANTIC | PROJECT_STORE_CAP_LINKED_DOCUMENTS)) ==
+          (PROJECT_STORE_CAP_STRUCTURED_WRITE | PROJECT_STORE_CAP_ENTITIES |
+           PROJECT_STORE_CAP_SEMANTIC | PROJECT_STORE_CAP_LINKED_DOCUMENTS));
     CHECK(store_import(proj, why, sizeof(why))); /* again: nothing to do */
     /* The same APIs now read the store. */
     Revision *revs = NULL;
@@ -454,6 +481,19 @@ static void test_import(void)
         CHECK(in == 1 && il[0].observer_ignore); /* the setting came along */
         free(il);
     }
+    ost = project_store_observer_state_load(proj);
+    CHECK(ost && cJSON_GetArraySize(cJSON_GetObjectItem(cJSON_GetObjectItem(ost, "docs"), "Chapter One.md")) == 1);
+    CHECK(ost && cJSON_GetNumberValue(cJSON_GetObjectItem(
+                     cJSON_GetObjectItem(cJSON_GetObjectItem(ost, "chats"), "20261104-160000-abcd"), "off")) == 17);
+    cJSON_Delete(ost);
+    char rules[17];
+    CHECK(project_store_observer_rules_get(proj, rules) && !strcmp(rules, "feedfacecafebeef"));
+    cJSON *stale_db = project_store_observer_state_load(proj);
+    ost = project_store_observer_state_load(proj);
+    CHECK(stale_db && ost && project_store_observer_state_save(proj, ost));
+    CHECK(stale_db && !project_store_observer_state_save(proj, stale_db));
+    cJSON_Delete(ost);
+    cJSON_Delete(stale_db);
     /* Exported as files (what an in-app backup carries): original times,
      * and sources that point at the exported snapshots. */
     {
@@ -499,9 +539,21 @@ static void test_import(void)
             CHECK(stat(snapfile, &sst) == 0); /* a real exported snapshot */
         }
         records_free(en, nen);
+        ost = project_store_observer_state_load(ex);
+        CHECK(ost && cJSON_GetArraySize(cJSON_GetObjectItem(cJSON_GetObjectItem(ost, "docs"), "Chapter One.md")) == 1);
+        cJSON_Delete(ost);
+        CHECK(project_store_observer_rules_get(ex, rules) && !strcmp(rules, "feedfacecafebeef"));
         snprintf(cmd0, sizeof(cmd0), "rm -rf '%s'", ex);
         system(cmd0);
     }
+    ost = project_store_observer_state_load(proj);
+    CHECK(ost != NULL);
+    if (ost) cJSON_DeleteItemFromObjectCaseSensitive(cJSON_GetObjectItem(ost, "chats"), "20261104-160000-abcd");
+    CHECK(ost && project_store_observer_state_save(proj, ost));
+    cJSON_Delete(ost);
+    ost = project_store_observer_state_load(proj);
+    CHECK(ost && !cJSON_GetObjectItem(cJSON_GetObjectItem(ost, "chats"), "20261104-160000-abcd"));
+    cJSON_Delete(ost);
     /* New writes go to the store; the old files were set aside, not deleted. */
     CHECK(records_append(proj, REC_NOTE, nid, "active", "v3", NULL, 0, NULL));
     nn = records_list(proj, REC_NOTE, &notes);
@@ -514,9 +566,45 @@ static void test_import(void)
     snprintf(notes_path, sizeof(notes_path), "%s/.scribodo/notes.jsonl", proj);
     struct stat st;
     CHECK(stat(notes_path, &st) != 0);
+    char bad[600], bad_dir[700], bad_state[800];
+    snprintf(bad, sizeof(bad), "%s-bad", proj);
+    snprintf(cmd0, sizeof(cmd0), "rm -rf '%s'", bad);
+    system(cmd0);
+    mkdir(bad, 0755);
+    snprintf(bad_dir, sizeof(bad_dir), "%s/.scribodo", bad);
+    mkdir(bad_dir, 0755);
+    snprintf(bad_dir, sizeof(bad_dir), "%s/.scribodo/observer", bad);
+    mkdir(bad_dir, 0755);
+    snprintf(bad_state, sizeof(bad_state), "%s/state.json", bad_dir);
+    f = fopen(bad_state, "wb");
+    if (f) { fputs("{\"docs\":[],\"chats\":{}}", f); fclose(f); }
+    CHECK(!store_import(bad, why, sizeof(why)) && store_mode(bad, NULL, 0, NULL) == STORE_FILES);
+    static const char *const malformed_states[] = {
+        "{\"docs\":{},\"chats\":{},\"_version\":9007199254740991}",
+        "{\"docs\":{},\"chats\":{\"chat\":{\"n\":1.5,\"off\":0}}}",
+        "{\"docs\":{},\"chats\":{},\"_version\":1,\"_version\":2}"
+    };
+    for (size_t i = 0; i < sizeof(malformed_states) / sizeof(malformed_states[0]); i++) {
+        f = fopen(bad_state, "wb");
+        if (f) { fputs(malformed_states[i], f); fclose(f); }
+        CHECK(!store_import(bad, why, sizeof(why)) && store_mode(bad, NULL, 0, NULL) == STORE_FILES);
+    }
+    f = fopen(bad_state, "wb");
+    if (f) { fputs("{\"docs\":{},\"chats\":{},\"_version\":9007199254740990}", f); fclose(f); }
+    CHECK(store_import(bad, why, sizeof(why)));
+    cJSON *max_version = project_store_observer_state_load(bad);
+    CHECK(max_version && project_store_observer_state_save(bad, max_version));
+    cJSON_Delete(max_version);
+    max_version = project_store_observer_state_load(bad);
+    CHECK(max_version && !project_store_observer_state_save(bad, max_version));
+    cJSON_Delete(max_version);
+    snprintf(cmd0, sizeof(cmd0), "rm -rf '%s'", bad);
+    system(cmd0);
     /* With the database down, a moved project pauses instead of using files. */
     store_stop();
     CHECK(store_mode(proj, NULL, 0, NULL) == STORE_PAUSED);
+    inspection = project_store_inspect(proj);
+    CHECK(!inspection.capabilities && inspection.blocked_by == PROJECT_STORE_BLOCK_OFFLINE);
     int paused_ver = 99;
     CHECK(!records_append(proj, REC_NOTE, nid, "active", "while paused", NULL, 0, &paused_ver) && paused_ver == 0);
     CHECK(records_list(proj, REC_NOTE, &notes) == 0);
@@ -531,6 +619,12 @@ static void test_import(void)
     size_t paused_nmsgs = 99;
     CHECK(chat_store_list(proj, &paused_chats) == 0 && paused_chats == NULL);
     CHECK(!chat_store_load(proj, cid, &paused_msgs, &paused_nmsgs) && paused_msgs == NULL && paused_nmsgs == 0);
+    CHECK(project_store_observer_state_load(proj) == NULL);
+    ost = cJSON_CreateObject();
+    CHECK(!project_store_observer_state_save(proj, ost));
+    cJSON_Delete(ost);
+    CHECK(!project_store_observer_rules_get(proj, rules) && !rules[0]);
+    CHECK(!project_store_observer_rules_set(proj, "deadbeefdeadbeef"));
     char cmd[700];
     snprintf(cmd, sizeof(cmd), "rm -rf '%s'", proj);
     system(cmd);

@@ -36,6 +36,7 @@
 #include "app/records.h"
 #include "app/renames.h"
 #include "app/store.h"
+#include "app/project_store.h"
 #include "app/store_backends.h"
 #include "app/store_entities.h"
 #include "app/backup.h"
@@ -256,6 +257,7 @@ typedef struct {
     int store_problem;          /* STORE_PROBLEM_COPY / _MISSING, or 0 */
     char store_original[PATH_MAX];
     Clay_Color store_color;
+    ProjectStoreInspection store_inspection;
     char chat_header[200];
     Clay_Color model_color;
 } App;
@@ -272,16 +274,18 @@ static void set_status(App *app, const char *msg)
  * file name in `fallback` would mislead. */
 static const char *store_says(App *app, const char *fallback)
 {
-    if (store_mode(app->project_dir, NULL, 0, NULL) == STORE_PAUSED) {
-        int problem = store_online() ? store_problem(app->project_dir, NULL, 0) : 0;
-        if (problem == STORE_PROBLEM_COPY)
+    ProjectStoreInspection inspection = project_store_inspect(app->project_dir);
+    if (!(inspection.capabilities & PROJECT_STORE_CAP_STRUCTURED_WRITE)) {
+        if (inspection.blocked_by == PROJECT_STORE_BLOCK_COPY)
             return "This folder is a copy of another project: this wasn't saved. Make it its own project first (Explorer).";
-        if (problem == STORE_PROBLEM_MISSING)
+        if (inspection.blocked_by == PROJECT_STORE_BLOCK_MISSING)
             return "This project is missing from the project store: this wasn't saved. Restore it first (Explorer).";
-        if (store_online()) return "The project is being moved into the project store: this wasn't saved. Try again in a moment.";
+        if (inspection.blocked_by == PROJECT_STORE_BLOCK_TRANSITION)
+            return "The project is being moved into the project store: this wasn't saved. Try again in a moment.";
         return "The project store is offline: this wasn't saved. Your documents are unaffected; try again once it's back.";
     }
-    if (store_mode(app->project_dir, NULL, 0, NULL) == STORE_DB) return "The project store couldn't save that (see its log)";
+    if (inspection.capabilities & PROJECT_STORE_CAP_LINKED_DOCUMENTS)
+        return "The project store couldn't save that (see its log)";
     return fallback;
 }
 
@@ -368,9 +372,7 @@ static void record_label(char *out, size_t outlen, const char *prefix, const cha
 static void *graph_main(void *arg)
 {
     App *app = arg;
-    char pid[64];
-    Db *db = NULL;
-    if (store_mode(app->graph_project, pid, sizeof(pid), &db) == STORE_DB && db) sdb_entities_backfill(db, pid);
+    project_store_entities_backfill(app->graph_project);
     store_thread_done();
     atomic_store(&app->graph_state, 2);
     return NULL;
@@ -381,29 +383,28 @@ static void refresh_entities(App *app)
     entity_list_free(app->ents, app->nents);
     app->ents = NULL;
     app->nents = 0;
-    char pid[64];
-    Db *db = NULL;
-    if (!app->project_dir[0] || store_mode(app->project_dir, pid, sizeof(pid), &db) != STORE_DB || !db) {
+    if (!app->project_dir[0] || !project_store_entities_available(app->project_dir)) {
         entity_detail_free(&app->ent);
         app->ent_open[0] = '\0';
         return;
     }
     /* Findings from before the graph existed are folded in once per
      * project, off the UI thread (red-team 009). */
-    if (atomic_load(&app->graph_state) == 0 && strcmp(app->graph_tried, app->project_dir) != 0 && !sdb_entities_built(db, pid)) {
+    if (atomic_load(&app->graph_state) == 0 && strcmp(app->graph_tried, app->project_dir) != 0 &&
+        !project_store_entities_built(app->project_dir)) {
         snprintf(app->graph_project, sizeof(app->graph_project), "%s", app->project_dir);
         snprintf(app->graph_tried, sizeof(app->graph_tried), "%s", app->project_dir);
         atomic_store(&app->graph_state, 1);
         if (pthread_create(&app->graph_thread, NULL, graph_main, app) != 0) atomic_store(&app->graph_state, 0);
     }
-    app->nents = sdb_entity_list(db, pid, &app->ents);
+    app->nents = project_store_entity_list(app->project_dir, &app->ents);
     for (size_t i = 0; i < app->nents && i < ENT_SHOW; i++) {
         char name[64];
         utf8_clip(name, sizeof(name), app->ents[i].name, 48);
         snprintf(app->ent_labels[i], sizeof(app->ent_labels[i]), "%s \xC2\xB7 %d", name, app->ents[i].mentions);
     }
     entity_detail_free(&app->ent);
-    if (app->ent_open[0] && !sdb_entity_detail(db, pid, app->ent_open, &app->ent)) app->ent_open[0] = '\0';
+    if (app->ent_open[0] && !project_store_entity_detail(app->project_dir, app->ent_open, &app->ent)) app->ent_open[0] = '\0';
     for (size_t i = 0; i < app->ent.nrows && i < ENT_ROWS; i++) {
         const EntityDetailRow *r = &app->ent.rows[i];
         char a[100], b[80];
@@ -508,7 +509,7 @@ static void store_begin(App *app)
 /* A project opened while the store is up is moved into it once. */
 static void store_adopt_project(App *app)
 {
-    if (!app->project_dir[0] || !store_online() || store_mode(app->project_dir, NULL, 0, NULL) != STORE_FILES) return;
+    if (!app->project_dir[0] || !store_online() || !store_needs_import(app->project_dir)) return;
     char why[256] = "";
     if (store_import(app->project_dir, why, sizeof(why))) {
         app->store_just_moved = true;
@@ -1021,16 +1022,14 @@ static bool same_file(const char *a, const char *b)
 
 /* History left under a name by an earlier, different document: set it
  * aside so a new document of that name never inherits it (red-team 006). */
-static bool set_aside_history(App *app, const char *name)
+static bool set_aside_history(App *app, const char *name, bool linked_documents)
 {
-    char spid[64];
-    if (store_mode(app->project_dir, spid, sizeof(spid), NULL) == STORE_DB) {
+    if (linked_documents) {
         /* An earlier document's row with this name keeps its history under
          * another name; the new document gets its own id. */
-        char did[40], aside[300];
-        if (!store_document_id(spid, name, false, did, sizeof(did))) return true;
+        char aside[300];
         snprintf(aside, sizeof(aside), "%s (earlier %ld)", name, (long)time(NULL));
-        return store_rename_document(spid, name, aside);
+        return project_store_document_set_aside(app->project_dir, name, aside);
     }
     char rev[PATH_MAX + 300];
     snprintf(rev, sizeof(rev), "%s/.scribodo/revisions/%s", app->project_dir, name);
@@ -1296,23 +1295,29 @@ static bool finish_prompt(App *app, const char *typed)
         prompt_set_error(app->prompt, "A file with that name already exists");
         return false;
     }
-    if (tag == PT_NEW_DOC && store_mode(app->project_dir, NULL, 0, NULL) == STORE_PAUSED) {
-        /* An earlier document's History under this name can only be set
-         * aside in the store; otherwise the new one would inherit it. */
-        prompt_set_error(app->prompt, "New documents wait for the project store (notes, canon, chats and History are paused)");
-        return false;
-    }
     if (tag == PT_NEW_DOC) {
+        ProjectStoreGuard guard;
+        if (!project_store_guard_begin(app->project_dir, &guard)) {
+            prompt_set_error(app->prompt, "New documents wait for the project store (notes, canon, chats and History are paused)");
+            return false;
+        }
         int fd = open(full, O_WRONLY | O_CREAT | O_EXCL, 0644);
         if (fd < 0) {
+            project_store_guard_end(&guard);
             prompt_set_error(app->prompt, strerror(errno));
             return false;
         }
         close(fd);
-        bool aside = set_aside_history(app, name);
+        bool aside = set_aside_history(app, name, (guard.capabilities & PROJECT_STORE_CAP_LINKED_DOCUMENTS) != 0);
+        if (!aside) unlink(full);
+        project_store_guard_end(&guard);
+        if (!aside) {
+            prompt_set_error(app->prompt, "Older History under this name couldn't be set aside; nothing was created");
+            return false;
+        }
         open_path(app, full);
         char msg[320];
-        snprintf(msg, sizeof(msg), aside ? "Created %s" : "Created %s (older History under this name couldn't be set aside)", name);
+        snprintf(msg, sizeof(msg), "Created %s", name);
         set_status(app, msg);
         app->focus = FOCUS_DOC;
         app->lists_dirty = true;
@@ -1325,26 +1330,27 @@ static bool finish_prompt(App *app, const char *typed)
         prompt_set_error(app->prompt, "Save the document before renaming it");
         return false;
     }
-    char spid[64];
-    StoreMode smode = store_mode(app->project_dir, spid, sizeof(spid), NULL);
-    if (smode == STORE_PAUSED) {
+    ProjectStoreGuard guard;
+    if (!project_store_guard_begin(app->project_dir, &guard)) {
         /* The store keys history by document; a rename it doesn't see would
          * disconnect the document from its History and sources. */
         prompt_set_error(app->prompt, "Renaming waits for the project store (it's offline)");
         return false;
     }
     if (renamex_np(old_full, full, self ? 0 : RENAME_EXCL) != 0) {
+        project_store_guard_end(&guard);
         prompt_set_error(app->prompt, strerror(errno));
         return false;
     }
-    if (smode == STORE_DB) {
+    if (guard.capabilities & PROJECT_STORE_CAP_LINKED_DOCUMENTS) {
         /* One update: the document keeps its id, so its History, sources,
          * attachments and observer state all follow. */
         char problems[160] = "";
-        if (!store_rename_document(spid, app->rename_from, name)) {
+        if (!project_store_document_rename(app->project_dir, app->rename_from, name)) {
             /* Never leave the file renamed without its record: that would cut
              * the document off from its History and sources. */
             renamex_np(full, old_full, self ? 0 : RENAME_EXCL);
+            project_store_guard_end(&guard);
             prompt_set_error(app->prompt, "The project store couldn't record the rename; nothing was changed");
             return false;
         }
@@ -1352,6 +1358,7 @@ static bool finish_prompt(App *app, const char *typed)
             if (!strcmp(app->attached[i], app->rename_from)) snprintf(app->attached[i], sizeof(app->attached[i]), "%s", name);
         recent_rename_doc(app->project_dir, app->rename_from, name);
         if (is_open) editor_set_path(app->editor, full);
+        project_store_guard_end(&guard);
         char msg[600];
         if (problems[0]) snprintf(msg, sizeof(msg), "Renamed to %s, but %s", name, problems);
         else snprintf(msg, sizeof(msg), "Renamed to %s", name);
@@ -1368,7 +1375,7 @@ static bool finish_prompt(App *app, const char *typed)
     struct stat st;
     if (stat(rev_old, &st) == 0) {
         bool same_dir = same_file(rev_old, rev_new); /* a case-only rename of the folder */
-        if (!same_dir && !set_aside_history(app, name)) snprintf(problems, sizeof(problems), "History couldn't be moved");
+        if (!same_dir && !set_aside_history(app, name, false)) snprintf(problems, sizeof(problems), "History couldn't be moved");
         else if (renamex_np(rev_old, rev_new, same_dir ? 0 : RENAME_EXCL) != 0)
             snprintf(problems, sizeof(problems), "History couldn't be moved");
     }
@@ -1380,6 +1387,7 @@ static bool finish_prompt(App *app, const char *typed)
         if (!strcmp(app->attached[i], app->rename_from)) snprintf(app->attached[i], sizeof(app->attached[i]), "%s", name);
     recent_rename_doc(app->project_dir, app->rename_from, name);
     if (is_open) editor_set_path(app->editor, full);
+    project_store_guard_end(&guard);
     char msg[700];
     if (problems[0]) snprintf(msg, sizeof(msg), "Renamed to %s, but %s", name, problems);
     else snprintf(msg, sizeof(msg), "Renamed to %s", name);
@@ -1395,12 +1403,18 @@ static void import_documents(App *app)
         set_status(app, "Open a project folder first (\xE2\x8C\x98O)");
         return;
     }
-    if (store_mode(app->project_dir, NULL, 0, NULL) == STORE_PAUSED) {
+    char **paths = NULL;
+    size_t n = dialogs_choose_files("Import documents into this project (they are copied)", &paths);
+    if (n == 0) {
+        dialogs_free_paths(paths, n);
+        return;
+    }
+    ProjectStoreGuard guard;
+    if (!project_store_guard_begin(app->project_dir, &guard)) {
+        dialogs_free_paths(paths, n);
         set_status(app, "Importing waits for the project store (notes, canon, chats and History are paused)");
         return;
     }
-    char **paths = NULL;
-    size_t n = dialogs_choose_files("Import documents into this project (they are copied)", &paths);
     size_t done = 0;
     bool history_kept = false;
     char first[PATH_MAX + 260] = "";
@@ -1425,15 +1439,19 @@ static void import_documents(App *app)
         if (in) fclose(in);
         if (!ok && fd >= 0) unlink(dst);
         if (ok) {
-            done++;
-            if (!first[0]) snprintf(first, sizeof(first), "%s", dst);
             /* An earlier document by this name keeps its History; this one
              * starts its own (as with New). */
-            if (!set_aside_history(app, name)) history_kept = true;
+            if (!set_aside_history(app, name, (guard.capabilities & PROJECT_STORE_CAP_LINKED_DOCUMENTS) != 0)) {
+                unlink(dst);
+                history_kept = true;
+            } else {
+                done++;
+                if (!first[0]) snprintf(first, sizeof(first), "%s", dst);
+            }
         }
     }
+    project_store_guard_end(&guard);
     dialogs_free_paths(paths, n);
-    if (n == 0) return;
     app->lists_dirty = true;
     if (first[0] && !editor_is_dirty(app->editor)) open_path(app, first);
     char msg[200];
@@ -2369,7 +2387,8 @@ static int draw_attach_row(App *app, Rectangle r)
 
 static void send_chat(App *app, char *text)
 {
-    if (store_mode(app->project_dir, NULL, 0, NULL) == STORE_PAUSED) {
+    if (app->project_dir[0] &&
+        !(project_store_inspect(app->project_dir).capabilities & PROJECT_STORE_CAP_STRUCTURED_WRITE)) {
         set_status(app, app->store_problem == STORE_PROBLEM_COPY      ? "Chat is paused: this folder is a copy (make it its own project in the Explorer)"
                         : app->store_problem == STORE_PROBLEM_MISSING ? "Chat is paused: this project is missing from the store (restore it in the Explorer)"
                                                                       : "Chat is paused while the project store is offline (nothing would be saved)");
@@ -2545,10 +2564,11 @@ static void update_labels(App *app)
                  app->remote.name, app->remote.host);
     if (remote_on) snprintf(app->remote_badge, sizeof(app->remote_badge), "\xE2\x86\x97 sent to %s", app->remote.host);
     else app->remote_badge[0] = '\0';
-    StoreMode sm = store_mode(app->project_dir, NULL, 0, NULL);
-    app->store_problem = sm == STORE_PAUSED && store_online() && app->project_dir[0]
-                             ? store_problem(app->project_dir, app->store_original, sizeof(app->store_original))
-                             : 0;
+    app->store_inspection = project_store_inspect(app->project_dir);
+    app->store_problem = app->store_inspection.blocked_by == PROJECT_STORE_BLOCK_COPY      ? STORE_PROBLEM_COPY
+                         : app->store_inspection.blocked_by == PROJECT_STORE_BLOCK_MISSING ? STORE_PROBLEM_MISSING
+                                                                                           : 0;
+    if (app->store_problem) store_problem(app->project_dir, app->store_original, sizeof(app->store_original));
     if (!app->store_wanted) {
         app->store_label[0] = '\0';
     } else if (service_supervisor_busy(&app->services)) {
@@ -2563,8 +2583,9 @@ static void update_labels(App *app)
         app->store_color = COL_OK;
     } else {
         snprintf(app->store_label, sizeof(app->store_label), "\xE2\x97\x8F Project store offline%s",
-                 sm == STORE_PAUSED ? " \xC2\xB7 notes, canon, chats and History paused" : "");
-        app->store_color = sm == STORE_PAUSED ? COL_ERR : COL_WARN;
+                  app->store_inspection.blocked_by != PROJECT_STORE_BLOCK_NONE
+                      ? " \xC2\xB7 notes, canon, chats and History paused" : "");
+        app->store_color = app->store_inspection.blocked_by != PROJECT_STORE_BLOCK_NONE ? COL_ERR : COL_WARN;
     }
     app->model_color = ls == LLM_READY ? COL_OK : ls == LLM_FAILED ? COL_ERR : COL_WARN;
     if (remote_on) app->model_color = COL_WARN; /* project content leaves this Mac */
@@ -2620,7 +2641,7 @@ static Clay_RenderCommandArray build_layout(App *app)
                     coming_soon("This project is missing from the store.");
                     coming_soon("Notes, canon, chats and History are paused.");
                     list_item(CLAY_ID("StoreFixItem"), "Restore it from its saved files", false);
-                } else if (store_mode(app->project_dir, NULL, 0, NULL) == STORE_PAUSED)
+                } else if (app->store_inspection.blocked_by != PROJECT_STORE_BLOCK_NONE)
                     coming_soon("Project store offline: notes, canon, chats and History are paused");
                 section_header("DOCUMENTS");
                 const char *cur = editor_path(app->editor) ? base_name(editor_path(app->editor)) : "";
@@ -2664,7 +2685,7 @@ static Clay_RenderCommandArray build_layout(App *app)
                 memset(app->drawn_ent, 0, sizeof(app->drawn_ent));
                 memset(app->drawn_row_finding, 0, sizeof(app->drawn_row_finding));
                 memset(app->drawn_row_other, 0, sizeof(app->drawn_row_other));
-                if (store_mode(app->project_dir, NULL, 0, NULL) == STORE_DB) {
+                if (app->store_inspection.capabilities & PROJECT_STORE_CAP_ENTITIES) {
                     section_header("ENTITIES");
                     if (app->nents == 0) coming_soon("The observer lists who and what appears here");
                     for (size_t i = 0; i < app->nents && i < ENT_SHOW; i++) {
@@ -2774,7 +2795,7 @@ static Clay_RenderCommandArray build_layout(App *app)
                        .backgroundColor = COL_PANEL, .clip = { .vertical = true } }) {
                     section_header("OBSERVER");
                     label(app->observer_label, FONT_UI, COL_DIM);
-                    if (store_mode(app->project_dir, NULL, 0, NULL) == STORE_DB)
+                    if (app->store_inspection.capabilities & PROJECT_STORE_CAP_SEMANTIC)
                         list_item(CLAY_ID("RebuildIndex"), "Rebuild the index", false);
                     CLAY({ .id = CLAY_ID("Findings"),
                            .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } } }) {}
@@ -3255,7 +3276,7 @@ int main(int argc, char **argv)
         /* Changes made here mark the lists at once; this catches the rest
          * (files added in Finder, other windows). Store queries cost more
          * than a directory read, so they're polled less often. */
-        double every = store_mode(app.project_dir, NULL, 0, NULL) == STORE_DB ? 10.0 : 3.0;
+        double every = (project_store_inspect(app.project_dir).capabilities & PROJECT_STORE_CAP_SLOW_REFRESH) ? 10.0 : 3.0;
         if (GetTime() - app.lists_refreshed > every) app.lists_dirty = true;
 
         /* Close requests: never lose unsaved prose silently. */

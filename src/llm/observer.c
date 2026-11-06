@@ -20,6 +20,7 @@
 #include <unistd.h>
 
 #include "app/chat_store.h"
+#include "app/project_store.h"
 #include "app/store.h"
 #include "app/store_entities.h"
 #include "llm/semantic.h"
@@ -657,231 +658,14 @@ static bool backend_judge(Observer *o, const char *canon, const char *statement,
 
 /* ---- state ------------------------------------------------------------------------ */
 
-static void state_path(const char *project, char *out, size_t outlen, bool create)
-{
-    char a[PATH_MAX + 32], b[PATH_MAX + 64];
-    snprintf(a, sizeof(a), "%s/.scribodo", project);
-    snprintf(b, sizeof(b), "%s/observer", a);
-    if (create) {
-        mkdir(a, 0755);
-        mkdir(b, 0755);
-    }
-    snprintf(out, outlen, "%s/state.json", b);
-}
-
-static cJSON *state_load_files(const char *project);
-
-/* ---- read state in the project store ---------------------------------------- */
-
-/* The same JSON shape as state.json, built from observer_pieces and
- * observer_chats (keyed by ids, presented by current names). */
-static cJSON *state_load_db(Db *db, const char *pid)
-{
-    DbRows r, c;
-    /* A failed query is not an empty state (that would re-read everything):
-     * NULL, and the caller treats the store as unavailable. */
-    if (!db_query(db,
-                  "SELECT d.name, p.piece_hash FROM observer_pieces p JOIN documents d ON d.id = p.document_id"
-                  " WHERE d.project_id = ? ORDER BY d.name",
-                  (DbArg[1]){ DB_S(pid) }, 1, &r))
-        return NULL;
-    if (!db_query(db,
-                  "SELECT o.conversation_id, o.msg, o.off FROM observer_chats o JOIN conversations c ON c.id = o.conversation_id"
-                  " WHERE c.project_id = ?",
-                  (DbArg[1]){ DB_S(pid) }, 1, &c)) {
-        db_rows_free(&r);
-        return NULL;
-    }
-    cJSON *j = cJSON_CreateObject();
-    cJSON *docs = cJSON_AddObjectToObject(j, "docs"), *chats = cJSON_AddObjectToObject(j, "chats");
-    for (size_t i = 0; i < r.nrows; i++) {
-        cJSON *arr = cJSON_GetObjectItem(docs, db_cell(&r, i, 0));
-        if (!arr) arr = cJSON_AddArrayToObject(docs, db_cell(&r, i, 0));
-        cJSON_AddItemToArray(arr, cJSON_CreateString(db_cell(&r, i, 1)));
-    }
-    for (size_t i = 0; i < c.nrows; i++) {
-        cJSON *o = cJSON_AddObjectToObject(chats, db_cell(&c, i, 0));
-        cJSON_AddNumberToObject(o, "n", atof(db_cell(&c, i, 1)));
-        cJSON_AddNumberToObject(o, "off", atof(db_cell(&c, i, 2)));
-    }
-    db_rows_free(&r);
-    db_rows_free(&c);
-    return j;
-}
-
-/* Run "INSERT IGNORE INTO observer_pieces VALUES (?,?),…" or a matching
- * DELETE for up to 200 (document, hash) pairs at a time. */
-static bool pieces_batch(Db *db, bool insert, const char *did, const char *const *hashes, size_t n)
-{
-    bool ok = true;
-    for (size_t at = 0; ok && at < n; at += 200) {
-        size_t k = n - at < 200 ? n - at : 200;
-        size_t sqlcap = 160 + k * 8;
-        char *sql = malloc(sqlcap);
-        DbArg *args = malloc((1 + 2 * k) * sizeof(DbArg));
-        if (!sql || !args) {
-            free(sql);
-            free(args);
-            return false;
-        }
-        size_t na = 0, len = 0;
-        if (insert) {
-            len = (size_t)snprintf(sql, sqlcap, "INSERT IGNORE INTO observer_pieces (document_id, piece_hash) VALUES ");
-            for (size_t q = 0; q < k; q++) {
-                len += (size_t)snprintf(sql + len, sqlcap - len, "%s(?,?)", q ? "," : "");
-                args[na++] = DB_S(did);
-                args[na++] = DB_S(hashes[at + q]);
-            }
-        } else {
-            len = (size_t)snprintf(sql, sqlcap, "DELETE FROM observer_pieces WHERE document_id = ? AND piece_hash IN (");
-            args[na++] = DB_S(did);
-            for (size_t q = 0; q < k; q++) {
-                len += (size_t)snprintf(sql + len, sqlcap - len, "%s?", q ? "," : "");
-                args[na++] = DB_S(hashes[at + q]);
-            }
-            snprintf(sql + len, sqlcap - len, ")");
-        }
-        ok = db_run(db, sql, args, na, NULL);
-        free(sql);
-        free(args);
-    }
-    return ok;
-}
-
-static bool in_array(cJSON *arr, const char *s)
-{
-    cJSON *it;
-    cJSON_ArrayForEach(it, arr) if (cJSON_IsString(it) && !strcmp(it->valuestring, s)) return true;
-    return false;
-}
-
-/* Bring the project's stored read state to `st`, writing only the
- * differences (red-team 008: rewriting every piece each job held locks long
- * enough to stall the UI's History saves). */
-static bool state_save_db(Db *db, const char *pid, cJSON *st)
-{
-    cJSON *old = state_load_db(db, pid);
-    if (!old) return false;
-    bool ok = db_begin(db);
-    cJSON *docs = cJSON_GetObjectItem(st, "docs"), *odocs = cJSON_GetObjectItem(old, "docs");
-    cJSON *doc;
-    cJSON_ArrayForEach(doc, docs)
-    {
-        if (!ok) break;
-        cJSON *prev = cJSON_GetObjectItem(odocs, doc->string);
-        size_t n = (size_t)cJSON_GetArraySize(doc), m = prev ? (size_t)cJSON_GetArraySize(prev) : 0;
-        const char **add = calloc(n ? n : 1, sizeof(char *)), **del = calloc(m ? m : 1, sizeof(char *));
-        size_t na = 0, nd = 0;
-        cJSON *h;
-        cJSON_ArrayForEach(h, doc) if (add && cJSON_IsString(h) && !(prev && in_array(prev, h->valuestring))) add[na++] = h->valuestring;
-        if (prev) cJSON_ArrayForEach(h, prev) if (del && cJSON_IsString(h) && !in_array(doc, h->valuestring)) del[nd++] = h->valuestring;
-        if (na || nd) {
-            char did[40];
-            if (store_document_id(pid, doc->string, true, did, sizeof(did)))
-                ok = pieces_batch(db, true, did, add, na) && pieces_batch(db, false, did, del, nd);
-        }
-        free(add);
-        free(del);
-    }
-    /* Documents gone from the state (deleted files): their pieces go. */
-    cJSON_ArrayForEach(doc, odocs)
-    {
-        if (!ok) break;
-        if (cJSON_GetObjectItem(docs, doc->string)) continue;
-        char did[40];
-        if (store_document_id(pid, doc->string, false, did, sizeof(did)))
-            ok = db_run(db, "DELETE FROM observer_pieces WHERE document_id = ?", (DbArg[1]){ DB_S(did) }, 1, NULL);
-    }
-    cJSON *c, *ochats = cJSON_GetObjectItem(old, "chats");
-    cJSON_ArrayForEach(c, cJSON_GetObjectItem(st, "chats"))
-    {
-        if (!ok) break;
-        cJSON *n = cJSON_GetObjectItem(c, "n"), *off = cJSON_GetObjectItem(c, "off");
-        double nv = cJSON_IsNumber(n) ? n->valuedouble : 0, ov = cJSON_IsNumber(off) ? off->valuedouble : 0;
-        cJSON *was = cJSON_GetObjectItem(ochats, c->string);
-        if (was && cJSON_GetNumberValue(cJSON_GetObjectItem(was, "n")) == nv &&
-            cJSON_GetNumberValue(cJSON_GetObjectItem(was, "off")) == ov)
-            continue; /* unchanged */
-        DbArg a[4] = { DB_I((int64_t)nv), DB_I((int64_t)ov), DB_S(c->string), DB_S(pid) };
-        ok = db_run(db,
-                    "INSERT INTO observer_chats (conversation_id, msg, off)"
-                    " SELECT id, ?, ? FROM conversations WHERE id = ? AND project_id = ?"
-                    " ON DUPLICATE KEY UPDATE msg = VALUES(msg), off = VALUES(off)",
-                    a, 4, NULL);
-    }
-    cJSON_Delete(old);
-    if (ok) ok = db_commit(db);
-    else db_rollback(db);
-    return ok;
-}
-
 static cJSON *state_load(const char *project)
 {
-    char pid[64];
-    Db *db;
-    StoreMode mode = store_mode(project, pid, sizeof(pid), &db);
-    if (mode == STORE_DB) return state_load_db(db, pid);
-    if (mode == STORE_PAUSED) return NULL; /* nothing to do until the store is back */
-    return state_load_files(project);
+    return project_store_observer_state_load(project);
 }
 
-static cJSON *state_load_files(const char *project)
+static bool state_save(const char *project, cJSON *state)
 {
-    char path[PATH_MAX + 128];
-    state_path(project, path, sizeof(path), false);
-    FILE *f = fopen(path, "rb");
-    cJSON *j = NULL;
-    if (f) {
-        fseek(f, 0, SEEK_END);
-        long n = ftell(f);
-        fseek(f, 0, SEEK_SET);
-        char *buf = n > 0 && n < (64l << 20) ? malloc((size_t)n + 1) : NULL;
-        if (buf) {
-            buf[fread(buf, 1, (size_t)n, f)] = '\0';
-            j = cJSON_Parse(buf);
-            free(buf);
-        }
-        fclose(f);
-    }
-    if (!cJSON_IsObject(j)) {
-        cJSON_Delete(j);
-        j = cJSON_CreateObject();
-    }
-    if (!cJSON_IsObject(cJSON_GetObjectItem(j, "docs"))) cJSON_AddObjectToObject(j, "docs");
-    if (!cJSON_IsObject(cJSON_GetObjectItem(j, "chats"))) cJSON_AddObjectToObject(j, "chats");
-    return j;
-}
-
-static bool state_save_files(const char *project, cJSON *st);
-
-static bool state_save(const char *project, cJSON *st)
-{
-    char pid[64];
-    Db *db;
-    StoreMode mode = store_mode(project, pid, sizeof(pid), &db);
-    if (mode == STORE_DB) return state_save_db(db, pid, st);
-    if (mode == STORE_PAUSED) return false;
-    return state_save_files(project, st);
-}
-
-static bool state_save_files(const char *project, cJSON *st)
-{
-    char path[PATH_MAX + 128], tmp[PATH_MAX + 160];
-    state_path(project, path, sizeof(path), true);
-    snprintf(tmp, sizeof(tmp), "%s.tmp-XXXXXX", path);
-    char *s = cJSON_PrintUnformatted(st);
-    if (!s) return false;
-    int fd = mkstemp(tmp);
-    bool ok = fd >= 0;
-    size_t n = strlen(s);
-    if (ok) {
-        ok = fchmod(fd, 0644) == 0 && write(fd, s, n) == (ssize_t)n && fsync(fd) == 0;
-        ok = close(fd) == 0 && ok;
-        ok = ok && rename(tmp, path) == 0;
-        if (!ok) unlink(tmp);
-    }
-    free(s);
-    return ok;
+    return project_store_observer_state_save(project, state);
 }
 
 static bool hash_seen(cJSON *arr, uint64_t h)
@@ -1358,57 +1142,12 @@ static void rules_signature(const char *author, const char *assistant, char out[
 
 static bool rules_get(const char *project, char out[17])
 {
-    out[0] = '\0';
-    char pid[64];
-    Db *db = NULL;
-    StoreMode mode = store_mode(project, pid, sizeof(pid), &db);
-    if (mode == STORE_PAUSED) return false;
-    if (mode == STORE_DB) {
-        char id[80];
-        snprintf(id, sizeof(id), "rules-%s", pid);
-        DbRows r;
-        if (!db_query(db, "SELECT state FROM jobs WHERE id = ?", (DbArg[1]){ DB_S(id) }, 1, &r)) return false;
-        if (r.nrows && db_cell(&r, 0, 0)) snprintf(out, 17, "%s", db_cell(&r, 0, 0));
-        db_rows_free(&r);
-        return true;
-    }
-    char path[PATH_MAX + 64];
-    snprintf(path, sizeof(path), "%s/.scribodo/observer-rules", project);
-    FILE *f = fopen(path, "rb");
-    if (f) {
-        size_t n = fread(out, 1, 16, f);
-        out[n] = '\0';
-        fclose(f);
-    }
-    return true;
+    return project_store_observer_rules_get(project, out);
 }
 
-static void rules_set(const char *project, const char *sig)
+static bool rules_set(const char *project, const char *sig)
 {
-    char pid[64];
-    Db *db = NULL;
-    StoreMode mode = store_mode(project, pid, sizeof(pid), &db);
-    if (mode == STORE_DB) {
-        char id[80];
-        snprintf(id, sizeof(id), "rules-%s", pid);
-        struct timeval tv;
-        gettimeofday(&tv, NULL);
-        DbArg a[4] = { DB_S(id), DB_S(pid), DB_S(sig), DB_D((double)tv.tv_sec) };
-        db_run(db,
-               "INSERT INTO jobs (id, project_id, kind, state, updated_at) VALUES (?,?,'observer_rules',?,?)"
-               " ON DUPLICATE KEY UPDATE state = VALUES(state), updated_at = VALUES(updated_at)",
-               a, 4, NULL);
-    } else if (mode == STORE_FILES) {
-        char dir[PATH_MAX + 32], path[PATH_MAX + 64];
-        snprintf(dir, sizeof(dir), "%s/.scribodo", project);
-        mkdir(dir, 0755);
-        snprintf(path, sizeof(path), "%s/observer-rules", dir);
-        FILE *f = fopen(path, "wb");
-        if (f) {
-            fputs(sig, f);
-            fclose(f);
-        }
-    }
+    return project_store_observer_rules_set(project, sig);
 }
 
 /* Re-check every chat finding against the current rules: ones that no
@@ -1614,7 +1353,8 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSO
     /* Projects in the store get semantic retrieval when the index is up;
      * canon and notes are synced into it first (cheap when unchanged). */
     char sem_pid[64] = "";
-    bool use_sem = store_mode(project, sem_pid, sizeof(sem_pid), NULL) == STORE_DB && semantic_ready();
+    bool use_sem = project_store_feature_key(project, PROJECT_STORE_CAP_SEMANTIC, sem_pid, sizeof(sem_pid)) &&
+                   semantic_ready();
     if (use_sem) {
         char serr[200];
         use_sem = semantic_sync_records(sem_pid, serr, sizeof(serr));
@@ -1857,7 +1597,8 @@ static void *worker(void *arg)
             char pid[64], err[200] = "";
             long n = -1;
             set_status(o, "Rebuilding the semantic index\xE2\x80\xA6");
-            if (store_mode(project, pid, sizeof(pid), NULL) == STORE_DB) n = semantic_rebuild(pid, err, sizeof(err));
+            if (project_store_feature_key(project, PROJECT_STORE_CAP_SEMANTIC, pid, sizeof(pid)))
+                n = semantic_rebuild(pid, err, sizeof(err));
             else snprintf(err, sizeof(err), "this project isn't in the project store");
             char msg[300];
             if (n >= 0) snprintf(msg, sizeof(msg), "Index rebuilt: %ld passages", n);

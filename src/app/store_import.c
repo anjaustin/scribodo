@@ -16,6 +16,7 @@
 #include "chat_store_internal.h"
 #include "records_internal.h"
 #include "project_store_internal.h"
+#include "observer_store_internal.h"
 
 #include <CommonCrypto/CommonDigest.h>
 #include <dirent.h>
@@ -341,18 +342,8 @@ static bool import_records(Db *db, const char *project_dir, const char *pid, Rec
 
 static bool import_observer(Db *db, const char *project_dir, const char *pid)
 {
-    char path[PATH_MAX + 64];
-    snprintf(path, sizeof(path), "%s/.scribodo/observer/state.json", project_dir);
-    FILE *f = fopen(path, "rb");
-    if (!f) return true;
-    fseek(f, 0, SEEK_END);
-    long len = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char *buf = len > 0 && len < (64l << 20) ? malloc((size_t)len + 1) : NULL;
-    if (buf) buf[fread(buf, 1, (size_t)len, f)] = '\0';
-    fclose(f);
-    cJSON *st = buf ? cJSON_Parse(buf) : NULL;
-    free(buf);
+    cJSON *st = NULL;
+    if (!observer_state_import_files(project_dir, &st)) return false;
     bool ok = true;
     cJSON *doc, *h, *c;
     cJSON_ArrayForEach(doc, cJSON_GetObjectItem(st, "docs"))
@@ -380,7 +371,11 @@ static bool import_observer(Db *db, const char *project_dir, const char *pid)
                     " SELECT id, ?, ? FROM conversations WHERE id = ? AND project_id = ?",
                     a, 4, NULL);
     }
+    if (ok) ok = observer_state_import_version_db(db, pid, st);
     cJSON_Delete(st);
+    char rules[17];
+    if (ok) ok = observer_rules_import_files(project_dir, rules);
+    if (ok && rules[0]) ok = observer_rules_set_db(db, pid, rules);
     return ok;
 }
 
@@ -395,7 +390,7 @@ static void set_aside(const char *project_dir)
     snprintf(legacy, sizeof(legacy), "%s/.scribodo/legacy-%s", project_dir, stamp);
     mkdir(legacy, 0755);
     static const char *const items[] = { "chats", "revisions", "notes.jsonl", "canon.jsonl", "findings.jsonl",
-                                         "observer", "renames.jsonl" };
+                                         "observer", "observer-rules", "renames.jsonl" };
     for (size_t i = 0; i < sizeof(items) / sizeof(items[0]); i++) {
         char from[PATH_MAX + 64], to[PATH_MAX + 128];
         snprintf(from, sizeof(from), "%s/.scribodo/%s", project_dir, items[i]);
@@ -434,17 +429,36 @@ static uint64_t fingerprint(const char *project_dir)
 {
     uint64_t h = 1469598103934665603ull;
     static const char *const items[] = { "chats", "revisions", "notes.jsonl", "canon.jsonl", "findings.jsonl",
-                                         "observer", "renames.jsonl" };
+                                         "observer", "observer-rules", "renames.jsonl" };
     for (size_t i = 0; i < sizeof(items) / sizeof(items[0]); i++) {
         char p[PATH_MAX + 64];
         snprintf(p, sizeof(p), "%s/.scribodo/%s", project_dir, items[i]);
         fingerprint_add(p, &h);
     }
+    uint64_t docs = 0;
+    DIR *d = opendir(project_dir);
+    struct dirent *ent;
+    while (d && (ent = readdir(d)) != NULL) {
+        size_t n = strlen(ent->d_name);
+        if (ent->d_name[0] == '.') continue;
+        if (!((n > 3 && !strcasecmp(ent->d_name + n - 3, ".md")) ||
+              (n > 4 && !strcasecmp(ent->d_name + n - 4, ".txt")) ||
+              (n > 9 && !strcasecmp(ent->d_name + n - 9, ".markdown")))) continue;
+        char p[PATH_MAX + 300];
+        snprintf(p, sizeof(p), "%s/%s", project_dir, ent->d_name);
+        uint64_t one = 1469598103934665603ull;
+        fingerprint_add(p, &one);
+        docs ^= one;
+    }
+    if (d) closedir(d);
+    for (size_t i = 0; i < sizeof(docs); i++) h = (h ^ (unsigned char)(docs >> (i * 8))) * 1099511628211ull;
     return h;
 }
 
-static bool import_once(Db *db, const char *project_dir, const char *pid, char *why, size_t whylen)
+static bool import_once(Db *db, const char *project_dir, const char *pid, uint64_t expected_fingerprint,
+                        bool *changed, char *why, size_t whylen)
 {
+    *changed = false;
     /* Documents present now. */
     DIR *d = opendir(project_dir);
     struct dirent *ent;
@@ -478,12 +492,16 @@ static bool import_once(Db *db, const char *project_dir, const char *pid, char *
                     " JOIN record_versions v ON v.record_id = x.record_id AND v.ver = x.mv SET r.current_status = v.status",
                     (DbArg[1]){ DB_S(pid) }, 1, NULL);
     if (ok) sdb_entities_backfill(db, pid);
+    if (ok && fingerprint(project_dir) != expected_fingerprint) {
+        *changed = true;
+        ok = false;
+    }
     if (ok) ok = db_commit(db);
     else db_rollback(db);
     free(map);
     free(chats.m);
     free(recs.m);
-    if (!ok) snprintf(why, whylen, "Moving the project into the store failed: %s", db_error(db));
+    if (!ok && !*changed) snprintf(why, whylen, "Moving the project into the store failed: %s", db_error(db));
     return ok;
 }
 
@@ -536,11 +554,15 @@ static bool import_locked(Db *db, const char *project_dir, const char *dir, char
     if (ok) ok = import_project(db, project_dir, pid, sizeof(pid), why, whylen);
     for (int attempt = 0; ok && attempt < 4; attempt++) {
         uint64_t before = fingerprint(project_dir);
-        ok = import_once(db, project_dir, pid, why, whylen);
-        if (ok && fingerprint(project_dir) == before) break;
-        if (ok && attempt == 3) {
+        bool changed = false;
+        ok = import_once(db, project_dir, pid, before, &changed, why, whylen);
+        if (ok) break;
+        if (changed && attempt < 3) {
+            ok = true;
+            continue;
+        }
+        if (changed) {
             snprintf(why, whylen, "The project's files kept changing; it stays on its files for now");
-            ok = false;
         }
     }
     if (ok && !store_mark_imported(project_dir, pid)) {
@@ -600,6 +622,11 @@ bool store_import(const char *project_dir, char *why, size_t whylen)
     flock(ownerfd, LOCK_UN);
     close(ownerfd);
     return ok;
+}
+
+bool store_needs_import(const char *project_dir)
+{
+    return project_dir && project_dir[0] && store_mode(project_dir, NULL, 0, NULL) == STORE_FILES;
 }
 
 /* ---- copies and missing projects ------------------------------------------------ */
@@ -703,6 +730,12 @@ static bool export_files_unlocked(Db *db, const char *pid, const char *project_d
             }
         records_free(recs, n);
     }
+    cJSON *observer_state = ok ? observer_state_load_db(db, pid) : NULL;
+    if (ok) ok = observer_state && observer_state_export_files(project_dir, observer_state);
+    cJSON_Delete(observer_state);
+    char observer_rules[17];
+    if (ok) ok = observer_rules_get_db(db, pid, observer_rules);
+    if (ok) ok = observer_rules_set_files(project_dir, observer_rules);
     store_set_write_time(0);
     free(revs);
     return ok;
@@ -832,7 +865,7 @@ bool store_restore(const char *project_dir, char *why, size_t whylen)
     if (d) closedir(d);
     if (newest[0]) {
         static const char *const items[] = { "chats", "revisions", "notes.jsonl", "canon.jsonl", "findings.jsonl",
-                                             "observer", "renames.jsonl" };
+                                             "observer", "observer-rules", "renames.jsonl" };
         for (size_t i = 0; i < sizeof(items) / sizeof(items[0]); i++) {
             char from[PATH_MAX + 400], to[PATH_MAX + 64];
             snprintf(from, sizeof(from), "%s/%s/%s", dir, newest, items[i]);
