@@ -147,8 +147,9 @@ several are optional developer actions rather than merge gates.
 - [x] ASan/UBSan.
 - [x] TSan.
 - [ ] MariaDB/Qdrant integration (`make dbtest`).
-- [x] Scripted UI canary (`make uitest`, non-blocking while runner stability is
-      established).
+- [ ] Scripted UI (`make uitest`); a non-blocking hosted canary is wired, but
+      the hosted runner has no display session in which Raylib can create a
+      window.
 - [ ] Store UI (`make uitest-db`).
 - [ ] Scheduled backup, remote and offline acceptance suites.
 
@@ -157,7 +158,10 @@ several are optional developer actions rather than merge gates.
 GitHub-hosted Apple Silicon macOS runners do not provide a supported Docker
 daemon or nested virtualization. `tools/services.sh` therefore cannot run the
 Compose-backed MariaDB/Qdrant suite there. Do not add a nominal DB job that can
-never pass.
+never pass. The first hosted UI canary (run `42157320138`) also confirmed that
+these runners have no usable display session: every script stopped at window
+creation. Failure artifacts were uploaded successfully, but the UI job cannot
+become required on this runner class.
 
 ### Migration plan
 
@@ -256,8 +260,11 @@ Do not treat these as remediation targets without a changed product decision:
   database isolation, repeated-start invalidation and verification-cache
   isolation.
 - Added a non-blocking hosted `make uitest` canary with UI and hang artifacts on
-  failure. Database/store UI and scheduled acceptance gates remain blocked on a
-  trusted macOS service runner or pinned native-service harness; required-check
-  enforcement remains blocked on repository administration.
+  failure. Its first remote run confirmed that hosted macOS has no display
+  session (`could not create a window` for all scripts), while artifact upload
+  and the gated build/headless/sanitizer jobs worked. Database, base/store UI
+  and scheduled acceptance gates remain blocked on a trusted macOS runner or
+  pinned native-service harness; required-check enforcement remains blocked on
+  repository administration.
 - Verification: build and headless tests, ASan/UBSan, TSan (574 checks),
   database integration (397 checks), base UI and store UI passed locally.
