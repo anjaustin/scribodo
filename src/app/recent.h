@@ -15,12 +15,15 @@ typedef struct {
     char doc[256]; /* last open document's file name, or "" */
 } RecentProject;
 
-void recent_set_dir(const char *dir);
+typedef struct RecentStore RecentStore;
+
+RecentStore *recent_store_create(const char *dir);
+void recent_store_destroy(RecentStore *store);
 /* Projects whose folders still exist. */
-size_t recent_load(RecentProject *out, size_t max);
+size_t recent_store_load(RecentStore *store, RecentProject *out, size_t max);
 /* Move `project` to the front (recording `doc` if non-NULL) and save. */
-void recent_touch(const char *project, const char *doc);
+void recent_store_touch(RecentStore *store, const char *project, const char *doc);
 /* A document in `project` was renamed: keep "last open" pointing at it. */
-void recent_rename_doc(const char *project, const char *from, const char *to);
+void recent_store_rename_doc(RecentStore *store, const char *project, const char *from, const char *to);
 
 #endif

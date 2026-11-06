@@ -16,6 +16,8 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
+#include <sys/file.h>
+#include <fcntl.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -36,11 +38,33 @@
 #define MAX_JUDGE_PAIRS 24    /* canon checks per job: 8 findings x 3 entries, so none are skipped */
 #define MAX_DOC_BYTES (16u << 20) /* the editor's own limit is lower */
 
-/* All finding writes (observer worker and UI status changes) take this. */
-static pthread_mutex_t g_findings_mu = PTHREAD_MUTEX_INITIALIZER;
+/* Finding read/modify/write sequences are serialized per project and across
+ * processes; unrelated projects never share a process-global mutex. */
+static int findings_lock(const char *project)
+{
+    char dir[PATH_MAX + 32], path[PATH_MAX + 64];
+    snprintf(dir, sizeof(dir), "%s/.scribodo", project ? project : "");
+    if (mkdir(dir, 0755) != 0 && errno != EEXIST) return -1;
+    snprintf(path, sizeof(path), "%s/findings.lock", dir);
+    int fd = open(path, O_RDWR | O_CREAT, 0600);
+    if (fd < 0) return -1;
+    if (flock(fd, LOCK_EX) != 0) {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+static void findings_unlock(int fd)
+{
+    if (fd < 0) return;
+    flock(fd, LOCK_UN);
+    close(fd);
+}
 
 struct Observer {
     LlmServer *server;
+    SemanticClient *semantic;
     pthread_t thread;
     bool thread_started;
     pthread_mutex_t mu;
@@ -1031,6 +1055,20 @@ static void finding_key(const char *type, const char *subject, const char *rel, 
     }
 }
 
+static bool candidate_already_exists(const Cand *candidate, const Record *existing, size_t count)
+{
+    char key[400], other[400];
+    finding_key(candidate->type, candidate->info.subject, candidate->info.relation, candidate->info.object,
+                candidate->desc, key, sizeof(key));
+    for (size_t i = 0; i < count; i++) {
+        const RecordVersion *version = record_current(&existing[i]);
+        finding_key(version->finding.type, version->finding.subject, version->finding.relation,
+                    version->finding.object, version->content, other, sizeof(other));
+        if (!strcmp(key, other)) return true;
+    }
+    return false;
+}
+
 /* Enough source text to support a finding: an entity's own name, or a
  * phrase of at least 3 words and 12 bytes. Measured red-team 005: a prompt
  * planted in a document made the model cite "the" as evidence for "Ingrid
@@ -1157,6 +1195,8 @@ static bool rules_set(const char *project, const char *sig)
  * changed. */
 size_t obs_refilter(const char *project, const char *author, const char *assistant)
 {
+    int lock = findings_lock(project);
+    if (lock < 0) return 0;
     Record *recs = NULL;
     size_t n = records_list(project, REC_FINDING, &recs), changed = 0;
     for (size_t i = 0; i < n; i++) {
@@ -1172,6 +1212,7 @@ size_t obs_refilter(const char *project, const char *author, const char *assista
             changed++;
     }
     records_free(recs, n);
+    findings_unlock(lock);
     return changed;
 }
 
@@ -1327,10 +1368,10 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSO
     free(json);
 
     /* Deduplicate against stored findings (and within this batch). */
-    pthread_mutex_lock(&g_findings_mu);
+    int findings_fd = findings_lock(project);
     Record *existing = NULL, *canon = NULL, *notes = NULL;
-    size_t ne = records_list(project, REC_FINDING, &existing);
-    pthread_mutex_unlock(&g_findings_mu);
+    size_t ne = findings_fd >= 0 ? records_list(project, REC_FINDING, &existing) : 0;
+    findings_unlock(findings_fd);
     size_t ncanon = records_list(project, REC_CANON, &canon), nnotes = records_list(project, REC_NOTE, &notes);
     for (size_t i = 0; i < nc; i++) {
         char key[400], other[400];
@@ -1353,11 +1394,11 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSO
     /* Projects in the store get semantic retrieval when the index is up;
      * canon and notes are synced into it first (cheap when unchanged). */
     char sem_pid[64] = "";
-    bool use_sem = project_store_feature_key(project, PROJECT_STORE_CAP_SEMANTIC, sem_pid, sizeof(sem_pid)) &&
-                   semantic_ready();
+    bool use_sem = o->semantic && project_store_feature_key(project, PROJECT_STORE_CAP_SEMANTIC, sem_pid, sizeof(sem_pid)) &&
+                   semantic_ready(o->semantic);
     if (use_sem) {
         char serr[200];
-        use_sem = semantic_sync_records(sem_pid, serr, sizeof(serr));
+        use_sem = semantic_sync_records(o->semantic, sem_pid, serr, sizeof(serr));
     }
 
     /* Compare with committed canon (possible conflicts) and notes (overlaps). */
@@ -1401,7 +1442,7 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSO
         int ncand = 0;
         if (use_sem) {
             SemHit *hits = NULL;
-            size_t nh = semantic_canon_for(sem_pid, stmt, 2, &hits);
+            size_t nh = semantic_canon_for(o->semantic, sem_pid, stmt, 2, &hits);
             for (size_t k = 0; k < nh && ncand < 2; k++)
                 for (size_t c = 0; c < ncanon; c++)
                     if (!strcmp(canon[c].id, hits[k].record_id) && !strcmp(record_current(&canon[c])->status, "committed")) {
@@ -1472,15 +1513,43 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSO
     ok = ok && gen == o->gen; /* project unchanged */
     pthread_mutex_unlock(&o->mu);
     if (ok) {
-        pthread_mutex_lock(&g_findings_mu);
-        for (size_t i = 0; i < nc; i++) {
+        findings_fd = findings_lock(project);
+        if (findings_fd < 0) io_failed = true;
+        if (findings_fd >= 0) {
+            /* Model work happens outside the lock. Revalidate under the final
+             * write lock so another process cannot create the same finding
+             * between our first deduplication read and append. */
+            records_free(existing, ne);
+            existing = NULL;
+            ne = records_list(project, REC_FINDING, &existing);
+            for (size_t i = 0; i < nc; i++)
+                if (cands[i].keep && candidate_already_exists(&cands[i], existing, ne)) cands[i].keep = false;
+            for (size_t c = 0; c < nconf; c++) {
+                Cand *candidate = &cands[conflicts[c].cand];
+                for (size_t e = 0; e < ne; e++) {
+                    const RecordVersion *version = record_current(&existing[e]);
+                    bool duplicate = !strcmp(version->finding.type, "conflict") &&
+                                     !strcmp(version->finding.related, conflicts[c].canon_id) &&
+                                     version->finding.related_text && conflicts[c].canon_text &&
+                                     !strcmp(version->finding.related_text, conflicts[c].canon_text) &&
+                                     version->nsources && version->sources[0].quote && candidate->src.quote &&
+                                     !strcmp(version->sources[0].quote, candidate->src.quote);
+                    if (duplicate) {
+                        conflicts[c].cand = SIZE_MAX;
+                        break;
+                    }
+                }
+            }
+        }
+        for (size_t i = 0; findings_fd >= 0 && i < nc; i++) {
             if (!cands[i].keep) continue;
             char id[40];
             records_new_id(REC_FINDING, id, sizeof(id));
             if (!records_create_ex(project, REC_FINDING, id, "new", cands[i].desc, &cands[i].src, 1, &cands[i].info))
                 io_failed = true;
         }
-        for (size_t c = 0; c < nconf; c++) {
+        for (size_t c = 0; findings_fd >= 0 && c < nconf; c++) {
+            if (conflicts[c].cand == SIZE_MAX) continue;
             Cand *cd = &cands[conflicts[c].cand];
             FindingInfo fi = { 0 };
             snprintf(fi.type, sizeof(fi.type), "conflict");
@@ -1491,7 +1560,7 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSO
             records_new_id(REC_FINDING, id, sizeof(id));
             if (!records_create_ex(project, REC_FINDING, id, "new", conflicts[c].check, &cd->src, 1, &fi)) io_failed = true;
         }
-        pthread_mutex_unlock(&g_findings_mu);
+        findings_unlock(findings_fd);
         /* Index what was read (documents as draft text, chats as chat), and
          * drop the document's points for pieces it no longer has. */
         if (use_sem) {
@@ -1505,8 +1574,8 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSO
                 if (!piece) continue;
                 const char *base = j->is_doc ? j->src : j->msgs[sg->message];
                 size_t start = cp_count(base, sg->src_off), len = cp_count(piece, sg->len);
-                if (j->is_doc) semantic_index_text(sem_pid, "draft", did, rev[0] ? rev : NULL, NULL, 0, start, len, piece);
-                else semantic_index_text(sem_pid, "chat", NULL, NULL, j->name, sg->message, start, len, piece);
+                if (j->is_doc) semantic_index_text(o->semantic, sem_pid, "draft", did, rev[0] ? rev : NULL, NULL, 0, start, len, piece);
+                else semantic_index_text(o->semantic, sem_pid, "chat", NULL, NULL, j->name, sg->message, start, len, piece);
                 free(piece);
             }
             if (j->is_doc && did[0] && j->current) {
@@ -1514,7 +1583,7 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, Job *j, cJSO
                 const char **hs = calloc(n ? n : 1, sizeof(char *));
                 cJSON *it;
                 cJSON_ArrayForEach(it, j->current) if (hs && cJSON_IsString(it)) hs[k++] = it->valuestring;
-                if (hs) semantic_prune_doc(sem_pid, did, hs, k);
+                if (hs) semantic_prune_doc(o->semantic, sem_pid, did, hs, k);
                 free(hs);
             }
         }
@@ -1598,7 +1667,7 @@ static void *worker(void *arg)
             long n = -1;
             set_status(o, "Rebuilding the semantic index\xE2\x80\xA6");
             if (project_store_feature_key(project, PROJECT_STORE_CAP_SEMANTIC, pid, sizeof(pid)))
-                n = semantic_rebuild(pid, err, sizeof(err));
+                n = semantic_rebuild(o->semantic, pid, err, sizeof(err));
             else snprintf(err, sizeof(err), "this project isn't in the project store");
             char msg[300];
             if (n >= 0) snprintf(msg, sizeof(msg), "Index rebuilt: %ld passages", n);
@@ -1648,9 +1717,7 @@ static void *worker(void *arg)
         char sig[17], had[17];
         rules_signature(author, assistant, sig);
         if (rules_get(project, had) && strcmp(had, sig) != 0) {
-            pthread_mutex_lock(&g_findings_mu);
             size_t changed = obs_refilter(project, author, assistant);
-            pthread_mutex_unlock(&g_findings_mu);
             rules_set(project, sig);
             if (changed) {
                 pthread_mutex_lock(&o->mu);
@@ -1707,11 +1774,12 @@ static void *worker(void *arg)
     return NULL;
 }
 
-Observer *observer_create(LlmServer *server)
+Observer *observer_create(LlmServer *server, SemanticClient *semantic)
 {
     Observer *o = calloc(1, sizeof(Observer));
     if (!o) return NULL;
     o->server = server;
+    o->semantic = semantic;
     o->enabled = true;
     pthread_mutex_init(&o->mu, NULL);
     pthread_cond_init(&o->cv, NULL);
@@ -1860,7 +1928,8 @@ unsigned observer_jobs_done(Observer *o)
 
 bool observer_set_finding_status(Observer *o, const char *project_dir, const char *id, const char *status)
 {
-    pthread_mutex_lock(&g_findings_mu);
+    int lock = findings_lock(project_dir);
+    if (lock < 0) return false;
     Record *list = NULL;
     size_t n = records_list(project_dir, REC_FINDING, &list);
     bool ok = false;
@@ -1871,7 +1940,7 @@ bool observer_set_finding_status(Observer *o, const char *project_dir, const cha
         break;
     }
     records_free(list, n);
-    pthread_mutex_unlock(&g_findings_mu);
+    findings_unlock(lock);
     if (ok && o) {
         pthread_mutex_lock(&o->mu);
         o->version++;

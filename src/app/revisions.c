@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/file.h>
 #include <sys/time.h>
 #include <unistd.h>
 
@@ -15,11 +16,6 @@
 #include "app/project_store.h"
 #include "app/revisions_internal.h"
 #include "app/store.h"
-
-#include <pthread.h>
-
-/* The UI thread and the observer both record revisions (red-team 005). */
-static pthread_mutex_t g_rev_mu = PTHREAD_MUTEX_INITIALIZER;
 
 static void hash_text(const char *s, char out[17])
 {
@@ -91,7 +87,32 @@ static double num(cJSON *j, const char *key)
     return d >= 0.0 && d < 1e15 ? d : 0.0;
 }
 
-size_t revisions_list_files(const char *project_dir, const char *doc_path, Revision **out)
+static int revision_lock(const char *project_dir, const char *doc_path, bool create, int operation)
+{
+    char dir[1500], path[1600];
+    if (!doc_dir(project_dir, doc_path, create, dir, sizeof(dir))) return -1;
+    snprintf(path, sizeof(path), "%s/.lock", dir);
+    int fd = open(path, O_RDWR | O_CREAT, 0600);
+    /* Pre-upgrade read-only histories have no lock file. Since this process
+     * cannot write that directory either, reading without a lock preserves
+     * access without racing one of our writers. */
+    if (fd < 0 && !create && (errno == EACCES || errno == EROFS)) return -2;
+    if (fd < 0) return -1;
+    if (flock(fd, operation) != 0) {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+static void revision_unlock(int fd)
+{
+    if (fd < 0) return;
+    flock(fd, LOCK_UN);
+    close(fd);
+}
+
+static size_t list_impl(const char *project_dir, const char *doc_path, Revision **out)
 {
     *out = NULL;
     char dir[1500], idx[1600];
@@ -138,6 +159,16 @@ size_t revisions_list_files(const char *project_dir, const char *doc_path, Revis
     return n;
 }
 
+size_t revisions_list_files(const char *project_dir, const char *doc_path, Revision **out)
+{
+    *out = NULL;
+    int lock = revision_lock(project_dir, doc_path, false, LOCK_SH);
+    if (lock == -1) return 0;
+    size_t count = list_impl(project_dir, doc_path, out);
+    revision_unlock(lock);
+    return count;
+}
+
 static bool record_impl(const char *project_dir, const char *doc_path, const char *text, const char *origin,
                         const char *note, bool *recorded, char *file_out, size_t file_len)
 {
@@ -148,7 +179,7 @@ static bool record_impl(const char *project_dir, const char *doc_path, const cha
     hash_text(text, hash);
 
     Revision *list = NULL;
-    size_t n = revisions_list_files(project_dir, doc_path, &list);
+    size_t n = list_impl(project_dir, doc_path, &list);
     bool same = n > 0 && !strcmp(list[0].hash, hash);
     if (same && file_out) snprintf(file_out, file_len, "%s", list[0].file);
     /* A snapshot for a source may reuse any revision with exactly this text:
@@ -217,9 +248,10 @@ static bool record_impl(const char *project_dir, const char *doc_path, const cha
 bool revisions_record_files(const char *project_dir, const char *doc_path, const char *text, const char *origin,
                             const char *note, bool *recorded)
 {
-    pthread_mutex_lock(&g_rev_mu);
+    int lock = revision_lock(project_dir, doc_path, true, LOCK_EX);
+    if (lock < 0) return false;
     bool ok = record_impl(project_dir, doc_path, text, origin, note, recorded, NULL, 0);
-    pthread_mutex_unlock(&g_rev_mu);
+    revision_unlock(lock);
     return ok;
 }
 
@@ -227,25 +259,36 @@ bool revisions_snapshot_files(const char *project_dir, const char *doc_path, con
                               char *file_out, size_t file_len)
 {
     if (file_len) file_out[0] = '\0';
-    pthread_mutex_lock(&g_rev_mu);
+    int lock = revision_lock(project_dir, doc_path, true, LOCK_EX);
+    if (lock < 0) return false;
     bool ok = record_impl(project_dir, doc_path, text, "source", NULL, NULL, file_out, file_len) && file_out[0];
-    pthread_mutex_unlock(&g_rev_mu);
+    revision_unlock(lock);
     return ok;
 }
 
 char *revisions_load_files(const char *project_dir, const char *doc_path, const Revision *r)
 {
+    int lock = revision_lock(project_dir, doc_path, false, LOCK_SH);
+    if (lock == -1) return NULL;
     char dir[1500], path[1700];
-    if (strchr(r->file, '/') || !doc_dir(project_dir, doc_path, false, dir, sizeof(dir))) return NULL;
+    if (strchr(r->file, '/') || !doc_dir(project_dir, doc_path, false, dir, sizeof(dir))) {
+        revision_unlock(lock);
+        return NULL;
+    }
     snprintf(path, sizeof(path), "%s/%s", dir, r->file);
     char *text = slurp(path);
-    if (!text) return NULL;
+    if (!text) {
+        revision_unlock(lock);
+        return NULL;
+    }
     char hash[17];
     hash_text(text, hash);
     if (r->hash[0] && strcmp(hash, r->hash) != 0) { /* snapshot damaged */
         free(text);
+        revision_unlock(lock);
         return NULL;
     }
+    revision_unlock(lock);
     return text;
 }
 

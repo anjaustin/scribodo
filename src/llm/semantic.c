@@ -16,40 +16,43 @@
 #include "llm/http.h"
 #include "llm/observer.h"
 
-static LlmServer *g_embed;
-static char g_qkey[128];
-static char g_qport[24] = "tcp:6333";
-static bool g_qloaded;
+struct SemanticClient {
+    LlmServer *embed;
+    char qkey[128];
+    char qport[24];
+};
 
-void semantic_set_embedder(LlmServer *embed) { g_embed = embed; }
-
-static void load_qdrant(void)
+SemanticClient *semantic_client_create(LlmServer *embed)
 {
-    if (g_qloaded) return;
-    g_qloaded = true;
+    SemanticClient *client = calloc(1, sizeof(*client));
+    if (!client) return NULL;
+    client->embed = embed;
+    snprintf(client->qport, sizeof(client->qport), "tcp:6333");
     const char *port = getenv("SCRIBODO_QDRANT_PORT");
-    if (port) snprintf(g_qport, sizeof(g_qport), "tcp:%d", atoi(port));
+    if (port) snprintf(client->qport, sizeof(client->qport), "tcp:%d", atoi(port));
     char path[1024];
     const char *dir = getenv("SCRIBODO_SECRETS"), *home = getenv("HOME");
     if (dir) snprintf(path, sizeof(path), "%s/qdrant_api_key", dir);
     else snprintf(path, sizeof(path), "%s/Library/Application Support/Scribodo/services/qdrant_api_key", home ? home : "");
     FILE *f = fopen(path, "rb");
     if (f) {
-        g_qkey[fread(g_qkey, 1, sizeof(g_qkey) - 1, f)] = '\0';
-        g_qkey[strcspn(g_qkey, "\r\n")] = '\0';
+        client->qkey[fread(client->qkey, 1, sizeof(client->qkey) - 1, f)] = '\0';
+        client->qkey[strcspn(client->qkey, "\r\n")] = '\0';
         fclose(f);
     }
+    return client;
 }
 
+void semantic_client_destroy(SemanticClient *client) { free(client); }
+
 /* One request to Qdrant; *out gets the parsed JSON (NULL on failure). */
-static bool qdrant(const char *method, const char *path, cJSON *body, cJSON **out)
+static bool qdrant(SemanticClient *client, const char *method, const char *path, cJSON *body, cJSON **out)
 {
-    load_qdrant();
     if (out) *out = NULL;
-    if (!g_qkey[0]) return false;
+    if (!client || !client->qkey[0]) return false;
     char *js = body ? cJSON_PrintUnformatted(body) : NULL;
     HttpResult r;
-    bool ok = http_request(g_qport, method, path, g_qkey, js, NULL, NULL, NULL, 15000, &r) && r.status >= 200 &&
+    bool ok = http_request(client->qport, method, path, client->qkey, js, NULL, NULL, NULL, 15000, &r) && r.status >= 200 &&
               r.status < 300;
     if (!ok && getenv("SCRIBODO_SEM_DEBUG"))
         fprintf(stderr, "qdrant %s %s -> %d %s %.300s\n", method, path, r.status, r.error, r.body ? r.body : "");
@@ -67,12 +70,12 @@ static void collection_for(const char *pid, char *out, size_t outlen)
     snprintf(out, outlen, "%s__%s", store_database(), pid);
 }
 
-bool semantic_ready(void)
+bool semantic_ready(SemanticClient *client)
 {
     cJSON *j = NULL;
-    bool ok = qdrant("GET", "/collections", NULL, &j);
+    bool ok = qdrant(client, "GET", "/collections", NULL, &j);
     cJSON_Delete(j);
-    return ok && (!g_embed || llm_server_state(g_embed, NULL, 0) == LLM_READY);
+    return ok && (!client->embed || llm_server_state(client->embed, NULL, 0) == LLM_READY);
 }
 
 /* ---- embeddings ------------------------------------------------------------- */
@@ -112,13 +115,13 @@ static const char *k_query_instruction =
     "Instruct: Given a statement from a work of fiction, retrieve established facts about the same people, places "
     "or things\nQuery: ";
 
-bool semantic_embed(const char *const *texts, size_t n, bool query, float *out, char *err, size_t errlen)
+bool semantic_embed(SemanticClient *client, const char *const *texts, size_t n, bool query, float *out, char *err, size_t errlen)
 {
-    if (!g_embed) {
+    if (!client || !client->embed) {
         for (size_t i = 0; i < n; i++) fake_embed(texts[i], out + i * SEM_DIM);
         return true;
     }
-    if (llm_server_state(g_embed, NULL, 0) != LLM_READY) {
+    if (llm_server_state(client->embed, NULL, 0) != LLM_READY) {
         snprintf(err, errlen, "The embedding model isn't ready");
         return false;
     }
@@ -153,7 +156,7 @@ bool semantic_embed(const char *const *texts, size_t n, bool query, float *out, 
     char *body = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     HttpResult r;
-    bool ok = body && http_request(llm_server_socket(g_embed), "POST", "/v1/embeddings", llm_server_key(g_embed), body, NULL,
+    bool ok = body && http_request(llm_server_socket(client->embed), "POST", "/v1/embeddings", llm_server_key(client->embed), body, NULL,
                                    NULL, NULL, 120000, &r) &&
               r.status == 200 && r.body;
     free(body);
@@ -202,14 +205,14 @@ static void hash16(const char *s, char out[17])
 }
 
 /* *created: it didn't exist (a new project, or a lost index). */
-static bool ensure_collection_ex(const char *pid, bool *created)
+static bool ensure_collection_ex(SemanticClient *client, const char *pid, bool *created)
 {
     char name[160], path[220];
     collection_for(pid, name, sizeof(name));
     snprintf(path, sizeof(path), "/collections/%s", name);
     if (created) *created = false;
     cJSON *j = NULL;
-    if (qdrant("GET", path, NULL, &j)) {
+    if (qdrant(client, "GET", path, NULL, &j)) {
         cJSON_Delete(j);
         return true;
     }
@@ -218,12 +221,12 @@ static bool ensure_collection_ex(const char *pid, bool *created)
     cJSON *vec = cJSON_AddObjectToObject(body, "vectors");
     cJSON_AddNumberToObject(vec, "size", SEM_DIM);
     cJSON_AddStringToObject(vec, "distance", "Cosine");
-    bool ok = qdrant("PUT", path, body, NULL);
+    bool ok = qdrant(client, "PUT", path, body, NULL);
     cJSON_Delete(body);
     return ok;
 }
 
-static bool ensure_collection(const char *pid) { return ensure_collection_ex(pid, NULL); }
+static bool ensure_collection(SemanticClient *client, const char *pid) { return ensure_collection_ex(client, pid, NULL); }
 
 /* Has this exact text already been indexed under `key`? */
 static bool marked(Db *db, const char *pid, const char *key, const char *hash)
@@ -253,7 +256,7 @@ typedef struct {
 } Pending;
 
 /* Embed and upsert a batch; marks each on success. */
-static bool upsert(Db *db, const char *pid, Pending *p, size_t n)
+static bool upsert(SemanticClient *client, Db *db, const char *pid, Pending *p, size_t n)
 {
     if (n == 0) return true;
     float *vecs = malloc(n * SEM_DIM * sizeof(float));
@@ -261,7 +264,7 @@ static bool upsert(Db *db, const char *pid, Pending *p, size_t n)
     bool ok = vecs && texts;
     for (size_t i = 0; ok && i < n; i++) texts[i] = p[i].text;
     char err[200];
-    ok = ok && semantic_embed(texts, n, false, vecs, err, sizeof(err));
+    ok = ok && semantic_embed(client, texts, n, false, vecs, err, sizeof(err));
     cJSON *body = cJSON_CreateObject();
     cJSON *pts = cJSON_AddArrayToObject(body, "points");
     for (size_t i = 0; ok && i < n; i++) {
@@ -278,7 +281,7 @@ static bool upsert(Db *db, const char *pid, Pending *p, size_t n)
     char name[160], path[260];
     collection_for(pid, name, sizeof(name));
     snprintf(path, sizeof(path), "/collections/%s/points?wait=true", name);
-    ok = ok && qdrant("PUT", path, body, NULL);
+    ok = ok && qdrant(client, "PUT", path, body, NULL);
     cJSON_Delete(body);
     for (size_t i = 0; i < n; i++) {
         if (ok) mark(db, pid, p[i].key, p[i].hash);
@@ -299,7 +302,7 @@ static cJSON *payload_base(const char *pid, const char *kind, const char *text)
     return p;
 }
 
-static bool delete_points(const char *pid, const char *key, const char *value)
+static bool delete_points(SemanticClient *client, const char *pid, const char *key, const char *value)
 {
     char name[160], path[260];
     collection_for(pid, name, sizeof(name));
@@ -310,12 +313,12 @@ static bool delete_points(const char *pid, const char *key, const char *value)
     cJSON_AddStringToObject(c, "key", key);
     cJSON_AddStringToObject(cJSON_AddObjectToObject(c, "match"), "value", value);
     cJSON_AddItemToArray(must, c);
-    bool ok = qdrant("POST", path, body, NULL);
+    bool ok = qdrant(client, "POST", path, body, NULL);
     cJSON_Delete(body);
     return ok;
 }
 
-static bool sync_records_impl(const char *project_id, char *err, size_t errlen);
+static bool sync_records_impl(SemanticClient *client, const char *project_id, char *err, size_t errlen);
 
 static bool rebuild_pending(Db *db, const char *pid)
 {
@@ -331,11 +334,11 @@ static void set_rebuild_pending(Db *db, const char *pid, bool on)
     db_run(db, "UPDATE projects SET index_rebuild_pending = ? WHERE id = ?", (DbArg[2]){ DB_I(on ? 1 : 0), DB_S(pid) }, 2, NULL);
 }
 
-bool semantic_sync_records(const char *project_id, char *err, size_t errlen)
+bool semantic_sync_records(SemanticClient *client, const char *project_id, char *err, size_t errlen)
 {
     Db *db = store_db();
     bool created = false;
-    if (!db || !ensure_collection_ex(project_id, &created)) {
+    if (!db || !ensure_collection_ex(client, project_id, &created)) {
         snprintf(err, errlen, "The semantic index isn't available");
         return false;
     }
@@ -344,14 +347,14 @@ bool semantic_sync_records(const char *project_id, char *err, size_t errlen)
      * marks can't be trusted, so the whole index is rebuilt from the
      * store (red-team 009). */
     if (errlen) err[0] = '\0';
-    if (created || rebuild_pending(db, project_id)) return semantic_rebuild(project_id, err, errlen) >= 0;
-    return sync_records_impl(project_id, err, errlen);
+    if (created || rebuild_pending(db, project_id)) return semantic_rebuild(client, project_id, err, errlen) >= 0;
+    return sync_records_impl(client, project_id, err, errlen);
 }
 
-static bool sync_records_impl(const char *project_id, char *err, size_t errlen)
+static bool sync_records_impl(SemanticClient *client, const char *project_id, char *err, size_t errlen)
 {
     Db *db = store_db();
-    if (!db || !ensure_collection(project_id)) {
+    if (!db || !ensure_collection(client, project_id)) {
         snprintf(err, errlen, "The semantic index isn't available");
         return false;
     }
@@ -378,7 +381,7 @@ static bool sync_records_impl(const char *project_id, char *err, size_t errlen)
         hash16(tag, h);
         if (!strcmp(status, "deleted")) {
             if (!marked(db, project_id, key, "deleted0000000000")) {
-                delete_points(project_id, "record_id", id);
+                delete_points(client, project_id, "record_id", id);
                 mark(db, project_id, key, "deleted0000000000");
             }
             continue;
@@ -394,7 +397,7 @@ static bool sync_records_impl(const char *project_id, char *err, size_t errlen)
     }
     for (size_t i = 0; ok && i < np; i += 16) {
         size_t n = np - i < 16 ? np - i : 16;
-        ok = upsert(db, project_id, p + i, n);
+        ok = upsert(client, db, project_id, p + i, n);
     }
     for (size_t i = 0; i < np; i++) cJSON_Delete(p[i].payload);
     free(p);
@@ -403,11 +406,11 @@ static bool sync_records_impl(const char *project_id, char *err, size_t errlen)
     return ok;
 }
 
-bool semantic_index_text(const char *project_id, const char *kind, const char *document_id, const char *revision_id,
+bool semantic_index_text(SemanticClient *client, const char *project_id, const char *kind, const char *document_id, const char *revision_id,
                          const char *conversation_id, long seq, size_t start, size_t len, const char *text)
 {
     Db *db = store_db();
-    if (!db || !text || !text[0] || !ensure_collection(project_id)) return false;
+    if (!db || !text || !text[0] || !ensure_collection(client, project_id)) return false;
     char key[191], h[17];
     hash16(text, h);
     if (!strcmp(kind, "draft")) snprintf(key, sizeof(key), "doc:%s:%s", document_id ? document_id : "", h);
@@ -424,10 +427,10 @@ bool semantic_index_text(const char *project_id, const char *kind, const char *d
     cJSON_AddNumberToObject(p.payload, "seq", (double)seq);
     cJSON_AddNumberToObject(p.payload, "start", (double)start);
     cJSON_AddNumberToObject(p.payload, "len", (double)len);
-    return upsert(db, project_id, &p, 1);
+    return upsert(client, db, project_id, &p, 1);
 }
 
-bool semantic_prune_doc(const char *project_id, const char *document_id, const char *const *piece_hashes, size_t n)
+bool semantic_prune_doc(SemanticClient *client, const char *project_id, const char *document_id, const char *const *piece_hashes, size_t n)
 {
     Db *db = store_db();
     if (!db) return false;
@@ -457,7 +460,7 @@ bool semantic_prune_doc(const char *project_id, const char *document_id, const c
         cJSON_AddStringToObject(cJSON_AddObjectToObject(b, "match"), "value", h);
         cJSON_AddItemToArray(must, a);
         cJSON_AddItemToArray(must, b);
-        ok = qdrant("POST", path, body, NULL) && ok;
+        ok = qdrant(client, "POST", path, body, NULL) && ok;
         cJSON_Delete(body);
         db_run(db, "DELETE FROM semantic_marks WHERE project_id = ? AND point_key = ?", (DbArg[2]){ DB_S(project_id), DB_S(key) },
                2, NULL);
@@ -482,12 +485,12 @@ static double payload_num(const cJSON *pl, const char *name)
     return v >= 0 && v <= 9007199254740992.0 ? v : 0;
 }
 
-static size_t search_filtered(const char *pid, const char *query, cJSON *filter, size_t limit, SemHit **out)
+static size_t search_filtered(SemanticClient *client, const char *pid, const char *query, cJSON *filter, size_t limit, SemHit **out)
 {
     *out = NULL;
     float *v = malloc(SEM_DIM * sizeof(float));
     char err[200];
-    if (!v || !semantic_embed(&query, 1, true, v, err, sizeof(err))) {
+    if (!v || !semantic_embed(client, &query, 1, true, v, err, sizeof(err))) {
         free(v);
         cJSON_Delete(filter);
         return 0;
@@ -503,7 +506,7 @@ static size_t search_filtered(const char *pid, const char *query, cJSON *filter,
     collection_for(pid, name, sizeof(name));
     snprintf(path, sizeof(path), "/collections/%s/points/search", name);
     cJSON *res = NULL;
-    bool ok = qdrant("POST", path, body, &res);
+    bool ok = qdrant(client, "POST", path, body, &res);
     cJSON_Delete(body);
     cJSON *arr = ok ? cJSON_GetObjectItem(res, "result") : NULL;
     size_t n = (size_t)cJSON_GetArraySize(arr), k = 0;
@@ -550,7 +553,7 @@ static cJSON *match(const char *key, const char *value)
     return c;
 }
 
-size_t semantic_canon_for(const char *project_id, const char *statement, size_t limit, SemHit **out)
+size_t semantic_canon_for(SemanticClient *client, const char *project_id, const char *statement, size_t limit, SemHit **out)
 {
     /* Only committed canon: retracted entries and everything else (draft
      * text, notes, chat) are never treated as established fact. */
@@ -558,31 +561,31 @@ size_t semantic_canon_for(const char *project_id, const char *statement, size_t 
     cJSON *must = cJSON_AddArrayToObject(filter, "must");
     cJSON_AddItemToArray(must, match("kind", "canon"));
     cJSON_AddItemToArray(must, match("status", "committed"));
-    return search_filtered(project_id, statement, filter, limit, out);
+    return search_filtered(client, project_id, statement, filter, limit, out);
 }
 
-size_t semantic_search(const char *project_id, const char *query, const char *kind, size_t limit, SemHit **out)
+size_t semantic_search(SemanticClient *client, const char *project_id, const char *query, const char *kind, size_t limit, SemHit **out)
 {
     cJSON *filter = NULL;
     if (kind) {
         filter = cJSON_CreateObject();
         cJSON_AddItemToArray(cJSON_AddArrayToObject(filter, "must"), match("kind", kind));
     }
-    return search_filtered(project_id, query, filter, limit, out);
+    return search_filtered(client, project_id, query, filter, limit, out);
 }
 
-bool semantic_drop(const char *project_id)
+bool semantic_drop(SemanticClient *client, const char *project_id)
 {
     char name[160], path[220];
     collection_for(project_id, name, sizeof(name));
     snprintf(path, sizeof(path), "/collections/%s", name);
-    bool ok = qdrant("DELETE", path, NULL, NULL);
+    bool ok = qdrant(client, "DELETE", path, NULL, NULL);
     Db *db = store_db();
     if (db) db_run(db, "DELETE FROM semantic_marks WHERE project_id = ?", (DbArg[1]){ DB_S(project_id) }, 1, NULL);
     return ok;
 }
 
-long semantic_rebuild(const char *project_id, char *err, size_t errlen)
+long semantic_rebuild(SemanticClient *client, const char *project_id, char *err, size_t errlen)
 {
     Db *db = store_db();
     if (!db) {
@@ -592,12 +595,12 @@ long semantic_rebuild(const char *project_id, char *err, size_t errlen)
     /* Pending until every part is indexed: an interrupted rebuild (an
      * embedding error, the app quitting) is resumed by the next sync. */
     set_rebuild_pending(db, project_id, true);
-    semantic_drop(project_id); /* fine if it didn't exist */
-    if (!ensure_collection(project_id)) {
+    semantic_drop(client, project_id); /* fine if it didn't exist */
+    if (!ensure_collection(client, project_id)) {
         snprintf(err, errlen, "Qdrant isn't reachable");
         return -1;
     }
-    if (!sync_records_impl(project_id, err, errlen)) return -1;
+    if (!sync_records_impl(client, project_id, err, errlen)) return -1;
     long count = 0, failed = 0;
     DbRows r;
     /* Each document's current revision, in paragraphs. */
@@ -638,7 +641,7 @@ long semantic_rebuild(const char *project_id, char *err, size_t errlen)
                 for (size_t b = 0; b < ps[k]; b++) cps += ((unsigned char)text[b] & 0xC0) != 0x80;
                 size_t clen = 0;
                 for (size_t b = 0; b < len; b++) clen += ((unsigned char)piece[b] & 0xC0) != 0x80;
-                if (semantic_index_text(project_id, "draft", db_cell(&r, i, 0), db_cell(&r, i, 1), NULL, 0, cps, clen, piece)) count++;
+                if (semantic_index_text(client, project_id, "draft", db_cell(&r, i, 0), db_cell(&r, i, 1), NULL, 0, cps, clen, piece)) count++;
                 else failed++;
                 free(piece);
             }
@@ -662,7 +665,7 @@ long semantic_rebuild(const char *project_id, char *err, size_t errlen)
             utf8_clip(piece, 2001, text, 2000);
             size_t clen = 0; /* the range is in characters */
             for (const char *b = piece; *b; b++) clen += ((unsigned char)*b & 0xC0) != 0x80;
-            if (semantic_index_text(project_id, "chat", NULL, NULL, db_cell(&r, i, 0), atol(db_cell(&r, i, 1)), 0, clen, piece))
+            if (semantic_index_text(client, project_id, "chat", NULL, NULL, db_cell(&r, i, 0), atol(db_cell(&r, i, 1)), 0, clen, piece))
                 count++;
             else failed++;
             free(piece);
@@ -683,10 +686,10 @@ long semantic_rebuild(const char *project_id, char *err, size_t errlen)
     return count;
 }
 
-bool semantic_forget_collection(const char *project_id)
+bool semantic_forget_collection(SemanticClient *client, const char *project_id)
 {
     char name[160], path[220];
     collection_for(project_id, name, sizeof(name));
     snprintf(path, sizeof(path), "/collections/%s", name);
-    return qdrant("DELETE", path, NULL, NULL);
+    return qdrant(client, "DELETE", path, NULL, NULL);
 }

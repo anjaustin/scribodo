@@ -109,11 +109,11 @@ order, limiting parallel tests and future independent application instances.
 
 - [ ] Introduce an owned `StoreManager`; keep connections thread-local within
       that manager.
-- [ ] Introduce `SemanticClient` and clear borrowed embedder ownership.
-- [ ] Introduce `RecentStore`.
-- [ ] Make findings/revision serialization project- or manager-scoped where
+- [x] Introduce `SemanticClient` and clear borrowed embedder ownership.
+- [x] Introduce `RecentStore`.
+- [x] Make findings/revision serialization project- or manager-scoped where
       practical.
-- [ ] Document input and signal state that intentionally remains process-global.
+- [x] Document input and signal state that intentionally remains process-global.
 
 ### Acceptance criteria
 
@@ -121,6 +121,17 @@ order, limiting parallel tests and future independent application instances.
 - Repeated app lifecycle tests can initialize and destroy state cleanly.
 - Independent projects are not serialized by unrelated global state unless the
   constraint is intentional and documented.
+
+### Intentional process-global state
+
+- POSIX signal delivery remains a process concern: the handler only stores a
+  `sig_atomic_t` shutdown request, which the single application event loop
+  consumes. It owns no resources and calls no non-signal-safe code.
+- Raylib exposes keyboard, mouse and system clipboard state per process/window.
+  `input.c` is therefore a main-thread adapter for the one supported window;
+  its scripted queue/private clipboard are test-harness state, reset by process
+  lifetime. Supporting multiple windows in one process would require an owned
+  input context before that product boundary changes.
 
 ## P1 — CI omits high-value verification
 
@@ -217,6 +228,10 @@ Do not treat these as remediation targets without a changed product decision:
   including explicit adoption, pending-response transfer and idempotent teardown.
 - Added a generation-tagged frame string arena; every Clay text command now
   references immutable frame-owned storage through render.
+- Added owned `SemanticClient` and `RecentStore` services, including isolated
+  concurrent recent repositories and explicit borrowed embedder lifetime.
+- Replaced process-global finding/revision mutexes with per-project advisory
+  locks and final-lock finding deduplication across processes.
 - Hardened the local HTTP stub used by hosted CI to consume complete requests
   and emit complete responses instead of depending on single `recv`/`send` calls.
 - Verification: build, unit/headless, ASan/UBSan, TSan, database, base UI and

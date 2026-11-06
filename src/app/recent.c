@@ -7,14 +7,40 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/file.h>
+#include <fcntl.h>
 #include <time.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #include "cJSON.h"
 
-static char g_dir[PATH_MAX];
+struct RecentStore {
+    char dir[PATH_MAX];
+    pthread_mutex_t mutex;
+};
 
-void recent_set_dir(const char *dir) { snprintf(g_dir, sizeof(g_dir), "%s", dir ? dir : ""); }
+static int recent_lock(RecentStore *store, int operation);
+static void recent_unlock(int fd);
+
+RecentStore *recent_store_create(const char *dir)
+{
+    RecentStore *store = calloc(1, sizeof(*store));
+    if (!store) return NULL;
+    snprintf(store->dir, sizeof(store->dir), "%s", dir ? dir : "");
+    if (pthread_mutex_init(&store->mutex, NULL) != 0) {
+        free(store);
+        return NULL;
+    }
+    return store;
+}
+
+void recent_store_destroy(RecentStore *store)
+{
+    if (!store) return;
+    pthread_mutex_destroy(&store->mutex);
+    free(store);
+}
 
 static bool is_dir(const char *p)
 {
@@ -23,12 +49,12 @@ static bool is_dir(const char *p)
 }
 
 /* *corrupt is set when the file exists but can't be read as a list. */
-static size_t load_all(RecentProject *out, size_t max, bool existing_only, bool *corrupt)
+static size_t load_all(RecentStore *store, RecentProject *out, size_t max, bool existing_only, bool *corrupt)
 {
     if (corrupt) *corrupt = false;
-    if (!g_dir[0]) return 0;
+    if (!store || !store->dir[0]) return 0;
     char path[PATH_MAX + 32];
-    snprintf(path, sizeof(path), "%s/recent.json", g_dir);
+    snprintf(path, sizeof(path), "%s/recent.json", store->dir);
     FILE *f = fopen(path, "rb");
     if (!f) return 0;
     char buf[64 * 1024];
@@ -52,7 +78,16 @@ static size_t load_all(RecentProject *out, size_t max, bool existing_only, bool 
     return k;
 }
 
-size_t recent_load(RecentProject *out, size_t max) { return load_all(out, max, true, NULL); }
+size_t recent_store_load(RecentStore *store, RecentProject *out, size_t max)
+{
+    if (!store) return 0;
+    pthread_mutex_lock(&store->mutex);
+    int lock = recent_lock(store, LOCK_SH);
+    size_t count = lock >= 0 ? load_all(store, out, max, true, NULL) : 0;
+    recent_unlock(lock);
+    pthread_mutex_unlock(&store->mutex);
+    return count;
+}
 
 static void mkdir_p(const char *dir)
 {
@@ -67,19 +102,46 @@ static void mkdir_p(const char *dir)
     mkdir(p, 0755);
 }
 
-static void save_list(RecentProject *list, size_t n);
-
-void recent_touch(const char *project, const char *doc)
+static int recent_lock(RecentStore *store, int operation)
 {
-    if (!g_dir[0] || !project || project[0] != '/') return;
+    mkdir_p(store->dir);
+    char path[PATH_MAX + 32];
+    snprintf(path, sizeof(path), "%s/recent.lock", store->dir);
+    int fd = open(path, O_RDWR | O_CREAT, 0600);
+    if (fd < 0) return -1;
+    if (flock(fd, operation) != 0) {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+static void recent_unlock(int fd)
+{
+    if (fd < 0) return;
+    flock(fd, LOCK_UN);
+    close(fd);
+}
+
+static void save_list(RecentStore *store, RecentProject *list, size_t n);
+
+void recent_store_touch(RecentStore *store, const char *project, const char *doc)
+{
+    if (!store || !store->dir[0] || !project || project[0] != '/') return;
+    pthread_mutex_lock(&store->mutex);
+    int lock = recent_lock(store, LOCK_EX);
+    if (lock < 0) {
+        pthread_mutex_unlock(&store->mutex);
+        return;
+    }
     RecentProject list[RECENT_MAX + 1];
     bool corrupt = false;
     /* Folders that are gone don't keep their places (red-team 006). */
-    size_t n = load_all(list, RECENT_MAX, true, &corrupt);
+    size_t n = load_all(store, list, RECENT_MAX, true, &corrupt);
     if (corrupt) { /* keep the unreadable file for inspection, never overwrite it silently */
         char a[PATH_MAX + 32], b[PATH_MAX + 64];
-        snprintf(a, sizeof(a), "%s/recent.json", g_dir);
-        snprintf(b, sizeof(b), "%s/recent.json.corrupt-%ld", g_dir, (long)time(NULL));
+        snprintf(a, sizeof(a), "%s/recent.json", store->dir);
+        snprintf(b, sizeof(b), "%s/recent.json.corrupt-%ld", store->dir, (long)time(NULL));
         rename(a, b);
     }
     RecentProject cur = { 0 };
@@ -95,23 +157,34 @@ void recent_touch(const char *project, const char *doc)
     memmove(&list[1], &list[0], n * sizeof(RecentProject));
     list[0] = cur;
     n = n + 1 > RECENT_MAX ? RECENT_MAX : n + 1;
-    save_list(list, n);
+    save_list(store, list, n);
+    recent_unlock(lock);
+    pthread_mutex_unlock(&store->mutex);
 }
 
-void recent_rename_doc(const char *project, const char *from, const char *to)
+void recent_store_rename_doc(RecentStore *store, const char *project, const char *from, const char *to)
 {
+    if (!store) return;
+    pthread_mutex_lock(&store->mutex);
+    int lock = recent_lock(store, LOCK_EX);
+    if (lock < 0) {
+        pthread_mutex_unlock(&store->mutex);
+        return;
+    }
     RecentProject list[RECENT_MAX + 1];
-    size_t n = load_all(list, RECENT_MAX, true, NULL);
+    size_t n = load_all(store, list, RECENT_MAX, true, NULL);
     bool changed = false;
     for (size_t i = 0; i < n; i++)
         if (!strcmp(list[i].path, project) && !strcmp(list[i].doc, from)) {
             snprintf(list[i].doc, sizeof(list[i].doc), "%s", to);
             changed = true;
         }
-    if (changed) save_list(list, n);
+    if (changed) save_list(store, list, n);
+    recent_unlock(lock);
+    pthread_mutex_unlock(&store->mutex);
 }
 
-static void save_list(RecentProject *list, size_t n)
+static void save_list(RecentStore *store, RecentProject *list, size_t n)
 {
     cJSON *j = cJSON_CreateObject();
     cJSON *arr = cJSON_AddArrayToObject(j, "projects");
@@ -124,9 +197,9 @@ static void save_list(RecentProject *list, size_t n)
     char *s = cJSON_PrintUnformatted(j);
     cJSON_Delete(j);
     if (!s) return;
-    mkdir_p(g_dir);
+    mkdir_p(store->dir);
     char path[PATH_MAX + 32], tmp[PATH_MAX + 64];
-    snprintf(path, sizeof(path), "%s/recent.json", g_dir);
+    snprintf(path, sizeof(path), "%s/recent.json", store->dir);
     snprintf(tmp, sizeof(tmp), "%s.tmp-XXXXXX", path);
     int fd = mkstemp(tmp);
     if (fd >= 0) {

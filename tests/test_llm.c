@@ -837,7 +837,7 @@ static void test_observer_run(void)
     records_new_id(REC_CANON, cid, sizeof(cid));
     CHECK(records_append(proj, REC_CANON, cid, "committed", "Zo\xC3\xAB's eyes are green.", NULL, 0, NULL));
 
-    Observer *o = observer_create(NULL);
+    Observer *o = observer_create(NULL, NULL);
     CHECK(o != NULL);
     if (!o) return;
     observer_set_project(o, proj);
@@ -960,7 +960,7 @@ static void test_observer_redteam(void)
     char proj[700], path[800];
     snprintf(proj, sizeof(proj), "%s/obs-rt", g_dir);
     mkdir(proj, 0755);
-    Observer *o = observer_create(NULL);
+    Observer *o = observer_create(NULL, NULL);
     if (!o) return;
 
     /* A 7 KB paragraph: names near its end are read, piece by piece. */
@@ -1075,6 +1075,18 @@ static void test_observer_redteam(void)
     observer_destroy(o);
 }
 
+typedef struct {
+    RecentStore *store;
+    const char *project;
+} RecentTouchThread;
+
+static void *recent_touch_thread(void *context)
+{
+    RecentTouchThread *thread = context;
+    for (int i = 0; i < 20; i++) recent_store_touch(thread->store, thread->project, NULL);
+    return NULL;
+}
+
 /* Red-team 006: recent projects and the observer's per-project renames. */
 static void test_recent_and_renames(void)
 {
@@ -1084,23 +1096,40 @@ static void test_recent_and_renames(void)
     snprintf(b, sizeof(b), "%s/projB", g_dir);
     mkdir(a, 0755);
     mkdir(b, 0755);
-    recent_set_dir(dir); /* created with its parents on first save */
     char deep[900];
     snprintf(deep, sizeof(deep), "%s/state/deeper/still", g_dir);
-    recent_set_dir(deep);
-    recent_touch(a, "one.md");
-    recent_touch(b, NULL);
+    RecentStore *recent = recent_store_create(deep);
+    RecentStore *other = recent_store_create(dir);
+    CHECK(recent != NULL && other != NULL);
+    recent_store_touch(recent, a, "one.md");
+    recent_store_touch(recent, b, NULL);
     RecentProject list[RECENT_MAX];
-    CHECK(recent_load(list, RECENT_MAX) == 2 && !strcmp(list[0].path, b) && !strcmp(list[1].doc, "one.md"));
-    recent_rename_doc(a, "one.md", "two.md");
-    CHECK(recent_load(list, RECENT_MAX) == 2 && !strcmp(list[1].doc, "two.md"));
+    CHECK(recent_store_load(recent, list, RECENT_MAX) == 2 && !strcmp(list[0].path, b) && !strcmp(list[1].doc, "one.md"));
+    recent_store_rename_doc(recent, a, "one.md", "two.md");
+    CHECK(recent_store_load(recent, list, RECENT_MAX) == 2 && !strcmp(list[1].doc, "two.md"));
+    recent_store_touch(other, a, "isolated.md");
+    CHECK(recent_store_load(other, list, RECENT_MAX) == 1 && !strcmp(list[0].doc, "isolated.md"));
+    CHECK(recent_store_load(recent, list, RECENT_MAX) == 2 && !strcmp(list[1].doc, "two.md"));
+    char shared_dir[900];
+    snprintf(shared_dir, sizeof(shared_dir), "%s/state/shared", g_dir);
+    RecentStore *shared_a = recent_store_create(shared_dir), *shared_b = recent_store_create(shared_dir);
+    RecentTouchThread ta = { shared_a, a }, tb = { shared_b, b };
+    pthread_t tha, thb;
+    bool started_a = shared_a && pthread_create(&tha, NULL, recent_touch_thread, &ta) == 0;
+    bool started_b = shared_b && pthread_create(&thb, NULL, recent_touch_thread, &tb) == 0;
+    CHECK(started_a && started_b);
+    if (started_a) pthread_join(tha, NULL);
+    if (started_b) pthread_join(thb, NULL);
+    CHECK(recent_store_load(shared_a, list, RECENT_MAX) == 2);
+    recent_store_destroy(shared_a);
+    recent_store_destroy(shared_b);
     /* A folder that's gone is dropped from the file on the next save. */
     char gone[800];
     snprintf(gone, sizeof(gone), "%s/projGone", g_dir);
     mkdir(gone, 0755);
-    recent_touch(gone, NULL);
+    recent_store_touch(recent, gone, NULL);
     rmdir(gone);
-    recent_touch(a, NULL);
+    recent_store_touch(recent, a, NULL);
     char path[1000];
     snprintf(path, sizeof(path), "%s/recent.json", deep);
     FILE *f = fopen(path, "rb");
@@ -1114,13 +1143,15 @@ static void test_recent_and_renames(void)
     f = fopen(path, "wb");
     fputs("{not json", f);
     fclose(f);
-    recent_touch(b, NULL);
+    recent_store_touch(recent, b, NULL);
     DIR *d = opendir(deep);
     int kept = 0;
     struct dirent *ent;
     while (d && (ent = readdir(d)) != NULL) kept += strstr(ent->d_name, "recent.json.corrupt-") != NULL;
     if (d) closedir(d);
-    CHECK(kept == 1 && recent_load(list, RECENT_MAX) == 1);
+    CHECK(kept == 1 && recent_store_load(recent, list, RECENT_MAX) == 1);
+    recent_store_destroy(other);
+    recent_store_destroy(recent);
 
     /* A rename queued for project A is never applied to project B. */
     snprintf(path, sizeof(path), "%s/a.md", a);
@@ -1131,7 +1162,7 @@ static void test_recent_and_renames(void)
     f = fopen(path, "wb");
     fputs("Brin waited.\n", f);
     fclose(f);
-    Observer *o = observer_create(NULL);
+    Observer *o = observer_create(NULL, NULL);
     observer_set_project(o, b);
     CHECK(wait_jobs(o, 1, 10));
     observer_rename_doc(o, a, "a.md", "renamed.md"); /* made in A while B is open */
@@ -1303,6 +1334,20 @@ static void test_revisions(void)
     CHECK(t0 && !strcmp(t0, "second draft") && t1 && !strcmp(t1, "first draft"));
     free(t0);
     free(t1);
+    /* Histories created before per-document lock files remain readable when
+     * the project has since become read-only. */
+    char history_dir[1500], lock_path[1600];
+    snprintf(history_dir, sizeof(history_dir), "%s/.scribodo/revisions/Chapter One.md", g_dir);
+    snprintf(lock_path, sizeof(lock_path), "%s/.lock", history_dir);
+    unlink(lock_path);
+    chmod(history_dir, 0555);
+    Revision *read_only = NULL;
+    size_t read_only_n = revisions_list(g_dir, doc, &read_only);
+    char *read_only_text = read_only_n ? revisions_load(g_dir, doc, &read_only[0]) : NULL;
+    CHECK(read_only_n == 2 && read_only_text && !strcmp(read_only_text, "second draft"));
+    free(read_only_text);
+    free(read_only);
+    chmod(history_dir, 0755);
     /* A damaged snapshot is refused rather than restored. */
     char path[1500];
     snprintf(path, sizeof(path), "%s/.scribodo/revisions/Chapter One.md/%s", g_dir, list[1].file);

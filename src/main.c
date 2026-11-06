@@ -125,6 +125,7 @@ typedef struct {
     /* Model and chat */
     LlmServer *llm;
     LlmServer *embed;             /* the embedding model (semantic retrieval) */
+    SemanticClient *semantic;
     union {
         ChatController chat_controller;
         struct {
@@ -213,6 +214,7 @@ typedef struct {
 
     /* Documents attached to the current chat (SOW §4.1: by reference, not copied) */
     Rectangle attach_chip[MAX_ATTACH], attach_x[MAX_ATTACH], attach_add;
+    RecentStore *recent_store;
     RecentProject recents[RECENT_MAX];
     size_t nrecents;
     Rectangle welcome_btn[3], recent_rect[RECENT_MAX], empty_btn[2];
@@ -810,7 +812,7 @@ static void open_path(App *app, const char *path)
         leave_edit_mode(app);
         set_status(app, msg[0] ? msg : "Opened");
         set_project_from(app, path);
-        recent_touch(app->project_dir, base_name(path));
+        recent_store_touch(app->recent_store, app->project_dir, base_name(path));
         /* A conversation that hasn't started yet follows the open document. */
         chat_lock(app->chat);
         size_t nmsg = chat_count(app->chat);
@@ -862,8 +864,8 @@ static void open_project(App *app, const char *dir)
     leave_edit_mode(app);
     editor_close(app->editor);
     set_project(app, real);
-    recent_touch(real, NULL);
-    app->nrecents = recent_load(app->recents, RECENT_MAX);
+    recent_store_touch(app->recent_store, real, NULL);
+    app->nrecents = recent_store_load(app->recent_store, app->recents, RECENT_MAX);
     char msg[PATH_MAX + 160];
     snprintf(msg, sizeof(msg), "Opened %s%s", base_name(real),
              app->store_just_moved ? " \xC2\xB7 it is now kept in the project store (old files are in .scribodo/legacy-\xE2\x80\xA6)" : "");
@@ -1284,7 +1286,7 @@ static bool finish_prompt(App *app, const char *typed)
             return false;
         }
         (void)chat_controller_rename_attachment(&app->chat_controller, app->rename_from, name);
-        recent_rename_doc(app->project_dir, app->rename_from, name);
+        recent_store_rename_doc(app->recent_store, app->project_dir, app->rename_from, name);
         if (is_open) editor_set_path(app->editor, full);
         project_store_guard_end(&guard);
         char msg[600];
@@ -1312,7 +1314,7 @@ static bool finish_prompt(App *app, const char *typed)
                  problems[0] ? "; " : "");
     observer_rename_doc(app->observer, app->project_dir, app->rename_from, name);
     (void)chat_controller_rename_attachment(&app->chat_controller, app->rename_from, name);
-    recent_rename_doc(app->project_dir, app->rename_from, name);
+    recent_store_rename_doc(app->recent_store, app->project_dir, app->rename_from, name);
     if (is_open) editor_set_path(app->editor, full);
     project_store_guard_end(&guard);
     char msg[700];
@@ -2928,6 +2930,8 @@ static void app_destroy(App *app)
 {
     if (!app) return;
     frame_view_model_destroy(&app->frame);
+    recent_store_destroy(app->recent_store);
+    app->recent_store = NULL;
     script_free(app->script);
     app->script = NULL;
     reviewed_edit_controller_destroy(&app->reviewed_edit);
@@ -2940,6 +2944,8 @@ static void app_destroy(App *app)
     if (app->graph_job_initialized) entity_backfill_job_destroy(&app->graph_job);
     if (app->names_job_initialized) name_detection_job_destroy(&app->names_job);
     observer_destroy(app->observer); /* cancels its request before the server stops */
+    semantic_client_destroy(app->semantic);
+    app->semantic = NULL;
     if (app->services_initialized) (void)service_supervisor_destroy(&app->services);
     store_stop();
     findings_view_destroy(app->findings);
@@ -2947,7 +2953,6 @@ static void app_destroy(App *app)
     entity_list_free(app->ents, app->nents);
     entity_detail_free(&app->ent);
     chat_controller_destroy(&app->chat_controller); /* cancels any reply in progress */
-    semantic_set_embedder(NULL);  /* clear the borrowed server before destroying it */
     llm_server_destroy(app->llm);
     llm_server_destroy(app->embed);
     editor_destroy(app->editor);
@@ -3067,8 +3072,8 @@ int main(int argc, char **argv)
         /* Embeddings for the semantic index (a second, small server). */
         app.embed = llm_server_create(&ecfg);
         if (app.embed) llm_server_start(app.embed);
-        semantic_set_embedder(app.embed);
     }
+    app.semantic = semantic_client_create(app.embed);
     ChatSession *owned_chat = chat_create(app.llm);
     name_detection_job_set_server(&app.names_job, app.llm);
     /* TLS secrets are never written out for a remote model's traffic. */
@@ -3090,13 +3095,14 @@ int main(int argc, char **argv)
     if (!reviewed_edit_controller_adopt(&app.reviewed_edit, app.editor, review)) review_destroy(review);
     app.record = record_view_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI]);
     app.prompt = prompt_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI]);
-    app.observer = observer_create(app.llm);
+    app.observer = observer_create(app.llm, app.semantic);
     app.findings = findings_view_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI]);
     app.findings_version = UINT64_MAX;
     /* UI scripts start with the observer off (deterministic files); a
      * script turns it on with "observer on". */
     if (app.observer && script_path) observer_set_enabled(app.observer, false);
-    if (!app.chat || !app.editor || !app.chat_view || !app.review || !app.record || !app.observer || !app.findings || !app.prompt) {
+    if (!app.chat || !app.editor || !app.chat_view || !app.review || !app.record || !app.observer || !app.semantic ||
+        !app.findings || !app.prompt) {
         fprintf(stderr, "scribodo: out of memory\n");
         app_destroy(&app);
         return 1;
@@ -3130,8 +3136,13 @@ int main(int argc, char **argv)
         }
         if (script_path) snprintf(state, sizeof(state), "%s/.scribodo-state", getenv("SCRIBODO_SCRIPT_DIR") ? getenv("SCRIBODO_SCRIPT_DIR") : ".");
         else snprintf(state, sizeof(state), "%s/Library/Application Support/Scribodo", home ? home : ".");
-        recent_set_dir(state);
-        app.nrecents = recent_load(app.recents, RECENT_MAX);
+        app.recent_store = recent_store_create(state);
+        if (!app.recent_store) {
+            fprintf(stderr, "scribodo: out of memory\n");
+            app_destroy(&app);
+            return 1;
+        }
+        app.nrecents = recent_store_load(app.recent_store, app.recents, RECENT_MAX);
     }
     dialogs_script_mode(script_path != NULL);
     ScriptHost host = { app.editor, &app.explorer_w, &app.observer_w, &app.editor_rect,

@@ -28,11 +28,13 @@
 
 #include "app/records.h"
 #include "llm/server.h"
+#include "llm/semantic.h"
 
 typedef struct Observer Observer;
 
 /* `server` NULL: the built-in deterministic fake (UI tests). */
-Observer *observer_create(LlmServer *server);
+/* Borrows both services; they must outlive the observer. */
+Observer *observer_create(LlmServer *server, SemanticClient *semantic);
 void observer_destroy(Observer *o);
 
 /* Switch project ("" for none): cancels the current job and starts over

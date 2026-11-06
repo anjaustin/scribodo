@@ -1100,11 +1100,12 @@ static void test_semantic(void)
 {
     char why[256] = "";
     CHECK(store_start(g_name, why, sizeof(why)));
-    semantic_set_embedder(NULL);
-    CHECK(semantic_ready());
+    SemanticClient *semantic = semantic_client_create(NULL);
+    CHECK(semantic != NULL);
+    CHECK(semantic_ready(semantic));
     char pid[40];
     CHECK(store_project_id("/private/var/tmp", true, pid, sizeof(pid)));
-    semantic_drop(pid);
+    semantic_drop(semantic, pid);
     Db *db = store_db();
     char c1[40], c2[40], c3[40], n1[40];
     store_new_id('c', c1, sizeof(c1));
@@ -1115,10 +1116,10 @@ static void test_semantic(void)
     CHECK(sdb_record_append(db, pid, REC_CANON, c2, "committed", "The lighthouse stands on Ytre Sula.", NULL, 0, NULL, true, NULL));
     CHECK(sdb_record_append(db, pid, REC_CANON, c3, "retracted", "Dvořák is Zoë's uncle.", NULL, 0, NULL, true, NULL));
     CHECK(sdb_record_append(db, pid, REC_NOTE, n1, "active", "Zoë's eyes might be grey in chapter two.", NULL, 0, NULL, true, NULL));
-    CHECK(semantic_sync_records(pid, why, sizeof(why)));
+    CHECK(semantic_sync_records(semantic, pid, why, sizeof(why)));
     if (why[0]) fprintf(stderr, "    sync: %s\n", why);
     SemHit *h = NULL;
-    size_t n = semantic_canon_for(pid, "Zoë's brown eyes narrowed.", 3, &h);
+    size_t n = semantic_canon_for(semantic, pid, "Zoë's brown eyes narrowed.", 3, &h);
     CHECK(n >= 1 && !strcmp(h[0].record_id, c1) && !strcmp(h[0].kind, "canon"));
     bool leaked = false;
     for (size_t i = 0; i < n; i++) leaked = leaked || !strcmp(h[i].record_id, c3) || !strcmp(h[i].record_id, n1);
@@ -1126,8 +1127,8 @@ static void test_semantic(void)
     semantic_hits_free(h, n);
     /* Retracting moves an entry out of canon retrieval. */
     CHECK(sdb_record_append(db, pid, REC_CANON, c1, "retracted", "Zoë's eyes are green.", NULL, 0, NULL, false, NULL));
-    CHECK(semantic_sync_records(pid, why, sizeof(why)));
-    n = semantic_canon_for(pid, "Zoë's brown eyes narrowed.", 3, &h);
+    CHECK(semantic_sync_records(semantic, pid, why, sizeof(why)));
+    n = semantic_canon_for(semantic, pid, "Zoë's brown eyes narrowed.", 3, &h);
     leaked = false;
     for (size_t i = 0; i < n; i++) leaked = leaked || !strcmp(h[i].record_id, c1);
     CHECK(!leaked);
@@ -1138,22 +1139,22 @@ static void test_semantic(void)
     char rv[40];
     CHECK(sdb_revision_record(db, pid, "/x/ch1.md", "The fog came in.\n\nZoë climbed the lighthouse stairs.", "save", NULL,
                               false, &rec, rv, sizeof(rv)));
-    long count = semantic_rebuild(pid, why, sizeof(why));
+    long count = semantic_rebuild(semantic, pid, why, sizeof(why));
     CHECK(count >= 6); /* 4 records + 2 paragraphs */
-    n = semantic_search(pid, "lighthouse stairs", "draft", 3, &h);
+    n = semantic_search(semantic, pid, "lighthouse stairs", "draft", 3, &h);
     CHECK(n >= 1 && !strcmp(h[0].kind, "draft") && !strcmp(h[0].revision_id, rv) && h[0].start == 18 && h[0].len == 34 &&
           !strcmp(h[0].text, "Zoë climbed the lighthouse stairs."));
     semantic_hits_free(h, n);
     /* Wipe the index; retrieval is empty; a rebuild restores it exactly. */
-    CHECK(semantic_drop(pid));
-    n = semantic_canon_for(pid, "Zoë's brown eyes narrowed.", 3, &h);
+    CHECK(semantic_drop(semantic, pid));
+    n = semantic_canon_for(semantic, pid, "Zoë's brown eyes narrowed.", 3, &h);
     CHECK(n == 0);
     semantic_hits_free(h, n);
-    CHECK(semantic_rebuild(pid, why, sizeof(why)) == count);
-    n = semantic_canon_for(pid, "Zoë's brown eyes narrowed.", 3, &h);
+    CHECK(semantic_rebuild(semantic, pid, why, sizeof(why)) == count);
+    n = semantic_canon_for(semantic, pid, "Zoë's brown eyes narrowed.", 3, &h);
     CHECK(n >= 1 && !strcmp(h[0].record_id, c1) && !strcmp(h[0].status, "committed"));
     semantic_hits_free(h, n);
-    n = semantic_search(pid, "lighthouse stairs", "draft", 3, &h);
+    n = semantic_search(semantic, pid, "lighthouse stairs", "draft", 3, &h);
     CHECK(n >= 1 && !strcmp(h[0].revision_id, rv) && h[0].start == 18);
     semantic_hits_free(h, n);
     /* Syncing again does no work (everything is marked). */
@@ -1161,15 +1162,15 @@ static void test_semantic(void)
     CHECK(db_query(db, "SELECT COUNT(*) FROM semantic_marks WHERE project_id = ?", (DbArg[1]){ DB_S(pid) }, 1, &r) &&
           atol(db_cell(&r, 0, 0)) == count);
     db_rows_free(&r);
-    CHECK(semantic_sync_records(pid, why, sizeof(why)));
+    CHECK(semantic_sync_records(semantic, pid, why, sizeof(why)));
     /* The index lost but its marks kept (restored under another database,
      * Qdrant wiped): the next sync rebuilds everything, documents too. */
-    CHECK(semantic_forget_collection(pid));
-    CHECK(semantic_sync_records(pid, why, sizeof(why)));
-    n = semantic_search(pid, "lighthouse stairs", "draft", 3, &h);
+    CHECK(semantic_forget_collection(semantic, pid));
+    CHECK(semantic_sync_records(semantic, pid, why, sizeof(why)));
+    n = semantic_search(semantic, pid, "lighthouse stairs", "draft", 3, &h);
     CHECK(n >= 1 && !strcmp(h[0].revision_id, rv) && h[0].start == 18);
     semantic_hits_free(h, n);
-    n = semantic_canon_for(pid, "Zoë's brown eyes narrowed.", 3, &h);
+    n = semantic_canon_for(semantic, pid, "Zoë's brown eyes narrowed.", 3, &h);
     CHECK(n >= 1 && !strcmp(h[0].record_id, c1));
     semantic_hits_free(h, n);
     /* A rebuild interrupted (the embedder down) is resumed by a later sync,
@@ -1177,20 +1178,22 @@ static void test_semantic(void)
     LlmServerConfig dead;
     llm_server_embed_config(&dead, "");
     LlmServer *down = llm_server_create(&dead); /* never started: not ready */
-    semantic_set_embedder(down);
-    CHECK(semantic_forget_collection(pid));
-    CHECK(!semantic_sync_records(pid, why, sizeof(why)));
-    semantic_set_embedder(NULL);
-    CHECK(semantic_sync_records(pid, why, sizeof(why)));
-    n = semantic_search(pid, "lighthouse stairs", "draft", 3, &h);
+    SemanticClient *unready = semantic_client_create(down);
+    CHECK(unready != NULL);
+    CHECK(semantic_forget_collection(unready, pid));
+    CHECK(!semantic_sync_records(unready, pid, why, sizeof(why)));
+    semantic_client_destroy(unready);
+    CHECK(semantic_sync_records(semantic, pid, why, sizeof(why)));
+    n = semantic_search(semantic, pid, "lighthouse stairs", "draft", 3, &h);
     CHECK(n >= 1 && !strcmp(h[0].revision_id, rv));
     semantic_hits_free(h, n);
-    CHECK(semantic_sync_records(pid, why, sizeof(why))); /* and then it's done: no rebuild each time */
+    CHECK(semantic_sync_records(semantic, pid, why, sizeof(why))); /* and then it's done: no rebuild each time */
     CHECK(db_query(db, "SELECT index_rebuild_pending FROM projects WHERE id = ?", (DbArg[1]){ DB_S(pid) }, 1, &r) &&
           !strcmp(db_cell(&r, 0, 0), "0"));
     db_rows_free(&r);
     llm_server_destroy(down);
-    semantic_drop(pid);
+    semantic_drop(semantic, pid);
+    semantic_client_destroy(semantic);
     store_stop();
 }
 
