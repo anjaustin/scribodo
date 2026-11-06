@@ -3,6 +3,7 @@
 
 #include <errno.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <math.h>
 #include <mysql.h>
 #include <stdio.h>
@@ -553,7 +554,10 @@ int db_schema_version(Db *db)
 {
     DbRows r;
     if (!db_query(db, "SELECT COALESCE(MAX(version), 0) FROM schema_migrations", NULL, 0, &r)) return -1;
-    int v = r.nrows && db_cell(&r, 0, 0) ? atoi(db_cell(&r, 0, 0)) : 0;
+    int64_t parsed;
+    int v = r.nrows == 1 && db_rows_has_columns(&r, 1) && db_cell_i64(&r, 0, 0, &parsed) && parsed >= 0 && parsed <= INT_MAX
+                ? (int)parsed
+                : -1;
     db_rows_free(&r);
     return v;
 }

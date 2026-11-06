@@ -4,6 +4,7 @@
 #include "store_backends.h"
 #include "store_entities.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,12 +25,87 @@ static bool exists(Db *db, const char *sql, const char *id, const char *scope)
 {
     DbRows r;
     if (!id || !id[0] || !scope || !scope[0] || !db_query(db, sql, (DbArg[2]){ DB_S(id), DB_S(scope) }, 2, &r)) return false;
-    bool e = r.nrows > 0;
+    const char *found_id;
+    bool e = r.nrows == 1 && db_rows_has_columns(&r, 1) && db_cell_text(&r, 0, 0, &found_id) &&
+             !strcmp(found_id, id);
     db_rows_free(&r);
     return e;
 }
 
 static const char *nz(const char *s) { return s && s[0] ? s : NULL; }
+
+typedef struct {
+    const char *id;
+    int ver;
+    double created_at;
+    const char *status;
+    const char *content;
+    const char *finding_type;
+    const char *subject;
+    const char *relation;
+    const char *object;
+    const char *related_id;
+    const char *related_text;
+    double record_created_at;
+    double changed_at;
+} RecordVersionRow;
+
+typedef struct {
+    const char *record_id;
+    int ver;
+    SourceKind kind;
+    const char *document;
+    const char *revision;
+    const char *conversation;
+    long message;
+    size_t start;
+    size_t len;
+    const char *quote;
+} SourceRow;
+
+static bool int_cell(const DbRows *rows, size_t row, size_t col, int *out)
+{
+    int64_t value;
+    if (!db_cell_i64(rows, row, col, &value) || value < INT_MIN || value > INT_MAX) return false;
+    *out = (int)value;
+    return true;
+}
+
+static bool record_version_row(const DbRows *rows, size_t row, RecordVersionRow *out)
+{
+    return db_rows_has_columns(rows, 13) && db_cell_text(rows, row, 0, &out->id) &&
+           int_cell(rows, row, 1, &out->ver) && out->ver > 0 &&
+           db_cell_double(rows, row, 2, &out->created_at) && out->created_at >= 0 &&
+           out->created_at <= (double)INT64_MAX && db_cell_text(rows, row, 3, &out->status) &&
+           db_cell_text(rows, row, 4, &out->content) && db_cell_nullable(rows, row, 5, &out->finding_type) &&
+           db_cell_nullable(rows, row, 6, &out->subject) && db_cell_nullable(rows, row, 7, &out->relation) &&
+           db_cell_nullable(rows, row, 8, &out->object) && db_cell_nullable(rows, row, 9, &out->related_id) &&
+           db_cell_nullable(rows, row, 10, &out->related_text) &&
+           db_cell_double(rows, row, 11, &out->record_created_at) && out->record_created_at >= 0 &&
+           out->record_created_at <= (double)SIZE_MAX / 1e6 && db_cell_double(rows, row, 12, &out->changed_at) &&
+           out->changed_at >= 0 && out->changed_at <= (double)INT64_MAX;
+}
+
+static bool source_row(const DbRows *rows, size_t row, SourceRow *out)
+{
+    const char *kind;
+    int64_t message;
+    uint64_t start, len;
+    if (!db_rows_has_columns(rows, 10) || !db_cell_text(rows, row, 0, &out->record_id) ||
+        !int_cell(rows, row, 1, &out->ver) || out->ver <= 0 || !db_cell_text(rows, row, 2, &kind) ||
+        !db_cell_nullable(rows, row, 3, &out->document) || !db_cell_nullable(rows, row, 4, &out->revision) ||
+        !db_cell_nullable(rows, row, 5, &out->conversation) || !db_cell_i64(rows, row, 6, &message) ||
+        message < LONG_MIN || message > LONG_MAX || !db_cell_u64(rows, row, 7, &start) || start > SIZE_MAX ||
+        !db_cell_u64(rows, row, 8, &len) || len > SIZE_MAX || !db_cell_text(rows, row, 9, &out->quote))
+        return false;
+    if (!strcmp(kind, "doc")) out->kind = SRC_DOC;
+    else if (!strcmp(kind, "chat")) out->kind = SRC_CHAT;
+    else return false;
+    out->message = (long)message;
+    out->start = (size_t)start;
+    out->len = (size_t)len;
+    return true;
+}
 
 bool sdb_record_append(Db *db, const char *project_id, RecordKind kind, const char *id, const char *status,
                        const char *content, const SourceRef *sources, size_t nsources, const FindingInfo *finding,
@@ -44,8 +120,9 @@ bool sdb_record_append(Db *db, const char *project_id, RecordKind kind, const ch
     DbRows r;
     ok = ok && db_query(db, "SELECT project_id, kind FROM records WHERE id = ? FOR UPDATE", (DbArg[1]){ DB_S(id) }, 1, &r);
     if (ok) {
-        ok = r.nrows == 1 && db_cell(&r, 0, 0) && !strcmp(db_cell(&r, 0, 0), project_id) && db_cell(&r, 0, 1) &&
-             !strcmp(db_cell(&r, 0, 1), kind_name(kind));
+        const char *owner, *stored_kind;
+        ok = r.nrows == 1 && db_rows_has_columns(&r, 2) && db_cell_text(&r, 0, 0, &owner) &&
+             db_cell_text(&r, 0, 1, &stored_kind) && !strcmp(owner, project_id) && !strcmp(stored_kind, kind_name(kind));
         db_rows_free(&r);
     }
     int ver = 1;
@@ -53,7 +130,7 @@ bool sdb_record_append(Db *db, const char *project_id, RecordKind kind, const ch
         ok = db_query(db, "SELECT COALESCE(MAX(ver), 0) + 1 FROM record_versions WHERE record_id = ?", (DbArg[1]){ DB_S(id) },
                       1, &r);
         if (ok) {
-            ver = r.nrows && db_cell(&r, 0, 0) ? atoi(db_cell(&r, 0, 0)) : 1;
+            ok = r.nrows == 1 && db_rows_has_columns(&r, 1) && int_cell(&r, 0, 0, &ver) && ver > 0;
             db_rows_free(&r);
         }
     }
@@ -109,93 +186,147 @@ static int by_id(const void *a, const void *b) { return strcmp(((const IdIndex *
 size_t sdb_record_list(Db *db, const char *project_id, RecordKind kind, Record **out)
 {
     *out = NULL;
-    DbArg k[2] = { DB_S(project_id), DB_S(kind_name(kind)) };
-    DbRows rv, rs;
-    /* Records ordered by their newest change (most recent first). */
+    DbArg query_args[2] = { DB_S(project_id), DB_S(kind_name(kind)) };
+    DbRows versions, sources;
     if (!db_query(db,
                   "SELECT r.id, v.ver, v.created_at, v.status, v.content, v.finding_type, v.subject, v.relation, v.object,"
                   " v.related_id, v.related_text, r.created_at,"
                   " (SELECT MAX(created_at) FROM record_versions WHERE record_id = r.id) AS changed"
                   " FROM records r JOIN record_versions v ON v.record_id = r.id"
                   " WHERE r.project_id = ? AND r.kind = ? ORDER BY changed DESC, r.id, v.ver",
-                  k, 2, &rv))
+                  query_args, 2, &versions))
         return 0;
     if (!db_query(db,
                   "SELECT s.record_id, s.ver, s.kind, d.name, s.revision_id, s.conversation_id, s.message_seq, s.start,"
                   " s.len, s.quote FROM source_refs s JOIN records r ON r.id = s.record_id"
                   " LEFT JOIN documents d ON d.id = s.document_id"
                   " WHERE r.project_id = ? AND r.kind = ? ORDER BY s.id",
-                  k, 2, &rs)) {
-        db_rows_free(&rv);
+                  query_args, 2, &sources)) {
+        db_rows_free(&versions);
         return 0;
     }
+
+    bool ok = db_rows_has_columns(&versions, 13) && db_rows_has_columns(&sources, 10);
     Record *list = NULL;
-    size_t n = 0, cap = 0;
-    for (size_t i = 0; i < rv.nrows; i++) {
-        const char *id = db_cell(&rv, i, 0);
-        if (!n || strcmp(list[n - 1].id, id)) {
-            if (n == cap) {
-                cap = cap ? cap * 2 : 32;
-                Record *l = realloc(list, cap * sizeof(Record));
-                if (!l) break;
-                list = l;
+    size_t count = 0, capacity = 0;
+    for (size_t i = 0; ok && i < versions.nrows; i++) {
+        RecordVersionRow row;
+        ok = record_version_row(&versions, i, &row);
+        ok = ok && strlen(row.id) < sizeof(list[0].id) && strlen(row.status) < sizeof(((RecordVersion *)0)->status) &&
+             (!row.finding_type || strlen(row.finding_type) < sizeof(((FindingInfo *)0)->type)) &&
+             (!row.subject || strlen(row.subject) < sizeof(((FindingInfo *)0)->subject)) &&
+             (!row.relation || strlen(row.relation) < sizeof(((FindingInfo *)0)->relation)) &&
+             (!row.object || strlen(row.object) < sizeof(((FindingInfo *)0)->object)) &&
+             (!row.related_id || strlen(row.related_id) < sizeof(((FindingInfo *)0)->related));
+        if (!ok) break;
+        if (!count || strcmp(list[count - 1].id, row.id)) {
+            if (count == capacity) {
+                size_t next = capacity ? capacity * 2 : 32;
+                if (next < capacity || next > SIZE_MAX / sizeof(*list)) {
+                    ok = false;
+                    break;
+                }
+                Record *grown = realloc(list, next * sizeof(*list));
+                if (!grown) {
+                    ok = false;
+                    break;
+                }
+                list = grown;
+                capacity = next;
             }
-            memset(&list[n], 0, sizeof(Record));
-            snprintf(list[n].id, sizeof(list[n].id), "%s", id);
-            /* creation order: the record's created_at in microseconds */
-            list[n].created_seq = (size_t)(atof(db_cell(&rv, i, 11) ? db_cell(&rv, i, 11) : "0") * 1e6);
-            n++;
+            memset(&list[count], 0, sizeof(list[count]));
+            snprintf(list[count].id, sizeof(list[count].id), "%s", row.id);
+            list[count].created_seq = (size_t)(row.record_created_at * 1e6);
+            count++;
         }
-        Record *r = &list[n - 1];
-        RecordVersion *vs = realloc(r->versions, (r->nversions + 1) * sizeof(RecordVersion));
-        if (!vs) break;
-        r->versions = vs;
-        RecordVersion *v = &vs[r->nversions++];
-        memset(v, 0, sizeof(*v));
-        v->ver = atoi(db_cell(&rv, i, 1));
-        v->ts = (time_t)atof(db_cell(&rv, i, 2) ? db_cell(&rv, i, 2) : "0");
-        snprintf(v->status, sizeof(v->status), "%s", db_cell(&rv, i, 3) ? db_cell(&rv, i, 3) : "");
-        v->content = strdup(db_cell(&rv, i, 4) ? db_cell(&rv, i, 4) : "");
-        FindingInfo *f = &v->finding;
-        if (db_cell(&rv, i, 5)) snprintf(f->type, sizeof(f->type), "%s", db_cell(&rv, i, 5));
-        if (db_cell(&rv, i, 6)) snprintf(f->subject, sizeof(f->subject), "%s", db_cell(&rv, i, 6));
-        if (db_cell(&rv, i, 7)) snprintf(f->relation, sizeof(f->relation), "%s", db_cell(&rv, i, 7));
-        if (db_cell(&rv, i, 8)) snprintf(f->object, sizeof(f->object), "%s", db_cell(&rv, i, 8));
-        if (db_cell(&rv, i, 9)) snprintf(f->related, sizeof(f->related), "%s", db_cell(&rv, i, 9));
-        if (db_cell(&rv, i, 10)) f->related_text = strdup(db_cell(&rv, i, 10));
+
+        Record *record = &list[count - 1];
+        if (record->nversions == SIZE_MAX / sizeof(RecordVersion)) {
+            ok = false;
+            break;
+        }
+        RecordVersion *grown = realloc(record->versions, (record->nversions + 1) * sizeof(*grown));
+        if (!grown) {
+            ok = false;
+            break;
+        }
+        record->versions = grown;
+        RecordVersion *version = &grown[record->nversions++];
+        memset(version, 0, sizeof(*version));
+        version->ver = row.ver;
+        version->ts = (time_t)row.created_at;
+        snprintf(version->status, sizeof(version->status), "%s", row.status);
+        version->content = strdup(row.content);
+        FindingInfo *finding = &version->finding;
+        if (row.finding_type) snprintf(finding->type, sizeof(finding->type), "%s", row.finding_type);
+        if (row.subject) snprintf(finding->subject, sizeof(finding->subject), "%s", row.subject);
+        if (row.relation) snprintf(finding->relation, sizeof(finding->relation), "%s", row.relation);
+        if (row.object) snprintf(finding->object, sizeof(finding->object), "%s", row.object);
+        if (row.related_id) snprintf(finding->related, sizeof(finding->related), "%s", row.related_id);
+        finding->related_text = row.related_text ? strdup(row.related_text) : NULL;
+        ok = version->content && (!row.related_text || finding->related_text);
     }
-    /* Attach sources to their versions (binary search by record id). */
-    IdIndex *idx = n ? malloc(n * sizeof(IdIndex)) : NULL;
-    for (size_t i = 0; idx && i < n; i++) idx[i] = (IdIndex){ list[i].id, i };
-    if (idx) qsort(idx, n, sizeof(IdIndex), by_id);
-    for (size_t i = 0; idx && i < rs.nrows; i++) {
-        IdIndex key = { db_cell(&rs, i, 0), 0 };
-        IdIndex *hit = bsearch(&key, idx, n, sizeof(IdIndex), by_id);
-        if (!hit) continue;
-        Record *r = &list[hit->index];
-        int ver = atoi(db_cell(&rs, i, 1));
-        RecordVersion *v = NULL;
-        for (size_t k2 = 0; k2 < r->nversions && !v; k2++)
-            if (r->versions[k2].ver == ver) v = &r->versions[k2];
-        if (!v) continue;
-        SourceRef *s = realloc(v->sources, (v->nsources + 1) * sizeof(SourceRef));
-        if (!s) continue;
-        v->sources = s;
-        SourceRef *src = &s[v->nsources];
-        memset(src, 0, sizeof(*src));
-        src->kind = db_cell(&rs, i, 2) && !strcmp(db_cell(&rs, i, 2), "chat") ? SRC_CHAT : SRC_DOC;
-        if (db_cell(&rs, i, 3)) snprintf(src->doc, sizeof(src->doc), "%s", db_cell(&rs, i, 3)); /* current name */
-        if (db_cell(&rs, i, 4)) snprintf(src->revision, sizeof(src->revision), "%s", db_cell(&rs, i, 4));
-        if (db_cell(&rs, i, 5)) snprintf(src->chat, sizeof(src->chat), "%s", db_cell(&rs, i, 5));
-        src->message = db_cell(&rs, i, 6) ? atol(db_cell(&rs, i, 6)) : 0;
-        src->start = (size_t)atoll(db_cell(&rs, i, 7) ? db_cell(&rs, i, 7) : "0");
-        src->len = (size_t)atoll(db_cell(&rs, i, 8) ? db_cell(&rs, i, 8) : "0");
-        src->quote = strdup(db_cell(&rs, i, 9) ? db_cell(&rs, i, 9) : "");
-        if (src->quote) v->nsources++;
+
+    IdIndex *index = ok && count ? malloc(count * sizeof(*index)) : NULL;
+    if (ok && count && !index) ok = false;
+    for (size_t i = 0; ok && i < count; i++) index[i] = (IdIndex){ list[i].id, i };
+    if (ok && index) qsort(index, count, sizeof(*index), by_id);
+
+    for (size_t i = 0; ok && i < sources.nrows; i++) {
+        SourceRow row;
+        ok = source_row(&sources, i, &row);
+        ok = ok && (!row.document || strlen(row.document) < sizeof(((SourceRef *)0)->doc)) &&
+             (!row.revision || strlen(row.revision) < sizeof(((SourceRef *)0)->revision)) &&
+             (!row.conversation || strlen(row.conversation) < sizeof(((SourceRef *)0)->chat));
+        if (!ok) break;
+        if (!index) {
+            ok = false;
+            break;
+        }
+        IdIndex key = { row.record_id, 0 };
+        IdIndex *hit = bsearch(&key, index, count, sizeof(*index), by_id);
+        if (!hit) {
+            ok = false;
+            break;
+        }
+        Record *record = &list[hit->index];
+        RecordVersion *version = NULL;
+        for (size_t k = 0; k < record->nversions && !version; k++)
+            if (record->versions[k].ver == row.ver) version = &record->versions[k];
+        if (!version || version->nsources == SIZE_MAX / sizeof(SourceRef)) {
+            ok = false;
+            break;
+        }
+        SourceRef *grown = realloc(version->sources, (version->nsources + 1) * sizeof(*grown));
+        if (!grown) {
+            ok = false;
+            break;
+        }
+        version->sources = grown;
+        SourceRef *source = &grown[version->nsources];
+        memset(source, 0, sizeof(*source));
+        source->kind = row.kind;
+        if (row.document) snprintf(source->doc, sizeof(source->doc), "%s", row.document);
+        if (row.revision) snprintf(source->revision, sizeof(source->revision), "%s", row.revision);
+        if (row.conversation) snprintf(source->chat, sizeof(source->chat), "%s", row.conversation);
+        source->message = row.message;
+        source->start = row.start;
+        source->len = row.len;
+        source->quote = strdup(row.quote);
+        if (!source->quote) {
+            ok = false;
+            break;
+        }
+        version->nsources++;
     }
-    free(idx);
-    db_rows_free(&rv);
-    db_rows_free(&rs);
+
+    free(index);
+    db_rows_free(&versions);
+    db_rows_free(&sources);
+    if (!ok) {
+        records_free(list, count);
+        return 0;
+    }
     *out = list;
-    return n;
+    return count;
 }

@@ -4,6 +4,7 @@
 #define _DARWIN_C_SOURCE
 #include "store_backends.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,6 +30,27 @@ static const char *base_name(const char *p)
     return s ? s + 1 : p;
 }
 
+typedef struct {
+    const char *id;
+    const char *origin;
+    const char *note;
+    const char *hash;
+    double created_at;
+    uint64_t bytes;
+} RevisionRow;
+
+static bool revision_row(const DbRows *rows, size_t row, RevisionRow *out)
+{
+    bool ok = db_rows_has_columns(rows, 6) && db_cell_text(rows, row, 0, &out->id) &&
+           db_cell_text(rows, row, 1, &out->origin) && db_cell_text(rows, row, 2, &out->note) &&
+           db_cell_text(rows, row, 3, &out->hash) && db_cell_double(rows, row, 4, &out->created_at) &&
+           db_cell_u64(rows, row, 5, &out->bytes) && out->created_at >= 0 && out->created_at <= (double)INT64_MAX &&
+           out->bytes <= SIZE_MAX;
+    return ok && strlen(out->id) < sizeof(((Revision *)0)->file) &&
+           strlen(out->origin) < sizeof(((Revision *)0)->origin) && strlen(out->note) < sizeof(((Revision *)0)->note) &&
+           strlen(out->hash) < sizeof(((Revision *)0)->hash);
+}
+
 /* Record `text` for the document unless it equals the newest revision (or,
  * for a source snapshot, any revision): one transaction. */
 bool sdb_revision_record(Db *db, const char *project_id, const char *doc_path, const char *text, const char *origin,
@@ -43,6 +65,9 @@ bool sdb_revision_record(Db *db, const char *project_id, const char *doc_path, c
     /* Lock the document's row so two writers (UI, observer) serialise. */
     DbRows lock;
     bool ok = db_query(db, "SELECT id FROM documents WHERE id = ? FOR UPDATE", (DbArg[1]){ DB_S(doc) }, 1, &lock);
+    const char *locked_id;
+    ok = ok && lock.nrows == 1 && db_rows_has_columns(&lock, 1) && db_cell_text(&lock, 0, 0, &locked_id) &&
+         !strcmp(locked_id, doc);
     db_rows_free(&lock);
     DbRows r;
     bool same = false;
@@ -51,9 +76,15 @@ bool sdb_revision_record(Db *db, const char *project_id, const char *doc_path, c
                                  : "SELECT id, hash FROM revisions WHERE document_id = ? ORDER BY seq DESC LIMIT 1",
                        any_match ? (DbArg[2]){ DB_S(doc), DB_S(hash) } : (DbArg[2]){ DB_S(doc), DB_S(NULL) },
                        any_match ? 2 : 1, &r)) {
-        if (r.nrows && (any_match || (db_cell(&r, 0, 1) && !strcmp(db_cell(&r, 0, 1), hash)))) {
+        const char *existing_id = NULL, *existing_hash = NULL;
+        bool valid = r.nrows <= 1 && db_rows_has_columns(&r, any_match ? 1 : 2);
+        if (r.nrows == 1)
+            valid = db_cell_text(&r, 0, 0, &existing_id) &&
+                    (any_match || db_cell_text(&r, 0, 1, &existing_hash));
+        ok = ok && valid;
+        if (ok && r.nrows == 1 && (any_match || !strcmp(existing_hash, hash))) {
             same = true;
-            if (id_out) snprintf(id_out, idlen, "%s", db_cell(&r, 0, 0));
+            if (id_out) snprintf(id_out, idlen, "%s", existing_id);
         }
         db_rows_free(&r);
     } else {
@@ -87,18 +118,27 @@ size_t sdb_revision_list(Db *db, const char *project_id, const char *doc_path, R
                   "ORDER BY seq DESC",
                   (DbArg[1]){ DB_S(doc) }, 1, &r))
         return 0;
-    Revision *list = r.nrows ? calloc(r.nrows, sizeof(Revision)) : NULL;
+    bool ok = db_rows_has_columns(&r, 6);
+    Revision *list = ok && r.nrows ? calloc(r.nrows, sizeof(Revision)) : NULL;
+    if (r.nrows && !list) ok = false;
     size_t n = 0;
-    for (size_t i = 0; list && i < r.nrows; i++) {
+    for (size_t i = 0; ok && i < r.nrows; i++) {
+        RevisionRow row;
+        ok = revision_row(&r, i, &row);
+        if (!ok) break;
         Revision *v = &list[n++];
-        snprintf(v->file, sizeof(v->file), "%s", db_cell(&r, i, 0));
-        snprintf(v->origin, sizeof(v->origin), "%s", db_cell(&r, i, 1) ? db_cell(&r, i, 1) : "");
-        snprintf(v->note, sizeof(v->note), "%s", db_cell(&r, i, 2) ? db_cell(&r, i, 2) : "");
-        snprintf(v->hash, sizeof(v->hash), "%s", db_cell(&r, i, 3) ? db_cell(&r, i, 3) : "");
-        v->ts = (time_t)atof(db_cell(&r, i, 4) ? db_cell(&r, i, 4) : "0");
-        v->bytes = (size_t)atoll(db_cell(&r, i, 5) ? db_cell(&r, i, 5) : "0");
+        snprintf(v->file, sizeof(v->file), "%s", row.id);
+        snprintf(v->origin, sizeof(v->origin), "%s", row.origin);
+        snprintf(v->note, sizeof(v->note), "%s", row.note);
+        snprintf(v->hash, sizeof(v->hash), "%s", row.hash);
+        v->ts = (time_t)row.created_at;
+        v->bytes = (size_t)row.bytes;
     }
     db_rows_free(&r);
+    if (!ok) {
+        free(list);
+        return 0;
+    }
     *out = list;
     return n;
 }
@@ -113,10 +153,14 @@ char *sdb_revision_load(Db *db, const char *project_id, const char *doc_path, co
                   (DbArg[2]){ DB_S(rev->file), DB_S(doc) }, 2, &r))
         return NULL;
     char *text = NULL;
-    if (r.nrows && db_cell(&r, 0, 0)) {
+    const char *content = NULL, *stored_hash = NULL;
+    bool valid = r.nrows <= 1 && db_rows_has_columns(&r, 2);
+    if (valid && r.nrows == 1)
+        valid = db_cell_text(&r, 0, 0, &content) && db_cell_nullable(&r, 0, 1, &stored_hash);
+    if (valid && r.nrows == 1) {
         char h[17];
-        hash16(db_cell(&r, 0, 0), h);
-        if (!db_cell(&r, 0, 1) || !strcmp(h, db_cell(&r, 0, 1))) text = strdup(db_cell(&r, 0, 0));
+        hash16(content, h);
+        if (!stored_hash || !strcmp(h, stored_hash)) text = strdup(content);
     }
     db_rows_free(&r);
     return text;

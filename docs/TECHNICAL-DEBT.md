@@ -192,7 +192,7 @@ but this repository policy cannot be established from a source commit alone.
 | Observer monolith | In progress | `src/llm/observer.c` still combines pure text analysis, model calls, persisted state, jobs and worker orchestration. | Extract cohesive internals without exposing mutable worker state. |
 | Test monoliths | In progress | Pure DB-row, observer-text and observer-fake suites now build independently; `test_llm.c` and `test_db.c` still span multiple stateful subsystems. | Extract shared stateful fixtures, then split the remaining integration suites without weakening targets. |
 | Documentation drift | Done | Living guides no longer encode volatile source locations or assertion totals; dated red-team reports retain their point-in-time evidence. | Keep contracts current and reserve numeric evidence for dated reports. |
-| Weakly typed DB rows | In progress | `DbRows` exposes nullable strings by column index. | Add checked conversion helpers, then migrate repository-local typed decoders. |
+| Weakly typed DB rows | In progress | Shared conversions and local decoders now cover schema versions, chats, revisions and records; observer, entity and import repositories still read indexed strings directly. | Continue repository-local decoder migration, starting with observer/entity reads. |
 | Manual dependency maintenance | Done | `make dependency-report` and a weekly workflow inventory submodules and images, verify immutable pins, and query OSV by vendored commit. | Review informational upstream updates and remediate any report failure. |
 
 ## Intentional pre-alpha tradeoffs
@@ -292,11 +292,24 @@ Do not treat these as remediation targets without a changed product decision:
   and advanced cJSON to its current post-1.7.19 revision after the first report
   identified six advisories on the previous pin. Scribodo does not compile
   `cJSON_Utils` or call `cJSON_Compare`, and its supported 64-bit target is not
-  exposed to the reported 32-bit print overflow; the newer pin also includes upstream depth and utility
-  hardening.
+  exposed to the reported 32-bit print overflow; the newer pin also includes
+  upstream depth and utility hardening.
 - Added checked `DbRows` shape, nullability and numeric conversions with focused
   overflow/malformed-value tests, then moved the chat repository to local typed
   row decoders instead of unchecked column coercion.
 - Split pure evidence/overlap analysis and the deterministic observer backend
   from worker orchestration. Their tests now run as independent binaries, which
   begins the test-monolith migration without exposing `Observer` worker state.
+
+### 2026-11-06 — checked revision and record repositories
+
+- Replaced unchecked revision, record-version and source-reference row access
+  with repository-local decoders for exact shapes, required/nullable text,
+  bounded domain fields, finite timestamps and overflow-safe integer values.
+- Malformed rows and allocation failures now discard the whole decoded result
+  rather than returning partially populated record history.
+- Made schema-version reads use the shared checked integer conversion.
+- Added socket I/O deadlines to the remote test stub and corrected a reset
+  callback counter that otherwise forced the test's full watchdog fallback.
+- Verification: build/headless, MariaDB/Qdrant integration, ASan/UBSan, TSan,
+  dependency reporting, base UI and store UI suites passed locally.

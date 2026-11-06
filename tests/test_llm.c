@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -1753,6 +1754,9 @@ static void *rstub_main(void *arg)
         if (c < 0) continue;
         int one = 1;
         setsockopt(c, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
+        struct timeval io_timeout = { .tv_sec = 2 };
+        setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, &io_timeout, sizeof(io_timeout));
+        setsockopt(c, SOL_SOCKET, SO_SNDTIMEO, &io_timeout, sizeof(io_timeout));
         /* Read headers and the whole body (Content-Length). */
         size_t got = 0;
         long need = -1;
@@ -1875,7 +1879,7 @@ static void test_remote(void)
     CHECK(chat_select_remote(s, NULL) && !chat_remote_selected(s));
     d.done = 0;
     CHECK(chat_send(s, "Locally now", NULL, err, sizeof(err)));
-    wait_idle(s, &d, 4);
+    wait_idle(s, &d, 2);
     chat_lock(s);
     m = chat_message(s, 3);
     CHECK(m && strstr(m->content, "fake model") && strstr(m->content, "Locally now"));
