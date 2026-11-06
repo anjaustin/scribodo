@@ -12,7 +12,9 @@
 #include <unistd.h>
 
 #include "cJSON.h"
-#include "app/store_backends.h"
+#include "app/project_store.h"
+#include "app/revisions_internal.h"
+#include "app/store.h"
 
 #include <pthread.h>
 
@@ -89,16 +91,8 @@ static double num(cJSON *j, const char *key)
     return d >= 0.0 && d < 1e15 ? d : 0.0;
 }
 
-size_t revisions_list(const char *project_dir, const char *doc_path, Revision **out)
+size_t revisions_list_files(const char *project_dir, const char *doc_path, Revision **out)
 {
-    char pid_[64];
-    Db *db_;
-    StoreMode mode_ = store_mode(project_dir, pid_, sizeof(pid_), &db_);
-    if (mode_ == STORE_DB) return sdb_revision_list(db_, pid_, doc_path, out);
-    if (mode_ == STORE_PAUSED) {
-        *out = NULL;
-        return 0;
-    }
     *out = NULL;
     char dir[1500], idx[1600];
     if (!doc_dir(project_dir, doc_path, false, dir, sizeof(dir))) return 0;
@@ -154,7 +148,7 @@ static bool record_impl(const char *project_dir, const char *doc_path, const cha
     hash_text(text, hash);
 
     Revision *list = NULL;
-    size_t n = revisions_list(project_dir, doc_path, &list);
+    size_t n = revisions_list_files(project_dir, doc_path, &list);
     bool same = n > 0 && !strcmp(list[0].hash, hash);
     if (same && file_out) snprintf(file_out, file_len, "%s", list[0].file);
     /* A snapshot for a source may reuse any revision with exactly this text:
@@ -220,33 +214,18 @@ static bool record_impl(const char *project_dir, const char *doc_path, const cha
     return ok;
 }
 
-bool revisions_record(const char *project_dir, const char *doc_path, const char *text, const char *origin,
-                      const char *note, bool *recorded)
+bool revisions_record_files(const char *project_dir, const char *doc_path, const char *text, const char *origin,
+                            const char *note, bool *recorded)
 {
-    char pid_[64];
-    Db *db_;
-    StoreMode mode_ = store_mode(project_dir, pid_, sizeof(pid_), &db_);
-    if (mode_ == STORE_DB) return sdb_revision_record(db_, pid_, doc_path, text, origin, note, false, recorded, NULL, 0);
-    if (mode_ == STORE_PAUSED) {
-        if (recorded) *recorded = false;
-        return false;
-    }
     pthread_mutex_lock(&g_rev_mu);
     bool ok = record_impl(project_dir, doc_path, text, origin, note, recorded, NULL, 0);
     pthread_mutex_unlock(&g_rev_mu);
     return ok;
 }
 
-bool revisions_snapshot(const char *project_dir, const char *doc_path, const char *text, char *file_out, size_t file_len)
+bool revisions_snapshot_files(const char *project_dir, const char *doc_path, const char *text,
+                              char *file_out, size_t file_len)
 {
-    char pid_[64];
-    Db *db_;
-    StoreMode mode_ = store_mode(project_dir, pid_, sizeof(pid_), &db_);
-    if (mode_ == STORE_DB) {
-        if (file_len) file_out[0] = '\0';
-        return sdb_revision_record(db_, pid_, doc_path, text, "source", NULL, true, NULL, file_out, file_len) && file_out[0];
-    }
-    if (mode_ == STORE_PAUSED) return false;
     if (file_len) file_out[0] = '\0';
     pthread_mutex_lock(&g_rev_mu);
     bool ok = record_impl(project_dir, doc_path, text, "source", NULL, NULL, file_out, file_len) && file_out[0];
@@ -254,13 +233,8 @@ bool revisions_snapshot(const char *project_dir, const char *doc_path, const cha
     return ok;
 }
 
-char *revisions_load(const char *project_dir, const char *doc_path, const Revision *r)
+char *revisions_load_files(const char *project_dir, const char *doc_path, const Revision *r)
 {
-    char pid_[64];
-    Db *db_;
-    StoreMode mode_ = store_mode(project_dir, pid_, sizeof(pid_), &db_);
-    if (mode_ == STORE_DB) return sdb_revision_load(db_, pid_, doc_path, r);
-    if (mode_ == STORE_PAUSED) return NULL;
     char dir[1500], path[1700];
     if (strchr(r->file, '/') || !doc_dir(project_dir, doc_path, false, dir, sizeof(dir))) return NULL;
     snprintf(path, sizeof(path), "%s/%s", dir, r->file);
@@ -273,4 +247,27 @@ char *revisions_load(const char *project_dir, const char *doc_path, const Revisi
         return NULL;
     }
     return text;
+}
+
+size_t revisions_list(const char *project_dir, const char *doc_path, Revision **out)
+{
+    return project_store_revisions_list(project_dir, doc_path, out);
+}
+
+bool revisions_record(const char *project_dir, const char *doc_path, const char *text, const char *origin,
+                      const char *note, bool *recorded)
+{
+    if (recorded) *recorded = false;
+    return project_store_revisions_record(project_dir, doc_path, text, origin, note, recorded);
+}
+
+bool revisions_snapshot(const char *project_dir, const char *doc_path, const char *text, char *file_out, size_t file_len)
+{
+    if (file_out && file_len) file_out[0] = '\0';
+    return project_store_revisions_snapshot(project_dir, doc_path, text, file_out, file_len);
+}
+
+char *revisions_load(const char *project_dir, const char *doc_path, const Revision *r)
+{
+    return project_store_revisions_load(project_dir, doc_path, r);
 }

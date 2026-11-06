@@ -1,6 +1,7 @@
 /* The MariaDB layer against the local service (make dbtest; needs
  * tools/services.sh up). Uses a throwaway database, dropped at the end. */
 #include <pthread.h>
+#include <sched.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -357,6 +358,25 @@ static void test_backends(void)
     store_stop();
 }
 
+typedef struct {
+    const char *project_id;
+    const char *directory;
+    char why[256];
+    bool ok;
+    atomic_bool started;
+    atomic_bool done;
+} ExportCall;
+
+static void *run_export(void *arg)
+{
+    ExportCall *call = arg;
+    atomic_store(&call->started, true);
+    call->ok = store_export_project(call->project_id, call->directory, call->why, sizeof(call->why));
+    store_thread_done();
+    atomic_store(&call->done, true);
+    return NULL;
+}
+
 /* A project's files moved into the store keep everything: revisions,
  * chats, notes, canon, findings with sources, renames, observer state. */
 static void test_import(void)
@@ -442,8 +462,27 @@ static void test_import(void)
         snprintf(ex, sizeof(ex), "%s-export", proj);
         snprintf(cmd0, sizeof(cmd0), "rm -rf '%s'", ex);
         system(cmd0);
-        char ewhy[200];
-        CHECK(store_export_project(pidx, ex, ewhy, sizeof(ewhy)));
+        mkdir(ex, 0755);
+        char exscrib[700], exlock[800];
+        snprintf(exscrib, sizeof(exscrib), "%s/.scribodo", ex);
+        mkdir(exscrib, 0755);
+        snprintf(exlock, sizeof(exlock), "%s/import.lock", exscrib);
+        int export_lfd = open(exlock, O_RDWR | O_CREAT, 0644);
+        CHECK(export_lfd >= 0 && flock(export_lfd, LOCK_EX | LOCK_NB) == 0);
+        ExportCall export_call = { .project_id = pidx, .directory = ex };
+        atomic_init(&export_call.started, false);
+        atomic_init(&export_call.done, false);
+        pthread_t exporter;
+        int export_rc = pthread_create(&exporter, NULL, run_export, &export_call);
+        CHECK(export_rc == 0);
+        for (int i = 0; export_rc == 0 && !atomic_load(&export_call.started) && i < 100; i++) usleep(1000);
+        CHECK(export_rc == 0 && atomic_load(&export_call.started));
+        usleep(50000);
+        CHECK(export_rc == 0 && !atomic_load(&export_call.done));
+        flock(export_lfd, LOCK_UN);
+        close(export_lfd);
+        if (export_rc == 0) pthread_join(exporter, NULL);
+        CHECK(export_rc == 0 && export_call.ok);
         snprintf(exdoc, sizeof(exdoc), "%s/Chapter One.md", ex);
         Revision *erevs = NULL;
         size_t ne = revisions_list(ex, exdoc, &erevs);
@@ -481,6 +520,17 @@ static void test_import(void)
     int paused_ver = 99;
     CHECK(!records_append(proj, REC_NOTE, nid, "active", "while paused", NULL, 0, &paused_ver) && paused_ver == 0);
     CHECK(records_list(proj, REC_NOTE, &notes) == 0);
+    bool paused_recorded = true;
+    char paused_snap[64] = "stale";
+    Revision *paused_revs = (Revision *)1;
+    CHECK(!revisions_record(proj, doc, "offline", "save", NULL, &paused_recorded) && !paused_recorded);
+    CHECK(!revisions_snapshot(proj, doc, "offline", paused_snap, sizeof(paused_snap)) && !paused_snap[0]);
+    CHECK(revisions_list(proj, doc, &paused_revs) == 0 && paused_revs == NULL);
+    ChatSummary *paused_chats = (ChatSummary *)1;
+    ChatMessage *paused_msgs = (ChatMessage *)1;
+    size_t paused_nmsgs = 99;
+    CHECK(chat_store_list(proj, &paused_chats) == 0 && paused_chats == NULL);
+    CHECK(!chat_store_load(proj, cid, &paused_msgs, &paused_nmsgs) && paused_msgs == NULL && paused_nmsgs == 0);
     char cmd[700];
     snprintf(cmd, sizeof(cmd), "rm -rf '%s'", proj);
     system(cmd);
@@ -514,6 +564,13 @@ typedef struct {
     atomic_bool done;
 } ImportCall;
 
+typedef struct {
+    const char *project_dir;
+    atomic_bool *go;
+    char why[256];
+    bool ok;
+} ForkCall;
+
 static void *run_import(void *arg)
 {
     ImportCall *call = arg;
@@ -521,6 +578,15 @@ static void *run_import(void *arg)
     call->ok = store_import(call->project_dir, call->why, sizeof(call->why));
     store_thread_done();
     atomic_store(&call->done, true);
+    return NULL;
+}
+
+static void *run_fork(void *arg)
+{
+    ForkCall *call = arg;
+    while (!atomic_load(call->go)) sched_yield();
+    call->ok = store_fork(call->project_dir, call->why, sizeof(call->why));
+    store_thread_done();
     return NULL;
 }
 
@@ -613,7 +679,16 @@ static void test_import_safety(void)
     char orig[1024];
     CHECK(store_mode(b, NULL, 0, NULL) == STORE_PAUSED);
     CHECK(store_problem(b, orig, sizeof(orig)) == STORE_PROBLEM_COPY);
-    CHECK(store_fork(b, why, sizeof(why)));
+    atomic_bool fork_go = false;
+    ForkCall forks[2] = { { .project_dir = b, .go = &fork_go }, { .project_dir = b, .go = &fork_go } };
+    pthread_t fork_threads[2];
+    int fork_rc[2] = { pthread_create(&fork_threads[0], NULL, run_fork, &forks[0]),
+                       pthread_create(&fork_threads[1], NULL, run_fork, &forks[1]) };
+    CHECK(fork_rc[0] == 0 && fork_rc[1] == 0);
+    atomic_store(&fork_go, true);
+    if (fork_rc[0] == 0) pthread_join(fork_threads[0], NULL);
+    if (fork_rc[1] == 0) pthread_join(fork_threads[1], NULL);
+    CHECK(fork_rc[0] == 0 && fork_rc[1] == 0 && forks[0].ok != forks[1].ok);
     char pb[40];
     CHECK(store_mode(b, pb, sizeof(pb), NULL) == STORE_DB && strcmp(pa, pb) != 0);
     CHECK(note_count(b) == 1);

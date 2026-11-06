@@ -3,6 +3,7 @@
  * llama-server end to end. */
 #define _DARWIN_C_SOURCE
 #include <dirent.h>
+#include <errno.h>
 #include <sched.h>
 #include <signal.h>
 #include <stdatomic.h>
@@ -14,6 +15,7 @@
 
 #include "../src/app/backup.h"
 #include "../src/app/backup_job.h"
+#include "../src/app/service_supervisor.h"
 #include "../src/app/chat_store.h"
 #include "../src/app/recent.h"
 #include "../src/app/records.h"
@@ -265,6 +267,57 @@ static void test_backup_pipes(void)
     CHECK(elapsed < 5.0 && strstr(why, "failed"));
     unsetenv("SCRIBODO_BACKUP_TIMEOUT_SECONDS");
     unsetenv("SCRIBODO_BACKUPS");
+}
+
+static void test_service_supervisor(void)
+{
+    char tools[700], script[800], marker[800];
+    snprintf(tools, sizeof(tools), "%s/service-tools", g_dir);
+    snprintf(script, sizeof(script), "%s/services.sh", tools);
+    snprintf(marker, sizeof(marker), "%s/started", tools);
+    mkdir(tools, 0700);
+    FILE *f = fopen(script, "wb");
+    CHECK(f != NULL);
+    if (f) {
+        fprintf(f, "#!/bin/bash\necho $$ > '%s'\ntrap '' TERM\nwhile :; do sleep 1; done\n", marker);
+        fclose(f);
+        chmod(script, 0700);
+    }
+
+    ServiceSupervisor supervisor;
+    CHECK(service_supervisor_init(&supervisor));
+    CHECK(service_supervisor_start(&supervisor, tools, true));
+    CHECK(service_supervisor_busy(&supervisor));
+    CHECK(!service_supervisor_start(&supervisor, tools, false));
+    for (int i = 0; access(marker, F_OK) != 0 && i < 200; i++) usleep(10000);
+    FILE *pf = fopen(marker, "rb");
+    int child_pid = 0;
+    if (pf) {
+        fscanf(pf, "%d", &child_pid);
+        fclose(pf);
+    }
+    CHECK(child_pid > 0);
+    struct timespec before, after;
+    clock_gettime(CLOCK_MONOTONIC, &before);
+    CHECK(service_supervisor_destroy(&supervisor));
+    clock_gettime(CLOCK_MONOTONIC, &after);
+    double elapsed = (double)(after.tv_sec - before.tv_sec) + (double)(after.tv_nsec - before.tv_nsec) / 1e9;
+    CHECK(elapsed < 3.0);
+    errno = 0;
+    CHECK(child_pid > 0 && kill(child_pid, 0) != 0 && errno == ESRCH);
+
+    CHECK(service_supervisor_init(&supervisor));
+    CHECK(service_supervisor_start(&supervisor, tools, false));
+    ServiceSupervisorResult result;
+    bool delivered = false;
+    for (int i = 0; !delivered && i < 300; i++) {
+        delivered = service_supervisor_poll(&supervisor, &result);
+        if (!delivered) usleep(20000);
+    }
+    CHECK(delivered && !service_supervisor_busy(&supervisor));
+    CHECK(!result.command_attempted);
+    CHECK(!service_supervisor_poll(&supervisor, &result));
+    CHECK(service_supervisor_destroy(&supervisor));
 }
 
 static long dense_count(const char *text, void *ctx) { (void)ctx; return (long)strlen(text); }
@@ -2120,6 +2173,7 @@ int main(int argc, char **argv)
         { "http_decoder", test_http_decoder },
         { "sse_parsing", test_sse_parsing },
         { "backup_pipes", test_backup_pipes },
+        { "service_supervisor", test_service_supervisor },
         { "request_builder", test_request_builder },
         { "chat_store", test_chat_store },
         { "fake_backend", test_fake_backend },

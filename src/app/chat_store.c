@@ -11,7 +11,9 @@
 #include <unistd.h>
 
 #include "cJSON.h"
-#include "app/store_backends.h"
+#include "app/chat_store_internal.h"
+#include "app/project_store.h"
+#include "app/store.h"
 
 bool chat_store_dir(const char *project_dir, char *out, size_t outlen)
 {
@@ -74,13 +76,8 @@ static bool ensure_trailing_newline(int fd)
     return last == '\n' || write(fd, "\n", 1) == 1;
 }
 
-bool chat_store_append(const char *project_dir, const char *id, const char *title, const ChatMessage *m)
+bool chat_store_append_files(const char *project_dir, const char *id, const char *title, const ChatMessage *m)
 {
-    char pid_[64];
-    Db *db_;
-    StoreMode mode_ = store_mode(project_dir, pid_, sizeof(pid_), &db_);
-    if (mode_ == STORE_DB) return sdb_chat_append(db_, pid_, id, title, m);
-    if (mode_ == STORE_PAUSED) return false;
     char path[1200];
     if (!path_for(project_dir, id, path, sizeof(path))) return false;
     struct stat st;
@@ -121,13 +118,8 @@ bool chat_store_append(const char *project_dir, const char *id, const char *titl
     return ok;
 }
 
-bool chat_store_rename(const char *project_dir, const char *id, const char *title)
+bool chat_store_rename_files(const char *project_dir, const char *id, const char *title)
 {
-    char pid_[64];
-    Db *db_;
-    StoreMode mode_ = store_mode(project_dir, pid_, sizeof(pid_), &db_);
-    if (mode_ == STORE_DB) return sdb_chat_rename(db_, pid_, id, title);
-    if (mode_ == STORE_PAUSED) return false;
     char path[1200];
     if (!path_for(project_dir, id, path, sizeof(path)) || !title || !title[0]) return false;
     struct stat st;
@@ -146,13 +138,8 @@ bool chat_store_rename(const char *project_dir, const char *id, const char *titl
     return ok;
 }
 
-bool chat_store_set_observer(const char *project_dir, const char *id, bool read)
+bool chat_store_set_observer_files(const char *project_dir, const char *id, bool read)
 {
-    char pid_[64];
-    Db *db_;
-    StoreMode mode_ = store_mode(project_dir, pid_, sizeof(pid_), &db_);
-    if (mode_ == STORE_DB) return sdb_chat_set_observer(db_, pid_, id, read);
-    if (mode_ == STORE_PAUSED) return false;
     char path[1200];
     if (!path_for(project_dir, id, path, sizeof(path))) return false;
     struct stat st;
@@ -193,19 +180,6 @@ static int by_updated_desc(const void *a, const void *b)
     const ChatSummary *x = a, *y = b;
     if (y->updated != x->updated) return (y->updated > x->updated) - (y->updated < x->updated);
     return (y->updated_nsec > x->updated_nsec) - (y->updated_nsec < x->updated_nsec);
-}
-
-size_t chat_store_list(const char *project_dir, ChatSummary **out)
-{
-    char pid_[64];
-    Db *db_;
-    StoreMode mode_ = store_mode(project_dir, pid_, sizeof(pid_), &db_);
-    if (mode_ == STORE_DB) return sdb_chat_list(db_, pid_, out);
-    if (mode_ == STORE_PAUSED) {
-        *out = NULL;
-        return 0;
-    }
-    return chat_store_list_files(project_dir, out);
 }
 
 size_t chat_store_list_files(const char *project_dir, ChatSummary **out)
@@ -266,20 +240,6 @@ size_t chat_store_list_files(const char *project_dir, ChatSummary **out)
     qsort(list, n, sizeof(ChatSummary), by_updated_desc);
     *out = list;
     return n;
-}
-
-bool chat_store_load(const char *project_dir, const char *id, ChatMessage **msgs, size_t *n)
-{
-    char pid_[64];
-    Db *db_;
-    StoreMode mode_ = store_mode(project_dir, pid_, sizeof(pid_), &db_);
-    if (mode_ == STORE_DB) return sdb_chat_load(db_, pid_, id, msgs, n);
-    if (mode_ == STORE_PAUSED) {
-        *msgs = NULL;
-        *n = 0;
-        return false;
-    }
-    return chat_store_load_files(project_dir, id, msgs, n);
 }
 
 bool chat_store_load_files(const char *project_dir, const char *id, ChatMessage **msgs, size_t *n)
@@ -347,6 +307,31 @@ bool chat_store_load_files(const char *project_dir, const char *id, ChatMessage 
     }
     free(text);
     return true;
+}
+
+bool chat_store_append(const char *project_dir, const char *id, const char *title, const ChatMessage *message)
+{
+    return project_store_chat_append(project_dir, id, title, message);
+}
+
+bool chat_store_rename(const char *project_dir, const char *id, const char *title)
+{
+    return project_store_chat_rename(project_dir, id, title);
+}
+
+bool chat_store_set_observer(const char *project_dir, const char *id, bool read)
+{
+    return project_store_chat_set_observer(project_dir, id, read);
+}
+
+size_t chat_store_list(const char *project_dir, ChatSummary **out)
+{
+    return project_store_chat_list(project_dir, out);
+}
+
+bool chat_store_load(const char *project_dir, const char *id, ChatMessage **messages, size_t *count)
+{
+    return project_store_chat_load(project_dir, id, messages, count);
 }
 
 void chat_store_free_messages(ChatMessage *msgs, size_t n)

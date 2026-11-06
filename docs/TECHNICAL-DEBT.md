@@ -43,8 +43,8 @@ dispatch and teaches UI/domain code about persistence topology.
 
 - [x] Add an internal `ProjectStore` routing seam.
 - [x] Route records list/create/append through the seam.
-- [ ] Route revisions through the seam.
-- [ ] Route chats through the seam.
+- [x] Route revisions through the seam.
+- [x] Route chats through the seam.
 - [ ] Route observer state and rules through the seam.
 - [ ] Add capability/blocking inspection for UI and semantic/entity features.
 - [ ] Remove direct `store_mode()` calls from ordinary UI/domain workflows.
@@ -75,8 +75,8 @@ and shutdown ambiguity.
 
 - [x] Extract `BackupJob`; its worker owns copied paths and never receives
       `App *`.
-- [ ] Extract a joinable `ServiceSupervisor`; remove detached worker access to
-      `App`.
+- [x] Extract a joinable `ServiceSupervisor`; remove detached worker access to
+       `App`.
 - [ ] Extract entity-backfill and name-detection jobs separately.
 - [ ] Introduce project/session and Explorer snapshot ownership.
 - [ ] Extract chat and reviewed-edit controllers.
@@ -197,3 +197,11 @@ Do not treat these as remediation targets without a changed product decision:
 - Recorded Docker-hosting constraints before adding database CI.
 - Verification: build, unit/headless, ASan/UBSan, TSan, database, base UI and
   store UI suites passed locally.
+
+### 2026-11-05 — transition-safe routing and service ownership
+
+- Routed revision and chat operations through the one-shot `ProjectStore` seam.
+- Made import/export use explicit file backends under one transition lock and
+  serialized copy-fork authority changes.
+- Replaced the detached service worker with a joinable, cancellable
+  `ServiceSupervisor` that owns copied inputs and structured results.

@@ -12,6 +12,10 @@
 #define _DARWIN_C_SOURCE
 #include "store_backends.h"
 #include "store_entities.h"
+#include "revisions_internal.h"
+#include "chat_store_internal.h"
+#include "records_internal.h"
+#include "project_store_internal.h"
 
 #include <CommonCrypto/CommonDigest.h>
 #include <dirent.h>
@@ -167,10 +171,10 @@ static bool import_revisions(Db *db, const char *project_dir, const char *pid, R
         char did[40];
         if (!store_document_id(pid, ent->d_name, true, did, sizeof(did))) continue;
         Revision *list = NULL;
-        size_t n = revisions_list(project_dir, doc_path, &list); /* the file store: not imported yet */
+        size_t n = revisions_list_files(project_dir, doc_path, &list);
         size_t order = 0; /* ties within a millisecond keep the original order */
         for (size_t i = n; ok && i-- > 0;) {                      /* oldest first */
-            char *text = revisions_load(project_dir, doc_path, &list[i]);
+            char *text = revisions_load_files(project_dir, doc_path, &list[i]);
             if (!text) continue; /* a damaged snapshot is not imported */
             char id[40];
             derived_id(pid, ent->d_name, list[i].file, id, sizeof(id));
@@ -525,6 +529,34 @@ static bool import_project(Db *db, const char *project_dir, char *pid, size_t pi
     return true;
 }
 
+static bool import_locked(Db *db, const char *project_dir, const char *dir, char *why, size_t whylen)
+{
+    bool ok = store_mode(project_dir, NULL, 0, NULL) == STORE_FILES;
+    char pid[40] = "";
+    if (ok) ok = import_project(db, project_dir, pid, sizeof(pid), why, whylen);
+    for (int attempt = 0; ok && attempt < 4; attempt++) {
+        uint64_t before = fingerprint(project_dir);
+        ok = import_once(db, project_dir, pid, why, whylen);
+        if (ok && fingerprint(project_dir) == before) break;
+        if (ok && attempt == 3) {
+            snprintf(why, whylen, "The project's files kept changing; it stays on its files for now");
+            ok = false;
+        }
+    }
+    if (ok && !store_mark_imported(project_dir, pid)) {
+        snprintf(why, whylen, "Couldn't write .scribodo/store.json; the project stays on its files for now");
+        ok = false;
+    }
+    if (ok) {
+        set_aside(project_dir);
+        char pending[PATH_MAX + 64];
+        snprintf(pending, sizeof(pending), "%s/import-pending", dir);
+        unlink(pending);
+        store_forget_verification();
+    }
+    return ok;
+}
+
 bool store_import(const char *project_dir, char *why, size_t whylen)
 {
     if (why && whylen) why[0] = '\0';
@@ -561,31 +593,7 @@ bool store_import(const char *project_dir, char *why, size_t whylen)
         return false;
     }
     store_set_importing(project_dir);
-    bool ok = store_mode(project_dir, NULL, 0, NULL) == STORE_FILES; /* someone may have finished meanwhile */
-    char pid[40] = "";
-    if (ok) ok = import_project(db, project_dir, pid, sizeof(pid), why, whylen);
-    /* Import, then check nothing changed underneath (another process still
-     * writing files); if it did, import again (it's idempotent). */
-    for (int attempt = 0; ok && attempt < 4; attempt++) {
-        uint64_t before = fingerprint(project_dir);
-        ok = import_once(db, project_dir, pid, why, whylen);
-        if (ok && fingerprint(project_dir) == before) break;
-        if (ok && attempt == 3) {
-            snprintf(why, whylen, "The project's files kept changing; it stays on its files for now");
-            ok = false;
-        }
-    }
-    if (ok && !store_mark_imported(project_dir, pid)) {
-        snprintf(why, whylen, "Couldn't write .scribodo/store.json; the project stays on its files for now");
-        ok = false;
-    }
-    if (ok) {
-        set_aside(project_dir);
-        char pending[PATH_MAX + 64];
-        snprintf(pending, sizeof(pending), "%s/import-pending", dir);
-        unlink(pending);
-        store_forget_verification();
-    }
+    bool ok = import_locked(db, project_dir, dir, why, whylen);
     store_set_importing(NULL);
     flock(lfd, LOCK_UN);
     close(lfd);
@@ -618,7 +626,7 @@ typedef struct {
  * normal import can take them in as a project). Everything keeps its
  * original time; sources keep their passages and point at the exported
  * snapshots. False if anything couldn't be written. */
-static bool export_files(Db *db, const char *pid, const char *project_dir)
+static bool export_files_unlocked(Db *db, const char *pid, const char *project_dir)
 {
     DbRows docs;
     if (!db_query(db, "SELECT id, name FROM documents WHERE project_id = ?", (DbArg[1]){ DB_S(pid) }, 1, &docs)) return false;
@@ -637,9 +645,9 @@ static bool export_files(Db *db, const char *pid, const char *project_dir)
         for (size_t k = 0; ok && k < r.nrows; k++) {
             store_set_write_time(atof(db_cell(&r, k, 4) ? db_cell(&r, k, 4) : "0"));
             bool rec = false;
-            ok = revisions_record(project_dir, path, db_cell(&r, k, 1), db_cell(&r, k, 2), db_cell(&r, k, 3), &rec);
+            ok = revisions_record_files(project_dir, path, db_cell(&r, k, 1), db_cell(&r, k, 2), db_cell(&r, k, 3), &rec);
             Revision *list = NULL;
-            size_t n = ok ? revisions_list(project_dir, path, &list) : 0;
+            size_t n = ok ? revisions_list_files(project_dir, path, &list) : 0;
             if (n && nrevs == cap) {
                 cap = cap ? cap * 2 : 64;
                 ExportRev *m = realloc(revs, cap * sizeof(ExportRev));
@@ -667,9 +675,9 @@ static bool export_files(Db *db, const char *pid, const char *project_dir)
         }
         for (size_t k = 0; ok && k < n; k++) {
             store_set_write_time(m[k].ts);
-            ok = chat_store_append(project_dir, cs[i].id, cs[i].title, &m[k]);
+            ok = chat_store_append_files(project_dir, cs[i].id, cs[i].title, &m[k]);
         }
-        if (ok && n && cs[i].observer_ignore) ok = chat_store_set_observer(project_dir, cs[i].id, false);
+        if (ok && n && cs[i].observer_ignore) ok = chat_store_set_observer_files(project_dir, cs[i].id, false);
         chat_store_free_messages(m, n);
     }
     free(cs);
@@ -689,13 +697,24 @@ static bool export_files(Db *db, const char *pid, const char *project_dir)
                     snprintf(src->revision, sizeof(src->revision), "%s", file); /* store ids mean nothing in files */
                 }
                 store_set_write_time((double)ver->ts);
-                ok = records_append_ex(project_dir, kinds[k], recs[i].id, ver->status, ver->content, ver->sources, ver->nsources,
-                                       kinds[k] == REC_FINDING ? &ver->finding : NULL, NULL);
+                ok = records_append_files(project_dir, kinds[k], recs[i].id, ver->status, ver->content,
+                                          ver->sources, ver->nsources,
+                                          kinds[k] == REC_FINDING ? &ver->finding : NULL, false, NULL);
             }
         records_free(recs, n);
     }
     store_set_write_time(0);
     free(revs);
+    return ok;
+}
+
+static bool export_files(Db *db, const char *pid, const char *project_dir)
+{
+    int export_lock = project_store_file_lock_shared(project_dir);
+    if (export_lock < 0) return false;
+    bool ok = store_mode(project_dir, NULL, 0, NULL) == STORE_FILES &&
+              export_files_unlocked(db, pid, project_dir);
+    project_store_file_unlock(export_lock);
     return ok;
 }
 
@@ -738,10 +757,49 @@ bool store_fork(const char *project_dir, char *why, size_t whylen)
         snprintf(why, whylen, "The project store is offline");
         return false;
     }
-    /* The copy gets the original's data as files, then imports them as its
-     * own project: ids that are the original's get fresh ones. */
+    /* Own the entire marker/export/import transition. Otherwise another
+     * window could import between setting the marker aside and exporting. */
+    char dir[PATH_MAX + 32], ownerp[PATH_MAX + 64], lockp[PATH_MAX + 64];
+    snprintf(dir, sizeof(dir), "%s/.scribodo", project_dir);
+    snprintf(ownerp, sizeof(ownerp), "%s/import.owner.lock", dir);
+    snprintf(lockp, sizeof(lockp), "%s/import.lock", dir);
+    int ownerfd = open(ownerp, O_RDWR | O_CREAT, 0644);
+    if (ownerfd < 0 || flock(ownerfd, LOCK_EX | LOCK_NB) != 0) {
+        if (ownerfd >= 0) close(ownerfd);
+        snprintf(why, whylen, "This project is being moved into the store by another window");
+        return false;
+    }
+    int lfd = open(lockp, O_RDWR | O_CREAT, 0644);
+    int lockrc = -1;
+    if (lfd >= 0) do lockrc = flock(lfd, LOCK_EX); while (lockrc != 0 && errno == EINTR);
+    if (lockrc != 0) {
+        if (lfd >= 0) close(lfd);
+        flock(ownerfd, LOCK_UN);
+        close(ownerfd);
+        snprintf(why, whylen, "Couldn't lock the project's files for import");
+        return false;
+    }
+    char current[64] = "";
+    f = fopen(path, "rb");
+    if (f) {
+        char buf[512];
+        size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+        buf[n] = '\0';
+        fclose(f);
+        const char *k = strstr(buf, "\"project_id\":\"");
+        if (k) snprintf(current, sizeof(current), "%.*s", (int)strcspn(k + 14, "\""), k + 14);
+    }
+    if (store_problem(project_dir, NULL, 0) != STORE_PROBLEM_COPY || strcmp(current, id) != 0) {
+        flock(lfd, LOCK_UN);
+        close(lfd);
+        flock(ownerfd, LOCK_UN);
+        close(ownerfd);
+        snprintf(why, whylen, "This folder is no longer the same copy");
+        return false;
+    }
+    store_set_importing(project_dir);
     set_marker_aside(project_dir, true);
-    bool ok = export_files(db, id, project_dir) && store_import(project_dir, why, whylen);
+    bool ok = export_files_unlocked(db, id, project_dir) && import_locked(db, project_dir, dir, why, whylen);
     if (ok) set_marker_aside(project_dir, false);
     else {
         char a[PATH_MAX + 64], b[PATH_MAX + 64];
@@ -750,6 +808,11 @@ bool store_fork(const char *project_dir, char *why, size_t whylen)
         rename(a, b); /* back as it was */
         store_forget_verification();
     }
+    store_set_importing(NULL);
+    flock(lfd, LOCK_UN);
+    close(lfd);
+    flock(ownerfd, LOCK_UN);
+    close(ownerfd);
     return ok;
 }
 

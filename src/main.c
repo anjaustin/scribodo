@@ -10,8 +10,6 @@
 #define _DARWIN_C_SOURCE
 #include <signal.h>
 #include <dirent.h>
-#include <sys/wait.h>
-#include <spawn.h>
 #include <stdatomic.h>
 #include <pthread.h>
 #include <pwd.h>
@@ -42,6 +40,7 @@
 #include "app/store_entities.h"
 #include "app/backup.h"
 #include "app/backup_job.h"
+#include "app/service_supervisor.h"
 #include "app/profile.h"
 #include "app/model_settings.h"
 #include "llm/memfit.h"
@@ -203,12 +202,10 @@ typedef struct {
     /* The project store (MariaDB; docs/STORE-001-design.md) */
     bool store_wanted;            /* use the store (off for UI scripts unless SCRIBODO_STORE=db) */
     char store_why[256];          /* why it's offline */
-    pthread_t services_thread;
+    ServiceSupervisor services;
     /* A backup running in the background (Explorer: PROJECT). */
     BackupJob backup;
     char backup_label[160];
-    atomic_int services_state;    /* 0 idle, 1 working (services up / probing), 2 finished */
-    atomic_bool store_reachable;  /* the last probe reached the database */
     double store_next_probe;      /* while offline: when to probe again */
     bool store_just_moved;        /* the project was just moved into the store (for the status) */
     bool services_started;
@@ -492,41 +489,13 @@ static void set_project(App *app, const char *real)
     app->lists_dirty = true;
 }
 
-/* Start the local services (Docker) in the background; the UI thread
- * retries the connection when this finishes. */
-/* Off the UI thread: the first time, start the local services (Docker);
- * after that, just probe whether the database is reachable. */
-extern char **environ;
-
-static void *services_main(void *arg)
-{
-    App *app = arg;
-    if (!app->services_started && !getenv("SCRIBODO_SCRIPT")) {
-        app->services_started = true;
-        char tool[PATH_MAX + 64];
-        snprintf(tool, sizeof(tool), "%s../tools/services.sh", GetApplicationDirectory());
-        char *argv[] = { tool, "up", NULL }; /* no shell: the path is never interpreted */
-        posix_spawn_file_actions_t fa;
-        posix_spawn_file_actions_init(&fa);
-        posix_spawn_file_actions_addopen(&fa, STDOUT_FILENO, "/dev/null", O_WRONLY, 0);
-        posix_spawn_file_actions_addopen(&fa, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
-        pid_t pid;
-        if (posix_spawn(&pid, tool, &fa, NULL, argv, environ) == 0) {
-            int st;
-            waitpid(pid, &st, 0);
-        }
-        posix_spawn_file_actions_destroy(&fa);
-    }
-    atomic_store(&app->store_reachable, store_probe());
-    atomic_store(&app->services_state, 2);
-    return NULL;
-}
-
 static void store_try_later(App *app)
 {
-    if (atomic_load(&app->services_state) != 0) return;
-    atomic_store(&app->services_state, 1);
-    if (pthread_create(&app->services_thread, NULL, services_main, app) != 0) atomic_store(&app->services_state, 0);
+    if (service_supervisor_busy(&app->services)) return;
+    char tools[PATH_MAX];
+    snprintf(tools, sizeof(tools), "%s../tools", GetApplicationDirectory());
+    bool start = !app->services_started && !getenv("SCRIBODO_SCRIPT");
+    (void)service_supervisor_start(&app->services, tools, start);
 }
 
 static void store_begin(App *app)
@@ -2582,7 +2551,7 @@ static void update_labels(App *app)
                              : 0;
     if (!app->store_wanted) {
         app->store_label[0] = '\0';
-    } else if (atomic_load(&app->services_state) == 1) {
+    } else if (service_supervisor_busy(&app->services)) {
         snprintf(app->store_label, sizeof(app->store_label), "\xE2\x97\x8F Starting the project store\xE2\x80\xA6");
         app->store_color = COL_WARN;
     } else if (store_online() && app->store_problem) {
@@ -3042,6 +3011,12 @@ int main(int argc, char **argv)
         CloseWindow();
         return 1;
     }
+    if (!service_supervisor_init(&app.services)) {
+        fprintf(stderr, "scribodo: couldn't initialise the service supervisor\n");
+        (void)backup_job_destroy(&app.backup);
+        CloseWindow();
+        return 1;
+    }
     app.explorer_w = 210;
     app.observer_w = 260;
     app.chat_w = 420;
@@ -3155,6 +3130,21 @@ int main(int argc, char **argv)
         app.nrecents = recent_load(app.recents, RECENT_MAX);
     }
     dialogs_script_mode(script_path != NULL);
+    Script *script = NULL;
+    ScriptHost host = { app.editor, &app.explorer_w, &app.observer_w, &app.editor_rect,
+                        host_status, host_open, host_drop, &app, app.chat, host_element, host_model_ready,
+                        host_record_text, host_observer_enable, host_observer_idle, host_findings_text,
+                        host_attached_text, host_explorer_text, host_observer_status };
+    if (script_path) {
+        char err[256];
+        script = script_load(script_path, getenv("SCRIBODO_SCRIPT_DIR"), getenv("SCRIBODO_SHOT_DIR"), err, sizeof(err));
+        if (!script) {
+            fprintf(stderr, "scribodo: %s\n", err);
+            CloseWindow();
+            return 2;
+        }
+        printf("script %s\n", script_path);
+    }
     /* The project store: on for the app (SCRIBODO_STORE=off disables it);
      * UI scripts use files unless SCRIBODO_STORE=db. */
     {
@@ -3174,21 +3164,6 @@ int main(int argc, char **argv)
         /* otherwise: the welcome screen */
     }
 
-    Script *script = NULL;
-    ScriptHost host = { app.editor, &app.explorer_w, &app.observer_w, &app.editor_rect,
-                        host_status, host_open, host_drop, &app, app.chat, host_element, host_model_ready,
-                        host_record_text, host_observer_enable, host_observer_idle, host_findings_text,
-                        host_attached_text, host_explorer_text, host_observer_status };
-    if (script_path) {
-        char err[256];
-        script = script_load(script_path, getenv("SCRIBODO_SCRIPT_DIR"), getenv("SCRIBODO_SHOT_DIR"), err, sizeof(err));
-        if (!script) {
-            fprintf(stderr, "scribodo: %s\n", err);
-            CloseWindow();
-            return 2;
-        }
-        printf("script %s\n", script_path);
-    }
     bool closed_by_window = false;
 
     /* Debug hook: SCRIBODO_SCREENSHOT=out.png renders a few frames, saves the
@@ -3219,14 +3194,14 @@ int main(int argc, char **argv)
         if (app.embed) llm_server_tick(app.embed);
         /* While the store is wanted but offline, probe every 15 s; when it
          * answers, connect (on this thread), adopt the project, refresh. */
-        if (app.store_wanted && !store_online() && atomic_load(&app.services_state) == 0 && GetTime() >= app.store_next_probe) {
+        if (app.store_wanted && !store_online() && !service_supervisor_busy(&app.services) && GetTime() >= app.store_next_probe) {
             app.store_next_probe = GetTime() + 15.0;
             store_try_later(&app);
         }
-        if (atomic_load(&app.services_state) == 2) {
-            pthread_join(app.services_thread, NULL);
-            atomic_store(&app.services_state, 0);
-            if (atomic_load(&app.store_reachable)) {
+        ServiceSupervisorResult service_result;
+        if (service_supervisor_poll(&app.services, &service_result)) {
+            if (service_result.command_attempted && service_result.command_succeeded) app.services_started = true;
+            if (service_result.reachable) {
                 app.store_why[0] = '\0';
                 store_start(getenv("SCRIBODO_DB_NAME"), app.store_why, sizeof(app.store_why));
             }
@@ -3794,7 +3769,7 @@ int main(int argc, char **argv)
     if (atomic_load(&app.graph_state) != 0) pthread_join(app.graph_thread, NULL);
     if (atomic_load(&app.names_state) != 0) pthread_join(app.names_thread, NULL);
     observer_destroy(app.observer);  /* cancels its request before the server stops */
-    if (atomic_load(&app.services_state) == 1) pthread_detach(app.services_thread);
+    (void)service_supervisor_destroy(&app.services);
     store_stop();
     findings_view_destroy(app.findings);
     records_free(app.flist, app.nflist);
