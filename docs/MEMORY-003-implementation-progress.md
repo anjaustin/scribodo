@@ -73,6 +73,12 @@ are now implemented in [MEMORY-004](MEMORY-004-history-windows.md). The list is
 retained as the original checkpoint; full-reader compatibility consumers and
 the workload/performance gates are still pending.
 
+The follow-up [REDTEAM-015](REDTEAM-015-history-windows.md) reproduced and fixed
+presentation/action freshness, retained allocation capacity, empty navigation,
+unsaved DB chat lifecycle and stopped-reply persistence. The latter introduces
+migration 008; the no-schema-change statement above describes only this original
+request-history/source-traversal checkpoint.
+
 1. Windowed/paged `ChatSession` and UI viewport/cache integration. `open_chat()`
    still loads the complete conversation and the UI still retains archive-sized
   state. Do not declare host memory bounded end-to-end yet.

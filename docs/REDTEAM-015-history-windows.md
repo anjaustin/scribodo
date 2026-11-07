@@ -142,7 +142,22 @@ Local evidence is retained in `build/window-audit-*.log`; generated logs and tes
 artifacts are not committed. Hosted CI is verified for the pushed commit rather
 than inferred from local runs.
 
-## Remaining scope
+## Local closeout
+
+Remediations are committed as `19625bc`. A post-commit diff/read-path review and
+`make -j8 all test dbtest` passed without another unresolved finding in scope.
+The final local matrix passed 3,641 LLM checks, 862 persistence-fault checks,
+323 view checks (369 with allocation faults), 11,235 DB integration checks and
+43 schema checks; ASan/UBSan, TSan, ordinary/store/real-model UI, local model
+compatibility and backup/restore acceptance also passed. Existing selector
+mutation controls detected all five mutants. Final static analysis reported no
+diagnostics, and whitespace checks passed. No generated logs are committed.
+
+Hosted CI/trusted acceptance is checked after pushing; this local closeout does
+not assert a hosted result before those runs complete. The author's unrelated
+`assets/sample/sample.md` edit remains untouched and excluded from the commits.
+
+## Remaining scope and limitations
 
 Explicit navigation still performs synchronous bounded SQL work. An owned
 asynchronous loader, cancellation/timeout responsiveness, workload percentiles,
