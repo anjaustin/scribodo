@@ -74,6 +74,8 @@ Local validation passed `make -j8 all test dbtest`, `make sanitize`, sanitizer
 Clang static analysis of the saved-file and revision-store modules reported no
 diagnostics. These checks establish neither whole-manuscript retrieval quality
 nor bounded server I/O for future revision ingestion.
+Hosted CI and trusted database/UI acceptance also passed for implementation
+commit `5a89801`.
 
 Still required: frozen attachment revision sets and detach/version fences,
 scope-local typed revision units, bounded revision ingestion receipts/outbox,

@@ -182,6 +182,20 @@ There were zero bad source hashes or unit hash/range checks; the final ingestion
 and index backlog drained. Service RSS, real inference and model quality were
 not measured by this run. These are one local workload's observations, not SLAs.
 
+The completed one-hour headless run sustained **3,600.023 seconds** (3,618.353
+seconds total), using real local MariaDB/Qdrant with fake embeddings and byte
+token counts, without UI or inference. It appended 3,492 turns, completed 12,267
+source-recall/apply plans, exercised 713 pause/reselections and recovered once
+from collection loss in 20.679 seconds. Final ingestion/index/control backlogs
+were empty; 7,117 source rows and 8,356 derived units had zero bad source hashes
+or unit hash/range checks. Source append p95/p99 were 15.250/19.000 ms; planner
+p95/p99 were 47.000/53.500 ms. Sampled process RSS was initially 12,058,624 bytes,
+peaked at 14,925,824, and ended at 7,962,624. The disposable database was cleaned.
+This run used the binary built when launched, before the final cold-start,
+disabled-Rebuild and cutoff-warning hardening; the final-code short run and
+regressions above cover those later changes. Service RSS, real-model fidelity,
+whole-manuscript quality and OS input latency remain unmeasured by this workload.
+
 **Still required:** saved-document-revision retrieval, T1 source-linked briefs,
 optional measured T2 checkpoints, shared generative-background admission before
 summary work, workload-wide deadlines/in-flight cancellation, old-generation
