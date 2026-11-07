@@ -1,0 +1,36 @@
+wait 5
+open "$DIR/windowbook/one.md"
+click_element ChatItem0
+expect chat_count 64
+expect chat_first_seq 336
+expect chat_last_seq 399
+expect attached "one.md"
+expect chat_cache_max 67108864
+click_element ChatOlder
+expect chat_first_seq 272
+expect chat_last_seq 335
+# Sending from an old window restores the newest context, not old history.
+click_element ChatInput
+type "continue from the latest history"
+key ENTER
+wait_chat
+expect chat_count 64
+expect chat_last_seq 401
+expect chat_first_seq 338
+expect chat_last "continue from the latest history"
+# Load an old source by durable sequence and codepoint offset.
+click_element NoteItem0
+click_element RecordSource
+expect chat_last_seq 101
+expect chat_excerpt_start 9000
+expect element_w ApplyLast 0 0
+expect chat_cache_max 67108864
+click_element RecordClose
+click_element ChatLatest
+expect chat_last_seq 401
+# This note must refer to sequence 401, not display position 63.
+click_element NoteLast
+expect record "Note"
+click_element RecordSource
+expect chat_last_seq 401
+expect chat_cache_max 67108864

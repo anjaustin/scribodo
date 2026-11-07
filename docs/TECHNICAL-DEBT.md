@@ -660,3 +660,17 @@ Do not treat these as remediation targets without a changed product decision:
   null/value guards for clean static analysis of the adapter and new history
   modules. The final code was revalidated before the closeout commit/push; see
   `REDTEAM-014-memory-foundation.md` for the matrix and remaining scope.
+
+### DB history windows and bounded layouts
+
+- Added byte-limited DB display windows, old/new/latest navigation and navigable
+  large-message excerpts. Source links use committed message sequences, not
+  window positions. Unsaved DB turns cannot be paged away or silently evicted.
+- Bounded display decoding/wrapping and reset caches/actions on replacement.
+  Allocation sweeps cover failed layout rebuilds; originals are not truncated.
+- Added growing real-service fixtures, a 400-message source-navigation UI test,
+  cache stress/accounting and warm diagnostic timings. Details and limits are
+  in `MEMORY-004-history-windows.md`.
+- Navigation is still synchronous; observer/file/backup compatibility readers,
+  sustained-use and percentile latency gates remain explicit follow-up work.
+  No memory jobs, Qdrant projection or generated briefs are implemented yet.

@@ -89,6 +89,7 @@ typedef struct {
     char *(*explorer_text)(void *ctx);
     /* The observer's status line (malloc'd). */
     char *(*observer_status)(void *ctx);
+    size_t (*history_cache_bytes)(void *ctx);
 } ScriptHost;
 
 typedef struct Script Script;

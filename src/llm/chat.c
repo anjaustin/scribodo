@@ -4,6 +4,7 @@
 #include "remote.h"
 
 #include <pthread.h>
+#include <limits.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,7 +46,9 @@ struct ChatSession {
     pthread_mutex_t mu;
     ChatMessage *msgs;
     size_t count, cap;
+    bool windowed, older, newer;
     uint64_t version, polled_version;
+    uint64_t trimmed_version;
     pthread_t worker;
     bool worker_running;
     atomic_bool cancel;
@@ -130,6 +133,7 @@ void chat_clear(ChatSession *s)
         free(s->msgs[i].via);
     }
     s->count = 0;
+    s->windowed = s->older = s->newer = false;
     s->history_stats = (ChatHistoryStats){0};
     s->notice[0] = s->notice_out[0] = '\0';
     s->version++;
@@ -186,6 +190,104 @@ bool chat_load_messages(ChatSession *s, const ChatMessage *msgs, size_t n)
     s->version++;
     pthread_mutex_unlock(&s->mu);
     return true;
+}
+
+ChatWindowInfo chat_window_info(ChatSession *s)
+{
+    ChatWindowInfo info = { .active = s->windowed, .older = s->older, .newer = s->newer, .first = -1, .last = -1 };
+    if (!info.active) return info;
+    for (size_t i = 0; i < s->count; i++) {
+        if (!s->msgs[i].sequence_known) info.unsaved = true;
+        else {
+            if (info.first < 0) info.first = s->msgs[i].sequence;
+            info.last = s->msgs[i].sequence;
+        }
+    }
+    return info;
+}
+
+long chat_find_sequence(ChatSession *s, int64_t sequence)
+{
+    for (size_t i = 0; i < s->count; i++)
+        if (s->msgs[i].sequence_known && s->msgs[i].sequence == sequence) return (long)i;
+    return -1;
+}
+
+void chat_enable_window(ChatSession *s)
+{
+    pthread_mutex_lock(&s->mu);
+    s->windowed = true;
+    pthread_mutex_unlock(&s->mu);
+}
+
+void chat_mark_saved(ChatSession *s, size_t index, int64_t sequence)
+{
+    pthread_mutex_lock(&s->mu);
+    if (index < s->count && sequence >= 0 && sequence <= INT_MAX) {
+        s->msgs[index].sequence_known = true;
+        s->msgs[index].sequence = sequence;
+        s->windowed = true;
+        s->version++;
+    }
+    pthread_mutex_unlock(&s->mu);
+}
+
+bool chat_load_window(ChatSession *s, const ChatMessage *msgs, size_t n, bool older, bool newer)
+{
+    if (n > 64 || (n && !msgs) || chat_busy(s)) return false;
+    pthread_mutex_lock(&s->mu);
+    ChatWindowInfo current = chat_window_info(s);
+    bool safe = !s->finished_pending && !s->user_done_pending && !current.unsaved;
+    pthread_mutex_unlock(&s->mu);
+    if (!safe) return false;
+    size_t bytes = 0;
+    for (size_t i = 0; i < n; i++) {
+        if (!msgs[i].sequence_known || msgs[i].sequence < 0 || msgs[i].sequence > INT_MAX || !msgs[i].content ||
+            !(msgs[i].ts >= 0 && msgs[i].ts < 0x1p63) || (i && msgs[i - 1].sequence >= msgs[i].sequence) ||
+            (!msgs[i].excerpt && (msgs[i].excerpt_start || msgs[i].excerpt_more))) return false;
+        size_t len = strnlen(msgs[i].content, 8193);
+        if (len > 8192 || len > 65536 - bytes || (msgs[i].excerpt && !len) ||
+            (msgs[i].via && strnlen(msgs[i].via, 513) > 512) ||
+            (msgs[i].docs && strnlen(msgs[i].docs, 2049) > 2048)) return false;
+        bytes += len;
+    }
+    if (!chat_load_messages(s, msgs, n)) return false;
+    pthread_mutex_lock(&s->mu);
+    s->windowed = true;
+    s->older = older;
+    s->newer = newer;
+    pthread_mutex_unlock(&s->mu);
+    return true;
+}
+
+bool chat_trim_saved(ChatSession *s)
+{
+    if (chat_busy(s)) return false;
+    pthread_mutex_lock(&s->mu);
+    if (!s->windowed || s->newer || s->finished_pending || s->user_done_pending || s->trimmed_version == s->version) {
+        pthread_mutex_unlock(&s->mu);
+        return false;
+    }
+    size_t bytes = 0, first = 0;
+    for (size_t i = 0; i < s->count; i++) bytes += strlen(s->msgs[i].content ? s->msgs[i].content : "");
+    while (s->count - first > 2 && (s->count - first > 64 || bytes > 1024 * 1024)) {
+        ChatMessage *m = &s->msgs[first];
+        if (!m->sequence_known) break; /* never evict a failed save */
+        bytes -= strlen(m->content ? m->content : "");
+        free(m->content); free(m->docs); free(m->via);
+        first++;
+    }
+    if (first) {
+        memmove(s->msgs, s->msgs + first, (s->count - first) * sizeof(*s->msgs));
+        s->count -= first;
+        s->target = s->target >= first ? s->target - first : 0;
+        s->user_index = s->user_index >= first ? s->user_index - first : 0;
+        s->older = true;
+        s->version++;
+    }
+    s->trimmed_version = s->version;
+    pthread_mutex_unlock(&s->mu);
+    return first != 0;
 }
 
 void chat_lock(ChatSession *s) { pthread_mutex_lock(&s->mu); }
@@ -671,6 +773,7 @@ static bool build_in_worker(ChatSession *s)
     ChatRequestHistory history = {0};
     /* Edits use the protected instruction/passage, not chat history. */
     bool ok = s->edit_passage || chat_request_history_copy(s->msgs, total, s->via_remote, &history);
+    if (!s->edit_passage && s->windowed && (s->older || s->newer)) history.limited = true;
     s->history_stats = (ChatHistoryStats){ history.count, history.content_bytes, history.scanned, history.limited };
     ChatContext ctx = { s->ctx_title, s->ctx_text, s->ctx_docs, s->nctx_docs };
     char an[64], sn[64];
@@ -723,12 +826,12 @@ static bool build_in_worker(ChatSession *s)
     pthread_mutex_lock(&s->mu);
     free(s->request);
     s->request = req;
-    if (truncated)
+    if (req && truncated)
         snprintf(s->notice, sizeof(s->notice), "%s",
                  history_limited ? "Attached document text was cut off; older conversation history was also omitted from this request"
                  : s->nctx_docs > 1 ? "Attached documents were too long for the model; the longest were cut off for this message"
                                     : "The document was too long for the model and was cut off for this message");
-    else if (history_limited)
+    else if (req && history_limited)
         snprintf(s->notice, sizeof(s->notice), "Only recent conversation history was prepared; older history was omitted from this request");
     pthread_mutex_unlock(&s->mu);
     return req != NULL;
@@ -856,6 +959,14 @@ static bool send_common(ChatSession *s, const char *text, const ChatContext *ctx
     }
     if (!text || !text[0]) {
         snprintf(err, errlen, "Nothing to send");
+        return false;
+    }
+    pthread_mutex_lock(&s->mu);
+    ChatWindowInfo window = chat_window_info(s);
+    pthread_mutex_unlock(&s->mu);
+    if (window.active && (window.newer || window.unsaved)) {
+        snprintf(err, errlen, "%s", window.unsaved ? "Chat has unsaved messages; keep them before changing history or sending again"
+                                                   : "Return to the latest history before sending");
         return false;
     }
     if (ctx && ctx->ndocs && !ctx->docs) {

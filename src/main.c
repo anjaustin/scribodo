@@ -1533,10 +1533,13 @@ static void on_message_done(ChatSession *s, size_t index, void *ctx)
     }
     if (copy.role == CHAT_ASSISTANT && !copy.error && !copy.is_edit && index >= 1) names_check(app, index);
     if (!app->chat_project[0]) { free(copy.content); return; }
-    if (!chat_store_append(app->store, app->chat_project, app->chat_id, app->chat_title, &copy))
+    int64_t sequence = -1;
+    if (!chat_store_append_sequenced(app->store, app->chat_project, app->chat_id, app->chat_title, &copy, &sequence))
         set_status(app, store_says(app, "Could not save the chat to .scribodo/chats"));
-    else if (app->observer && copy.role == CHAT_ASSISTANT)
-        observer_poke(app->observer); /* a finished exchange is stored */
+    else {
+        if (sequence >= 0) chat_mark_saved(s, index, sequence);
+        if (app->observer && copy.role == CHAT_ASSISTANT) observer_poke(app->observer);
+    }
     free(copy.content);
     app->lists_dirty = true;
 }
@@ -1558,10 +1561,14 @@ static void adopt_chat(App *app)
     }
     chat_unlock(app->chat);
     bool ok = copy != NULL;
-    for (size_t i = 0; ok && i < n; i++)
-        ok = copy[i].content && chat_store_append(app->store, app->chat_project, app->chat_id, app->chat_title, &copy[i]);
+    for (size_t i = 0; ok && i < n; i++) {
+        int64_t sequence = -1;
+        ok = copy[i].content && chat_store_append_sequenced(app->store, app->chat_project, app->chat_id, app->chat_title, &copy[i], &sequence);
+        if (ok && sequence >= 0) chat_mark_saved(app->chat, i, sequence);
+    }
     for (size_t i = 0; copy && i < n; i++) free(copy[i].content);
     free(copy);
+    if (chat_trim_saved(app->chat)) chat_view_history_changed(app->chat_view);
     set_status(app, ok ? "Chat saved to this project" : store_says(app, "Could not save the chat to .scribodo/chats"));
     app->lists_dirty = true;
 }
@@ -1672,9 +1679,56 @@ static void new_chat(App *app)
         return;
     }
     chat_clear(app->chat);
+    chat_view_history_changed(app->chat_view);
     project_session_clear_chat(&app->session);
     attach_reset(app);
     app->focus = FOCUS_CHAT;
+}
+
+static bool load_chat_window(App *app, const char *project, const char *id, ChatWindowRequest request, bool restore)
+{
+    if (chat_busy(app->chat)) { set_status(app, "Stop the reply before changing history"); return false; }
+    chat_lock(app->chat);
+    ChatWindowInfo info = chat_window_info(app->chat);
+    chat_unlock(app->chat);
+    if (info.unsaved) { set_status(app, "History has unsaved messages; keep them before changing windows"); return false; }
+    ChatWindowPage page;
+    if (!chat_store_window(app->store, project, id, &request, &page)) {
+        set_status(app, store_says(app, "Could not read this history window"));
+        return false;
+    }
+    bool ok = chat_load_window(app->chat, page.messages, page.count, page.older, page.newer);
+    if (ok) {
+        chat_view_history_changed(app->chat_view);
+        if (restore) {
+            chat_controller_use_no_attachments(&app->chat_controller);
+            for (char *save = NULL, *name = strtok_r(page.latest_user_docs, "\n", &save); name; name = strtok_r(NULL, "\n", &save)) attach(app, name);
+        }
+        if (request.direction == CHAT_WINDOW_FOCUS) {
+            chat_lock(app->chat);
+            long index = chat_find_sequence(app->chat, request.sequence);
+            chat_unlock(app->chat);
+            if (index >= 0) chat_view_reveal(app->chat_view, index);
+        }
+        set_status(app, restore && !page.attachments_known
+                        ? "History opened; prior attachments could not be restored. Choose attachments explicitly."
+                        : "History window loaded (large messages have navigable excerpts)");
+    } else set_status(app, "Could not replace history; the current conversation was kept");
+    chat_window_page_free(&page);
+    return ok;
+}
+
+static void page_chat(App *app, ChatPageAction action)
+{
+    chat_lock(app->chat);
+    ChatWindowInfo info = chat_window_info(app->chat);
+    chat_unlock(app->chat);
+    if (!info.active || !app->chat_project[0] || !app->chat_id[0]) return;
+    ChatWindowRequest request = { .direction = CHAT_WINDOW_LATEST };
+    if (action.kind == CHAT_PAGE_OLDER) request = (ChatWindowRequest){ .direction = CHAT_WINDOW_BEFORE, .sequence = info.first };
+    if (action.kind == CHAT_PAGE_NEWER) request = (ChatWindowRequest){ .direction = CHAT_WINDOW_AFTER, .sequence = info.last };
+    if (action.kind == CHAT_PAGE_PART) request = (ChatWindowRequest){ CHAT_WINDOW_FOCUS, action.sequence, action.start };
+    (void)load_chat_window(app, app->chat_project, app->chat_id, request, false);
 }
 
 static void open_chat(App *app, const ChatSummary *c)
@@ -1683,9 +1737,15 @@ static void open_chat(App *app, const ChatSummary *c)
         set_status(app, "Wait for the reply to finish (or press Stop)");
         return;
     }
-    ChatMessage *msgs;
-    size_t n;
+    if (project_store_inspect(app->store, app->project_dir).capabilities & PROJECT_STORE_CAP_LINKED_DOCUMENTS) {
+        if (load_chat_window(app, app->project_dir, c->id, (ChatWindowRequest){ .direction = CHAT_WINDOW_LATEST }, true))
+            project_session_bind_chat(&app->session, app->project_dir, c->id, c->title);
+        return;
+    }
+    ChatMessage *msgs = NULL;
+    size_t n = 0;
     if (!chat_store_load(app->store, app->project_dir, c->id, &msgs, &n) || !chat_load_messages(app->chat, msgs, n)) {
+        chat_store_free_messages(msgs, n);
         set_status(app, "Could not open that chat");
         return;
     }
@@ -1706,6 +1766,7 @@ static void open_chat(App *app, const ChatSummary *c)
     }
     chat_store_free_messages(msgs, n);
     project_session_bind_chat(&app->session, app->project_dir, c->id, c->title);
+    chat_view_history_changed(app->chat_view);
     chat_view_scroll_to_end(app->chat_view);
 }
 
@@ -1872,10 +1933,12 @@ static void record_from_reply(App *app, long index, bool canon)
     }
     chat_lock(app->chat);
     const ChatMessage *m = chat_message(app->chat, (size_t)index);
-    char *text = m && !m->streaming ? strdup(m->content) : NULL;
+    ChatWindowInfo window = chat_window_info(app->chat);
+    long source_sequence = m && m->sequence_known ? (long)m->sequence : index;
+    char *text = m && !m->streaming && !m->excerpt && (!window.active || m->sequence_known) ? strdup(m->content) : NULL;
     chat_unlock(app->chat);
     if (!text) return;
-    SourceRef s = { .kind = SRC_CHAT, .message = index, .start = 0, .quote = text };
+    SourceRef s = { .kind = SRC_CHAT, .message = source_sequence, .start = 0, .quote = text };
     snprintf(s.chat, sizeof(s.chat), "%s", app->chat_id);
     size_t cps = 0;
     for (const unsigned char *p = (const unsigned char *)text; *p; p++) cps += (*p & 0xC0) != 0x80;
@@ -1904,13 +1967,26 @@ static void record_from_reply(App *app, long index, bool canon)
 static void open_source(App *app, const SourceRef *s)
 {
     if (s->kind == SRC_CHAT) {
+        if (s->message < 0 || s->message == LONG_MAX) { set_status(app, "Invalid source message"); return; }
         for (size_t i = 0; i < app->nchats; i++)
             if (!strcmp(app->chats[i].id, s->chat)) {
                 if (strcmp(app->chat_id, s->chat) != 0) open_chat(app, &app->chats[i]);
                 char msg[120];
                 snprintf(msg, sizeof(msg), "Source: message %ld of this chat", s->message + 1);
                 if (!strcmp(app->chat_id, s->chat)) {
-                    chat_view_reveal(app->chat_view, s->message);
+                    chat_lock(app->chat);
+                    ChatWindowInfo window = chat_window_info(app->chat);
+                    chat_unlock(app->chat);
+                    long index = s->message;
+                    if (window.active) {
+                        if (!load_chat_window(app, app->chat_project, app->chat_id,
+                                              (ChatWindowRequest){ CHAT_WINDOW_FOCUS, s->message, s->start }, false)) return;
+                        chat_lock(app->chat);
+                        index = chat_find_sequence(app->chat, s->message);
+                        chat_unlock(app->chat);
+                    }
+                    if (index < 0) { set_status(app, "That source message is unavailable"); return; }
+                    chat_view_reveal(app->chat_view, index);
                     set_status(app, msg);
                 }
                 return;
@@ -2337,6 +2413,16 @@ static void send_chat(App *app, char *text)
         size_t n = utf8_clip(app->chat_title, sizeof(app->chat_title) - 4, text, line < 48 ? line : 48);
         if (strlen(text) > n) strcat(app->chat_title, "\xE2\x80\xA6");
         project_session_bind_chat(&app->session, app->project_dir, app->chat_id, app->chat_title);
+    }
+    if (project_store_inspect(app->store, app->chat_project).capabilities & PROJECT_STORE_CAP_LINKED_DOCUMENTS) {
+        chat_lock(app->chat);
+        ChatWindowInfo window = chat_window_info(app->chat);
+        chat_unlock(app->chat);
+        if (window.newer && !load_chat_window(app, app->chat_project, app->chat_id,
+                                             (ChatWindowRequest){ .direction = CHAT_WINDOW_LATEST }, false)) {
+            free(text); return;
+        }
+        chat_enable_window(app->chat);
     }
     /* The attached documents, read now (by reference: nothing is copied
      * into the project). An edit request uses the edited document alone. */
@@ -2779,6 +2865,9 @@ static Rectangle host_element(void *ctx, const char *name)
     if (!strcmp(name, "ApplyLast")) return chat_view_last_apply_rect(app->chat_view);
     if (!strcmp(name, "NoteLast")) return chat_view_last_note_rect(app->chat_view, false);
     if (!strcmp(name, "CanonLast")) return chat_view_last_note_rect(app->chat_view, true);
+    if (!strcmp(name, "ChatOlder")) return chat_view_page_rect(app->chat_view, CHAT_PAGE_OLDER);
+    if (!strcmp(name, "ChatNewer")) return chat_view_page_rect(app->chat_view, CHAT_PAGE_NEWER);
+    if (!strcmp(name, "ChatLatest")) return chat_view_page_rect(app->chat_view, CHAT_PAGE_LATEST);
     if (!strncmp(name, "Record", 6)) return record_view_element(app->record, name);
     if (!strncmp(name, "Prompt", 6)) return prompt_element(app->prompt, name);
     if (!strcmp(name, "AttachAdd")) return app->attach_add;
@@ -2819,6 +2908,7 @@ static const char *host_status(void *ctx)
     App *app = ctx;
     return GetTime() - app->status_time < 6.0 ? app->status : "";
 }
+static size_t host_history_cache_bytes(void *ctx) { return chat_view_cache_bytes(((App *)ctx)->chat_view); }
 static void host_open(void *ctx, const char *path) { open_path(ctx, path); }
 static char *host_record_text(void *ctx)
 {
@@ -3172,7 +3262,7 @@ int main(int argc, char **argv)
     ScriptHost host = { app.editor, &app.explorer_w, &app.observer_w, &app.editor_rect,
                         host_status, host_open, host_drop, &app, app.chat, host_element, host_model_ready,
                         host_record_text, host_observer_enable, host_observer_idle, host_findings_text,
-                        host_attached_text, host_explorer_text, host_observer_status };
+                        host_attached_text, host_explorer_text, host_observer_status, host_history_cache_bytes };
     if (script_path) {
         char err[256];
         app.script = script_load(script_path, getenv("SCRIBODO_SCRIPT_DIR"), getenv("SCRIBODO_SHOT_DIR"), err, sizeof(err));
@@ -3263,6 +3353,7 @@ int main(int argc, char **argv)
             app.lists_dirty = true;
         }
         chat_poll(app.chat);
+        if (chat_trim_saved(app.chat)) chat_view_history_changed(app.chat_view);
         /* The observer shares the model: it yields whenever chat is active. */
         observer_set_chat_active(app.observer, chat_busy(app.chat));
         if (observer_version(app.observer) != app.findings_version) {
@@ -3285,6 +3376,7 @@ int main(int argc, char **argv)
                 adopt_chat(&app);
             } else if (strcmp(app.chat_project, app.project_dir) != 0) {
                 chat_clear(app.chat);
+                chat_view_history_changed(app.chat_view);
                 project_session_clear_chat(&app.session);
                 attach_reset(&app); /* the old project's documents aren't this one's */
             }
@@ -3569,6 +3661,8 @@ int main(int argc, char **argv)
         editor_update(app.editor, app.editor_rect, idle && app.focus == FOCUS_DOC);
         chat_view_set_can_apply(app.chat_view, editor_path(app.editor) != NULL && !editor_is_read_only(app.editor));
         chat_view_update(app.chat_view, app.chat_list_rect, app.chat_input_rect, idle && app.focus == FOCUS_CHAT);
+        ChatPageAction page_action = chat_view_take_page(app.chat_view);
+        if (idle && page_action.kind != CHAT_PAGE_NONE) page_chat(&app, page_action);
         if (review_active(app.review) && !modal) review_update(app.review, app.review_rect);
         if (record_view_active(app.record)) record_view_update(app.record, app.record_rect, idle && app.focus == FOCUS_RECORD);
         if (app.observer_open && !modal) findings_view_update(app.findings, app.findings_rect);
@@ -3579,7 +3673,7 @@ int main(int argc, char **argv)
              * selection, or as an insertion at the cursor. */
             chat_lock(app.chat);
             const ChatMessage *m = chat_message(app.chat, (size_t)apply);
-            char *reply = m ? strdup(m->content) : NULL;
+            char *reply = m && !m->excerpt ? strdup(m->content) : NULL;
             bool reply_cut = m && (m->truncated || m->stopped);
             bool reply_edit = m && m->is_edit;
             chat_unlock(app.chat);

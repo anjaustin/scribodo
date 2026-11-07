@@ -34,6 +34,9 @@ bool sdb_record_list_checked(Db *db, const char *project_id, RecordKind kind, Re
 
 /* chats */
 bool sdb_chat_append(Db *db, const char *project_id, const char *id, const char *title, const ChatMessage *m);
+bool sdb_chat_append_sequenced(Db *db, const char *project_id, const char *id, const char *title,
+                                const ChatMessage *m, int64_t *sequence);
+bool sdb_chat_window(Db *db, const char *project_id, const char *id, const ChatWindowRequest *request, ChatWindowPage *out);
 size_t sdb_chat_list(Db *db, const char *project_id, ChatSummary **out);
 bool sdb_chat_list_checked(Db *db, const char *project_id, ChatSummary **out, size_t *count);
 bool sdb_chat_load(Db *db, const char *project_id, const char *id, ChatMessage **msgs, size_t *n);

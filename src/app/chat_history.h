@@ -43,4 +43,25 @@ bool chat_store_source_page(StoreManager *manager, const char *project_dir, cons
                             const ChatSourceCursor *cursor, ChatSourcePage *out);
 void chat_source_page_free(ChatSourcePage *page);
 
+typedef enum { CHAT_WINDOW_LATEST, CHAT_WINDOW_BEFORE, CHAT_WINDOW_AFTER, CHAT_WINDOW_FOCUS } ChatWindowDirection;
+typedef struct {
+    ChatWindowDirection direction;
+    int64_t sequence;
+    size_t start; /* codepoint offset, FOCUS target only */
+} ChatWindowRequest;
+typedef struct {
+    ChatMessage *messages;
+    size_t count, text_bytes;
+    bool older, newer;
+    bool attachments_known;
+    char *latest_user_docs; /* bounded current names, not historical revisions */
+} ChatWindowPage;
+
+/* DB-only display windows: <=64 messages, <=64 KiB body bytes, <=8 KiB per
+ * displayed body. Explicit excerpt flags prevent treating a partial original
+ * as a complete model turn or applying it as a whole reviewed replacement. */
+bool chat_store_window(StoreManager *manager, const char *project_dir, const char *conversation,
+                        const ChatWindowRequest *request, ChatWindowPage *out);
+void chat_window_page_free(ChatWindowPage *page);
+
 #endif

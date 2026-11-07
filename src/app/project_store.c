@@ -539,6 +539,33 @@ bool project_store_chat_append(StoreManager *manager, const char *project_dir, c
     return ok;
 }
 
+bool project_store_chat_append_sequenced(StoreManager *manager, const char *project_dir, const char *id, const char *title,
+                                        const ChatMessage *message, int64_t *sequence)
+{
+    if (sequence) *sequence = -1;
+    if (!project_dir || !project_dir[0]) return false;
+    ProjectStore store;
+    int lock = begin_operation(manager, project_dir, &store);
+    if (store.ops == &file_ops && lock < 0) return false;
+    bool ok = store.ops == &db_ops ? sdb_chat_append_sequenced(store.db, store.project_id, id, title, message, sequence)
+                                    : store.ops->chat_append(&store, id, title, message);
+    project_store_file_unlock(lock);
+    return ok;
+}
+
+bool project_store_chat_window(StoreManager *manager, const char *project_dir, const char *id,
+                                const ChatWindowRequest *request, ChatWindowPage *out)
+{
+    if (!out) return false;
+    *out = (ChatWindowPage){0};
+    if (!project_dir || !project_dir[0] || !id || !request) return false;
+    ProjectStore store;
+    int lock = begin_operation(manager, project_dir, &store);
+    bool ok = store.ops == &db_ops && sdb_chat_window(store.db, store.project_id, id, request, out);
+    project_store_file_unlock(lock);
+    return ok;
+}
+
 bool project_store_chat_rename(StoreManager *manager, const char *project_dir, const char *id, const char *title)
 {
     if (!project_dir || !project_dir[0]) return false;

@@ -68,6 +68,11 @@ whole-manuscript recall, model fidelity or a sustained-use SLA.
 
 ## Remaining before slice 1 is complete
 
+**Update:** the DB UI windowing and source-identity portions of items 1–2 below
+are now implemented in [MEMORY-004](MEMORY-004-history-windows.md). The list is
+retained as the original checkpoint; full-reader compatibility consumers and
+the workload/performance gates are still pending.
+
 1. Windowed/paged `ChatSession` and UI viewport/cache integration. `open_chat()`
    still loads the complete conversation and the UI still retains archive-sized
   state. Do not declare host memory bounded end-to-end yet.

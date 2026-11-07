@@ -35,6 +35,11 @@ typedef struct {
     char *docs;      /* user: names of the documents attached, '\n'-separated ("" = none), or NULL */
     char *via;       /* sent to / answered by a remote model ("Frontier · api.example.com"); NULL = this Mac */
     double ts;       /* when it was stored (loaded chats), else 0 */
+    bool sequence_known; /* persisted DB sequence, never a window offset */
+    int64_t sequence;
+    bool excerpt;    /* stored body is only a display range; not model history */
+    bool excerpt_more;
+    size_t excerpt_start; /* codepoint offset in the persisted original */
 } ChatMessage;
 
 typedef struct {
@@ -80,6 +85,20 @@ bool chat_busy(ChatSession *s);
 /* Load an existing conversation (replaces the current one). Not while busy.
  * Allocation/validation failure leaves the current conversation intact. */
 bool chat_load_messages(ChatSession *s, const ChatMessage *msgs, size_t n);
+/* UI-thread commands for a DB-backed bounded display window. Caller owns msgs.
+ * Idle, saved history only; not concurrent with another UI command/send. */
+bool chat_load_window(ChatSession *s, const ChatMessage *msgs, size_t n, bool older, bool newer);
+typedef struct {
+    bool active, older, newer, unsaved;
+    int64_t first, last;
+} ChatWindowInfo;
+ChatWindowInfo chat_window_info(ChatSession *s); /* lock held */
+long chat_find_sequence(ChatSession *s, int64_t sequence); /* lock held, -1 absent */
+void chat_mark_saved(ChatSession *s, size_t index, int64_t sequence);
+void chat_enable_window(ChatSession *s);
+/* Evict only saved prefix rows, idle and after persistence callbacks. Keep the
+ * latest exchange even if it is larger than the normal 1 MiB retained tail. */
+bool chat_trim_saved(ChatSession *s);
 void chat_clear(ChatSession *s);
 
 /* Call each frame on the UI thread: fires ChatMessageDone for finished

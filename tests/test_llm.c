@@ -755,6 +755,69 @@ static void test_fake_backend(void)
     chat_destroy(s);
 }
 
+static void test_chat_windows(void)
+{
+    ChatSession *s = chat_create(NULL);
+    ChatMessage rows[64];
+    for (size_t i = 0; i < 64; i++)
+        rows[i] = (ChatMessage){ .role = i % 2 ? CHAT_ASSISTANT : CHAT_USER, .content = "saved history",
+                                .sequence_known = true, .sequence = (int64_t)i * 3 };
+    CHECK(chat_load_window(s, rows, 64, true, true));
+    chat_lock(s);
+    ChatWindowInfo info = chat_window_info(s);
+    CHECK(info.active && info.older && info.newer && !info.unsaved && info.first == 0 && info.last == 189);
+    CHECK(chat_find_sequence(s, 180) == 60 && chat_find_sequence(s, 181) == -1);
+    chat_unlock(s);
+    char why[256];
+    CHECK(!chat_send(s, "must not send from an old page", NULL, why, sizeof(why)) && strstr(why, "latest"));
+    CHECK(chat_load_window(s, rows, 64, true, false));
+    DoneCtx d = {0};
+    chat_on_message_done(s, on_done, &d);
+    CHECK(chat_send(s, "keep this new turn", NULL, why, sizeof(why)));
+    CHECK(!chat_load_window(s, rows, 64, true, false)); /* busy */
+    wait_idle(s, &d, 2);
+    CHECK(!chat_load_window(s, rows, 64, true, false)); /* failed/unattempted persistence */
+    chat_mark_saved(s, 64, 5000);
+    chat_mark_saved(s, 65, 5001);
+    CHECK(chat_trim_saved(s));
+    chat_lock(s);
+    info = chat_window_info(s);
+    CHECK(chat_count(s) == 64 && info.first == 6 && info.last == 5001 && !info.unsaved);
+    CHECK(!strcmp(chat_message(s, 62)->content, "keep this new turn"));
+    chat_unlock(s);
+    rows[0].sequence_known = false;
+    CHECK(!chat_load_window(s, rows, 64, true, false));
+    rows[0].sequence_known = true;
+    rows[2].sequence = 0;
+    CHECK(!chat_load_window(s, rows, 64, true, false));
+    rows[2].sequence = 6;
+    rows[1].excerpt = true;
+    rows[1].excerpt_more = true;
+    CHECK(chat_load_window(s, rows, 64, true, false));
+    ChatRequestHistory history;
+    ChatMessage excerpt_turns[] = { rows[0], rows[1], { .role = CHAT_USER, .content = "current" } };
+    CHECK(chat_request_history_copy(excerpt_turns, 3, false, &history) && history.count == 2 && history.limited);
+    chat_request_history_free(&history);
+    excerpt_turns[2].excerpt = true;
+    CHECK(!chat_request_history_copy(excerpt_turns, 3, false, &history));
+    chat_destroy(s);
+    s = chat_create(NULL);
+    CHECK(chat_load_window(s, rows, 64, true, false));
+    d = (DoneCtx){0};
+    chat_on_message_done(s, on_done, &d);
+    char *oversized = malloc(CHAT_HISTORY_MAX_BYTES + 2);
+    CHECK(oversized != NULL);
+    memset(oversized, 'x', CHAT_HISTORY_MAX_BYTES + 1); oversized[CHAT_HISTORY_MAX_BYTES + 1] = '\0';
+    CHECK(chat_send(s, oversized, NULL, why, sizeof(why)));
+    free(oversized);
+    wait_idle(s, &d, 2);
+    CHECK(chat_take_notice(s) == NULL); /* no successful-preparation notice for a failed request */
+    chat_lock(s);
+    CHECK(chat_message(s, 65)->error);
+    chat_unlock(s);
+    chat_destroy(s);
+}
+
 /* ---- reviewed AI edits ---------------------------------------------------------- */
 
 static void test_clean_edit(void)
@@ -2114,6 +2177,7 @@ int main(int argc, char **argv)
         { "request_builder", test_request_builder },
         { "bounded_request_history", test_bounded_request_history },
         { "worker_bounded_history", test_worker_bounded_history },
+        { "chat_windows", test_chat_windows },
         { "chat_store", test_chat_store },
         { "chat_store_read_failures", test_chat_store_read_failures },
         { "concurrent_file_readers", test_concurrent_file_readers },

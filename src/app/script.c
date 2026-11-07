@@ -373,6 +373,18 @@ static void run_expect(Script *s, ScriptHost *h, Tokens *t)
         chat_unlock(h->chat);
         ok = n == strtoul(t->tok[2], NULL, 10);
         snprintf(detail, sizeof(detail), "got %zu", n);
+    } else if ((!strcmp(what, "chat_first_seq") || !strcmp(what, "chat_last_seq") || !strcmp(what, "chat_excerpt_start")) && t->n == 3 && h->chat) {
+        chat_lock(h->chat);
+        size_t n = chat_count(h->chat);
+        const ChatMessage *m = n ? chat_message(h->chat, !strcmp(what, "chat_first_seq") ? 0 : n - 1) : NULL;
+        int64_t value = m ? (!strcmp(what, "chat_excerpt_start") ? (int64_t)m->excerpt_start : m->sequence) : -1;
+        ok = m && m->sequence_known && value == strtoll(t->tok[2], NULL, 10);
+        snprintf(detail, sizeof(detail), "got %lld", (long long)value);
+        chat_unlock(h->chat);
+    } else if (!strcmp(what, "chat_cache_max") && t->n == 3 && h->history_cache_bytes) {
+        size_t bytes = h->history_cache_bytes(h->ctx);
+        ok = bytes <= strtoull(t->tok[2], NULL, 10);
+        snprintf(detail, sizeof(detail), "got %zu cache bytes", bytes);
     } else if (!strcmp(what, "chat_last") && t->n == 3 && h->chat) {
         chat_lock(h->chat);
         size_t n = chat_count(h->chat);

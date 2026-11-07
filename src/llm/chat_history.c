@@ -21,7 +21,7 @@ bool chat_request_history_copy(const ChatMessage *msgs, size_t n, bool remote, C
     /* The newest author request is mandatory. A missing provider marker must
      * fail closed, not turn a remote request into a reply to older history. */
     const ChatMessage *current = &msgs[n - 1];
-    if (current->role != CHAT_USER || current->error || current->streaming || !current->content ||
+    if (current->role != CHAT_USER || current->error || current->streaming || current->excerpt || !current->content ||
         (remote && !(current->via && current->via[0]))) return false;
     size_t indices[CHAT_HISTORY_MAX_MESSAGES], lengths[CHAT_HISTORY_MAX_MESSAGES];
     size_t count = 0, bytes = 0, scanned = 0, i = n;
@@ -29,6 +29,7 @@ bool chat_request_history_copy(const ChatMessage *msgs, size_t n, bool remote, C
     while (i && scanned < CHAT_HISTORY_MAX_SCAN && count < CHAT_HISTORY_MAX_MESSAGES) {
         const ChatMessage *m = &msgs[--i];
         scanned++;
+        if (m->excerpt) { byte_limited = true; continue; }
         if (m->error || (remote && !(m->via && m->via[0]))) continue;
         if (m->role != CHAT_USER && m->role != CHAT_ASSISTANT) return false;
         const char *text = m->content ? m->content : "";

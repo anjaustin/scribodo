@@ -67,7 +67,7 @@ APP_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(APP_SRCS))
 # Native dialogs (Objective-C on macOS).
 APP_OBJS  += $(BUILD)/src/platform/dialogs_mac.o
 APP   := $(BUILD)/scribodo
-TESTS := $(BUILD)/test_core $(BUILD)/test_doc_io $(BUILD)/test_editor $(BUILD)/test_editor_faults $(BUILD)/test_db_rows $(BUILD)/test_observer_text $(BUILD)/test_observer_fake $(BUILD)/test_chat_history $(BUILD)/test_components $(BUILD)/test_remote $(BUILD)/test_llm $(BUILD)/test_persistence_faults $(BUILD)/test_semantic_faults
+TESTS := $(BUILD)/test_core $(BUILD)/test_doc_io $(BUILD)/test_editor $(BUILD)/test_editor_faults $(BUILD)/test_db_rows $(BUILD)/test_observer_text $(BUILD)/test_observer_fake $(BUILD)/test_chat_history $(BUILD)/test_chat_view $(BUILD)/test_chat_view_faults $(BUILD)/test_components $(BUILD)/test_remote $(BUILD)/test_llm $(BUILD)/test_persistence_faults $(BUILD)/test_semantic_faults
 
 .PHONY: all run test uitest uitest-real sanitize tsan cstest dbtest uitest-db backuptest remotetest offlinetest dependency-report clean distclean llama model llmtest
 
@@ -117,6 +117,13 @@ $(BUILD)/test_observer_text: $(BUILD)/src/llm/observer_text.o $(BUILD)/tests/tes
 
 $(BUILD)/test_chat_history: $(BUILD)/src/llm/chat_history.o $(BUILD)/tests/test_chat_history.o
 	$(CC) $(CFLAGS) $^ -o $@
+
+$(BUILD)/test_chat_view: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/src/ui/chat_view.o $(BUILD)/src/ui/editor.o $(BUILD)/src/ui/input.o $(BUILD)/tests/raylib_stubs.o $(BUILD)/tests/test_chat_view.o
+	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread -lm
+
+CHAT_VIEW_FAULT_SRCS := $(CORE_SRCS) $(LLM_SRCS) src/core/json_vendor.c src/ui/chat_view.c src/ui/editor.c src/ui/input.c tests/raylib_stubs.c tests/test_chat_view.c
+$(BUILD)/test_chat_view_faults: $(CHAT_VIEW_FAULT_SRCS) $(wildcard src/core/*.h src/app/*.h src/llm/*.h src/ui/*.h) tests/fault_alloc.h $(BUILD)/tests/fault_alloc.o | $(MARIADB_LIB)
+	$(CC) $(CFLAGS) $(INCLUDES) -DCHAT_VIEW_FAULT_TEST -include tests/fault_alloc.h $(CHAT_VIEW_FAULT_SRCS) $(BUILD)/tests/fault_alloc.o -o $@ $(MARIADB_LIBS) -lpthread -lm
 
 $(BUILD)/test_observer_fake: $(BUILD)/src/llm/observer_text.o $(BUILD)/src/llm/observer_fake.o $(BUILD)/third_party/cJSON/cJSON.o $(BUILD)/tests/test_observer_fake.o
 	$(CC) $(CFLAGS) $^ -o $@
@@ -203,6 +210,9 @@ uitest-db: $(APP)
 	    SCRIBODO_STORE=db SCRIBODO_DB_NAME=$$db SCRIBODO_SCRIPT=$$s SCRIBODO_SCRIPT_DIR=$$work SCRIBODO_SHOT_DIR=$$PWD/build/ui/store \
 	      $(WATCHDOG) 180 ui-store ./$(APP) 2>>build/ui/store/stderr.log || fail=1; echo; \
 	  done; \
+	  python3 tests/seed_chat_window.py $$work/windowbook || fail=1; \
+	  SCRIBODO_STORE=db SCRIBODO_DB_NAME=$$db SCRIBODO_SCRIPT=tests/ui/store/7_chat_windows.scribo SCRIBODO_SCRIPT_DIR=$$work \
+	    SCRIBODO_SHOT_DIR=$$PWD/build/ui/store $(WATCHDOG) 180 ui-store-windows ./$(APP) 2>>build/ui/store/stderr.log || fail=1; \
 	  SCRIBODO_STORE=db SCRIBODO_DB_NAME=$$db SCRIBODO_BACKUPS=$$work/backups SCRIBODO_SCRIPT=tests/ui/store/6_backup.scribo SCRIBODO_SCRIPT_DIR=$$work \
 	    SCRIBODO_SHOT_DIR=$$PWD/build/ui/store $(WATCHDOG) 240 ui-store ./$(APP) 2>>build/ui/store/stderr.log || fail=1; echo; \
 	  SCRIBODO_STORE=db SCRIBODO_DB_NAME=$$db SCRIBODO_SCRIPT=tests/ui/store/5_entities.scribo SCRIBODO_SCRIPT_DIR=$$work \

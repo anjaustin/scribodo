@@ -36,6 +36,13 @@ void chat_view_clear_input(ChatView *v);
 
 /* Scroll to the newest message (e.g. after loading a conversation). */
 void chat_view_scroll_to_end(ChatView *v);
+/* Drop old window layouts and queued positional actions after paging/eviction. */
+void chat_view_history_changed(ChatView *v);
+typedef enum { CHAT_PAGE_NONE, CHAT_PAGE_OLDER, CHAT_PAGE_NEWER, CHAT_PAGE_LATEST, CHAT_PAGE_PART } ChatPageKind;
+typedef struct { ChatPageKind kind; int64_t sequence; size_t start; } ChatPageAction;
+ChatPageAction chat_view_take_page(ChatView *v);
+Rectangle chat_view_page_rect(ChatView *v, ChatPageKind kind);
+size_t chat_view_cache_bytes(const ChatView *v);
 
 /* For tests and notices: text the last "Copy" click put on the clipboard. */
 bool chat_view_take_copied(ChatView *v);

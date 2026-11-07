@@ -16,7 +16,7 @@ def main():
     output = root / "build/memory-mutations"
     output.mkdir(parents=True, exist_ok=True)
     source = (root / "src/llm/chat_history.c").read_text()
-    guard = """if (current->role != CHAT_USER || current->error || current->streaming || !current->content ||
+    guard = """if (current->role != CHAT_USER || current->error || current->streaming || current->excerpt || !current->content ||
         (remote && !(current->via && current->via[0]))) return false;"""
     variants = {
         "control": source,

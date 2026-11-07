@@ -382,6 +382,18 @@ bool chat_store_append(StoreManager *manager, const char *project_dir, const cha
     return project_store_chat_append(manager, project_dir, id, title, message);
 }
 
+bool chat_store_append_sequenced(StoreManager *manager, const char *project_dir, const char *id, const char *title,
+                                const ChatMessage *message, int64_t *sequence)
+{
+    return project_store_chat_append_sequenced(manager, project_dir, id, title, message, sequence);
+}
+
+bool chat_store_window(StoreManager *manager, const char *project_dir, const char *id,
+                        const ChatWindowRequest *request, ChatWindowPage *out)
+{
+    return project_store_chat_window(manager, project_dir, id, request, out);
+}
+
 bool chat_store_rename(StoreManager *manager, const char *project_dir, const char *id, const char *title)
 {
     return project_store_chat_rename(manager, project_dir, id, title);

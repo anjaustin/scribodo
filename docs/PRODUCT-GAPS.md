@@ -79,6 +79,9 @@ bounded resources and staged acceptance in
 [`MEMORY-002-mvp-design.md`](MEMORY-002-mvp-design.md); it is not a runtime change.
 The authorized implementation is tracked separately in
 [`MEMORY-003-implementation-progress.md`](MEMORY-003-implementation-progress.md).
+DB history browsing, source identities, bounded layouts and their remaining
+latency/scope limits are tracked in
+[`MEMORY-004-history-windows.md`](MEMORY-004-history-windows.md).
 
 ## GAP-004 — Deterministic crash/recovery interruption coverage
 

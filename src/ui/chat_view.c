@@ -1,3 +1,4 @@
+#define _DARWIN_C_SOURCE
 #include "chat_view.h"
 
 #include <math.h>
@@ -15,6 +16,8 @@
 #define BUBBLE_PAD 10.0f
 #define GAP 14.0f
 #define LABEL_H 18.0f
+#define DISPLAY_BYTES 8192u
+#define PAGE_HEADER 26.0f
 
 typedef struct {
     TextBuffer buf;
@@ -23,6 +26,7 @@ typedef struct {
     uint64_t src_hash;
     float width;
     float height;      /* text height */
+    bool valid, markdown, preview;
 } MsgCache;
 
 struct ChatView {
@@ -32,6 +36,7 @@ struct ChatView {
     Editor *input;
     MsgCache *cache;
     size_t ncache;
+    size_t cache_capacity;
     float scroll;
     bool stick_to_end;
     uint64_t seen_version;
@@ -48,6 +53,8 @@ struct ChatView {
     char author_name[64];    /* speaker labels with this name are not shown */
     Rectangle last_note, last_canon;
     char *submitted;
+    ChatPageAction page;
+    Rectangle page_rect[4];
 };
 
 static float adv(uint32_t cp, void *ctx) { return sfont_advance((const SFont *)ctx, cp); }
@@ -104,6 +111,36 @@ float chat_view_input_height(ChatView *v, float width)
 
 void chat_view_scroll_to_end(ChatView *v) { v->stick_to_end = true; }
 
+static void cache_free(MsgCache *c)
+{
+    tb_free(&c->buf);
+    wrap_free(&c->layout);
+    *c = (MsgCache){0};
+}
+
+void chat_view_history_changed(ChatView *v)
+{
+    for (size_t i = 0; i < v->ncache; i++) cache_free(&v->cache[i]);
+    free(v->cache); v->cache = NULL; v->ncache = v->cache_capacity = 0;
+    v->scroll = 0; v->stick_to_end = true;
+    v->apply_index = v->record_index = v->reveal_index = v->flash_index = -1;
+    v->page = (ChatPageAction){0};
+}
+
+size_t chat_view_cache_bytes(const ChatView *v)
+{
+    size_t bytes = v->cache_capacity * sizeof(MsgCache);
+    for (size_t i = 0; i < v->ncache; i++)
+        bytes += v->cache[i].buf.cap * sizeof(uint32_t) + v->cache[i].layout.cap * sizeof(WrapRow);
+    return bytes;
+}
+
+ChatPageAction chat_view_take_page(ChatView *v) { ChatPageAction a = v->page; v->page = (ChatPageAction){0}; return a; }
+Rectangle chat_view_page_rect(ChatView *v, ChatPageKind kind)
+{
+    return kind >= CHAT_PAGE_OLDER && kind <= CHAT_PAGE_LATEST ? v->page_rect[kind] : (Rectangle){0};
+}
+
 static uint64_t hash_str(const char *s, size_t n)
 {
     uint64_t h = 1469598103934665603ull;
@@ -113,43 +150,63 @@ static uint64_t hash_str(const char *s, size_t n)
 
 /* Rebuild the wrap cache for message i if its text or width changed. */
 /* `markdown`: a model reply, shown without its Markdown markers. */
-static void refresh(ChatView *v, size_t i, const char *content, bool markdown, float width)
+static MsgCache *refresh(ChatView *v, size_t i, const char *content, bool markdown, float width)
 {
     if (i >= v->ncache) {
+        if (i >= SIZE_MAX / sizeof(MsgCache)) return NULL;
         MsgCache *c = realloc(v->cache, (i + 1) * sizeof(MsgCache));
-        if (!c) return;
+        if (!c) return NULL;
         v->cache = c;
         for (size_t k = v->ncache; k <= i; k++) {
             memset(&v->cache[k], 0, sizeof(MsgCache));
             tb_init(&v->cache[k].buf);
         }
         v->ncache = i + 1;
+        v->cache_capacity = i + 1;
     }
     MsgCache *c = &v->cache[i];
-    size_t len = strlen(content);
-    uint64_t h = hash_str(content, len);
-    if (c->src_len == len && c->src_hash == h && c->width == width && c->layout.count) return;
+    char clipped[DISPLAY_BYTES + 1];
+    size_t len = strnlen(content, DISPLAY_BYTES + 1);
+    bool preview = len > DISPLAY_BYTES;
+    if (preview) {
+        len = DISPLAY_BYTES;
+        while (len && ((unsigned char)content[len] & 0xC0) == 0x80) len--;
+    }
+    memcpy(clipped, content, len); clipped[len] = '\0';
+    uint64_t h = hash_str(clipped, len);
+    if (c->valid && c->src_len == len && c->src_hash == h && c->width == width && c->markdown == markdown && c->preview == preview) return c;
     /* Replies saved with speaker labels ("Tripp: ") are shown without them. */
-    char *unlabelled = markdown ? llm_strip_speaker_labels(content, v->author_name, v->assistant_name) : NULL;
-    char *shown = markdown ? llm_markdown_display(unlabelled ? unlabelled : content) : NULL;
+    char *unlabelled = markdown ? llm_strip_speaker_labels(clipped, v->author_name, v->assistant_name) : NULL;
+    char *shown = markdown ? llm_markdown_display(unlabelled ? unlabelled : clipped) : NULL;
     free(unlabelled);
-    const char *text = shown ? shown : content;
+    const char *text = shown ? shown : clipped;
     size_t tlen = strlen(text);
     uint32_t *cps = malloc((tlen + 1) * sizeof(uint32_t));
     if (!cps) {
         free(shown);
-        return;
+        cache_free(c);
+        return NULL;
     }
     size_t n = utf8_decode((const uint8_t *)text, tlen, cps, NULL);
     free(shown);
-    tb_set(&c->buf, cps, n);
+    MsgCache staged = {0};
+    tb_init(&staged.buf);
+    bool ok = tb_set(&staged.buf, cps, n);
     free(cps);
-    wrap_compute(&c->layout, &c->buf, width > 20 ? width : 20, adv, v->text);
+    ok = ok && wrap_compute(&staged.layout, &staged.buf, width > 20 ? width : 20, adv, v->text) == 0;
+    if (!ok) { cache_free(&staged); cache_free(c); return NULL; }
+    cache_free(c);
+    *c = staged;
     c->src_len = len;
     c->src_hash = h;
     c->width = width;
     c->height = (float)c->layout.count * v->text->line_height;
+    c->valid = true; c->markdown = markdown; c->preview = preview;
+    return c;
 }
+
+static float cached_height(ChatView *v, size_t i) { return i < v->ncache && v->cache[i].valid ? v->cache[i].height : LABEL_H; }
+static bool footer(const ChatMessage *m) { return m->excerpt || (m->role == CHAT_ASSISTANT && !m->streaming && !m->error && m->content[0]); }
 
 static float content_width(Rectangle list) { return list.width - 2 * PAD - 2 * BUBBLE_PAD; }
 
@@ -158,17 +215,41 @@ static float total_height(ChatView *v, float width)
 {
     float y = PAD;
     size_t n = chat_count(v->chat);
+    for (size_t i = n; i < v->ncache; i++) cache_free(&v->cache[i]);
+    if (n < v->ncache) {
+        v->ncache = n;
+        if (!n) { free(v->cache); v->cache = NULL; v->cache_capacity = 0; }
+        else {
+            MsgCache *smaller = realloc(v->cache, n * sizeof(MsgCache));
+            if (smaller) { v->cache = smaller; v->cache_capacity = n; }
+        }
+    }
     for (size_t i = 0; i < n; i++) {
         const ChatMessage *m = chat_message(v->chat, i);
         refresh(v, i, m->content, m->role == CHAT_ASSISTANT && !m->is_edit, width);
-        y += LABEL_H + v->cache[i].height + 2 * BUBBLE_PAD + GAP;
-        if (m->role == CHAT_ASSISTANT && !m->streaming && !m->error && m->content[0]) y += LABEL_H;
+        y += LABEL_H + cached_height(v, i) + 2 * BUBBLE_PAD + GAP;
+        if (footer(m)) y += LABEL_H;
+        if (i < v->ncache && v->cache[i].preview) y += LABEL_H;
     }
     return y;
 }
 
 void chat_view_update(ChatView *v, Rectangle list, Rectangle input, bool input_focused)
 {
+    chat_lock(v->chat);
+    ChatWindowInfo info = chat_window_info(v->chat);
+    chat_unlock(v->chat);
+    memset(v->page_rect, 0, sizeof(v->page_rect));
+    if (info.active) {
+        for (int k = CHAT_PAGE_OLDER; k <= CHAT_PAGE_LATEST; k++) {
+            Rectangle r = { list.x + PAD + (k - 1) * 72, list.y, 68, PAGE_HEADER };
+            v->page_rect[k] = r;
+            bool enabled = k == CHAT_PAGE_OLDER ? info.older : k == CHAT_PAGE_NEWER ? info.newer : true;
+            if (enabled && !input_mouse_blocked() && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(GetMousePosition(), r))
+                v->page = (ChatPageAction){ .kind = (ChatPageKind)k };
+        }
+        list.y += PAGE_HEADER; list.height -= PAGE_HEADER;
+    }
     float width = content_width(list);
     uint64_t ver = chat_version(v->chat); /* takes the lock itself: read before locking */
     chat_lock(v->chat);
@@ -187,14 +268,30 @@ void chat_view_update(ChatView *v, Rectangle list, Rectangle input, bool input_f
             float y = list.y + PAD - v->scroll;
             for (size_t i = 0; i < n; i++) {
                 const ChatMessage *msg = chat_message(v->chat, i);
-                y += LABEL_H + v->cache[i].height + 2 * BUBBLE_PAD;
-                bool copyable = msg->role == CHAT_ASSISTANT && !msg->streaming && !msg->error && msg->content[0];
+                y += LABEL_H + cached_height(v, i) + 2 * BUBBLE_PAD;
+                if (i < v->ncache && v->cache[i].preview) y += LABEL_H;
+                bool copyable = footer(msg) && i < v->ncache && v->cache[i].valid;
                 if (copyable) {
+                    if (msg->excerpt) {
+                        Rectangle prev = { list.x + PAD + 100, y, 80, LABEL_H }, next = { list.x + PAD + 190, y, 80, LABEL_H };
+                        size_t cps = 0;
+                        for (const unsigned char *p = (const unsigned char *)msg->content; *p; p++) cps += (*p & 0xC0) != 0x80;
+                        if (msg->excerpt_start && CheckCollisionPointRec(m, prev))
+                            v->page = (ChatPageAction){ CHAT_PAGE_PART, msg->sequence, msg->excerpt_start > 2048 ? msg->excerpt_start - 2048 : 0 };
+                        if (msg->excerpt_more && CheckCollisionPointRec(m, next))
+                            v->page = (ChatPageAction){ CHAT_PAGE_PART, msg->sequence, msg->excerpt_start + cps };
+                        if (CheckCollisionPointRec(m, (Rectangle){list.x + PAD, y, 92, LABEL_H})) {
+                            input_set_clipboard(msg->content); v->copied = true;
+                        }
+                        y += LABEL_H + GAP;
+                        continue;
+                    }
                     Rectangle copy = { list.x + PAD, y + 2, 40, LABEL_H };
                     float nx = v->can_apply ? 184 : 52;
                     Rectangle apply = v->can_apply ? (Rectangle){ list.x + PAD + 52, y + 2, 120, LABEL_H } : (Rectangle){ 0 };
-                    Rectangle note = { list.x + PAD + nx, y + 2, 40, LABEL_H };
-                    Rectangle canon = { list.x + PAD + nx + 50, y + 2, 50, LABEL_H };
+                    bool can_record = !info.active || msg->sequence_known;
+                    Rectangle note = can_record ? (Rectangle){ list.x + PAD + nx, y + 2, 40, LABEL_H } : (Rectangle){0};
+                    Rectangle canon = can_record ? (Rectangle){ list.x + PAD + nx + 50, y + 2, 50, LABEL_H } : (Rectangle){0};
                     if (CheckCollisionPointRec(m, copy)) {
                         input_set_clipboard(msg->content);
                         v->copied = true;
@@ -205,7 +302,7 @@ void chat_view_update(ChatView *v, Rectangle list, Rectangle input, bool input_f
                         v->record_kind = CheckCollisionPointRec(m, canon) ? 1 : 0;
                     }
                     y += LABEL_H;
-                }
+                } else if (footer(msg)) y += LABEL_H;
                 y += GAP;
             }
         }
@@ -216,8 +313,9 @@ void chat_view_update(ChatView *v, Rectangle list, Rectangle input, bool input_f
         float y = PAD;
         for (size_t i = 0; i < (size_t)v->reveal_index; i++) {
             const ChatMessage *msg = chat_message(v->chat, i);
-            y += LABEL_H + v->cache[i].height + 2 * BUBBLE_PAD + GAP;
-            if (msg->role == CHAT_ASSISTANT && !msg->streaming && !msg->error && msg->content[0]) y += LABEL_H;
+            y += LABEL_H + cached_height(v, i) + 2 * BUBBLE_PAD + GAP;
+            if (footer(msg)) y += LABEL_H;
+            if (i < v->ncache && v->cache[i].preview) y += LABEL_H;
         }
         v->scroll = y - PAD;
         v->stick_to_end = false;
@@ -347,6 +445,17 @@ static void draw_rows(ChatView *v, const MsgCache *c, float x, float y, Color co
 
 void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_focused)
 {
+    chat_lock(v->chat);
+    ChatWindowInfo info = chat_window_info(v->chat);
+    chat_unlock(v->chat);
+    if (info.active) {
+        const char *labels[] = { "", "Older", "Newer", "Latest" };
+        for (int k = CHAT_PAGE_OLDER; k <= CHAT_PAGE_LATEST; k++) {
+            bool enabled = k == CHAT_PAGE_OLDER ? info.older : k == CHAT_PAGE_NEWER ? info.newer : true;
+            sfont_draw_utf8(v->label, labels[k], (int)strlen(labels[k]), list.x + PAD + (k - 1) * 72, list.y + 3, enabled ? COL_LINK : COL_LABEL);
+        }
+        list.y += PAGE_HEADER; list.height -= PAGE_HEADER;
+    }
     float width = content_width(list);
     BeginScissorMode((int)list.x, (int)list.y, (int)list.width, (int)list.height);
     chat_lock(v->chat);
@@ -360,24 +469,28 @@ void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_foc
     v->last_apply = v->last_note = v->last_canon = (Rectangle){ 0 };
     for (size_t i = 0; i < n; i++) {
         const ChatMessage *m = chat_message(v->chat, i);
-        refresh(v, i, m->content, m->role == CHAT_ASSISTANT && !m->is_edit, width);
-        const MsgCache *c = &v->cache[i];
+        const MsgCache *c = refresh(v, i, m->content, m->role == CHAT_ASSISTANT && !m->is_edit, width);
         /* A message that went to (or came from) a remote model says so,
          * also when the chat is reopened later. */
         char who[480];
         if (m->via && m->via[0])
             snprintf(who, sizeof(who), m->role == CHAT_USER ? "You \xC2\xB7 sent to %s" : "%s", m->via);
         else snprintf(who, sizeof(who), "%s", m->role == CHAT_USER ? "You" : v->assistant_name);
+        if (m->excerpt) {
+            size_t used = strlen(who);
+            snprintf(who + used, sizeof(who) - used, " · excerpt at character %zu", m->excerpt_start + 1);
+        }
         sfont_draw_utf8(v->label, who, (int)strlen(who), list.x + PAD, y, m->via && m->via[0] ? (Color){ 0xE6, 0xB4, 0x50, 0xFF } : COL_LABEL);
         y += LABEL_H;
-        float bh = c->height + 2 * BUBBLE_PAD;
+        float bh = (c ? c->height : LABEL_H) + 2 * BUBBLE_PAD;
         if ((long)i == v->flash_index && GetTime() - v->flash_t < 2.5)
             DrawRectangleLinesEx((Rectangle){ list.x + PAD - 3, y - 3, list.width - 2 * PAD + 6, bh + 6 }, 2.0f,
                                  (Color){ 0xE6, 0xB4, 0x50, 0xFF });
         if (m->role == CHAT_USER)
             DrawRectangleRounded((Rectangle){ list.x + PAD, y, list.width - 2 * PAD, bh }, 0.12f, 6, COL_USER_BG);
-        draw_rows(v, c, list.x + PAD + BUBBLE_PAD, y + BUBBLE_PAD, m->error ? COL_ERROR : COL_TEXT, list);
-        if (m->streaming && blink) {
+        if (c) draw_rows(v, c, list.x + PAD + BUBBLE_PAD, y + BUBBLE_PAD, m->error ? COL_ERROR : COL_TEXT, list);
+        else sfont_draw_utf8(v->label, "Layout unavailable", 18, list.x + PAD, y, COL_ERROR);
+        if (c && m->streaming && blink) {
             /* Streaming caret after the last character. */
             size_t rows = c->layout.count ? c->layout.count : 1;
             const WrapRow *last = c->layout.count ? &c->layout.rows[c->layout.count - 1] : NULL;
@@ -386,7 +499,18 @@ void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_foc
             DrawRectangleRec((Rectangle){ cx + 1, cy + 3, 7, v->text->line_height - 6 }, COL_LABEL);
         }
         y += bh;
-        if (m->role == CHAT_ASSISTANT && !m->streaming && !m->error && m->content[0]) {
+        if (c && c->preview) {
+            const char *preview = "Display preview; actions use the complete message";
+            sfont_draw_utf8(v->label, preview, (int)strlen(preview), list.x + PAD, y, COL_LABEL);
+            y += LABEL_H;
+        }
+        if (m->excerpt) {
+            if (i == n - 1) v->last_apply = v->last_note = v->last_canon = (Rectangle){0};
+            sfont_draw_utf8(v->label, "Copy excerpt", 12, list.x + PAD, y + 2, COL_LINK);
+            if (m->excerpt_start) sfont_draw_utf8(v->label, "Earlier part", 12, list.x + PAD + 100, y + 2, COL_LINK);
+            if (m->excerpt_more) sfont_draw_utf8(v->label, "Next part", 9, list.x + PAD + 190, y + 2, COL_LINK);
+            y += LABEL_H;
+        } else if (m->role == CHAT_ASSISTANT && !m->streaming && !m->error && m->content[0]) {
             sfont_draw_utf8(v->label, "Copy", 4, list.x + PAD, y + 2, COL_LINK);
             /* "Apply to document" only with a document to apply it to. */
             float nx = v->can_apply ? 184 : 52;
@@ -395,10 +519,12 @@ void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_foc
                 sfont_draw_utf8(v->label, apply, (int)strlen(apply), list.x + PAD + 52, y + 2, COL_LINK);
                 v->last_apply = (Rectangle){ list.x + PAD + 52, y + 2, 120, LABEL_H };
             }
-            sfont_draw_utf8(v->label, "Note", 4, list.x + PAD + nx, y + 2, COL_LINK);
-            sfont_draw_utf8(v->label, "Canon", 5, list.x + PAD + nx + 50, y + 2, COL_LINK);
-            v->last_note = (Rectangle){ list.x + PAD + nx, y + 2, 40, LABEL_H };
-            v->last_canon = (Rectangle){ list.x + PAD + nx + 50, y + 2, 50, LABEL_H };
+            if (!info.active || m->sequence_known) {
+                sfont_draw_utf8(v->label, "Note", 4, list.x + PAD + nx, y + 2, COL_LINK);
+                sfont_draw_utf8(v->label, "Canon", 5, list.x + PAD + nx + 50, y + 2, COL_LINK);
+                v->last_note = (Rectangle){ list.x + PAD + nx, y + 2, 40, LABEL_H };
+                v->last_canon = (Rectangle){ list.x + PAD + nx + 50, y + 2, 50, LABEL_H };
+            } else if (i == n - 1) v->last_note = v->last_canon = (Rectangle){0};
             if (m->truncated || m->stopped) {
                 const char *note = m->stopped ? "Stopped before the end" : "Reply stopped at the length limit";
                 sfont_draw_utf8(v->label, note, (int)strlen(note), list.x + PAD + 296, y + 2, COL_LABEL);

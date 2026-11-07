@@ -93,6 +93,13 @@ static bool own_conversation(Db *db, const char *project_id, const char *id)
 
 bool sdb_chat_append(Db *db, const char *project_id, const char *id, const char *title, const ChatMessage *m)
 {
+    return sdb_chat_append_sequenced(db, project_id, id, title, m, NULL);
+}
+
+bool sdb_chat_append_sequenced(Db *db, const char *project_id, const char *id, const char *title,
+                                const ChatMessage *m, int64_t *sequence)
+{
+    if (sequence) *sequence = -1;
     double t = now_s();
     if (!db_begin(db)) return false;
     DbArg c[5] = { DB_S(id), DB_S(project_id), DB_S(title && title[0] ? title : "Chat"), DB_D(t), DB_D(t) };
@@ -135,6 +142,7 @@ bool sdb_chat_append(Db *db, const char *project_id, const char *id, const char 
     ok = ok && db_run(db, "UPDATE conversations SET updated_at = ? WHERE id = ?", (DbArg[2]){ DB_D(t), DB_S(id) }, 2, NULL);
     if (ok) ok = db_commit(db);
     else db_rollback(db);
+    if (ok && sequence) *sequence = seq;
     return ok;
 }
 
@@ -227,6 +235,8 @@ bool sdb_chat_load(Db *db, const char *project_id, const char *id, ChatMessage *
         m->truncated = row.truncated;
         m->via = row.via && row.via[0] ? strdup(row.via) : NULL;
         m->ts = row.created_at;
+        m->sequence_known = true;
+        m->sequence = row.seq;
         ok = m->content && (!row.via || !row.via[0] || m->via);
         if (!ok) break;
         /* The documents' *current* names: renames are followed for free. */

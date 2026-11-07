@@ -36,6 +36,10 @@ void chat_store_new_id(char *out, size_t outlen);
 /* Append one message; writes the meta line first if the file is new.
  * `title` is used only for a new file. */
 bool chat_store_append(StoreManager *manager, const char *project_dir, const char *id, const char *title, const ChatMessage *m);
+/* Return the committed DB sequence; file mode returns -1. Failure never assigns
+ * a sequence. A failed/uncertain append must not be retried automatically. */
+bool chat_store_append_sequenced(StoreManager *manager, const char *project_dir, const char *id, const char *title,
+                                const ChatMessage *m, int64_t *sequence);
 
 /* Rename a stored conversation (a title line is appended). */
 bool chat_store_rename(StoreManager *manager, const char *project_dir, const char *id, const char *title);

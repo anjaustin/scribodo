@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <time.h>
 #include <unistd.h>
 #include <mysql.h>
 
@@ -218,6 +219,160 @@ static void test_chat_source_pages(void)
     cursor = (ChatSourceCursor){ .started = true, .seq = 2, .end_seq = 3 };
     CHECK(sdb_chat_source_page(db, pid, cid, &cursor, &page) && page.count == 1 && page.chunks[0].seq == 3);
     chat_source_page_free(&page);
+    free(large);
+    store_stop(g_store);
+}
+
+static double monotonic_seconds(void)
+{
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (double)t.tv_sec + (double)t.tv_nsec / 1e9;
+}
+
+static void measure_chat_window(Db *db, const char *pid, const char *cid, size_t count)
+{
+    double full[3], window[3];
+    size_t full_bytes = 0, page_bytes = 0, page_rows = 0;
+    for (size_t run = 0; run < 3; run++) {
+        ChatMessage *messages = NULL;
+        size_t n = 0;
+        double begin = monotonic_seconds();
+        CHECK(sdb_chat_load(db, pid, cid, &messages, &n) && n == count);
+        full[run] = monotonic_seconds() - begin;
+        full_bytes = 0;
+        for (size_t i = 0; i < n; i++) full_bytes += strlen(messages[i].content);
+        chat_store_free_messages(messages, n);
+        ChatWindowPage page;
+        ChatWindowRequest request = { .direction = CHAT_WINDOW_LATEST };
+        begin = monotonic_seconds();
+        CHECK(sdb_chat_window(db, pid, cid, &request, &page));
+        window[run] = monotonic_seconds() - begin;
+        CHECK(page.count == 64 && page.text_bytes <= 65536);
+        page_rows = page.count; page_bytes = page.text_bytes;
+        chat_window_page_free(&page);
+    }
+    for (size_t i = 0; i < 3; i++) for (size_t j = i + 1; j < 3; j++) {
+        if (full[i] > full[j]) { double tmp = full[i]; full[i] = full[j]; full[j] = tmp; }
+        if (window[i] > window[j]) { double tmp = window[i]; window[i] = window[j]; window[j] = tmp; }
+    }
+    printf("    window fixture=%zu full_bytes=%zu window_rows=%zu window_bytes=%zu full_ms=%.3f window_ms=%.3f (warm median of 3)\n",
+           count, full_bytes, page_rows, page_bytes, full[1] * 1000, window[1] * 1000);
+}
+
+static void test_chat_windows(void)
+{
+    char why[256], pid[40];
+    CHECK(store_start(g_store, g_name, why, sizeof(why)));
+    CHECK(store_project_id(g_store, "/private/var", true, pid, sizeof(pid)));
+    Db *db = store_db(g_store);
+    const char *cid = "20261106-170000-abcd";
+    CHECK(db_begin(db));
+    CHECK(db_run(db, "INSERT INTO conversations (id,project_id,title,created_at,updated_at) VALUES (?,?,?,1,1)",
+                 (DbArg[3]){ DB_S(cid), DB_S(pid), DB_S("Window fixture") }, 3, NULL));
+    for (int i = 0; i < 10000; i++) {
+        char text[256];
+        snprintf(text, sizeof(text), "message %d", i);
+        CHECK(db_run(db, "INSERT INTO messages (conversation_id,seq,role,content,created_at) VALUES (?,?,?,?,1)",
+                     (DbArg[4]){ DB_S(cid), DB_I(i * 3), DB_S(i % 2 ? "assistant" : "user"), DB_S(text) }, 4, NULL));
+        if (i == 99 || i == 999 || i == 9999) {
+            CHECK(db_commit(db));
+            measure_chat_window(db, pid, cid, (size_t)i + 1);
+            if (i != 9999) CHECK(db_begin(db));
+        }
+    }
+    ChatWindowPage page;
+    ChatWindowRequest request = { .direction = CHAT_WINDOW_LATEST };
+    CHECK(sdb_chat_window(db, pid, cid, &request, &page));
+    CHECK(page.count == 64 && page.older && !page.newer && page.attachments_known && !page.latest_user_docs[0]);
+    CHECK(page.messages[0].sequence == 9936 * 3 && page.messages[63].sequence == 9999 * 3);
+    CHECK(!strcmp(page.messages[63].content, "message 9999"));
+    int64_t first = page.messages[0].sequence;
+    chat_window_page_free(&page);
+    request = (ChatWindowRequest){ .direction = CHAT_WINDOW_BEFORE, .sequence = first };
+    CHECK(sdb_chat_window(db, pid, cid, &request, &page));
+    CHECK(page.count == 64 && page.older && page.newer && page.messages[63].sequence == 9935 * 3);
+    int64_t last = page.messages[63].sequence;
+    chat_window_page_free(&page);
+    request = (ChatWindowRequest){ .direction = CHAT_WINDOW_AFTER, .sequence = last };
+    CHECK(sdb_chat_window(db, pid, cid, &request, &page));
+    CHECK(page.count == 64 && page.messages[0].sequence == first && !page.newer);
+    chat_window_page_free(&page);
+    request = (ChatWindowRequest){ .direction = CHAT_WINDOW_FOCUS, .sequence = 41 * 3 };
+    CHECK(sdb_chat_window(db, pid, cid, &request, &page));
+    CHECK(page.count == 42 && !page.older && page.newer && !strcmp(page.messages[41].content, "message 41"));
+    chat_window_page_free(&page);
+    request.sequence++;
+    CHECK(!sdb_chat_window(db, pid, cid, &request, &page) && !page.messages && !page.count); /* sequence gap */
+    char *large = malloc(24001);
+    CHECK(large != NULL);
+    for (size_t i = 0; i < 24000; i += 4) {
+        memcpy(large + i, "\xF0\x9F\x8C\xAB", 4);
+        large[i + 3] = (char)(0x80 + (i / 4) % 61);
+    }
+    large[24000] = '\0';
+    ChatMessage message = { .role = CHAT_ASSISTANT, .content = large, .via = " " };
+    int64_t sequence = -1;
+    CHECK(sdb_chat_append_sequenced(db, pid, cid, "Window fixture", &message, &sequence) && sequence == 29998);
+    size_t offset = 0, reconstructed = 0, pieces = 0;
+    bool more = true;
+    while (more && pieces < 10) {
+        request = (ChatWindowRequest){ CHAT_WINDOW_FOCUS, sequence, offset };
+        CHECK(sdb_chat_window(db, pid, cid, &request, &page));
+        const ChatMessage *m = &page.messages[page.count - 1];
+        CHECK(m->sequence == sequence && m->excerpt && m->excerpt_start == offset && m->via && !strcmp(m->via, " "));
+        size_t bytes = strlen(m->content);
+        CHECK(bytes <= 8192 && bytes % 4 == 0 && !memcmp(large + reconstructed, m->content, bytes));
+        offset += bytes / 4; reconstructed += bytes;
+        more = m->excerpt_more;
+        CHECK(page.count <= 64 && page.text_bytes <= 65536);
+        pieces++;
+        chat_window_page_free(&page);
+    }
+    CHECK(!more && reconstructed == 24000 && offset == 6000 && pieces == 3);
+    request = (ChatWindowRequest){ CHAT_WINDOW_FOCUS, sequence, 6001 };
+    CHECK(!sdb_chat_window(db, pid, cid, &request, &page) && !page.count && !page.messages);
+    request = (ChatWindowRequest){ .direction = CHAT_WINDOW_LATEST };
+    CHECK(sdb_chat_window(db, "wrong-project", cid, &request, &page) && page.count == 0 && !page.older && !page.newer);
+    chat_window_page_free(&page);
+    CHECK(db_run(db, "UPDATE messages SET created_at=-1 WHERE conversation_id=? AND seq=?",
+                 (DbArg[2]){DB_S(cid), DB_I(9990 * 3)}, 2, NULL));
+    CHECK(!sdb_chat_window(db, pid, cid, &request, &page) && !page.count && !page.messages && !page.text_bytes);
+    CHECK(db_run(db, "UPDATE messages SET created_at=1 WHERE conversation_id=? AND seq=?",
+                 (DbArg[2]){DB_S(cid), DB_I(9990 * 3)}, 2, NULL));
+    CHECK(db_run(db, "UPDATE messages SET via=REPEAT('é',300) WHERE conversation_id=? AND seq=?",
+                 (DbArg[2]){ DB_S(cid), DB_I(sequence) }, 2, NULL));
+    CHECK(!sdb_chat_window(db, pid, cid, &request, &page) && !page.messages);
+    CHECK(db_run(db, "UPDATE messages SET via=NULL,content=CONCAT('a',CHAR(0),'b') WHERE conversation_id=? AND seq=?",
+                 (DbArg[2]){ DB_S(cid), DB_I(sequence) }, 2, NULL));
+    CHECK(!sdb_chat_window(db, pid, cid, &request, &page) && !page.messages);
+    CHECK(db_run(db, "UPDATE messages SET content='evidence' WHERE conversation_id=? AND seq=?",
+                 (DbArg[2]){ DB_S(cid), DB_I(sequence) }, 2, NULL));
+    for (size_t i = 0; i < 9; i++) {
+        char name[64], doc[40];
+        snprintf(name, sizeof(name), "window-attachment-%zu.md", i);
+        CHECK(store_document_id_db(db, pid, name, true, doc, sizeof(doc)));
+        CHECK(db_run(db, "INSERT INTO message_documents(message_id,document_id)"
+                         " SELECT id,? FROM messages WHERE conversation_id=? AND seq=?",
+                     (DbArg[3]){ DB_S(doc), DB_S(cid), DB_I(9998 * 3) }, 3, NULL));
+    }
+    CHECK(sdb_chat_window(db, pid, cid, &request, &page) && page.count == 64 && !page.attachments_known && !page.latest_user_docs[0]);
+    chat_window_page_free(&page);
+    /* The exact sequence returned by append is the source reference, not the
+     * last display position (63). Store linkage must preserve that identity. */
+    SourceRef source = { .kind = SRC_CHAT, .message = (long)sequence, .quote = "evidence", .len = 8 };
+    snprintf(source.chat, sizeof(source.chat), "%s", cid);
+    char record[40]; store_new_id('n', record, sizeof(record));
+    CHECK(sdb_record_append(db, pid, REC_NOTE, record, "active", "from the reply", &source, 1, NULL, true, NULL));
+    DbRows refs;
+    CHECK(db_query(db, "SELECT message_seq FROM source_refs WHERE record_id=?", (DbArg[1]){DB_S(record)}, 1, &refs));
+    int64_t actual = -1;
+    CHECK(refs.nrows == 1 && db_cell_i64(&refs, 0, 0, &actual) && actual == sequence);
+    db_rows_free(&refs);
+    CHECK(db_run(db, "UPDATE messages SET role='assistant' WHERE conversation_id=? AND seq>=?",
+                 (DbArg[2]){ DB_S(cid), DB_I(9937 * 3) }, 2, NULL));
+    CHECK(sdb_chat_window(db, pid, cid, &request, &page) && page.count == 64 && !page.attachments_known && !page.latest_user_docs[0]);
+    chat_window_page_free(&page);
     free(large);
     store_stop(g_store);
 }
@@ -1597,6 +1752,7 @@ int main(void)
     }
     TestCase tests[] = { { "store_ids", test_store_ids }, { "store_managers", test_store_managers }, { "backends", test_backends },
                          { "chat_source_pages", test_chat_source_pages },
+                         { "chat_windows", test_chat_windows },
                          { "import", test_import }, { "import_safety", test_import_safety },
                           { "transition_read_failures", test_transition_read_failures }, { "entities", test_entities },
                           { "legacy_import_read_failures", test_legacy_import_read_failures },

@@ -63,6 +63,10 @@ bool project_store_revisions_snapshot(StoreManager *manager, const char *project
 char *project_store_revisions_load(StoreManager *manager, const char *project_dir, const char *doc_path, const Revision *revision);
 
 bool project_store_chat_append(StoreManager *manager, const char *project_dir, const char *id, const char *title, const ChatMessage *message);
+bool project_store_chat_append_sequenced(StoreManager *manager, const char *project_dir, const char *id, const char *title,
+                                        const ChatMessage *message, int64_t *sequence);
+bool project_store_chat_window(StoreManager *manager, const char *project_dir, const char *id,
+                                const ChatWindowRequest *request, ChatWindowPage *out);
 bool project_store_chat_rename(StoreManager *manager, const char *project_dir, const char *id, const char *title);
 bool project_store_chat_set_observer(StoreManager *manager, const char *project_dir, const char *id, bool read);
 size_t project_store_chat_list(StoreManager *manager, const char *project_dir, ChatSummary **out);
