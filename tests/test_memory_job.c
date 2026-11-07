@@ -452,6 +452,8 @@ typedef struct {
     pthread_cond_t cv;
     bool hold, entered, release;
     unsigned failures, attempts, commits, resources;
+    bool retry_waiting;
+    struct timespec retry_due;
     char conversations[MEMORY_JOB_CONTROL_CAPACITY][40];
     MemoryJobAction actions[MEMORY_JOB_CONTROL_CAPACITY];
 } ControlGate;
@@ -467,6 +469,13 @@ static bool control_runner(StoreManager *m, const char *p, const char *c, Memory
         g->resources++;
         strcpy(status->scope.conversation_id, c);
     } else {
+        if (g->retry_waiting) {
+            struct timespec now;
+            assert(clock_gettime(CLOCK_REALTIME, &now) == 0);
+            assert(now.tv_sec > g->retry_due.tv_sec ||
+                   (now.tv_sec == g->retry_due.tv_sec && now.tv_nsec >= g->retry_due.tv_nsec));
+            g->retry_waiting = false;
+        }
         assert(first == (g->attempts == 0 || g->commits != 0));
         g->attempts++;
         g->entered = true;
@@ -474,7 +483,12 @@ static bool control_runner(StoreManager *m, const char *p, const char *c, Memory
         struct timespec until = deadline();
         while (g->hold && !g->release)
             assert(pthread_cond_timedwait(&g->cv, &g->mu, &until) == 0);
-        if (g->failures) g->failures--;
+        if (g->failures) {
+            g->failures--;
+            assert(clock_gettime(CLOCK_REALTIME, &g->retry_due) == 0);
+            g->retry_due.tv_sec++;
+            g->retry_waiting = true;
+        }
         else {
             assert(g->commits < MEMORY_JOB_CONTROL_CAPACITY);
             strcpy(g->conversations[g->commits], c);
@@ -536,13 +550,9 @@ static void test_consent_fifo_while_paused(void)
     assert(memory_job_status(job, &status) && !status.active && status.controls_pending);
     assert(memory_job_select(job, "/p", "B", MEMORY_JOB_RESUME));
     control_release(&g);
-    /* Wait for the failed head to enter retry backoff. */
-    for (unsigned i = 0; i < 5000; i++) {
-        memory_job_status(job, &status);
-        if (strstr(status.why, "retrying")) break;
-        assert(i != 4999);
-        poll_pause();
-    }
+    /* Wakeups must preserve the retry deadline. A loaded host may legitimately
+     * take over a second to execute this loop; check admission time in the
+     * callback, not an assumed upper bound on scheduler/sleep latency. */
     for (unsigned i = 0; i < 100; i++) {
         assert(memory_job_select(job, "/p", "B", MEMORY_JOB_RESUME));
         memory_job_pause(job, true);
@@ -550,7 +560,7 @@ static void test_consent_fifo_while_paused(void)
         nanosleep(&delay, NULL);
     }
     pthread_mutex_lock(&g.mu);
-    assert(g.attempts == 1 && !g.commits && !g.resources);
+    assert(g.attempts >= 1 && !g.resources);
     pthread_mutex_unlock(&g.mu);
     for (unsigned i = 0; i < 5000; i++) {
         memory_job_status(job, &status);

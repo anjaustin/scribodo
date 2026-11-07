@@ -54,6 +54,18 @@ static void file_metadata(void)
         fclose(f);
         CHECK(!chat_store_load_files(dir, "abc", &loaded, &count) && !loaded && !count);
     }
+    const char *nul_records[] = {
+        "{\"type\":\"message\",\"role\":\"assistant\",\"content\":\"x\",\"memory_sources\":\"KEEP\\u0000LOST\"}\n",
+        "{\"type\":\"message\",\"role\":\"user\",\"content\":\"remote source\",\"via\":\"\\u0000remote\"}\n"
+    };
+    for (size_t i = 0; i < sizeof(nul_records) / sizeof(*nul_records); i++) {
+        f = fopen(path, "w"); CHECK(f != NULL);
+        if (f) {
+            fputs(nul_records[i], f); fclose(f);
+            CHECK(!chat_store_load_files(dir, "abc", &loaded, &count) && !loaded && !count);
+            chat_store_free_messages(loaded, count);
+        }
+    }
     unlink(path);
     snprintf(path, sizeof(path), "%s/.scribodo/chats", dir); rmdir(path);
     snprintf(path, sizeof(path), "%s/.scribodo", dir); rmdir(path);

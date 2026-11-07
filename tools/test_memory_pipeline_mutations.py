@@ -27,6 +27,7 @@ def main():
         ("worker_control", "worker", None),
         ("worker_pause_controls", "worker", ("if (job->control_count) {", "if (job->control_count && !job->paused) {")),
         ("worker_idle_pacing", "worker", ("if (job->request.serial == serial && !time_due(navigation_due, now))", "if (false)")),
+        ("worker_control_backoff", "worker", ("if (!time_due(control_due, now))", "if (false)")),
         ("worker_clear_controls", "worker", ("job->selected = false;\n    job->status = (MemoryJobStatus){0};", "job->selected = false;\n    job->control_count = 0;\n    job->status = (MemoryJobStatus){0};")),
         ("worker_cold_tokenizer", "worker", ("if (job->tokenizer.server && llm_server_state(job->tokenizer.server, NULL, 0) != LLM_READY)", "if (false)")),
     ]

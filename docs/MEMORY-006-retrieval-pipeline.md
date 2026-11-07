@@ -146,9 +146,18 @@ Final local validation after the disabled-Rebuild/cutoff-warning fixes passed:
 `dbtest`, `make tsan`, and `make uitest uitest-db llmtest uitest-real backuptest`.
 Clang static analysis of the store, worker, planner, tokenizer, chat and history
 window modules reported no diagnostics. The pipeline mutation suite passed two
-unmodified controls and killed ten weakened protocols; this is targeted test
+unmodified controls and killed eleven weakened protocols; this is targeted test
 sensitivity, not a claim of complete fault coverage. Document cutoff notices
 remain first when appending bounded memory status/source information.
+
+Post-push trusted database/UI acceptance passed. Hosted CI exposed a test-only
+scheduler assumption in the consent FIFO test: 100 short sleeps can legitimately
+span more than the one-second retry backoff on a loaded runner. The regression
+now checks the retry deadline at callback entry rather than assuming a loop's
+maximum elapsed time; FIFO order, bounded controls and paused-resource assertions
+remain intact. A mutation that bypasses consent retry backoff is detected.
+File compatibility tests also verify that escaped-NUL provenance/provider fields
+are rejected by the existing whole-file guard, not silently shortened on import.
 
 The store UI fixture retrieves an author-established fact at sequence 0 after it
 has left a 130-message conversation's 64-message window. It also verifies explicit
