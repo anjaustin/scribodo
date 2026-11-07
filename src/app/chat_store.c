@@ -407,6 +407,12 @@ bool chat_store_load(StoreManager *manager, const char *project_dir, const char 
     return project_store_chat_load(manager, project_dir, id, messages, count);
 }
 
+bool chat_store_source_page(StoreManager *manager, const char *project_dir, const char *id,
+                            const ChatSourceCursor *cursor, ChatSourcePage *out)
+{
+    return project_store_chat_source_page(manager, project_dir, id, cursor, out);
+}
+
 void chat_store_free_messages(ChatMessage *msgs, size_t n)
 {
     for (size_t i = 0; i < n; i++) {

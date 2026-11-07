@@ -57,8 +57,8 @@ $(RAYLIB_LIB): $(RAYLIB_OBJS)
 
 # --- Scribodo ----------------------------------------------------------------
 CORE_SRCS := src/core/utf8.c src/core/text_buffer.c src/core/undo.c src/core/wrap.c src/core/doc_io.c src/core/diff.c src/core/file_text.c src/app/frame_view_model.c
-STORE_SRCS := src/app/db.c src/app/store.c src/app/project_store.c src/app/observer_store.c src/app/store_revisions.c src/app/store_records.c src/app/store_chats.c src/app/store_import.c src/app/store_entities.c src/app/backup.c src/app/backup_job.c src/app/service_supervisor.c src/app/entity_backfill_job.c src/app/name_detection_job.c src/app/project_session.c src/app/explorer_snapshot.c src/app/profile.c src/app/model_settings.c
-LLM_SRCS  := src/core/json.c src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/app/recent.c src/app/renames.c src/llm/observer.c src/llm/observer_text.c src/llm/observer_fake.c src/llm/observer_model.c src/llm/observer_job.c src/llm/semantic.c src/llm/remote.c src/llm/names.c src/llm/memfit.c $(STORE_SRCS)
+STORE_SRCS := src/app/db.c src/app/store.c src/app/project_store.c src/app/observer_store.c src/app/store_revisions.c src/app/store_records.c src/app/store_chats.c src/app/store_chat_history.c src/app/store_import.c src/app/store_entities.c src/app/backup.c src/app/backup_job.c src/app/service_supervisor.c src/app/entity_backfill_job.c src/app/name_detection_job.c src/app/project_session.c src/app/explorer_snapshot.c src/app/profile.c src/app/model_settings.c
+LLM_SRCS  := src/core/json.c src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/llm/chat_history.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/app/recent.c src/app/renames.c src/llm/observer.c src/llm/observer_text.c src/llm/observer_fake.c src/llm/observer_model.c src/llm/observer_job.c src/llm/semantic.c src/llm/remote.c src/llm/names.c src/llm/memfit.c $(STORE_SRCS)
 LLM_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(LLM_SRCS)) $(BUILD)/third_party/cJSON/cJSON.o
 APP_SRCS  := src/main.c src/app/script.c src/app/chat_controller.c src/app/reviewed_edit_controller.c src/ui/font.c src/ui/clay_render.c src/ui/editor.c src/ui/input.c \
              src/ui/chat_view.c src/ui/review_view.c src/ui/record_view.c src/ui/findings_view.c src/ui/prompt_view.c src/ui/menu_view.c src/ui/vendor_impl.c
@@ -67,7 +67,7 @@ APP_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(APP_SRCS))
 # Native dialogs (Objective-C on macOS).
 APP_OBJS  += $(BUILD)/src/platform/dialogs_mac.o
 APP   := $(BUILD)/scribodo
-TESTS := $(BUILD)/test_core $(BUILD)/test_doc_io $(BUILD)/test_editor $(BUILD)/test_editor_faults $(BUILD)/test_db_rows $(BUILD)/test_observer_text $(BUILD)/test_observer_fake $(BUILD)/test_components $(BUILD)/test_remote $(BUILD)/test_llm $(BUILD)/test_persistence_faults $(BUILD)/test_semantic_faults
+TESTS := $(BUILD)/test_core $(BUILD)/test_doc_io $(BUILD)/test_editor $(BUILD)/test_editor_faults $(BUILD)/test_db_rows $(BUILD)/test_observer_text $(BUILD)/test_observer_fake $(BUILD)/test_chat_history $(BUILD)/test_components $(BUILD)/test_remote $(BUILD)/test_llm $(BUILD)/test_persistence_faults $(BUILD)/test_semantic_faults
 
 .PHONY: all run test uitest uitest-real sanitize tsan cstest dbtest uitest-db backuptest remotetest offlinetest dependency-report clean distclean llama model llmtest
 
@@ -113,6 +113,9 @@ $(BUILD)/test_db_rows: $(BUILD)/src/app/db.o $(BUILD)/tests/test_db_rows.o
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS)
 
 $(BUILD)/test_observer_text: $(BUILD)/src/llm/observer_text.o $(BUILD)/tests/test_observer_text.o
+	$(CC) $(CFLAGS) $^ -o $@
+
+$(BUILD)/test_chat_history: $(BUILD)/src/llm/chat_history.o $(BUILD)/tests/test_chat_history.o
 	$(CC) $(CFLAGS) $^ -o $@
 
 $(BUILD)/test_observer_fake: $(BUILD)/src/llm/observer_text.o $(BUILD)/src/llm/observer_fake.o $(BUILD)/third_party/cJSON/cJSON.o $(BUILD)/tests/test_observer_fake.o

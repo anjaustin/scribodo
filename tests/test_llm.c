@@ -28,6 +28,8 @@
 #include "../src/app/records.h"
 #include "../src/app/revisions.h"
 #include "../src/llm/chat.h"
+#include "../src/llm/chat_history.h"
+#include "../src/app/chat_history.h"
 #include "../src/llm/http.h"
 #include "../src/llm/llm_text.h"
 #include "../src/llm/observer.h"
@@ -55,6 +57,76 @@ static void *start_backup_together(void *arg)
     while (!atomic_load(s->go)) sched_yield();
     s->started = backup_job_start(s->job, s->tools, s->project);
     return NULL;
+}
+
+static void test_bounded_request_history(void)
+{
+    ChatRequestHistory h;
+    CHECK(chat_request_history_copy(NULL, 0, false, &h) && h.count == 0);
+    chat_request_history_free(&h);
+    CHECK(!chat_request_history_copy(NULL, 1, false, &h) && !h.messages);
+    ChatMessage invalid_current = { .role = CHAT_USER, .content = "must not vanish", .error = true };
+    CHECK(!chat_request_history_copy(&invalid_current, 1, false, &h));
+    invalid_current.error = false;
+    CHECK(!chat_request_history_copy(&invalid_current, 1, true, &h));
+    invalid_current.role = CHAT_ASSISTANT;
+    CHECK(!chat_request_history_copy(&invalid_current, 1, false, &h));
+    ChatMessage small[] = {
+        { .role = CHAT_USER, .content = "local secret" },
+        { .role = CHAT_ASSISTANT, .content = "local reply" },
+        { .role = CHAT_USER, .content = "remote question", .via = "remote" },
+        { .role = CHAT_ASSISTANT, .content = "failed", .via = "remote", .error = true },
+        { .role = CHAT_USER, .content = "new question", .via = "remote" }
+    };
+    CHECK(chat_request_history_copy(small, 5, true, &h) && h.count == 2 && h.scanned == 5);
+    CHECK(!strcmp(h.messages[0].content, "remote question") && !strcmp(h.messages[1].content, "new question"));
+    CHECK(h.messages[0].via == NULL && h.messages[0].docs == NULL);
+    CHECK(h.messages[0].content != small[2].content);
+    chat_request_history_free(&h);
+
+    char *large = malloc(CHAT_HISTORY_MAX_BYTES + 2);
+    CHECK(large != NULL);
+    memset(large, 'x', CHAT_HISTORY_MAX_BYTES + 1);
+    large[CHAT_HISTORY_MAX_BYTES + 1] = '\0';
+    ChatMessage big[] = { { .role = CHAT_USER, .content = large },
+                          { .role = CHAT_ASSISTANT, .content = "old reply" },
+                          { .role = CHAT_USER, .content = "keep current request" } };
+    CHECK(chat_request_history_copy(big, 3, false, &h) && h.count == 1 && h.limited);
+    CHECK(!strcmp(h.messages[0].content, "keep current request"));
+    chat_request_history_free(&h);
+    CHECK(!chat_request_history_copy(big, 1, false, &h) && h.count == 0 && h.messages == NULL);
+    large[CHAT_HISTORY_MAX_BYTES] = '\0';
+    CHECK(chat_request_history_copy(big, 1, false, &h) && h.content_bytes == CHAT_HISTORY_MAX_BYTES);
+    chat_request_history_free(&h);
+    free(large);
+
+    /* Increasing archive size must not increase history copies or row scans.
+     * All source bodies are shared here; the snapshot must own its copies. */
+    size_t sizes[] = { 100, 1000, 10000, 100000 };
+    for (size_t k = 0; k < sizeof(sizes) / sizeof(sizes[0]); k++) {
+        size_t n = sizes[k] + 1;
+        ChatMessage *msgs = calloc(n, sizeof(*msgs));
+        CHECK(msgs != NULL);
+        for (size_t j = 0; j < n; j++)
+            msgs[j] = (ChatMessage){ .role = j % 2 ? CHAT_ASSISTANT : CHAT_USER, .content = "history text" };
+        CHECK(chat_request_history_copy(msgs, n, false, &h));
+        CHECK(h.count <= CHAT_HISTORY_MAX_MESSAGES && h.scanned <= CHAT_HISTORY_MAX_SCAN && h.limited);
+        CHECK(h.content_bytes <= CHAT_HISTORY_MAX_BYTES && h.messages[0].role == CHAT_USER);
+        printf("    history archive=%zu copied=%zu bytes=%zu scanned=%zu\n", n, h.count, h.content_bytes, h.scanned);
+        chat_request_history_free(&h);
+        /* Remote selection cannot scan backwards without bound for one old
+         * eligible message, or copy local text to find out it was private. */
+        msgs[0].via = "remote";
+        msgs[n - 1].via = "remote";
+        CHECK(chat_request_history_copy(msgs, n, true, &h));
+        CHECK(h.scanned <= CHAT_HISTORY_MAX_SCAN && h.count <= 2);
+        if (n > CHAT_HISTORY_MAX_SCAN) CHECK(h.count == 1 && h.limited);
+        chat_request_history_free(&h);
+        free(msgs);
+    }
+    ChatSourcePage page;
+    ChatSourceCursor cursor = {0};
+    CHECK(!chat_store_source_page(g_store, g_dir, "abcd", &cursor, &page) && page.count == 0);
 }
 
 static void test_neutralize(void)
@@ -602,6 +674,48 @@ static void wait_idle(ChatSession *s, DoneCtx *d, int want)
     chat_poll(s);
 }
 
+static void test_worker_bounded_history(void)
+{
+    ChatSession *s = chat_create(NULL);
+    ChatMessage *archive = calloc(10000, sizeof(*archive));
+    CHECK(s && archive);
+    for (size_t i = 0; i < 10000; i++)
+        archive[i] = (ChatMessage){ .role = i % 2 ? CHAT_ASSISTANT : CHAT_USER, .content = "old history" };
+    CHECK(chat_load_messages(s, archive, 10000));
+    free(archive);
+    DoneCtx d = {0};
+    chat_on_message_done(s, on_done, &d);
+    char err[256];
+    CHECK(chat_send(s, "current request", NULL, err, sizeof(err)));
+    wait_idle(s, &d, 2);
+    ChatHistoryStats stats = chat_history_stats(s);
+    CHECK(stats.messages == 63 && stats.scanned == 64 && stats.limited && stats.content_bytes < 1024);
+    const char *notice = chat_take_notice(s);
+    CHECK(notice && strstr(notice, "older history was omitted") != NULL);
+    chat_lock(s);
+    CHECK(chat_count(s) == 10002 && !chat_message(s, 10001)->error);
+    CHECK(!strcmp(chat_message(s, 0)->content, "old history")); /* archive in RAM not deleted */
+    chat_unlock(s);
+    char *document = malloc(100001);
+    CHECK(document != NULL);
+    memset(document, 'x', 100000);
+    document[100000] = '\0';
+    ChatContext context = { .doc_title = "large.md", .doc_text = document };
+    CHECK(chat_send(s, "discuss", &context, err, sizeof(err)));
+    free(document);
+    wait_idle(s, &d, 4);
+    notice = chat_take_notice(s);
+    CHECK(notice && strstr(notice, "document text was cut off") && strstr(notice, "older conversation history"));
+    CHECK(chat_send_edit(s, "tighten", "a short passage", NULL, err, sizeof(err)));
+    wait_idle(s, &d, 6);
+    stats = chat_history_stats(s);
+    CHECK(stats.messages == 0 && stats.scanned == 0 && stats.content_bytes == 0);
+    chat_clear(s);
+    stats = chat_history_stats(s);
+    CHECK(stats.messages == 0 && !stats.limited);
+    chat_destroy(s);
+}
+
 static void test_fake_backend(void)
 {
     ChatSession *s = chat_create(NULL);
@@ -618,6 +732,8 @@ static void test_fake_backend(void)
     CHECK(!chat_message(s, 1)->streaming);
     chat_unlock(s);
     CHECK(d.done == 2); /* user + assistant persisted */
+    ChatHistoryStats stats = chat_history_stats(s);
+    CHECK(stats.messages == 1 && stats.content_bytes == strlen("hello") && stats.scanned == 1 && !stats.limited);
 
     /* Cancel mid-stream keeps the partial reply. */
     CHECK(chat_send(s, "a much longer message to stream slowly", NULL, err, sizeof(err)));
@@ -1996,6 +2112,8 @@ int main(int argc, char **argv)
         { "backup_pipes", test_backup_pipes },
         { "service_supervisor", test_service_supervisor },
         { "request_builder", test_request_builder },
+        { "bounded_request_history", test_bounded_request_history },
+        { "worker_bounded_history", test_worker_bounded_history },
         { "chat_store", test_chat_store },
         { "chat_store_read_failures", test_chat_store_read_failures },
         { "concurrent_file_readers", test_concurrent_file_readers },

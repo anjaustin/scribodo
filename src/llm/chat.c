@@ -1,5 +1,6 @@
 #define _DARWIN_C_SOURCE
 #include "chat.h"
+#include "chat_history.h"
 #include "remote.h"
 
 #include <pthread.h>
@@ -56,6 +57,7 @@ struct ChatSession {
     size_t nctx_docs;
     char *edit_instruction, *edit_passage; /* set while an edit request is in flight */
     bool has_doc;
+    ChatHistoryStats history_stats;
     char notice[256];
     char notice_out[256];
     char build_error[256]; /* why the worker could not build the request */
@@ -84,6 +86,7 @@ static void free_docs(ChatSession *s)
 static bool push_message(ChatSession *s, ChatRole role, const char *content)
 {
     if (s->count == s->cap) {
+        if (s->cap > SIZE_MAX / 2 / sizeof(ChatMessage)) return false;
         size_t cap = s->cap ? s->cap * 2 : 16;
         ChatMessage *m = realloc(s->msgs, cap * sizeof(ChatMessage));
         if (!m) return false;
@@ -127,6 +130,8 @@ void chat_clear(ChatSession *s)
         free(s->msgs[i].via);
     }
     s->count = 0;
+    s->history_stats = (ChatHistoryStats){0};
+    s->notice[0] = s->notice_out[0] = '\0';
     s->version++;
     s->finished_pending = s->user_done_pending = false;
     pthread_mutex_unlock(&s->mu);
@@ -149,21 +154,38 @@ void chat_destroy(ChatSession *s)
 
 bool chat_load_messages(ChatSession *s, const ChatMessage *msgs, size_t n)
 {
-    if (atomic_load(&s->busy)) return false;
-    chat_clear(s);
-    pthread_mutex_lock(&s->mu);
+    if (atomic_load(&s->busy) || (n && !msgs) || n > SIZE_MAX / sizeof(ChatMessage)) return false;
+    /* Stage the whole replacement. Never destroy the open conversation or
+     * silently drop provider/attachment metadata on a failed allocation. */
+    ChatMessage *loaded = n ? calloc(n, sizeof(*loaded)) : NULL;
+    if (n && !loaded) return false;
     bool ok = true;
     for (size_t i = 0; i < n && ok; i++) {
-        ok = push_message(s, msgs[i].role, msgs[i].content);
-        if (ok) {
-            s->msgs[s->count - 1].error = msgs[i].error;
-            s->msgs[s->count - 1].is_edit = msgs[i].is_edit;
-            s->msgs[s->count - 1].docs = msgs[i].docs ? strdup(msgs[i].docs) : NULL;
-            s->msgs[s->count - 1].via = msgs[i].via && msgs[i].via[0] ? strdup(msgs[i].via) : NULL;
-        }
+        loaded[i] = msgs[i];
+        loaded[i].streaming = false;
+        loaded[i].content = strdup(msgs[i].content ? msgs[i].content : "");
+        loaded[i].docs = msgs[i].docs ? strdup(msgs[i].docs) : NULL;
+        loaded[i].via = msgs[i].via ? strdup(msgs[i].via) : NULL;
+        ok = (msgs[i].role == CHAT_USER || msgs[i].role == CHAT_ASSISTANT) && loaded[i].content &&
+             (!msgs[i].docs || loaded[i].docs) && (!msgs[i].via || loaded[i].via);
     }
+    if (!ok) {
+        for (size_t i = 0; i < n; i++) {
+            free(loaded[i].content);
+            free(loaded[i].docs);
+            free(loaded[i].via);
+        }
+        free(loaded);
+        return false;
+    }
+    chat_clear(s);
+    pthread_mutex_lock(&s->mu);
+    free(s->msgs);
+    s->msgs = loaded;
+    s->count = s->cap = n;
+    s->version++;
     pthread_mutex_unlock(&s->mu);
-    return ok;
+    return true;
 }
 
 void chat_lock(ChatSession *s) { pthread_mutex_lock(&s->mu); }
@@ -171,6 +193,14 @@ void chat_unlock(ChatSession *s) { pthread_mutex_unlock(&s->mu); }
 size_t chat_count(ChatSession *s) { return s->count; }
 const ChatMessage *chat_message(ChatSession *s, size_t i) { return i < s->count ? &s->msgs[i] : NULL; }
 bool chat_busy(ChatSession *s) { return atomic_load(&s->busy); }
+
+ChatHistoryStats chat_history_stats(ChatSession *s)
+{
+    pthread_mutex_lock(&s->mu);
+    ChatHistoryStats stats = s->history_stats;
+    pthread_mutex_unlock(&s->mu);
+    return stats;
+}
 
 uint64_t chat_version(ChatSession *s)
 {
@@ -610,7 +640,7 @@ static void finish(ChatSession *s, bool error, const char *errmsg)
 }
 
 /* Build the request on the worker thread (token counting talks to the
- * server). Copies the conversation under the lock first. */
+ * server). Copies only a bounded recent history under the lock first. */
 static long server_count(const char *text, void *ctx)
 {
     ChatSession *s = ctx;
@@ -638,21 +668,10 @@ static bool build_in_worker(ChatSession *s)
 {
     pthread_mutex_lock(&s->mu);
     size_t total = s->target; /* everything before the in-progress reply */
-    ChatMessage *copy = calloc(total ? total : 1, sizeof(ChatMessage));
-    bool ok = copy != NULL;
-    size_t n = 0;
-    for (size_t i = 0; ok && i < total; i++) {
-        /* A remote model gets only what was already exchanged with it (and
-         * this message): turns with the local model stay on this Mac
-         * (red-team 009). */
-        if (s->via_remote && !(s->msgs[i].via && s->msgs[i].via[0])) continue;
-        copy[n] = s->msgs[i];
-        copy[n].content = strdup(s->msgs[i].content);
-        copy[n].docs = NULL; /* not needed to build the request */
-        copy[n].via = NULL;
-        ok = copy[n].content != NULL;
-        n++;
-    }
+    ChatRequestHistory history = {0};
+    /* Edits use the protected instruction/passage, not chat history. */
+    bool ok = s->edit_passage || chat_request_history_copy(s->msgs, total, s->via_remote, &history);
+    s->history_stats = (ChatHistoryStats){ history.count, history.content_bytes, history.scanned, history.limited };
     ChatContext ctx = { s->ctx_title, s->ctx_text, s->ctx_docs, s->nctx_docs };
     char an[64], sn[64];
     snprintf(an, sizeof(an), "%s", s->author_name);
@@ -672,6 +691,9 @@ static bool build_in_worker(ChatSession *s)
     ChatTokenCount counter = !s->via_remote && s->server ? server_count : NULL;
     char *req = NULL;
     s->build_error[0] = '\0';
+    if (!ok)
+        snprintf(s->build_error, sizeof(s->build_error),
+                 "Could not prepare bounded chat history (current request must be at most 64 KiB); shorten it or retry");
     if (ok && s->edit_passage) {
         /* The passage and its rewrite must both fit in one request. */
         long pt = count_tokens(counter, s, s->edit_passage);
@@ -685,7 +707,7 @@ static bool build_in_worker(ChatSession *s)
         req = chat_build_edit_request(s->edit_instruction, s->edit_passage, s->has_doc ? &ctx : NULL, slot_ctx,
                                       counter, s, &truncated);
     else if (ok)
-        req = chat_build_request_ex(copy, n, s->has_doc ? &ctx : NULL, &names, slot_ctx, counter, s, &truncated);
+        req = chat_build_request_ex(history.messages, history.count, s->has_doc ? &ctx : NULL, &names, slot_ctx, counter, s, &truncated);
     if (req && use_samp) {
         char *tuned = chat_apply_sampling(req, &samp, s->edit_passage != NULL);
         free(req);
@@ -696,15 +718,18 @@ static bool build_in_worker(ChatSession *s)
         free(req);
         req = adapted;
     }
-    for (size_t i = 0; copy && i < n; i++) free(copy[i].content);
-    free(copy);
+    bool history_limited = history.limited;
+    chat_request_history_free(&history);
     pthread_mutex_lock(&s->mu);
     free(s->request);
     s->request = req;
     if (truncated)
         snprintf(s->notice, sizeof(s->notice), "%s",
-                 s->nctx_docs > 1 ? "Attached documents were too long for the model; the longest were cut off for this message"
-                                  : "The document was too long for the model and was cut off for this message");
+                 history_limited ? "Attached document text was cut off; older conversation history was also omitted from this request"
+                 : s->nctx_docs > 1 ? "Attached documents were too long for the model; the longest were cut off for this message"
+                                    : "The document was too long for the model and was cut off for this message");
+    else if (history_limited)
+        snprintf(s->notice, sizeof(s->notice), "Only recent conversation history was prepared; older history was omitted from this request");
     pthread_mutex_unlock(&s->mu);
     return req != NULL;
 }
@@ -833,6 +858,10 @@ static bool send_common(ChatSession *s, const char *text, const ChatContext *ctx
         snprintf(err, errlen, "Nothing to send");
         return false;
     }
+    if (ctx && ctx->ndocs && !ctx->docs) {
+        snprintf(err, errlen, "Invalid document context");
+        return false;
+    }
     /* The selected model only: no fallback either way. */
     if (!s->remote_selected && s->server && llm_server_state(s->server, NULL, 0) != LLM_READY) {
         snprintf(err, errlen, "The model isn't ready yet");
@@ -842,8 +871,14 @@ static bool send_common(ChatSession *s, const char *text, const ChatContext *ctx
     s->via_remote = s->remote_selected;
 
     pthread_mutex_lock(&s->mu);
+    size_t original_count = s->count;
     bool ok = push_message(s, CHAT_USER, text);
-    size_t user_index = s->count - 1;
+    if (!ok) {
+        pthread_mutex_unlock(&s->mu);
+        snprintf(err, errlen, "Out of memory");
+        return false;
+    }
+    size_t user_index = original_count;
     free(s->ctx_title);
     free(s->ctx_text);
     free(s->edit_instruction);
@@ -856,7 +891,7 @@ static bool send_common(ChatSession *s, const char *text, const ChatContext *ctx
     s->has_doc = single || (ctx && ctx->ndocs);
     s->ctx_title = single && ctx->doc_title ? strdup(ctx->doc_title) : NULL;
     s->ctx_text = single ? strdup(ctx->doc_text) : NULL;
-    if (single && !s->ctx_text) ok = false;
+    if (single && (!s->ctx_text || (ctx->doc_title && !s->ctx_title))) ok = false;
     if (ctx && ctx->ndocs) {
         s->ctx_docs = calloc(ctx->ndocs, sizeof(ChatDoc));
         ok = ok && s->ctx_docs;
@@ -866,7 +901,9 @@ static bool send_common(ChatSession *s, const char *text, const ChatContext *ctx
             s->ctx_docs[i].text = strdup(ctx->docs[i].text ? ctx->docs[i].text : "");
             s->nctx_docs++;
             ok = s->ctx_docs[i].title && s->ctx_docs[i].text;
-            names += strlen(ctx->docs[i].title ? ctx->docs[i].title : "") + 1;
+            size_t len = strlen(ctx->docs[i].title ? ctx->docs[i].title : "");
+            if (len >= SIZE_MAX - names) ok = false;
+            else names += len + 1;
         }
         /* The user message records which documents it was sent with. */
         char *joined = ok ? malloc(names) : NULL;
@@ -877,28 +914,44 @@ static bool send_common(ChatSession *s, const char *text, const ChatContext *ctx
                 strcat(joined, s->ctx_docs[i].title);
             }
             s->msgs[user_index].docs = joined;
-        }
+        } else ok = false;
     } else if (single && ctx->doc_title && ok) {
         s->msgs[user_index].docs = strdup(ctx->doc_title);
     } else if (ok) {
         s->msgs[user_index].docs = strdup(""); /* sent with nothing attached */
     }
+    ok = ok && s->msgs[user_index].docs;
     ok = ok && push_message(s, CHAT_ASSISTANT, "");
     if (ok) {
-        s->target = s->count - 1;
-        s->msgs[s->target].streaming = true;
-        s->msgs[s->target].is_edit = passage != NULL;
+        size_t assistant_index = s->count - 1;
+        s->msgs[assistant_index].streaming = true;
+        s->msgs[assistant_index].is_edit = passage != NULL;
         s->msgs[user_index].is_edit = passage != NULL;
         /* Which messages left this Mac, kept with them (shown and saved). */
         if (s->via_remote) {
             char via[400];
             snprintf(via, sizeof(via), "%s \xC2\xB7 %s", s->remote.name, s->remote.host);
             s->msgs[user_index].via = strdup(via);
-            s->msgs[s->target].via = strdup(via);
+            s->msgs[assistant_index].via = strdup(via);
+            ok = s->msgs[user_index].via && s->msgs[assistant_index].via;
         }
-        s->user_index = user_index;
-        s->user_done_pending = true;
-        s->last_truncated = false;
+        if (ok) {
+            s->target = assistant_index;
+            s->user_index = user_index;
+            s->user_done_pending = true;
+            s->last_truncated = false;
+        }
+    }
+    if (!ok) {
+        /* Restore the complete pre-send transcript. Context copies are owned
+         * by the session and will be replaced on retry or freed on destroy. */
+        for (size_t i = original_count; i < s->count; i++) {
+            free(s->msgs[i].content);
+            free(s->msgs[i].docs);
+            free(s->msgs[i].via);
+        }
+        s->count = original_count;
+        s->version++;
     }
     pthread_mutex_unlock(&s->mu);
     if (!ok) {

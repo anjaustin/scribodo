@@ -77,7 +77,8 @@ bool chat_send_edit(ChatSession *s, const char *instruction, const char *passage
 void chat_cancel(ChatSession *s);
 bool chat_busy(ChatSession *s);
 
-/* Load an existing conversation (replaces the current one). Not while busy. */
+/* Load an existing conversation (replaces the current one). Not while busy.
+ * Allocation/validation failure leaves the current conversation intact. */
 bool chat_load_messages(ChatSession *s, const ChatMessage *msgs, size_t n);
 void chat_clear(ChatSession *s);
 
@@ -95,6 +96,14 @@ void chat_unlock(ChatSession *s);
 size_t chat_count(ChatSession *s);                    /* lock held */
 const ChatMessage *chat_message(ChatSession *s, size_t i); /* lock held */
 uint64_t chat_version(ChatSession *s);
+
+/* Last request's owned history materialization (not documents, model context or
+ * the UI/archive). Read on any thread. Counters reset when the session clears. */
+typedef struct {
+    size_t messages, content_bytes, scanned;
+    bool limited;
+} ChatHistoryStats;
+ChatHistoryStats chat_history_stats(ChatSession *s);
 
 /* ---- exposed for tests ------------------------------------------------ */
 

@@ -8,6 +8,13 @@ evidence and session log when a remediation lands.
 **Baseline:** `a9652c7` (`Route project stores and own service startup`)
 **Status:** pre-alpha; macOS on Apple Silicon is the MVP target
 
+## Current product priority
+
+The five post-audit product-readiness gaps are tracked separately in
+[`PRODUCT-GAPS.md`](PRODUCT-GAPS.md). **GAP-003, whole-manuscript scale and
+sustained-use evidence, is P0 by user direction.** The other four are retained
+as deferred follow-ups; completed architectural debt below is historical.
+
 ## Status legend
 
 - **Open** — accepted debt, no implementation started.
@@ -614,3 +621,38 @@ Do not treat these as remediation targets without a changed product decision:
   offline acceptance (42 script runs, 628 expectations, including real models).
 - Evidence and residual limits remain in `docs/REDTEAM-013-failure-paths.md`.
   The unrelated sample-document edit is neither modified nor included in commits.
+
+### 2026-11-06 — product gap priorities and long-lived memory investigation
+
+- Recorded all five product-readiness gaps in `docs/PRODUCT-GAPS.md`; GAP-003
+  (whole-manuscript scale and sustained use) is P0 by user direction. The other
+  four remain deferred, individually scoped and paired with exit evidence.
+- Inspected `ranxianglei/billion-context` at commit
+  `c3dfbe6b21a1b2fc3642594043bc81fd2ae91247`, including its kernel design,
+  licenses and reported benchmark limitations. No upstream package was installed
+  or executed. The inspected licenses add visible attribution to MIT text.
+- Recommended evaluating a native bounded context planner using retained raw
+  sources, hierarchical briefs and exact/semantic retrieval. Request compression
+  alone does not bound host history loads, copies, UI caches or background work.
+- Recorded the source-pinned assessment, privacy/authority invariants, workload
+  sweeps and baseline/retrieval/hybrid comparison plan in
+  `docs/MEMORY-001-long-lived-context.md`. This is design work only: no inference
+  behavior changed and no benchmark results or infinite-recall claims are made.
+- Validated the new Markdown's local link targets and whitespace. The existing
+  sample edit remains untouched; implementation and numeric performance budgets
+  are next-step decisions.
+
+### 2026-11-06 — bounded memory foundation and adversarial remediation
+
+- Implemented bounded owned request-history snapshots and byte-limited MariaDB
+  source traversal. Reviewed edits no longer copy unrelated chat history.
+- Adversarial regressions exposed mandatory-request omission, non-atomic chat
+  loading/preparation, lost metadata and an aggregate high-water query. Fixed
+  them and added allocation sweeps, deterministic properties, query-plan and
+  combined-notice checks. Five selector mutations are detected.
+- Validation and limits are recorded in `REDTEAM-014-memory-foundation.md` and
+  `MEMORY-003-implementation-progress.md`. Unit, real database, sanitizer and
+  scripted UI suites pass; this is not a full memory MVP or recall-quality claim.
+- UI history/cache windowing and stable source-navigation mappings remain next,
+  before ingestion/outbox/retrieval and T1/T2 experiments. GAP-003 remains P0.
+- The sample-document edit remains untouched and excluded from commits.

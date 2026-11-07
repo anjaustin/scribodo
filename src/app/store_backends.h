@@ -13,6 +13,7 @@
 #include <stddef.h>
 
 #include "app/chat_store.h"
+#include "app/chat_history.h"
 #include "app/records.h"
 #include "app/revisions.h"
 #include "app/store.h"
@@ -36,6 +37,10 @@ bool sdb_chat_append(Db *db, const char *project_id, const char *id, const char 
 size_t sdb_chat_list(Db *db, const char *project_id, ChatSummary **out);
 bool sdb_chat_list_checked(Db *db, const char *project_id, ChatSummary **out, size_t *count);
 bool sdb_chat_load(Db *db, const char *project_id, const char *id, ChatMessage **msgs, size_t *n);
+
+/* Bounded source traversal for memory ingestion; no full body/result fallback. */
+bool sdb_chat_source_page(Db *db, const char *project_id, const char *id,
+                          const ChatSourceCursor *cursor, ChatSourcePage *out);
 bool sdb_chat_rename(Db *db, const char *project_id, const char *id, const char *title);
 bool sdb_chat_set_observer(Db *db, const char *project_id, const char *id, bool read);
 

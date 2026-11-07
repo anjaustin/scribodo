@@ -597,6 +597,21 @@ bool project_store_chat_load(StoreManager *manager, const char *project_dir, con
     return ok;
 }
 
+bool project_store_chat_source_page(StoreManager *manager, const char *project_dir, const char *id,
+                                    const ChatSourceCursor *cursor, ChatSourcePage *out)
+{
+    if (!out) return false;
+    *out = (ChatSourcePage){0};
+    if (!project_dir || !project_dir[0] || !id || !cursor) return false;
+    ProjectStore store;
+    int lock = begin_operation(manager, project_dir, &store);
+    /* The memory MVP is DB-only. Never slurp a file or trust cached data if
+     * resolution pauses or the store becomes unavailable. */
+    bool ok = store.ops == &db_ops && sdb_chat_source_page(store.db, store.project_id, id, cursor, out);
+    project_store_file_unlock(lock);
+    return ok;
+}
+
 cJSON *project_store_observer_state_load(StoreManager *manager, const char *project_dir)
 {
     if (!project_dir || !project_dir[0]) return NULL;

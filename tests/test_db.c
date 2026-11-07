@@ -119,6 +119,109 @@ static void test_store_ids(void)
     store_set_offline(g_store, false);
 }
 
+static void test_chat_source_pages(void)
+{
+    char why[256], pid[40];
+    CHECK(store_start(g_store, g_name, why, sizeof(why)));
+    CHECK(store_project_id(g_store, "/private/var", true, pid, sizeof(pid)));
+    Db *db = store_db(g_store);
+    const char *cid = "20261106-150000-abcd";
+    /* Oversized Unicode source forces both byte-limited pages and UTF-8
+     * continuations. Every byte must reconstruct exactly, once and in order. */
+    size_t len = 200003;
+    char *large = malloc(len + 1);
+    CHECK(large != NULL);
+    memset(large, 'x', 8191);
+    for (size_t i = 8191; i + 4 <= len; i += 4) memcpy(large + i, "\xF0\x9F\x8C\xAB", 4);
+    large[len] = '\0';
+    ChatMessage m = { .role = CHAT_USER, .content = large };
+    CHECK(sdb_chat_append(db, pid, cid, "History pages", &m));
+    /* SQL string equality may ignore trailing spaces. Any nonempty persisted
+     * provider marker still means remote, matching the chat adapter's policy. */
+    m = (ChatMessage){ .role = CHAT_ASSISTANT, .content = "", .error = true, .truncated = true, .via = " " };
+    CHECK(sdb_chat_append(db, pid, cid, "History pages", &m));
+    for (size_t i = 0; i < 130; i++) {
+        m = (ChatMessage){ .role = CHAT_USER, .content = "tail" };
+        CHECK(sdb_chat_append(db, pid, cid, "History pages", &m));
+    }
+    ChatSourceCursor cursor = {0};
+    ChatSourcePage page;
+    DbRows plan;
+    CHECK(db_query(db, "EXPLAIN SELECT m.seq FROM messages m"
+                      " JOIN conversations c ON c.id = m.conversation_id"
+                      " WHERE m.conversation_id = ? AND c.project_id = ? ORDER BY m.seq DESC LIMIT 1",
+                   (DbArg[2]){ DB_S(cid), DB_S(pid) }, 2, &plan));
+    CHECK(db_rows_has_columns(&plan, 10));
+    bool indexed_seek = false;
+    for (size_t i = 0; i < plan.nrows; i++) {
+        const char *table = db_cell(&plan, i, 2), *key = db_cell(&plan, i, 5), *extra = db_cell(&plan, i, 9);
+        CHECK(!extra || !strstr(extra, "filesort"));
+        if (table && !strcmp(table, "m") && key && !strcmp(key, "msg_seq")) indexed_seek = true;
+    }
+    CHECK(indexed_seek); /* DESC LIMIT 1, not the archive-sized aggregate scan */
+    db_rows_free(&plan);
+    size_t copied = 0, empty = 0, tails = 0, pages = 0;
+    bool more = true;
+    while (more && pages < 20) {
+        CHECK(sdb_chat_source_page(db, pid, cid, &cursor, &page));
+        CHECK(page.count <= CHAT_SOURCE_PAGE_ROWS && page.text_bytes <= CHAT_SOURCE_PAGE_BYTES);
+        CHECK(page.next.started && page.next.end_seq == 131);
+        for (size_t i = 0; i < page.count; i++) {
+            ChatSourceChunk *c = &page.chunks[i];
+            size_t bytes = strlen(c->text);
+            CHECK(c->message_id > 0 && bytes <= CHAT_SOURCE_CHUNK_BYTES);
+            if (c->seq == 0) {
+                CHECK(c->byte_offset == copied && c->total_bytes == len && c->role == CHAT_USER && !c->remote);
+                CHECK(!memcmp(large + copied, c->text, bytes));
+                CHECK(!bytes || ((unsigned char)c->text[0] & 0xC0) != 0x80);
+                copied += bytes;
+            } else if (c->seq == 1) {
+                CHECK(bytes == 0 && c->error && c->truncated && c->remote && c->role == CHAT_ASSISTANT);
+                empty++;
+            } else { CHECK(!strcmp(c->text, "tail")); tails++; }
+        }
+        cursor = page.next;
+        more = page.has_more;
+        chat_source_page_free(&page);
+        if (pages++ == 0) {
+            /* Appends after page one must not move this traversal's endpoint. */
+            CHECK(sdb_chat_append(db, pid, cid, "History pages", &m));
+        }
+    }
+    CHECK(!more && copied == len && empty == 1 && tails == 130 && pages > 3);
+    CHECK(sdb_chat_source_page(db, pid, cid, &cursor, &page) && page.count == 0 && !page.has_more);
+    chat_source_page_free(&page);
+    printf("    source pages=%zu bytes=%zu messages=132 (concurrent append excluded)\n", pages, copied);
+    cursor = (ChatSourceCursor){ .started = true, .seq = 0, .end_seq = 131, .byte_offset = 8192 };
+    CHECK(!sdb_chat_source_page(db, pid, cid, &cursor, &page) && page.count == 0); /* inside emoji */
+    cursor.byte_offset = len + 1;
+    CHECK(!sdb_chat_source_page(db, pid, cid, &cursor, &page) && page.count == 0);
+    cursor = (ChatSourceCursor){ .started = true, .seq = 2, .end_seq = 0 };
+    CHECK(!sdb_chat_source_page(db, pid, cid, &cursor, &page) && page.count == 0);
+    cursor = (ChatSourceCursor){ .started = true, .seq = 1, .end_seq = 0, .byte_offset = 1 };
+    CHECK(!sdb_chat_source_page(db, pid, cid, &cursor, &page) && page.count == 0);
+    cursor = (ChatSourceCursor){0};
+    CHECK(sdb_chat_source_page(db, "wrong-project", cid, &cursor, &page) && page.count == 0 && !page.has_more);
+    chat_source_page_free(&page);
+    CHECK(db_run(db, "UPDATE messages SET created_at = -1 WHERE conversation_id = ? AND seq = 1",
+                 (DbArg[1]){ DB_S(cid) }, 1, NULL));
+    cursor = (ChatSourceCursor){ .started = true, .seq = 1, .end_seq = 131 };
+    CHECK(!sdb_chat_source_page(db, pid, cid, &cursor, &page) && page.count == 0);
+    cursor = (ChatSourceCursor){ .started = true, .seq = 0, .end_seq = 131, .byte_offset = 196607 };
+    CHECK(!sdb_chat_source_page(db, pid, cid, &cursor, &page) && page.count == 0 && page.text_bytes == 0);
+    CHECK(cursor.seq == 0 && cursor.byte_offset == 196607); /* retry position not advanced by failure */
+    CHECK(db_run(db, "UPDATE messages SET created_at = 1 WHERE conversation_id = ? AND seq = 1",
+                 (DbArg[1]){ DB_S(cid) }, 1, NULL));
+    /* Seek through sequence gaps, without assuming array offsets are IDs. */
+    CHECK(db_run(db, "DELETE FROM messages WHERE conversation_id = ? AND seq = 2",
+                 (DbArg[1]){ DB_S(cid) }, 1, NULL));
+    cursor = (ChatSourceCursor){ .started = true, .seq = 2, .end_seq = 3 };
+    CHECK(sdb_chat_source_page(db, pid, cid, &cursor, &page) && page.count == 1 && page.chunks[0].seq == 3);
+    chat_source_page_free(&page);
+    free(large);
+    store_stop(g_store);
+}
+
 static void test_store_managers(void)
 {
     StoreManager *a = store_manager_create(), *b = store_manager_create();
@@ -480,6 +583,12 @@ static void test_import(void)
     size_t nm = 0;
     CHECK(chat_store_load(g_store, proj, "20261104-160000-abcd", &msgs, &nm) && nm == 2 && msgs[0].docs &&
           !strcmp(msgs[0].docs, "Chapter One.md"));
+    ChatSourcePage source_page;
+    ChatSourceCursor source_cursor = {0};
+    CHECK(chat_store_source_page(g_store, proj, "20261104-160000-abcd", &source_cursor, &source_page) &&
+          source_page.count == 2 && !source_page.has_more);
+    CHECK(!strcmp(source_page.chunks[0].text, msgs[0].content) && !strcmp(source_page.chunks[1].text, msgs[1].content));
+    chat_source_page_free(&source_page);
     chat_store_free_messages(msgs, nm);
     {
         ChatSummary *il = NULL;
@@ -626,6 +735,7 @@ static void test_import(void)
     size_t paused_nmsgs = 99;
     CHECK(chat_store_list(g_store, proj, &paused_chats) == 0 && paused_chats == NULL);
     CHECK(!chat_store_load(g_store, proj, cid, &paused_msgs, &paused_nmsgs) && paused_msgs == NULL && paused_nmsgs == 0);
+    CHECK(!chat_store_source_page(g_store, proj, cid, &source_cursor, &source_page) && source_page.count == 0);
     CHECK(project_store_observer_state_load(g_store, proj) == NULL);
     ost = cJSON_CreateObject();
     CHECK(!project_store_observer_state_save(g_store, proj, ost));
@@ -1486,6 +1596,7 @@ int main(void)
         return 1;
     }
     TestCase tests[] = { { "store_ids", test_store_ids }, { "store_managers", test_store_managers }, { "backends", test_backends },
+                         { "chat_source_pages", test_chat_source_pages },
                          { "import", test_import }, { "import_safety", test_import_safety },
                           { "transition_read_failures", test_transition_read_failures }, { "entities", test_entities },
                           { "legacy_import_read_failures", test_legacy_import_read_failures },

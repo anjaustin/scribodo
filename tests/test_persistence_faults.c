@@ -3,6 +3,7 @@
 #include "test_util.h"
 #include "test_state_fixture.h"
 #include "app/chat_store.h"
+#include "llm/chat_history.h"
 #include "app/records.h"
 #include "app/revisions.h"
 #include <sys/stat.h>
@@ -83,6 +84,90 @@ static void chat_faults(void)
     }
 }
 
+static void request_history_faults(void)
+{
+    ChatMessage messages[] = { { .role = CHAT_USER, .content = "Question" },
+                               { .role = CHAT_ASSISTANT, .content = "Answer" },
+                               { .role = CHAT_USER, .content = "Follow-up" } };
+    ChatRequestHistory history;
+    fault_alloc_after(-1);
+    CHECK(chat_request_history_copy(messages, 3, false, &history) && history.count == 3);
+    long count = fault_alloc_count();
+    chat_request_history_free(&history);
+    CHECK(count == 4); /* one bounded array and three independent bodies */
+    for (long i = 0; i < count * 2; i++) {
+        allocation_case(i, count);
+        bool ok = chat_request_history_copy(messages, 3, false, &history);
+        fault_alloc_after(-1);
+        CHECK(!ok && !history.messages && history.count == 0 && history.content_bytes == 0);
+        chat_request_history_free(&history);
+    }
+}
+
+static void chat_load_faults(void)
+{
+    ChatMessage original = { .role = CHAT_USER, .content = "Keep this conversation" };
+    ChatMessage replacement[] = {
+        { .role = CHAT_USER, .content = "A question", .docs = "chapter.md", .via = "Provider", .ts = 123 },
+        { .role = CHAT_ASSISTANT, .content = "A partial answer", .via = "Provider", .ts = 124,
+          .truncated = true, .stopped = true, .is_edit = true }
+    };
+    ChatSession *s = chat_create(NULL);
+    CHECK(s && chat_load_messages(s, &original, 1));
+    fault_alloc_after(-1);
+    CHECK(chat_load_messages(s, replacement, 2));
+    long count = fault_alloc_count();
+    chat_lock(s);
+    CHECK(chat_message(s, 0)->ts == 123 && chat_message(s, 1)->ts == 124);
+    CHECK(chat_message(s, 1)->truncated && chat_message(s, 1)->stopped && chat_message(s, 1)->is_edit);
+    chat_unlock(s);
+    for (long i = 0; i < count * 2; i++) {
+        CHECK(chat_load_messages(s, &original, 1));
+        allocation_case(i, count);
+        bool ok = chat_load_messages(s, replacement, 2);
+        fault_alloc_after(-1);
+        CHECK(!ok);
+        chat_lock(s);
+        CHECK(chat_count(s) == 1 && !strcmp(chat_message(s, 0)->content, original.content));
+        chat_unlock(s);
+    }
+    chat_destroy(s);
+}
+
+static void chat_send_faults(void)
+{
+    /* Only UI-thread preparation allocations are injected. The fake worker has
+     * its own thread-local allocator state. Each failed send must be atomic. */
+    ChatDoc docs[] = { { "one.md", "first document" }, { "two.md", "second document" } };
+    ChatContext contexts[] = { {0}, { .doc_title = "one.md", .doc_text = "a document" },
+                               { .docs = docs, .ndocs = 2 } };
+    for (size_t k = 0; k < 4; k++) {
+        size_t context_index = k < 3 ? k : 0;
+        RemoteConfig remote = { .name = "Test provider", .base_url = "http://127.0.0.1:1/v1",
+                                .host = "127.0.0.1", .model = "test", .context_tokens = 32768 };
+        ChatSession *s = chat_create(NULL);
+        if (k == 3) CHECK(chat_select_remote(s, &remote));
+        char why[256];
+        fault_alloc_after(-1);
+        CHECK(chat_send(s, "question", &contexts[context_index], why, sizeof(why)));
+        long count = fault_alloc_count();
+        chat_cancel(s);
+        chat_destroy(s);
+        for (long i = 0; i < count * 2; i++) {
+            s = chat_create(NULL);
+            if (k == 3) CHECK(chat_select_remote(s, &remote));
+            allocation_case(i, count);
+            bool ok = chat_send(s, "question", &contexts[context_index], why, sizeof(why));
+            fault_alloc_after(-1);
+            CHECK(!ok && why[0] && !chat_busy(s));
+            chat_lock(s);
+            CHECK(chat_count(s) == 0);
+            chat_unlock(s);
+            chat_destroy(s);
+        }
+    }
+}
+
 static void writer_faults(void)
 {
     SourceRef source = { .kind = SRC_DOC, .quote = "A quote" };
@@ -152,6 +237,9 @@ int main(void)
     ChatMessage message = { .role = CHAT_USER, .content = "Keep me too", .docs = "chapter.md", .via = "A provider" };
     CHECK(chat_store_append(store, project, "abcd", "Fault tests", &message));
     TestCase tests[] = { { "record_allocations", record_faults }, { "revision_allocations", revision_faults },
+                        { "request_history_allocations", request_history_faults },
+                        { "chat_load_allocations", chat_load_faults },
+                        { "chat_send_allocations", chat_send_faults },
                          { "chat_allocations", chat_faults }, { "writer_allocations", writer_faults } };
     int rc = run_tests(tests, sizeof(tests) / sizeof(tests[0]));
     test_state_fixture_destroy(root, store);
