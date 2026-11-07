@@ -14,8 +14,9 @@ future slices. This extends [MEMORY-003](MEMORY-003-implementation-progress.md).
   applied as a whole-reply replacement or turned into a note/canon source. A
   complete in-memory reply can still be copied/applied in full even when its
   layout is only a bounded display preview; the UI labels that distinction.
-- Sending from an older window returns to the newest window before building the
-  request. Input and the author's current explicit attachment choices are kept.
+- Sending from an older window asynchronously returns to the newest window and
+  keeps input/explicit attachment choices; the author presses Send again once it
+  is ready. See [MEMORY-005](MEMORY-005-async-history.md).
   The chat engine independently refuses to send from an older window.
 - Stored message sequences, not display positions, identify new note/canon
   sources. Opening a chat source loads its exact sequence and codepoint offset,
@@ -145,10 +146,10 @@ not-stopped; a stopped flag lost by earlier versions cannot be reconstructed.
 
 ## Explicit remaining work
 
-- Loads are bounded in result size and SQL operation count but still synchronous
-  on explicit UI navigation. Slow queries/service timeouts can stall that action.
-  An owned asynchronous loader, cancellation and measured UI-latency gates remain
-  necessary before claiming outage responsiveness or the proposed p95 SLA.
+- Explicit DB navigation now uses the owned asynchronous worker described in
+  [MEMORY-005](MEMORY-005-async-history.md). Cancellation invalidates results but
+  cannot interrupt an in-flight database call; broader UI/deadline/latency gates
+  remain necessary before claiming outage responsiveness or the proposed p95 SLA.
 - File-backed conversation state, the observer, importer/exporter and backup
   compatibility paths still use their existing full-history readers. This does
   not establish bounded host memory for every feature/process or unbound legacy

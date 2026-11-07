@@ -1,6 +1,7 @@
 wait 5
 open "$DIR/windowbook/one.md"
 click_element ChatItem0
+wait_history
 click_element ChatInput
 type "unsaved close sentinel"
 key ENTER

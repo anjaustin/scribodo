@@ -7,6 +7,7 @@ expect explorer_has "Chapter One.md"
 expect explorer_has "remember the lighthouse"
 expect explorer_has "Old chat"
 click_element ChatItem0
+wait_history
 expect chat_count 2
 expect chat_last "You said: remember the lighthouse"
 expect attached "Chapter One.md"

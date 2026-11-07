@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include "app/chat_controller.h"
 #ifdef CHAT_VIEW_FAULT_TEST
 #include "fault_alloc.h"
 #endif
@@ -12,6 +13,31 @@
 extern Vector2 g_stub_mouse;
 extern float g_stub_wheel;
 extern bool g_stub_mouse_pressed;
+
+static void attachment_revisions(void)
+{
+    ChatController c;
+    chat_controller_init(&c);
+    uint64_t initial = c.attachment_revision;
+    CHECK(chat_controller_add_attachment(&c, "one.md"));
+    CHECK(c.attachment_revision > initial);
+    uint64_t captured = c.attachment_revision;
+    CHECK(chat_controller_remove_attachment(&c, 0));
+    CHECK(chat_controller_add_attachment(&c, "one.md"));
+    CHECK(c.nattached == 1 && !strcmp(c.attached[0], "one.md") && c.attachment_revision > captured);
+    captured = c.attachment_revision;
+    CHECK(chat_controller_rename_attachment(&c, "one.md", "two.md"));
+    CHECK(c.attachment_revision > captured);
+    captured = c.attachment_revision;
+    chat_controller_mark_attachments_changed(&c);
+    CHECK(c.attachment_revision > captured);
+    captured = c.attachment_revision;
+    chat_controller_use_no_attachments(&c);
+    CHECK(c.nattached == 0 && c.attach_touched && c.attachment_revision > captured);
+    captured = c.attachment_revision;
+    chat_controller_clear_attachments(&c);
+    CHECK(c.nattached == 0 && !c.attach_touched && c.attachment_revision > captured);
+}
 
 static void store_finished(ChatSession *chat, size_t index, void *context)
 {
@@ -206,7 +232,8 @@ static void layout_allocations(void)
 
 int main(void)
 {
-    TestCase tests[] = { { "window_layouts", window_layouts }, { "presented_actions", presented_actions },
+    TestCase tests[] = { { "attachment_revisions", attachment_revisions },
+                         { "window_layouts", window_layouts }, { "presented_actions", presented_actions },
                          { "concurrent_presentation", concurrent_presentation },
 #ifdef CHAT_VIEW_FAULT_TEST
                          { "layout_allocations", layout_allocations },

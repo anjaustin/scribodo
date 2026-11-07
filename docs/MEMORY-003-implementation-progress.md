@@ -79,6 +79,11 @@ unsaved DB chat lifecycle and stopped-reply persistence. The latter introduces
 migration 008; the no-schema-change statement above describes only this original
 request-history/source-traversal checkpoint.
 
+The next [MEMORY-005](MEMORY-005-async-history.md) slice adds owned asynchronous
+DB navigation/source reveals, publication identity/epoch fences, connection-lock
+remediation and repeatable percentile/resource diagnostics. It does not complete
+the sustained-use gates or add ingestion, Qdrant memory projections or summaries.
+
 1. Windowed/paged `ChatSession` and UI viewport/cache integration. `open_chat()`
    still loads the complete conversation and the UI still retains archive-sized
   state. Do not declare host memory bounded end-to-end yet.

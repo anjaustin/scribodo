@@ -54,6 +54,7 @@ struct Script {
     int qhead, qcount;
     int wait;
     int wait_chat;      /* frames left to wait for the chat to go idle */
+    int wait_history;
     int wait_status;    /* frames left to wait for the status to contain wait_text */
     char wait_text[256];
     int wait_observer;  /* frames left to wait for the observer to go idle */
@@ -385,6 +386,8 @@ static void run_expect(Script *s, ScriptHost *h, Tokens *t)
         size_t bytes = h->history_cache_bytes(h->ctx);
         ok = bytes <= strtoull(t->tok[2], NULL, 10);
         snprintf(detail, sizeof(detail), "got %zu cache bytes", bytes);
+    } else if (!strcmp(what, "history_busy") && t->n == 3 && h->history_busy) {
+        ok = h->history_busy(h->ctx) == yes(t->tok[2]);
     } else if (!strcmp(what, "chat_unsaved") && t->n == 3 && h->chat) {
         chat_lock(h->chat);
         ok = chat_window_info(h->chat).unsaved == yes(t->tok[2]);
@@ -627,6 +630,20 @@ static bool run_line(Script *s, ScriptHost *h)
         s->wait_chat = t.n >= 2 ? atoi(t.tok[1]) : 1200;
         return true;
     }
+    if (!strcmp(cmd, "wait_history") && h->history_busy) {
+        s->wait_history = t.n >= 2 ? atoi(t.tok[1]) : 1200;
+        if (s->wait_history <= 0) { report(s, false, "history wait needs a positive frame limit"); return false; }
+        s->pc--;
+        return true;
+    }
+    if (!strcmp(cmd, "history_hold") && t.n == 2 && h->history_hold) {
+        h->history_hold(h->ctx, yes(t.tok[1]));
+        return false;
+    }
+    if (!strcmp(cmd, "store_restart") && t.n == 1 && h->store_restart) {
+        h->store_restart(h->ctx);
+        return false;
+    }
     if (!strcmp(cmd, "right_click_element") && t.n == 2 && h->element) {
         Rectangle r = h->element(h->ctx, t.tok[1]);
         if (r.width <= 0) {
@@ -773,6 +790,17 @@ bool script_frame(Script *s, ScriptHost *h)
             if (found || --s->wait_status == 0) {
                 s->wait_status = 0;
                 report(s, found, found ? NULL : "status never showed it");
+                s->pc++;
+                new_batch(s);
+                continue;
+            }
+            return true;
+        }
+        if (s->wait_history > 0) {
+            bool done = !h->history_busy(h->ctx) && (!h->history_worker_busy || !h->history_worker_busy(h->ctx));
+            if (done || --s->wait_history == 0) {
+                s->wait_history = 0;
+                report(s, done, done ? NULL : "history load did not finish");
                 s->pc++;
                 new_batch(s);
                 continue;

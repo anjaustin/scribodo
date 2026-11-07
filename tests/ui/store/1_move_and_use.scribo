@@ -62,6 +62,7 @@ expect files "$DIR/book/.scribodo" "renames.jsonl" 0
 expect element_w RevItem0 10 2000
 click_element NoteItem0
 click_element RecordSource
+wait_history
 expect status "Source passage selected"
 expect files "$DIR/book/.scribodo" "notes.jsonl" 0
 expect files "$DIR/book/.scribodo" "chats" 0

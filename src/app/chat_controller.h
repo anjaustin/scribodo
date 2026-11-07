@@ -15,6 +15,7 @@ typedef struct {
     char attached[CHAT_CONTROLLER_MAX_ATTACH][256];
     size_t nattached;
     bool attach_touched;
+    uint64_t attachment_revision;
 } ChatController;
 
 void chat_controller_init(ChatController *controller);

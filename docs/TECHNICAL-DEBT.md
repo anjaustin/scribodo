@@ -677,6 +677,14 @@ Do not treat these as remediation targets without a changed product decision:
 
 ### History-window adversarial follow-up
 
+Asynchronous navigation and subsequent adversarial fixes are now recorded in
+`MEMORY-005-async-history.md`: owned/coalesced reads, cancellation/publication
+guards, local identity/store epochs, attachment revisions, unlocked worker
+connection establishment and malformed-marker fail-closed routing. A 500-sample
+DB diagnostic is reproducible with `make historysoak`; it is not hours-long
+sustained-use or UI latency evidence. In-flight I/O interruption, other synchronous
+UI/store paths and full-history compatibility consumers remain debt.
+
 - Reproduced stale presentation selecting a different reply/action, archive-sized
   slot retention after trimming/clear, blank window replacement on empty
   navigation, and unsaved DB chat loss on project switch/close.

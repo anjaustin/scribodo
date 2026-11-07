@@ -4,6 +4,7 @@ write "$DIR/unsaved-other/one.md" "A second project's prose."
 open "$DIR/unsaved-other/one.md"
 open "$DIR/windowbook/one.md"
 click_element ChatItem0
+wait_history
 click_element ChatInput
 type "unsaved project-switch sentinel"
 key ENTER

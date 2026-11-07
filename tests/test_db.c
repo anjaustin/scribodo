@@ -939,6 +939,59 @@ static size_t note_count(const char *proj)
 }
 
 typedef struct {
+    const char *directory;
+    char project_id[64];
+    bool ok;
+} RegisterMoveCall;
+
+static void *register_move_main(void *arg)
+{
+    RegisterMoveCall *call = arg;
+    StoreManager *other = store_manager_create();
+    char why[256];
+    call->ok = other && store_start(other, g_name, why, sizeof(why)) &&
+               store_mode(other, call->directory, call->project_id, sizeof(call->project_id), NULL) == STORE_DB;
+    if (other) store_manager_destroy(other);
+    return NULL;
+}
+
+static void test_warmed_verification_replacement(void)
+{
+    char why[256], root[PATH_MAX], a[PATH_MAX], b[PATH_MAX], cmd[PATH_MAX * 2 + 32], pid[64];
+    CHECK(store_start(g_store, g_name, why, sizeof(why)));
+    snprintf(root, sizeof(root), "%s/scribodo-verify-XXXXXX", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp");
+    CHECK(mkdtemp(root) != NULL);
+    snprintf(a, sizeof(a), "%s/A", root);
+    snprintf(b, sizeof(b), "%s/B", root);
+    CHECK(mkdir(a, 0755) == 0);
+    CHECK(store_import(g_store, a, why, sizeof(why)));
+    /* This thread represents a persistent worker: do not replace its TLS,
+     * switch its verification path, or explicitly forget its warmed verdict. */
+    CHECK(store_mode(g_store, a, pid, sizeof(pid), NULL) == STORE_DB);
+    double warmed = monotonic_seconds();
+    CHECK(rename(a, b) == 0);
+    RegisterMoveCall moved = { .directory = b };
+    pthread_t mover;
+    int rc = pthread_create(&mover, NULL, register_move_main, &moved);
+    CHECK(rc == 0);
+    if (rc == 0) pthread_join(mover, NULL);
+    CHECK(moved.ok && !strcmp(moved.project_id, pid));
+    snprintf(cmd, sizeof(cmd), "cp -R '%s' '%s'", b, a);
+    CHECK(system(cmd) == 0);
+    struct stat ast, bst;
+    CHECK(stat(a, &ast) == 0 && stat(b, &bst) == 0 &&
+          (ast.st_dev != bst.st_dev || ast.st_ino != bst.st_ino));
+    CHECK(monotonic_seconds() - warmed < 30.0); /* exercise a live cache entry */
+    CHECK(store_mode(g_store, a, NULL, 0, NULL) == STORE_PAUSED);
+    char original[PATH_MAX], real_b[PATH_MAX];
+    CHECK(store_problem(g_store, a, original, sizeof(original)) == STORE_PROBLEM_COPY);
+    CHECK(realpath(b, real_b) != NULL && !strcmp(original, real_b));
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root);
+    CHECK(system(cmd) == 0);
+    store_stop(g_store);
+}
+
+typedef struct {
     const char *project_dir;
     char why[256];
     bool ok;
@@ -1770,6 +1823,7 @@ int main(void)
                          { "chat_source_pages", test_chat_source_pages },
                          { "chat_windows", test_chat_windows },
                          { "import", test_import }, { "import_safety", test_import_safety },
+                         { "warmed_verification_replacement", test_warmed_verification_replacement },
                           { "transition_read_failures", test_transition_read_failures }, { "entities", test_entities },
                           { "legacy_import_read_failures", test_legacy_import_read_failures },
                           { "fork_retry_snapshot", test_fork_retry_snapshot },

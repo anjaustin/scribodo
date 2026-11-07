@@ -24,4 +24,5 @@ expect record "Ångström."
 click_element RecordClose
 # Its chat resumes with the documents it was sent with.
 click_element ChatItem0
+wait_history
 expect attached "Chapter One.md"

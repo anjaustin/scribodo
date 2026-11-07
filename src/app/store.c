@@ -2,6 +2,7 @@
 #include "store.h"
 
 #include <CommonCrypto/CommonDigest.h>
+#include <errno.h>
 #include <limits.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -33,6 +34,9 @@ typedef struct {
     char original[PATH_MAX];
     double checked;
     uint64_t generation;
+    unsigned long long dev, ino;
+    unsigned long long marker_dev, marker_ino;
+    bool marker_ident;
 } StoreVerification;
 
 typedef struct StoreThreadContext {
@@ -180,6 +184,13 @@ Db *store_db(StoreManager *manager)
         return NULL;
     }
     uint64_t generation = atomic_load(&manager->generation);
+    DbConfig config = manager->cfg;
+    pthread_mutex_unlock(&manager->mutex);
+
+    /* Contexts and connections belong exclusively to this thread. Neither
+     * closing an old connection nor opening a new one may hold the manager
+     * mutex: a worker's network wait must not stall UI lifecycle calls. The
+     * owner must join borrowed workers before destroying the manager. */
     if (context->generation != generation) {
         if (context->db) db_close(context->db);
         context->db = NULL;
@@ -196,12 +207,24 @@ Db *store_db(StoreManager *manager)
     }
     if (!context->db) {
         char err[256];
-        context->db = db_open(&manager->cfg, err, sizeof(err));
-        if (!context->db) atomic_store(&manager->online, false);
+        Db *opened = db_open(&config, err, sizeof(err));
+        pthread_mutex_lock(&manager->mutex);
+        /* Every configuration/lifecycle change advances the generation. A
+         * stale success must not escape into TLS, and a stale failure must
+         * not take a newer store offline (even after an offline/on roundtrip). */
+        bool current = generation == atomic_load(&manager->generation) &&
+                       atomic_load(&manager->online) && !atomic_load(&manager->forced_offline);
+        if (current) {
+            context->db = opened;
+            if (!opened) atomic_store(&manager->online, false);
+        }
+        pthread_mutex_unlock(&manager->mutex);
+        if (!current) {
+            if (opened) db_close(opened);
+            return NULL;
+        }
     }
-    Db *db = context->db;
-    pthread_mutex_unlock(&manager->mutex);
-    return db;
+    return context->db;
 }
 
 bool store_probe(StoreManager *manager)
@@ -252,8 +275,14 @@ static bool read_marker(const char *project_dir, Marker *m)
     memset(m, 0, sizeof(*m));
     char path[PATH_MAX + 64];
     snprintf(path, sizeof(path), "%s/.scribodo/store.json", project_dir);
-    FILE *f = fopen(path, "rb");
-    if (!f) return false;
+    /* UI identity snapshots may inspect malformed markers. Opening a FIFO must
+     * not wait for a writer; validate the opened object, not a racy path stat. */
+    int fd = open(path, O_RDONLY | O_NONBLOCK);
+    if (fd < 0) return false;
+    struct stat marker_stat;
+    if (fstat(fd, &marker_stat) != 0 || !S_ISREG(marker_stat.st_mode)) { close(fd); return false; }
+    FILE *f = fdopen(fd, "rb");
+    if (!f) { close(fd); return false; }
     char buf[512];
     size_t n = fread(buf, 1, sizeof(buf) - 1, f);
     fclose(f);
@@ -273,6 +302,26 @@ static bool read_marker(const char *project_dir, Marker *m)
         m->ino = strtoull(in + 6, NULL, 10);
         m->ident = true;
     }
+    return true;
+}
+
+bool store_project_identity(StoreManager *manager, const char *project_dir, StoreProjectIdentity *out)
+{
+    if (!out) return false;
+    memset(out, 0, sizeof(*out));
+    if (!manager || !project_dir || !project_dir[0]) return false;
+    uint64_t generation = atomic_load(&manager->generation);
+    struct stat before, after;
+    Marker marker;
+    if (stat(project_dir, &before) != 0 || !S_ISDIR(before.st_mode) ||
+        !read_marker(project_dir, &marker) ||
+        stat(project_dir, &after) != 0 || !S_ISDIR(after.st_mode) ||
+        before.st_dev != after.st_dev || before.st_ino != after.st_ino ||
+        generation != atomic_load(&manager->generation)) return false;
+    out->generation = generation;
+    snprintf(out->project_id, sizeof(out->project_id), "%s", marker.id);
+    out->device = (unsigned long long)after.st_dev;
+    out->inode = (unsigned long long)after.st_ino;
     return true;
 }
 
@@ -356,16 +405,31 @@ static int verify(StoreManager *manager, Db *d, const char *project_dir, const M
         memset(verification, 0, sizeof(*verification));
         verification->generation = generation;
     }
+    /* A persistent worker may see a different folder at a previously verified
+     * path before the TTL expires. Check the actual identity before any hit,
+     * and include the marker's claimed identity (read anew by the caller).
+     * External DB-only path edits with unchanged identities still use the TTL. */
+    struct stat st;
+    if (stat(project_dir, &st) != 0 || !S_ISDIR(st.st_mode)) {
+        verification->checked = 0;
+        verification->original[0] = '\0';
+        return verification->verdict = STORE_PROBLEM_MISSING;
+    }
     double t = now_s();
     if (!strcmp(verification->dir, project_dir) && !strcmp(verification->id, m->id) &&
+        verification->dev == (unsigned long long)st.st_dev && verification->ino == (unsigned long long)st.st_ino &&
+        verification->marker_ident == m->ident && verification->marker_dev == m->dev && verification->marker_ino == m->ino &&
         t - verification->checked < 30.0)
         return verification->verdict;
     snprintf(verification->dir, sizeof(verification->dir), "%s", project_dir);
     snprintf(verification->id, sizeof(verification->id), "%s", m->id);
+    verification->dev = (unsigned long long)st.st_dev;
+    verification->ino = (unsigned long long)st.st_ino;
+    verification->marker_ident = m->ident;
+    verification->marker_dev = m->dev;
+    verification->marker_ino = m->ino;
     verification->checked = t;
     verification->original[0] = '\0';
-    struct stat st;
-    if (stat(project_dir, &st) != 0) return verification->verdict = STORE_PROBLEM_MISSING;
     DbRows r;
     if (!db_query(d, "SELECT path FROM projects WHERE id = ?", (DbArg[1]){ DB_S(m->id) }, 1, &r)) {
         verification->checked = 0; /* not a verdict: try again next time */
@@ -415,6 +479,12 @@ StoreMode store_mode(StoreManager *manager, const char *project_dir, char *proje
     Marker m;
     if (!project_dir || !project_dir[0]) return STORE_FILES;
     if (!read_marker(project_dir, &m)) {
+        /* A malformed/unreadable marker is not consent to create a parallel
+         * file history. Only absence permits the legacy file-store route. */
+        char path[PATH_MAX + 64];
+        struct stat st;
+        snprintf(path, sizeof(path), "%s/.scribodo/store.json", project_dir);
+        if (lstat(path, &st) == 0 || errno != ENOENT) return STORE_PAUSED;
         StoreThreadContext *context = thread_context(manager, false);
         if (context && !strcmp(context->importing, project_dir)) return STORE_FILES;
         return import_in_progress(project_dir) ? STORE_PAUSED : STORE_FILES;

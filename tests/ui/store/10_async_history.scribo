@@ -1,0 +1,108 @@
+wait 5
+open "$DIR/windowbook/one.md"
+click_element ChatItem0
+wait_history
+expect chat_count 64
+expect chat_last_seq 403
+# Hold a fetched result, not the UI: composition still works.
+history_hold yes
+click_element ChatOlder
+expect history_busy yes
+click_element ChatInput
+type "keep this composed request"
+key ENTER
+expect chat_busy no
+expect status "History is loading"
+key A cmd
+key C cmd
+expect clipboard "keep this composed request"
+# New chat cancels the display intent immediately; it does not wait for SQL.
+click_element NewChatItem
+expect history_busy no
+expect chat_count 0
+# Reopen while the superseded read is held. Only the newest intent may publish.
+click_element ChatItem0
+expect history_busy yes
+expect chat_count 0
+history_hold no
+wait_history
+expect chat_count 64
+key L cmd
+key A cmd
+key C cmd
+expect clipboard "keep this composed request"
+# Project A -> B -> A must invalidate the delayed A result even though paths match.
+history_hold yes
+click_element ChatOlder
+open "$DIR/unsaved-other/one.md"
+expect history_busy no
+expect chat_count 0
+open "$DIR/windowbook/one.md"
+history_hold no
+wait_history
+click_element ChatItem0
+wait_history
+expect chat_count 64
+# Escape cancels only the pending intent, leaving the displayed window intact.
+history_hold yes
+click_element ChatOlder
+click_element ChatInput
+key ESC
+expect history_busy no
+expect chat_count 64
+history_hold no
+click_element ChatLatest
+wait_history
+expect chat_count 64
+# There has been no implicit send after any of these transitions.
+expect chat_last_not "keep this composed request"
+# Opening a conversation must not overwrite attachment edits made while waiting.
+expect attached "one.md"
+history_hold yes
+click_element ChatItem0
+click_element AttachAdd
+click_element MenuItem0
+expect attached ""
+history_hold no
+wait_history
+expect chat_last_seq 403
+expect status "your current attachment choices were kept"
+expect attached ""
+# An empty -> attached -> empty ABA edit must also defeat stored restoration.
+history_hold yes
+click_element ChatItem0
+click_element AttachAdd
+click_element MenuItem0
+expect attached "one.md"
+click_element AttachAdd
+click_element MenuItem0
+expect attached ""
+history_hold no
+wait_history
+expect chat_last_seq 403
+expect status "your current attachment choices were kept"
+expect attached ""
+# A store restart invalidates fetched results even at the same path/chat.
+history_hold yes
+click_element ChatOlder
+expect history_busy yes
+store_restart
+history_hold no
+wait_history
+expect history_busy no
+expect chat_count 64
+expect chat_last_seq 403
+# Latest clears the barrier; a failed old request cannot overwrite that intent.
+click_element ChatLatest
+wait_history
+expect attached ""
+# The foreground Cancel button has the same immediate discard semantics as Esc.
+history_hold yes
+click_element ChatOlder
+click_element SendButton
+expect history_busy no
+expect chat_count 64
+history_hold no
+click_element ChatLatest
+wait_history
+expect attached ""

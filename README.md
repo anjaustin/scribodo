@@ -182,6 +182,8 @@ On first launch the app checks the model file against its pinned hash (once), th
 make sanitize  # run the same tests under AddressSanitizer + UBSan
 make tsan      # the threaded code (chat, observer, supervisor) under ThreadSanitizer
 make dbtest    # the store against the local MariaDB (tools/services.sh up), in a throwaway database
+make historybench # bounded DB history workload: bytes/rows and diagnostic percentiles
+make historysoak  # 500 samples/case; short repeated workload, not hours-long soak/SLA
 make uitest-db # the app on the store: move a project in, resume after a restart, entities, a copied folder, database down
 make backuptest # back up, lose the folder, database and index, restore, resume
 make remotetest # the optional remote model, against a stand-in provider on 127.0.0.1

@@ -41,6 +41,7 @@
 #include "app/store_entities.h"
 #include "app/backup.h"
 #include "app/backup_job.h"
+#include "app/chat_history_job.h"
 #include "app/service_supervisor.h"
 #include "app/entity_backfill_job.h"
 #include "app/name_detection_job.h"
@@ -123,6 +124,15 @@ typedef struct {
     double close_armed_at;
     bool chat_discard_armed;
     double chat_discard_at;
+    ChatHistoryJob *history_job;
+    uint64_t history_ticket, history_session, history_version;
+    bool history_pending, history_restore, history_send_ready;
+    char history_project[PATH_MAX], history_id[40], history_title[160];
+    char history_from_project[PATH_MAX], history_from_id[40];
+    ChatWindowRequest history_request;
+    uint64_t history_attachment_revision;
+    StoreProjectIdentity history_identity;
+    atomic_bool history_hold; /* script-only deterministic stalled-reader gate */
 
     /* Model and chat */
     LlmServer *llm;
@@ -136,6 +146,7 @@ typedef struct {
             char attached[MAX_ATTACH][256];
             size_t nattached;
             bool attach_touched;
+            uint64_t attachment_revision;
         };
     };
     /* A conversation belongs to the project it started in, even if the author
@@ -484,6 +495,28 @@ static void refresh_records(App *app)
 
 static void project_of(const char *doc_path, char *out, size_t outlen);
 
+static void cancel_history(App *app)
+{
+    if (app->history_job) chat_history_job_cancel(app->history_job);
+    app->history_pending = false;
+    app->history_ticket++;
+}
+
+/* Routing hint only: a stored project always goes through the worker, including
+ * paused/malformed markers. Actual authorization stays in ProjectStore there. */
+static bool database_history_project(const char *project)
+{
+    char marker[PATH_MAX + 64];
+    struct stat st;
+    snprintf(marker, sizeof(marker), "%s/.scribodo/store.json", project);
+    return lstat(marker, &st) == 0;
+}
+
+static bool history_read_busy(App *app)
+{
+    return app->history_pending || chat_history_job_busy(app->history_job);
+}
+
 static void set_project(App *app, const char *real)
 {
     if (strcmp(real, app->project_dir) != 0) {
@@ -491,6 +524,7 @@ static void set_project(App *app, const char *real)
         if (app->prompt) prompt_close(app->prompt);
         app->menu.active = false;
         (void)project_session_set_project(&app->session, real);
+        cancel_history(app);
         ExplorerSnapshot empty;
         explorer_snapshot_init(&empty);
         empty.generation = app->explorer.generation + 1;
@@ -546,6 +580,7 @@ static void store_adopt_project(App *app)
 /* The two ways out of a paused project that isn't offline (red-team 008). */
 static void store_resolve_problem(App *app)
 {
+    cancel_history(app);
     char why[256] = "";
     int problem = store_problem(app->store, app->project_dir, NULL, 0);
     bool ok = problem == STORE_PROBLEM_COPY ? store_fork(app->store, app->project_dir, why, sizeof(why))
@@ -1215,6 +1250,8 @@ static bool finish_prompt(App *app, const char *typed)
             return false;
         }
         if (!strcmp(app->chat_id, app->menu_chat)) snprintf(app->chat_title, sizeof(app->chat_title), "%s", typed);
+        if (app->history_pending && !strcmp(app->history_id, app->menu_chat))
+            snprintf(app->history_title, sizeof(app->history_title), "%s", typed);
         set_status(app, "Chat renamed");
         app->lists_dirty = true;
         return true;
@@ -1695,6 +1732,7 @@ static void new_chat(App *app)
         return;
     }
     app->chat_discard_armed = false;
+    cancel_history(app);
     chat_clear(app->chat);
     chat_view_history_changed(app->chat_view);
     project_session_clear_chat(&app->session);
@@ -1702,37 +1740,96 @@ static void new_chat(App *app)
     app->focus = FOCUS_CHAT;
 }
 
-static bool load_chat_window(App *app, const char *project, const char *id, ChatWindowRequest request, bool restore)
+static bool load_chat_window(App *app, const char *project, const char *id, const char *title,
+                             ChatWindowRequest request, bool restore)
 {
     if (chat_busy(app->chat)) { set_status(app, "Stop the reply before changing history"); return false; }
     chat_lock(app->chat);
     ChatWindowInfo info = chat_window_info(app->chat);
     chat_unlock(app->chat);
     if (info.unsaved) { set_status(app, "History has unsaved messages; keep them before changing windows"); return false; }
-    ChatWindowPage page;
-    if (!chat_store_window(app->store, project, id, &request, &page)) {
-        set_status(app, store_says(app, "Could not read this history window"));
+    StoreProjectIdentity identity;
+    if (!store_project_identity(app->store, project, &identity)) {
+        set_status(app, "Could not identify the stored project; the current conversation was kept");
         return false;
     }
-    bool ok = chat_load_window(app->chat, page.messages, page.count, page.older, page.newer);
+    uint64_t ticket = app->history_ticket + 1;
+    if (!chat_history_job_start(app->history_job, project, id, &request, ticket)) {
+        set_status(app, "Could not start history loading; the current conversation was kept");
+        return false;
+    }
+    app->history_ticket = ticket;
+    app->history_pending = true;
+    app->history_restore = restore;
+    app->history_send_ready = false;
+    app->history_session = app->session_generation;
+    app->history_version = chat_version(app->chat);
+    app->history_request = request;
+    app->history_identity = identity;
+    snprintf(app->history_project, sizeof(app->history_project), "%s", project);
+    snprintf(app->history_id, sizeof(app->history_id), "%s", id);
+    snprintf(app->history_title, sizeof(app->history_title), "%s", title ? title : app->chat_title);
+    snprintf(app->history_from_project, sizeof(app->history_from_project), "%s", app->chat_project);
+    snprintf(app->history_from_id, sizeof(app->history_from_id), "%s", app->chat_id);
+    app->history_attachment_revision = app->attachment_revision;
+    set_status(app, "Loading history — keep writing, or Cancel to keep this window");
+    return true;
+}
+
+static void history_poll(App *app)
+{
+    ChatHistoryResult result;
+    if (!chat_history_job_poll(app->history_job, &result)) return;
+    StoreProjectIdentity identity;
+    bool same_identity = store_project_identity(app->store, app->history_project, &identity) &&
+                         identity.generation == app->history_identity.generation &&
+                         identity.device == app->history_identity.device && identity.inode == app->history_identity.inode &&
+                         !strcmp(identity.project_id, app->history_identity.project_id);
+    /* Publication is a UI-thread operation, conditional on the original intent.
+     * A completed old read cannot overwrite new/unsaved prose or cross projects. */
+    bool current = app->history_pending && result.ticket == app->history_ticket &&
+                   app->history_session == app->session_generation &&
+                   app->history_version == chat_version(app->chat) &&
+                   !strcmp(app->history_from_project, app->chat_project) &&
+                   !strcmp(app->history_from_id, app->chat_id) && !chat_busy(app->chat) && !unsaved_chat(app) &&
+                   store_online(app->store) && same_identity;
+    if (!current) {
+        if (result.ticket == app->history_ticket) app->history_pending = false;
+        chat_window_page_free(&result.page);
+        return;
+    }
+    app->history_pending = false;
+    if (!result.ok) {
+        set_status(app, result.why[0] ? result.why : "Could not load history; the current conversation was kept");
+        chat_window_page_free(&result.page);
+        return;
+    }
+    ChatWindowPage *page = &result.page;
+    bool ok = chat_load_window(app->chat, page->messages, page->count, page->older, page->newer);
     if (ok) {
         chat_view_history_changed(app->chat_view);
-        if (restore) {
-            chat_controller_use_no_attachments(&app->chat_controller);
-            for (char *save = NULL, *name = strtok_r(page.latest_user_docs, "\n", &save); name; name = strtok_r(NULL, "\n", &save)) attach(app, name);
+        if (app->history_restore) {
+            project_session_bind_chat(&app->session, app->history_project, app->history_id, app->history_title);
         }
-        if (request.direction == CHAT_WINDOW_FOCUS) {
+        bool unchanged = app->attachment_revision == app->history_attachment_revision;
+        if (app->history_restore && unchanged) {
+            chat_controller_use_no_attachments(&app->chat_controller);
+            for (char *save = NULL, *name = page->latest_user_docs ? strtok_r(page->latest_user_docs, "\n", &save) : NULL;
+                 name; name = strtok_r(NULL, "\n", &save)) attach(app, name);
+        }
+        if (app->history_request.direction == CHAT_WINDOW_FOCUS) {
             chat_lock(app->chat);
-            long index = chat_find_sequence(app->chat, request.sequence);
+            long index = chat_find_sequence(app->chat, app->history_request.sequence);
             chat_unlock(app->chat);
             if (index >= 0) chat_view_reveal(app->chat_view, index);
         }
-        set_status(app, restore && !page.attachments_known
+        set_status(app, app->history_send_ready ? "Latest history ready; review attachments/provider and press Send again"
+                        : app->history_restore && !unchanged ? "History opened; your current attachment choices were kept"
+                        : app->history_restore && !page->attachments_known
                         ? "History opened; prior attachments could not be restored. Choose attachments explicitly."
                         : "History window loaded (large messages have navigable excerpts)");
     } else set_status(app, "Could not replace history; the current conversation was kept");
-    chat_window_page_free(&page);
-    return ok;
+    chat_window_page_free(page);
 }
 
 static void page_chat(App *app, ChatPageAction action)
@@ -1745,7 +1842,7 @@ static void page_chat(App *app, ChatPageAction action)
     if (action.kind == CHAT_PAGE_OLDER) request = (ChatWindowRequest){ .direction = CHAT_WINDOW_BEFORE, .sequence = info.first };
     if (action.kind == CHAT_PAGE_NEWER) request = (ChatWindowRequest){ .direction = CHAT_WINDOW_AFTER, .sequence = info.last };
     if (action.kind == CHAT_PAGE_PART) request = (ChatWindowRequest){ CHAT_WINDOW_FOCUS, action.sequence, action.start };
-    (void)load_chat_window(app, app->chat_project, app->chat_id, request, false);
+    (void)load_chat_window(app, app->chat_project, app->chat_id, NULL, request, false);
 }
 
 static void open_chat(App *app, const ChatSummary *c)
@@ -1754,11 +1851,12 @@ static void open_chat(App *app, const ChatSummary *c)
         set_status(app, "Wait for the reply to finish (or press Stop)");
         return;
     }
-    if (project_store_inspect(app->store, app->project_dir).capabilities & PROJECT_STORE_CAP_LINKED_DOCUMENTS) {
-        if (load_chat_window(app, app->project_dir, c->id, (ChatWindowRequest){ .direction = CHAT_WINDOW_LATEST }, true))
-            project_session_bind_chat(&app->session, app->project_dir, c->id, c->title);
+    if (unsaved_chat(app)) { set_status(app, "History has unsaved messages; keep them before opening another chat"); return; }
+    if (database_history_project(app->project_dir)) {
+        (void)load_chat_window(app, app->project_dir, c->id, c->title, (ChatWindowRequest){ .direction = CHAT_WINDOW_LATEST }, true);
         return;
     }
+    cancel_history(app);
     ChatMessage *msgs = NULL;
     size_t n = 0;
     if (!chat_store_load(app->store, app->project_dir, c->id, &msgs, &n) || !chat_load_messages(app->chat, msgs, n)) {
@@ -1987,6 +2085,12 @@ static void open_source(App *app, const SourceRef *s)
         if (s->message < 0 || s->message == LONG_MAX) { set_status(app, "Invalid source message"); return; }
         for (size_t i = 0; i < app->nchats; i++)
             if (!strcmp(app->chats[i].id, s->chat)) {
+                if (database_history_project(app->project_dir)) {
+                    (void)load_chat_window(app, app->project_dir, s->chat, app->chats[i].title,
+                                           (ChatWindowRequest){ CHAT_WINDOW_FOCUS, s->message, s->start },
+                                           strcmp(app->chat_id, s->chat) != 0 || strcmp(app->chat_project, app->project_dir) != 0);
+                    return;
+                }
                 if (strcmp(app->chat_id, s->chat) != 0) open_chat(app, &app->chats[i]);
                 char msg[120];
                 snprintf(msg, sizeof(msg), "Source: message %ld of this chat", s->message + 1);
@@ -1996,11 +2100,9 @@ static void open_source(App *app, const SourceRef *s)
                     chat_unlock(app->chat);
                     long index = s->message;
                     if (window.active) {
-                        if (!load_chat_window(app, app->chat_project, app->chat_id,
+                        if (!load_chat_window(app, app->chat_project, app->chat_id, NULL,
                                               (ChatWindowRequest){ CHAT_WINDOW_FOCUS, s->message, s->start }, false)) return;
-                        chat_lock(app->chat);
-                        index = chat_find_sequence(app->chat, s->message);
-                        chat_unlock(app->chat);
+                        return;
                     }
                     if (index < 0) { set_status(app, "That source message is unavailable"); return; }
                     chat_view_reveal(app->chat_view, index);
@@ -2415,6 +2517,10 @@ static int draw_attach_row(App *app, Rectangle r)
 
 static void send_chat(App *app, char *text)
 {
+    if (app->history_pending) {
+        set_status(app, "History is loading; your input is kept. Wait, or Cancel before sending");
+        free(text); return;
+    }
     if (app->project_dir[0] &&
         !(project_store_inspect(app->store, app->project_dir).capabilities & PROJECT_STORE_CAP_STRUCTURED_WRITE)) {
         set_status(app, app->store_problem == STORE_PROBLEM_COPY      ? "Chat is paused: this folder is a copy (make it its own project in the Explorer)"
@@ -2435,8 +2541,12 @@ static void send_chat(App *app, char *text)
         chat_lock(app->chat);
         ChatWindowInfo window = chat_window_info(app->chat);
         chat_unlock(app->chat);
-        if (window.newer && !load_chat_window(app, app->chat_project, app->chat_id,
-                                             (ChatWindowRequest){ .direction = CHAT_WINDOW_LATEST }, false)) {
+        if (window.newer) {
+            if (load_chat_window(app, app->chat_project, app->chat_id, NULL,
+                                 (ChatWindowRequest){ .direction = CHAT_WINDOW_LATEST }, false)) {
+                app->history_send_ready = true;
+                set_status(app, "Loading latest history; input kept. Review and press Send again when ready");
+            }
             free(text); return;
         }
         chat_enable_window(app->chat);
@@ -2605,11 +2715,11 @@ static void update_labels(App *app)
                  app->remote.name, app->remote.host);
     if (remote_on) snprintf(app->remote_badge, sizeof(app->remote_badge), "\xE2\x86\x97 sent to %s", app->remote.host);
     else app->remote_badge[0] = '\0';
-    app->store_inspection = project_store_inspect(app->store, app->project_dir);
+    if (!history_read_busy(app)) app->store_inspection = project_store_inspect(app->store, app->project_dir);
     app->store_problem = app->store_inspection.blocked_by == PROJECT_STORE_BLOCK_COPY      ? STORE_PROBLEM_COPY
                          : app->store_inspection.blocked_by == PROJECT_STORE_BLOCK_MISSING ? STORE_PROBLEM_MISSING
                                                                                            : 0;
-    if (app->store_problem) store_problem(app->store, app->project_dir, app->store_original, sizeof(app->store_original));
+    if (app->store_problem && !history_read_busy(app)) store_problem(app->store, app->project_dir, app->store_original, sizeof(app->store_original));
     if (!app->store_wanted) {
         app->store_label[0] = '\0';
     } else if (service_supervisor_busy(&app->services)) {
@@ -2930,7 +3040,31 @@ static void host_store_offline(void *ctx, bool offline)
 {
     App *app = ctx;
     store_set_offline(app->store, offline);
+    if (offline) cancel_history(app);
     app->lists_dirty = true;
+}
+static bool host_history_busy(void *ctx) { return ((App *)ctx)->history_pending; }
+static bool host_history_worker_busy(void *ctx) { return history_read_busy(ctx); }
+static void host_store_restart(void *ctx)
+{
+    App *app = ctx;
+    char database[64], why[256];
+    store_database(app->store, database, sizeof(database));
+    /* Deliberately no intent cancellation: exercise publication's epoch fence. */
+    if (!store_start(app->store, database, why, sizeof(why))) set_status(app, why);
+}
+static void host_history_hold(void *ctx, bool hold) { atomic_store(&((App *)ctx)->history_hold, hold); }
+
+static bool scripted_history_read(StoreManager *store, const char *project, const char *conversation,
+                                  const ChatWindowRequest *request, ChatWindowPage *page, void *context)
+{
+    App *app = context;
+    bool ok = chat_store_window(store, project, conversation, request, page);
+    while (atomic_load(&app->history_hold)) {
+        struct timespec pause = { .tv_nsec = 1000000 };
+        nanosleep(&pause, NULL);
+    }
+    return ok;
 }
 static void host_open(void *ctx, const char *path) { open_path(ctx, path); }
 static char *host_record_text(void *ctx)
@@ -3065,6 +3199,9 @@ static void app_destroy(App *app)
     app->recent_store = NULL;
     script_free(app->script);
     app->script = NULL;
+    atomic_store(&app->history_hold, false);
+    chat_history_job_destroy(app->history_job);
+    app->history_job = NULL;
     reviewed_edit_controller_destroy(&app->reviewed_edit);
     record_view_destroy(app->record);
     prompt_destroy(app->prompt);
@@ -3103,6 +3240,7 @@ static void app_destroy(App *app)
 int main(int argc, char **argv)
 {
     static App app;
+    atomic_init(&app.history_hold, false);
     app.store = store_manager_create();
     if (!app.store) return 1;
     frame_view_model_init(&app.frame);
@@ -3126,6 +3264,9 @@ int main(int argc, char **argv)
      * hidden window (no focus stealing, immune to the real mouse) and exits
      * non-zero if any expectation fails. See src/app/script.h. */
     const char *script_path = getenv("SCRIBODO_SCRIPT");
+    app.history_job = script_path ? chat_history_job_create_with_reader(app.store, scripted_history_read, &app)
+                                  : chat_history_job_create(app.store);
+    if (!app.history_job) { app_destroy(&app); return 1; }
     unsigned flags = FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_HIGHDPI | FLAG_VSYNC_HINT;
     if (script_path) {
         flags |= FLAG_WINDOW_HIDDEN;
@@ -3285,7 +3426,8 @@ int main(int argc, char **argv)
     ScriptHost host = { app.editor, &app.explorer_w, &app.observer_w, &app.editor_rect,
                         host_status, host_open, host_drop, &app, app.chat, host_element, host_model_ready,
                         host_record_text, host_observer_enable, host_observer_idle, host_findings_text,
-                        host_attached_text, host_explorer_text, host_observer_status, host_history_cache_bytes, host_store_offline };
+                        host_attached_text, host_explorer_text, host_observer_status, host_history_cache_bytes, host_store_offline,
+                        host_history_busy, host_history_hold, host_history_worker_busy, host_store_restart };
     if (script_path) {
         char err[256];
         app.script = script_load(script_path, getenv("SCRIBODO_SCRIPT_DIR"), getenv("SCRIBODO_SHOT_DIR"), err, sizeof(err));
@@ -3353,6 +3495,7 @@ int main(int argc, char **argv)
         if (service_supervisor_poll(&app.services, &service_result)) {
             if (service_result.command_attempted && service_result.command_succeeded) app.services_started = true;
             if (service_result.reachable) {
+                cancel_history(&app);
                 app.store_why[0] = '\0';
                 store_start(app.store, getenv("SCRIBODO_DB_NAME"), app.store_why, sizeof(app.store_why));
             }
@@ -3379,7 +3522,7 @@ int main(int argc, char **argv)
         if (chat_trim_saved(app.chat)) chat_view_history_changed(app.chat_view);
         /* The observer shares the model: it yields whenever chat is active. */
         observer_set_chat_active(app.observer, chat_busy(app.chat));
-        if (observer_version(app.observer) != app.findings_version) {
+        if (!history_read_busy(&app) && observer_version(app.observer) != app.findings_version) {
             app.findings_version = observer_version(app.observer);
             refresh_findings(&app);
         }
@@ -3408,10 +3551,11 @@ int main(int argc, char **argv)
                 }
             }
         }
+        history_poll(&app);
         /* Changes made here mark the lists at once; this catches the rest
          * (files added in Finder, other windows). Store queries cost more
          * than a directory read, so they're polled less often. */
-        double every = (project_store_inspect(app.store, app.project_dir).capabilities & PROJECT_STORE_CAP_SLOW_REFRESH) ? 10.0 : 3.0;
+        double every = (app.store_inspection.capabilities & PROJECT_STORE_CAP_SLOW_REFRESH) ? 10.0 : 3.0;
         if (GetTime() - app.lists_refreshed > every) app.lists_dirty = true;
 
         /* Close requests: never lose unsaved prose silently. */
@@ -3632,6 +3776,10 @@ int main(int argc, char **argv)
         if (primary && shortcut_pressed('o')) choose_project(&app, false);
         if (primary && !shift && shortcut_pressed('n')) begin_new_document(&app);
         if (!modal && app.focus == FOCUS_CHAT && IsKeyPressed(KEY_ESCAPE)) {
+            if (app.history_pending) {
+                cancel_history(&app);
+                set_status(&app, "History loading cancelled; the current window was kept");
+            }
             if (app.edit_mode) {
                 leave_edit_mode(&app);
                 if (!app.pending.active) editor_anchor_clear(app.editor);
@@ -3644,7 +3792,7 @@ int main(int argc, char **argv)
 
         /* Refresh lists only now: clicks above were hit-tested against the
          * lists as last drawn, so a re-sort can never redirect a click. */
-        if (app.lists_dirty) {
+        if (app.lists_dirty && !history_read_busy(&app)) {
             if (refresh_lists(&app)) app.lists_dirty = false;
         }
         Clay_RenderCommandArray cmds = build_layout(&app);
@@ -3831,6 +3979,11 @@ int main(int argc, char **argv)
         }
         if (chat_busy(app.chat)) {
             if (GuiButton(send_rect, "Stop")) chat_cancel(app.chat);
+        } else if (app.history_pending) {
+            if (GuiButton(send_rect, "Cancel")) {
+                cancel_history(&app);
+                set_status(&app, "History loading cancelled; the current window was kept");
+            }
         } else {
             bool ready = !app.llm || chat_remote_selected(app.chat) || llm_server_state(app.llm, NULL, 0) == LLM_READY;
             if (!ready) GuiDisable();

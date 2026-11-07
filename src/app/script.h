@@ -21,6 +21,10 @@
  *   drag_index A B               drag from index A to index B
  *   click_element NAME [COUNT]   click the centre of a named UI element
  *   wait_chat [MAX_FRAMES]       wait until no chat reply is streaming
+ *   wait_history [MAX_FRAMES]    wait until history completion is applied/rejected
+ *   history_hold yes|no         script-only delayed history reader
+ *   store_restart               script-only manager restart (no service shutdown)
+ *   expect history_busy yes|no  a history replacement is pending
  *   wait_ready [MAX_FRAMES]      wait until the model is ready (fails on timeout)
  *   move X Y | wheel DY | wait FRAMES | resize W H | close
  *   shot NAME                    save a screenshot after this frame draws
@@ -93,6 +97,10 @@ typedef struct {
     char *(*observer_status)(void *ctx);
     size_t (*history_cache_bytes)(void *ctx);
     void (*store_offline)(void *ctx, bool offline); /* scripted service failure, not a production menu */
+    bool (*history_busy)(void *ctx);
+    void (*history_hold)(void *ctx, bool hold);
+    bool (*history_worker_busy)(void *ctx);
+    void (*store_restart)(void *ctx);
 } ScriptHost;
 
 typedef struct Script Script;

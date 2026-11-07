@@ -2,6 +2,11 @@
 
 **Baseline:** `9e714e0` (DB chat windows and bounded layouts).
 
+**Subsequent implementation:** [MEMORY-005](MEMORY-005-async-history.md) replaces
+synchronous explicit DB navigation with an owned worker and adds further
+identity/epoch, connection and marker guards. Remaining-scope statements below
+describe this audit's original closeout, not the later implementation.
+
 **Scope:** window/action identity, ownership and allocation boundaries, invalid
 navigation, and unsaved DB chat lifecycle. The unrelated sample-document edit is
 preserved and excluded. This review does not certify the unfinished memory MVP.

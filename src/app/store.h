@@ -16,6 +16,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "app/db.h"
 
@@ -34,7 +35,7 @@ void store_stop(StoreManager *manager);
 bool store_online(const StoreManager *manager);
 /* The database in use ("scribodo", or a test database). */
 void store_database(StoreManager *manager, char *out, size_t outlen);
-/* Force the file store (tests, or the author's choice). */
+/* Force the manager offline. Marked projects pause; no file-history fallback. */
 void store_set_offline(StoreManager *manager, bool offline);
 
 /* This thread's connection, or NULL when offline. A connection that fails
@@ -50,7 +51,7 @@ bool store_probe(StoreManager *manager);
 typedef enum {
     STORE_FILES,  /* not in the store yet: local files under .scribodo/ */
     STORE_DB,     /* in the store, and the database is reachable */
-    STORE_PAUSED, /* in the store, but the database is down: structured data waits */
+    STORE_PAUSED, /* offline/unverified/malformed marker: structured data waits */
 } StoreMode;
 
 /* The mode for `project_dir`; for STORE_DB also its project id and this
@@ -59,6 +60,19 @@ StoreMode store_mode(StoreManager *manager, const char *project_dir, char *proje
 /* Mark a project as moved into the store (after a successful import): the
  * marker records the folder's identity (device, inode). */
 bool store_mark_imported(const char *project_dir, const char *project_id);
+
+typedef struct {
+    uint64_t generation;
+    char project_id[64];
+    unsigned long long device, inode;
+} StoreProjectIdentity;
+
+/* Local-only snapshot for async submission/publication checks: never opens a
+ * connection or queries SQL. Uses the actual directory identity, not marker
+ * inode metadata. False (and zeroed output) means no valid stored identity;
+ * it does not establish that falling back to file-backed history is safe.
+ * Valid snapshots are available even while the store is offline. */
+bool store_project_identity(StoreManager *manager, const char *project_dir, StoreProjectIdentity *out);
 
 /* Why a project with a marker is paused although the store is up:
  *   STORE_PROBLEM_COPY     this folder isn't the one the project belongs to
