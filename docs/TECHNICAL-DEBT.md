@@ -656,3 +656,7 @@ Do not treat these as remediation targets without a changed product decision:
 - UI history/cache windowing and stable source-navigation mappings remain next,
   before ingestion/outbox/retrieval and T1/T2 experiments. GAP-003 remains P0.
 - The sample-document edit remains untouched and excluded from commits.
+- Post-commit review of `3a4fa35` repeated mutation checks and added explicit
+  null/value guards for clean static analysis of the adapter and new history
+  modules. The final code was revalidated before the closeout commit/push; see
+  `REDTEAM-014-memory-foundation.md` for the matrix and remaining scope.

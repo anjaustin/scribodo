@@ -534,7 +534,7 @@ int chat_parse_sse_line(const char *line, char **acc, size_t *acc_len, char *err
             cJSON *j = json_parse(line);
             cJSON *e = j ? cJSON_GetObjectItem(j, "error") : NULL;
             cJSON *msg = e ? cJSON_GetObjectItem(e, "message") : NULL;
-            if (cJSON_IsString(msg)) {
+            if (msg && cJSON_IsString(msg) && msg->valuestring) {
                 snprintf(err, errlen, "%s", msg->valuestring);
                 cJSON_Delete(j);
                 return -1;
@@ -552,14 +552,14 @@ int chat_parse_sse_line(const char *line, char **acc, size_t *acc_len, char *err
     cJSON *e = cJSON_GetObjectItem(j, "error");
     if (e) {
         cJSON *msg = cJSON_GetObjectItem(e, "message");
-        snprintf(err, errlen, "%s", cJSON_IsString(msg) ? msg->valuestring : "model error");
+        snprintf(err, errlen, "%s", msg && cJSON_IsString(msg) && msg->valuestring ? msg->valuestring : "model error");
         rc = -1;
     } else {
         cJSON *ch = cJSON_GetArrayItem(cJSON_GetObjectItem(j, "choices"), 0);
         cJSON *delta = ch ? cJSON_GetObjectItem(ch, "delta") : NULL;
         cJSON *content = delta ? cJSON_GetObjectItem(delta, "content") : NULL;
         /* reasoning_content deltas are deliberately ignored */
-        if (cJSON_IsString(content)) {
+        if (content && cJSON_IsString(content) && content->valuestring) {
             int appended = append(acc, acc_len, content->valuestring);
             if (appended <= 0) {
                 snprintf(err, errlen, "%s", appended < 0 ? "Model response exceeded the 16 MB safety limit" :
@@ -568,7 +568,7 @@ int chat_parse_sse_line(const char *line, char **acc, size_t *acc_len, char *err
             }
         }
         cJSON *fin = ch ? cJSON_GetObjectItem(ch, "finish_reason") : NULL;
-        if (rc == 1 && cJSON_IsString(fin)) rc = strcmp(fin->valuestring, "length") ? 0 : 2;
+        if (rc == 1 && fin && cJSON_IsString(fin) && fin->valuestring) rc = strcmp(fin->valuestring, "length") ? 0 : 2;
     }
     cJSON_Delete(j);
     return rc;
@@ -910,10 +910,12 @@ static bool send_common(ChatSession *s, const char *text, const ChatContext *ctx
         if (joined) {
             joined[0] = '\0';
             for (size_t i = 0; i < s->nctx_docs; i++) {
+                if (!s->ctx_docs[i].title) { ok = false; break; }
                 if (i) strcat(joined, "\n");
                 strcat(joined, s->ctx_docs[i].title);
             }
-            s->msgs[user_index].docs = joined;
+            if (ok) s->msgs[user_index].docs = joined;
+            else free(joined);
         } else ok = false;
     } else if (single && ctx->doc_title && ok) {
         s->msgs[user_index].docs = strdup(ctx->doc_title);

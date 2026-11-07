@@ -120,3 +120,21 @@ prerequisite for publishing derived memory. These are explicit next slices, not
 silently waived acceptance criteria. The supported UI-thread ownership model is
 unchanged. This review found no additional unresolved defect within the bounded
 foundation's tested scope; it is not a claim that Scribodo is defect-free.
+
+## Final review iteration
+
+After implementation commit `3a4fa35`, repeated mutation checks still rejected
+all five weakened selectors. Clang static analysis was also run over `chat.c`,
+`chat_history.c` and `store_chat_history.c`. The two new modules were clean.
+Four warnings in the adapter depended on null-safe cJSON predicates or successful
+prior title-allocation checks that the analyzer could not establish across those
+calls. Explicit pointer/value guards and a checked join now make those safety
+conditions local; all three analyzed translation units emit no diagnostics.
+These were defensive/analyzability refinements, not newly reproduced crashes.
+
+The final code was revalidated with the same build/unit/database, ASan/UBSan,
+TSan, ordinary/store UI and pinned real-model adapter/UI matrix above. Local
+documentation targets/anchors and staging were checked separately. The authored
+research/design/implementation files are committed; downloaded upstream caches
+remain ignored and the unrelated sample edit remains the sole excluded working
+tree modification. Hosted CI results are reported after push, not pre-claimed.
