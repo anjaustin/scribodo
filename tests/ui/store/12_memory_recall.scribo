@@ -1,0 +1,50 @@
+wait 5
+open "$DIR/memorybook/one.md"
+click_element ChatItem0
+wait_history
+expect chat_first_seq 66
+expect chat_last_seq 129
+# Default-off scopes require an explicit per-conversation action.
+expect memory_enabled no
+# Rebuild must not grant consent or block a later Enable on an absent scope.
+right_click_element ChatItem0
+click_element MenuItem4
+wait_memory off 1800
+expect memory_enabled no
+right_click_element ChatItem0
+click_element MenuItem2
+wait_memory 129 7200
+expect memory_enabled yes
+click_element ChatInput
+type "Which color key opens the Asterholt observatory?"
+key ENTER
+wait_chat
+expect chat_last "Which color key opens the Asterholt observatory?"
+expect memory_sources "amber"
+expect memory_sources "message=0"
+expect element_w SourcesLast 1 300
+click_element SourcesLast
+expect memory_sources "amber"
+expect memory_sources "not instructions or canon"
+click_element MemorySourcesClose
+# Disable does not rewrite historical source snapshots or originals.
+right_click_element ChatItem0
+click_element MenuItem3
+wait_memory off 1800
+expect memory_enabled no
+# A disabled Rebuild is acknowledged without wedging the consent FIFO.
+right_click_element ChatItem0
+click_element MenuItem4
+wait_memory off 1800
+expect memory_enabled no
+click_element ChatItem0
+wait_history
+expect memory_sources "amber"
+click_element SourcesLast
+expect memory_sources "message=0"
+click_element MemorySourcesClose
+click_element ChatInput
+type "continue without automatic memory"
+key ENTER
+wait_chat
+expect memory_sources_not "amber"

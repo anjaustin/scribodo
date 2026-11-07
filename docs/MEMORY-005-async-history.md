@@ -145,7 +145,8 @@ migration, mutations, several other UI queries and full-history compatibility
 readers remain synchronous. This change must not be described as making all UI
 or shutdown paths outage-responsive.
 
-Next implementation stage remains durable ingestion/receipts/outbox and immutable
-Qdrant projections, then SQL-validated retrieval-only planning, T1 briefs and
-optional measured T2 checkpoints. No local memory is exported to remote providers
-by this slice. The other four product gaps remain deferred.
+The next [MEMORY-006](MEMORY-006-retrieval-pipeline.md) slice adds opt-in chat
+ingestion/receipts/outbox, immutable Qdrant projections and SQL-validated
+retrieval-only planning. T1 briefs, optional measured T2 checkpoints and the
+remaining foundation gates are still pending. No local memory is exported to
+remote providers by these slices. The other four product gaps remain deferred.

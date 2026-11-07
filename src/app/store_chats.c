@@ -3,6 +3,7 @@
  * for projects in the store. */
 #define _DARWIN_C_SOURCE
 #include "store_backends.h"
+#include "memory_store.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -34,6 +35,7 @@ typedef struct {
     bool stopped;
     const char *via;
     double created_at;
+    const char *memory_sources;
 } ChatMessageRow;
 
 static bool bool_cell(const DbRows *rows, size_t row, size_t col, bool *out)
@@ -55,11 +57,13 @@ static bool chat_summary_row(const DbRows *rows, size_t row, ChatSummaryRow *out
 
 static bool chat_message_row(const DbRows *rows, size_t row, ChatMessageRow *out)
 {
-    bool ok = db_rows_has_columns(rows, 9) && db_cell_i64(rows, row, 0, &out->seq) &&
+    bool ok = db_rows_has_columns(rows, 10) && db_cell_i64(rows, row, 0, &out->seq) &&
            db_cell_text(rows, row, 1, &out->role) && db_cell_text(rows, row, 2, &out->content) &&
            bool_cell(rows, row, 3, &out->error) && bool_cell(rows, row, 4, &out->is_edit) &&
            bool_cell(rows, row, 5, &out->truncated) && db_cell_nullable(rows, row, 6, &out->via) &&
-           db_cell_double(rows, row, 7, &out->created_at) && bool_cell(rows, row, 8, &out->stopped);
+           db_cell_double(rows, row, 7, &out->created_at) && bool_cell(rows, row, 8, &out->stopped) &&
+           db_cell_nullable(rows, row, 9, &out->memory_sources) &&
+           (!out->memory_sources || strlen(out->memory_sources) <= CHAT_MEMORY_SOURCES_BYTES);
     return ok && out->seq >= 0 && out->created_at >= 0 && out->created_at < 0x1p63;
 }
 
@@ -76,6 +80,7 @@ static void chat_messages_free_partial(ChatMessage *messages, size_t count)
         free(messages[i].content);
         free(messages[i].docs);
         free(messages[i].via);
+        free(messages[i].memory_sources);
     }
     free(messages);
 }
@@ -101,8 +106,10 @@ bool sdb_chat_append_sequenced(Db *db, const char *project_id, const char *id, c
                                 const ChatMessage *m, int64_t *sequence)
 {
     if (sequence) *sequence = -1;
+    if (!db || !m || (m->memory_sources &&
+        strnlen(m->memory_sources, CHAT_MEMORY_SOURCES_BYTES + 1) > CHAT_MEMORY_SOURCES_BYTES)) return false;
     double t = now_s();
-    if (!db_begin(db)) return false;
+    if (db_in_transaction(db) || !db_begin(db)) return false;
     DbArg c[5] = { DB_S(id), DB_S(project_id), DB_S(title && title[0] ? title : "Chat"), DB_D(t), DB_D(t) };
     bool ok = db_run(db, "INSERT IGNORE INTO conversations (id, project_id, title, created_at, updated_at) VALUES (?,?,?,?,?)",
                      c, 5, NULL) &&
@@ -118,13 +125,13 @@ bool sdb_chat_append_sequenced(Db *db, const char *project_id, const char *id, c
     } else {
         ok = false;
     }
-    DbArg a[10] = { DB_S(id), DB_I(seq), DB_S(m->role == CHAT_USER ? "user" : "assistant"), DB_S(m->content ? m->content : ""),
+    DbArg a[11] = { DB_S(id), DB_I(seq), DB_S(m->role == CHAT_USER ? "user" : "assistant"), DB_S(m->content ? m->content : ""),
                    DB_I(m->error ? 1 : 0), DB_I(m->is_edit ? 1 : 0), DB_I(m->truncated ? 1 : 0), DB_D(t),
-                   DB_S(m->via && m->via[0] ? m->via : NULL), DB_I(m->stopped ? 1 : 0) };
+                   DB_S(m->via && m->via[0] ? m->via : NULL), DB_I(m->stopped ? 1 : 0), DB_S(m->memory_sources) };
     ok = ok && db_run(db,
-                      "INSERT INTO messages (conversation_id, seq, role, content, error, is_edit, truncated, created_at, via, stopped)"
-                      " VALUES (?,?,?,?,?,?,?,?,?,?)",
-                      a, 10, NULL);
+                      "INSERT INTO messages (conversation_id, seq, role, content, error, is_edit, truncated, created_at, via, stopped, memory_sources)"
+                      " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                      a, 11, NULL);
     /* The documents this message was sent with. */
     if (ok && m->docs && m->docs[0]) {
         char *copy = strdup(m->docs);
@@ -141,6 +148,7 @@ bool sdb_chat_append_sequenced(Db *db, const char *project_id, const char *id, c
         free(copy);
     }
     ok = ok && db_run(db, "UPDATE conversations SET updated_at = ? WHERE id = ?", (DbArg[2]){ DB_D(t), DB_S(id) }, 2, NULL);
+    ok = ok && memory_message_intent(db, project_id, id, seq);
     if (ok) ok = db_commit(db);
     else db_rollback(db);
     if (ok && sequence) *sequence = seq;
@@ -196,7 +204,7 @@ bool sdb_chat_load(Db *db, const char *project_id, const char *id, ChatMessage *
     DbRows r, d;
     DbArg k[2] = { DB_S(id), DB_S(project_id) };
     if (!db_query(db,
-                  "SELECT m.seq, m.role, m.content, m.error, m.is_edit, m.truncated, m.via, m.created_at, m.stopped FROM messages m"
+                  "SELECT m.seq, m.role, m.content, m.error, m.is_edit, m.truncated, m.via, m.created_at, m.stopped, m.memory_sources FROM messages m"
                   " JOIN conversations c ON c.id = m.conversation_id WHERE m.conversation_id = ? AND c.project_id = ?"
                   " ORDER BY m.seq",
                   k, 2, &r))
@@ -209,7 +217,7 @@ bool sdb_chat_load(Db *db, const char *project_id, const char *id, ChatMessage *
         db_rows_free(&r);
         return false;
     }
-    bool ok = db_rows_has_columns(&r, 9) && db_rows_has_columns(&d, 2);
+    bool ok = db_rows_has_columns(&r, 10) && db_rows_has_columns(&d, 2);
     int64_t previous_document_seq = -1;
     for (size_t i = 0; ok && i < d.nrows; i++) {
         int64_t seq;
@@ -236,10 +244,11 @@ bool sdb_chat_load(Db *db, const char *project_id, const char *id, ChatMessage *
         m->truncated = row.truncated;
         m->stopped = row.stopped;
         m->via = row.via && row.via[0] ? strdup(row.via) : NULL;
+        m->memory_sources = row.memory_sources ? strdup(row.memory_sources) : NULL;
         m->ts = row.created_at;
         m->sequence_known = true;
         m->sequence = row.seq;
-        ok = m->content && (!row.via || !row.via[0] || m->via);
+        ok = m->content && (!row.via || !row.via[0] || m->via) && (!row.memory_sources || m->memory_sources);
         if (!ok) break;
         /* The documents' *current* names: renames are followed for free. */
         int64_t seq = row.seq;

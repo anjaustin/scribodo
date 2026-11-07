@@ -3,6 +3,7 @@
 #define _DEFAULT_SOURCE
 
 #include "script.h"
+#include "frame_metrics.h"
 
 #include "platform/dialogs.h"
 
@@ -15,6 +16,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
+#include <inttypes.h>
+#include <limits.h>
 
 #include "core/utf8.h"
 #include "ui/input.h"
@@ -55,6 +59,8 @@ struct Script {
     int wait;
     int wait_chat;      /* frames left to wait for the chat to go idle */
     int wait_history;
+    int wait_memory;
+    long memory_sequence;
     int wait_status;    /* frames left to wait for the status to contain wait_text */
     char wait_text[256];
     int wait_observer;  /* frames left to wait for the observer to go idle */
@@ -71,9 +77,19 @@ struct Script {
     atomic_bool stop_watchdog;
     pthread_t watchdog;
     bool watchdog_running;
+    FrameMetrics frame_metrics;
+    bool measuring_frames;
+    double frame_started_s;
 };
 
 #define STALL_LIMIT_S 15
+
+static double frame_now(void)
+{
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return NAN;
+    return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+}
 
 static void *watchdog_main(void *arg)
 {
@@ -386,6 +402,14 @@ static void run_expect(Script *s, ScriptHost *h, Tokens *t)
         size_t bytes = h->history_cache_bytes(h->ctx);
         ok = bytes <= strtoull(t->tok[2], NULL, 10);
         snprintf(detail, sizeof(detail), "got %zu cache bytes", bytes);
+    } else if (!strcmp(what, "memory_enabled") && t->n == 3 && h->memory_enabled) {
+        ok = h->memory_enabled(h->ctx) == yes(t->tok[2]);
+    } else if ((!strcmp(what, "memory_sources") || !strcmp(what, "memory_sources_not")) && t->n == 3 && h->memory_sources) {
+        char *sources = h->memory_sources(h->ctx);
+        bool found = sources && strstr(sources, t->tok[2]);
+        ok = !strcmp(what, "memory_sources") ? found : !found;
+        show(detail, sizeof(detail), "memory_sources", sources ? sources : "");
+        free(sources);
     } else if (!strcmp(what, "history_busy") && t->n == 3 && h->history_busy) {
         ok = h->history_busy(h->ctx) == yes(t->tok[2]);
     } else if (!strcmp(what, "chat_unsaved") && t->n == 3 && h->chat) {
@@ -599,6 +623,19 @@ static bool run_line(Script *s, ScriptHost *h)
         new_batch(s);
         return true;
     }
+    if (!strcmp(cmd, "measure_frames") && t.n == 2) {
+        if (!strcmp(t.tok[1], "start")) {
+            frame_metrics_clear(&s->frame_metrics);
+            frame_metrics_record(&s->frame_metrics, s->frame_started_s);
+            s->measuring_frames = true;
+        } else if (!strcmp(t.tok[1], "stop")) {
+            FrameMetricsReport r = frame_metrics_report(&s->frame_metrics);
+            s->measuring_frames = false;
+            printf("FRAME_METRICS interframe_ms count=%" PRIu64 " p50=%.3f p95=%.3f p99=%.3f max=%.3f sample_seconds=%.3f (includes waits/vsync; not input latency, isolated CPU time, or an SLA)\n",
+                   r.count, r.p50_ms, r.p95_ms, r.p99_ms, r.max_ms, r.sample_s);
+        } else report(s, false, "measure_frames needs start or stop");
+        return false;
+    }
     if (!strcmp(cmd, "wait") && t.n == 2) { s->wait = atoi(t.tok[1]); return true; }
     if (!strcmp(cmd, "wait_ready")) {
         s->wait_ready = t.n >= 2 ? atoi(t.tok[1]) : 60 * 180;
@@ -634,6 +671,19 @@ static bool run_line(Script *s, ScriptHost *h)
         s->wait_history = t.n >= 2 ? atoi(t.tok[1]) : 1200;
         if (s->wait_history <= 0) { report(s, false, "history wait needs a positive frame limit"); return false; }
         s->pc--;
+        return true;
+    }
+    if (!strcmp(cmd, "wait_memory") && h->memory_settled && (t.n == 2 || t.n == 3)) {
+        char *end;
+        bool off = !strcmp(t.tok[1], "off");
+        long seq = off ? -1 : strtol(t.tok[1], &end, 10);
+        if (!off && (!t.tok[1][0] || *end || seq < 0 || seq > INT_MAX)) { report(s, false, "invalid memory sequence"); return false; }
+        long frames = 1800;
+        if (t.n == 3) {
+            frames = strtol(t.tok[2], &end, 10);
+            if (!t.tok[2][0] || *end || frames < 1 || frames > 120000) { report(s, false, "invalid memory wait"); return false; }
+        }
+        s->memory_sequence = seq; s->wait_memory = (int)frames; s->pc--;
         return true;
     }
     if (!strcmp(cmd, "history_hold") && t.n == 2 && h->history_hold) {
@@ -741,6 +791,9 @@ static bool run_line(Script *s, ScriptHost *h)
 
 bool script_frame(Script *s, ScriptHost *h)
 {
+    /* Once per invocation, never once per command in the dispatch loop. */
+    s->frame_started_s = frame_now();
+    if (s->measuring_frames) frame_metrics_record(&s->frame_metrics, s->frame_started_s);
     unsigned long frame = atomic_fetch_add(&s->frames, 1);
     atomic_store(&s->line, s->pc > 0 ? s->pc - 1 : 0);
     if (frame < 2) return true; /* let the UI lay out once before the first command */
@@ -793,6 +846,15 @@ bool script_frame(Script *s, ScriptHost *h)
                 s->pc++;
                 new_batch(s);
                 continue;
+            }
+            return true;
+        }
+        if (s->wait_memory > 0) {
+            bool done = h->memory_settled(h->ctx, s->memory_sequence);
+            if (done || --s->wait_memory == 0) {
+                s->wait_memory = 0;
+                report(s, done, done ? NULL : "memory ingestion/outbox did not settle");
+                s->pc++; new_batch(s); continue;
             }
             return true;
         }

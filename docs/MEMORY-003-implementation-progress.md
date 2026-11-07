@@ -1,6 +1,6 @@
 # Memory MVP — implementation progress
 
-**Date:** 2026-11-06
+**Date:** 2026-11-07 (latest pipeline checkpoint)
 
 **Baseline:** [MEMORY-002](MEMORY-002-mvp-design.md). Implementation authorized
 after the design pass. This is a partial foundation, not the complete memory MVP.
@@ -84,6 +84,11 @@ DB navigation/source reveals, publication identity/epoch fences, connection-lock
 remediation and repeatable percentile/resource diagnostics. It does not complete
 the sustained-use gates or add ingestion, Qdrant memory projections or summaries.
 
+[MEMORY-006](MEMORY-006-retrieval-pipeline.md) adds opt-in durable chat ingestion,
+fenced index outbox/projections, SQL-validated retrieval-only planning and as-of
+reply sources. It remains chat-only, experimental and default-off; document
+revision retrieval and generated T1/T2 briefs are still unfinished.
+
 1. Windowed/paged `ChatSession` and UI viewport/cache integration. `open_chat()`
    still loads the complete conversation and the UI still retains archive-sized
   state. Do not declare host memory bounded end-to-end yet.
@@ -100,11 +105,11 @@ export/import/observer compatibility until their consumers are migrated safely.
 
 ## Subsequent slices
 
-Implement scope/epoch authority, SQL outbox/leases and immutable Qdrant projections;
-then source-validated retrieval-only planning; then T1 and gated T2 comparisons.
-Historical mutation detection/epochs, byte-to-token chunk subdivision, attachment
-revision eligibility, dispatch admission and provenance must exist before source
-pages authorize generated memory. The pager is append-stable, not a transaction
+The chat-only scope/epoch authority, SQL outbox/leases, immutable Qdrant
+projections, source-validated retrieval-only planning and reply provenance are
+implemented in MEMORY-006. Next: saved-document-revision eligibility/retrieval,
+T1 briefs with shared generative admission, then optional measured T2 comparisons
+and whole-manuscript quality/resource gates. The pager is append-stable, not a transaction
 snapshot against historical edits. SQL output limits also do not prove bounded
 database-server I/O or constant seek latency for large LONGTEXT sources.
 

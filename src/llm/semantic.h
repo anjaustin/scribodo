@@ -36,6 +36,9 @@ void semantic_client_destroy(SemanticClient *client);
 /* Whether retrieval is available right now (Qdrant reachable and, for the
  * real embedder, its server ready). */
 bool semantic_ready(SemanticClient *client);
+/* Model state only, no network probe. Used to avoid consuming durable retry
+ * attempts while the pinned local embedding server is still starting. */
+bool semantic_embedding_ready(SemanticClient *client);
 
 /* Embed `n` texts into out[n * SEM_DIM] (unit length). Queries get the
  * model's instruction prefix; stored passages don't. */

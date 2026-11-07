@@ -22,8 +22,8 @@ void test_db(void)
     }
     bool migrated = db_migrate(db, err, sizeof(err));
     if (!migrated) fprintf(stderr, "    %s\n", err);
-    CHECK(migrated && db_schema_version(db) == 8);
-    CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 8); /* idempotent */
+    CHECK(migrated && db_schema_version(db) == 9);
+    CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 9); /* idempotent */
 
     /* Author text with quotes, backslashes, SQL and Unicode goes through
      * prepared statements untouched. */
@@ -118,15 +118,35 @@ void test_migration(void)
         CHECK(db_run(db, "INSERT INTO revisions (id, document_id, hash, content, origin, created_at) VALUES"
                          " ('r-b','d-1','h2','second','save',20), ('r-a','d-1','h1','first','save',10)",
                      NULL, 0, NULL));
+        CHECK(db_migrate_upto(db, 8, err, sizeof(err)) && db_schema_version(db) == 8);
         bool migrated = db_migrate(db, err, sizeof(err));
         if (!migrated) fprintf(stderr, "    %s\n", err);
-        CHECK(migrated && db_schema_version(db) == 8);
+        CHECK(migrated && db_schema_version(db) == 9);
         DbRows r;
+        CHECK(db_query(db, "SELECT source_hash=SHA2(content,256) AND memory_sources IS NULL FROM messages WHERE conversation_id='c-1'",
+                       NULL, 0, &r) && r.nrows == 1 && !strcmp(db_cell(&r, 0, 0), "1"));
+        db_rows_free(&r);
+        CHECK(db_run(db, "INSERT INTO memory_scopes(id,project_id,conversation_id) VALUES ('default-scope','p-1','c-1')",
+                     NULL, 0, NULL));
+        CHECK(db_query(db, "SELECT enabled=0 AND history_epoch=1 AND policy_epoch=1 AND generation=1"
+                          " AND cursor_seq=-1 AND byte_offset=0 AND pending_seq=-1 AND tokenizer IS NULL"
+                          " AND fence=0 AND attempts=0 AND lease_until IS NULL AND retry_after IS NULL"
+                          " FROM memory_scopes WHERE id='default-scope'", NULL, 0, &r) &&
+              r.nrows == 1 && !strcmp(db_cell(&r, 0, 0), "1"));
+        db_rows_free(&r);
+        CHECK(db_run(db, "UPDATE messages SET content='changed after migration' WHERE conversation_id='c-1'",
+                     NULL, 0, NULL));
+        CHECK(db_query(db, "SELECT source_hash=SHA2('changed after migration',256) FROM messages WHERE conversation_id='c-1'",
+                       NULL, 0, &r) && r.nrows == 1 && !strcmp(db_cell(&r, 0, 0), "1"));
+        db_rows_free(&r);
         CHECK(db_query(db, "SELECT stopped FROM messages WHERE conversation_id='c-1'", NULL, 0, &r) &&
               r.nrows == 1 && !strcmp(db_cell(&r, 0, 0), "0"));
         db_rows_free(&r);
         CHECK(db_run(db, "UPDATE messages SET stopped=1 WHERE conversation_id='c-1'", NULL, 0, NULL));
-        CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 8);
+        /* Simulate a crash after migration 009's idempotent DDL but before its
+         * migration receipt. Reapplying must preserve existing rows/defaults. */
+        CHECK(db_run(db, "DELETE FROM schema_migrations WHERE version=9", NULL, 0, NULL));
+        CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 9);
         CHECK(db_query(db, "SELECT stopped FROM messages WHERE conversation_id='c-1'", NULL, 0, &r) &&
               r.nrows == 1 && !strcmp(db_cell(&r, 0, 0), "1"));
         db_rows_free(&r);

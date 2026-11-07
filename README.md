@@ -139,6 +139,13 @@ On first launch the app checks the model file against its pinned hash (once), th
 - If the store is down, documents stay editable; notes, canon, chats and History pause until it's back. A project not yet moved keeps using its files.
 - Set `SCRIBODO_STORE=off` to run without it.
 
+**Experimental local conversation memory:** launch with
+`SCRIBODO_MEMORY_EXPERIMENT=1`, open a stored chat, and right-click it to explicitly
+enable/disable/rebuild memory. This retrieves older chat excerpts only, never
+silently exports them to a remote provider, and shows read-only as-of **Sources**.
+It is default-off; document-revision retrieval and generated briefs are not yet
+implemented. See [the pipeline and remaining gates](docs/MEMORY-006-retrieval-pipeline.md).
+
 **Projects and documents:** a project is a folder of `.md` and `.txt` files.
 - On launch, Scribodo reopens the project and document you last had open. The first time, it shows a welcome screen: **Open folder…**, **New project…**, **Open the sample**, and your recent projects.
 - **⌘O** or **Open…** opens another folder. Dropping a folder onto the window works too.

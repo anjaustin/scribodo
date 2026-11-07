@@ -23,6 +23,8 @@
  *   wait_chat [MAX_FRAMES]       wait until no chat reply is streaming
  *   wait_history [MAX_FRAMES]    wait until history completion is applied/rejected
  *   history_hold yes|no         script-only delayed history reader
+ *   measure_frames start|stop   reset/report bounded interframe histogram;
+ *                              includes waits/vsync, not isolated CPU/input time
  *   store_restart               script-only manager restart (no service shutdown)
  *   expect history_busy yes|no  a history replacement is pending
  *   wait_ready [MAX_FRAMES]      wait until the model is ready (fails on timeout)
@@ -57,6 +59,9 @@
  *   expect running no            (only valid as the last command, after close)
  *   store_offline yes|no         force this test's StoreManager offline/online
  *   expect chat_unsaved yes|no   whether DB turns lack committed sequence receipts
+ *   wait_memory SEQ|off [FRAMES] wait for durable ingestion/outbox or disable
+ *   expect memory_enabled yes|no
+ *   expect memory_sources "..." expect memory_sources_not "..." (as-of snapshot)
  */
 #ifndef SCRIBODO_SCRIPT_H
 #define SCRIBODO_SCRIPT_H
@@ -101,6 +106,9 @@ typedef struct {
     void (*history_hold)(void *ctx, bool hold);
     bool (*history_worker_busy)(void *ctx);
     void (*store_restart)(void *ctx);
+    bool (*memory_settled)(void *ctx, long sequence);
+    bool (*memory_enabled)(void *ctx);
+    char *(*memory_sources)(void *ctx); /* owned as-of source snapshot */
 } ScriptHost;
 
 typedef struct Script Script;

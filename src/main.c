@@ -42,6 +42,7 @@
 #include "app/backup.h"
 #include "app/backup_job.h"
 #include "app/chat_history_job.h"
+#include "app/memory_job.h"
 #include "app/service_supervisor.h"
 #include "app/entity_backfill_job.h"
 #include "app/name_detection_job.h"
@@ -138,6 +139,12 @@ typedef struct {
     LlmServer *llm;
     LlmServer *embed;             /* the embedding model (semantic retrieval) */
     SemanticClient *semantic;
+    MemoryJob *memory_job;
+    bool memory_experiment, memory_sources_open;
+    char memory_bound_project[PATH_MAX], memory_bound_chat[40], memory_label[280];
+    uint64_t memory_bound_generation;
+    Editor *memory_sources_editor;
+    Rectangle memory_sources_close;
     union {
         ChatController chat_controller;
         struct {
@@ -515,6 +522,85 @@ static bool database_history_project(const char *project)
 static bool history_read_busy(App *app)
 {
     return app->history_pending || chat_history_job_busy(app->history_job);
+}
+
+static bool memory_controls_pending(App *app)
+{
+    MemoryJobStatus status;
+    return app->memory_job && memory_job_status(app->memory_job, &status) && status.controls_pending;
+}
+
+static void memory_tick(App *app)
+{
+    if (!app->memory_job) return;
+    StoreProjectIdentity identity;
+    bool bound = app->chat_id[0] && !strcmp(app->chat_project, app->project_dir) &&
+                 store_project_identity(app->store, app->chat_project, &identity);
+    if (!bound) {
+        if (app->memory_bound_chat[0]) memory_job_clear(app->memory_job);
+        app->memory_bound_chat[0] = app->memory_bound_project[0] = 0;
+        snprintf(app->memory_label, sizeof(app->memory_label), "Memory (experimental, chat-only): disabled/unavailable");
+        return;
+    }
+    if (strcmp(app->memory_bound_project, app->chat_project) || strcmp(app->memory_bound_chat, app->chat_id) ||
+        app->memory_bound_generation != identity.generation) {
+        if (memory_job_select(app->memory_job, app->chat_project, app->chat_id, MEMORY_JOB_RESUME)) {
+            snprintf(app->memory_bound_project, sizeof(app->memory_bound_project), "%s", app->chat_project);
+            snprintf(app->memory_bound_chat, sizeof(app->memory_bound_chat), "%s", app->chat_id);
+            app->memory_bound_generation = identity.generation;
+        }
+    }
+    memory_job_pause(app->memory_job, chat_busy(app->chat) || chat_remote_selected(app->chat) || history_read_busy(app));
+    MemoryJobStatus status;
+    if (memory_job_status(app->memory_job, &status))
+        snprintf(app->memory_label, sizeof(app->memory_label), "Memory (chat-only): %.240s", status.why);
+}
+
+static void memory_control(App *app, MemoryJobAction action)
+{
+    if (!app->memory_job || strcmp(app->menu_chat, app->chat_id) || strcmp(app->chat_project, app->project_dir)) {
+        set_status(app, "Open that stored conversation before changing local memory"); return;
+    }
+    if (chat_busy(app->chat) || app->history_pending) {
+        set_status(app, "Stop the reply and finish history navigation before changing memory"); return;
+    }
+    StoreProjectIdentity identity;
+    if (!store_project_identity(app->store, app->chat_project, &identity) ||
+        !memory_job_select(app->memory_job, app->chat_project, app->chat_id, action)) {
+        set_status(app, "Could not change memory; no file fallback was used"); return;
+    }
+    snprintf(app->memory_bound_project, sizeof(app->memory_bound_project), "%s", app->chat_project);
+    snprintf(app->memory_bound_chat, sizeof(app->memory_bound_chat), "%s", app->chat_id);
+    app->memory_bound_generation = identity.generation;
+    set_status(app, action == MEMORY_JOB_DISABLE ? "Disabling local memory; old replies keep their as-of sources"
+        : action == MEMORY_JOB_REBUILD ? "Rebuilding local memory from original chat sources; coverage remains partial"
+        : "Enabling experimental local memory for this conversation only; originals stay intact");
+}
+
+static void show_memory_sources(App *app, long index)
+{
+    chat_lock(app->chat);
+    const ChatMessage *message = index >= 0 ? chat_message(app->chat, (size_t)index) : NULL;
+    char *sources = message && message->memory_sources ? strdup(message->memory_sources) : NULL;
+    chat_unlock(app->chat);
+    if (!sources) { set_status(app, "No retrieval sources were recorded for that reply"); return; }
+    if (editor_set_text_utf8(app->memory_sources_editor, sources)) app->memory_sources_open = true;
+    else set_status(app, "Could not open the source snapshot");
+    free(sources);
+}
+
+static void draw_memory_sources(App *app)
+{
+    float width = fminf(900, GetScreenWidth() - 60.0f), height = fminf(700, GetScreenHeight() - 60.0f);
+    Rectangle box = { (GetScreenWidth() - width) / 2, (GetScreenHeight() - height) / 2, width, height };
+    DrawRectangleRec(box, (Color){0x28, 0x28, 0x28, 0xff});
+    const char *title = "As-of retrieval sources - read only; not canon or proof of exhaustive recall";
+    sfont_draw_utf8(&app->fonts[FONT_UI], title, (int)strlen(title), box.x + 14, box.y + 12, (Color){0xcc,0xcc,0xcc,0xff});
+    app->memory_sources_close = (Rectangle){ box.x + box.width - 90, box.y + box.height - 40, 76, 28 };
+    Rectangle content = { box.x + 8, box.y + 38, box.width - 16, box.height - 88 };
+    editor_update(app->memory_sources_editor, content, true);
+    editor_draw(app->memory_sources_editor, content, true);
+    if (GuiButton(app->memory_sources_close, "Close") || IsKeyPressed(KEY_ESCAPE)) app->memory_sources_open = false;
 }
 
 static void set_project(App *app, const char *real)
@@ -2517,8 +2603,16 @@ static int draw_attach_row(App *app, Rectangle r)
 
 static void send_chat(App *app, char *text)
 {
+    if (chat_busy(app->chat)) {
+        set_status(app, "A reply is already running; your input is kept. Stop it before sending");
+        free(text); return;
+    }
     if (app->history_pending) {
         set_status(app, "History is loading; your input is kept. Wait, or Cancel before sending");
+        free(text); return;
+    }
+    if (memory_controls_pending(app)) {
+        set_status(app, "Memory settings are not committed yet; your input is kept. Wait before sending");
         free(text); return;
     }
     if (app->project_dir[0] &&
@@ -2550,6 +2644,10 @@ static void send_chat(App *app, char *text)
             free(text); return;
         }
         chat_enable_window(app->chat);
+    }
+    if (!chat_memory_configure(app->chat, app->store, app->semantic, app->chat_project, app->chat_id,
+                               app->memory_experiment && database_history_project(app->chat_project))) {
+        set_status(app, "Could not freeze local memory routing; your input was kept"); free(text); return;
     }
     /* The attached documents, read now (by reference: nothing is copied
      * into the project). An edit request uses the edited document alone. */
@@ -2898,6 +2996,11 @@ static Clay_RenderCommandArray build_layout(App *app)
                     if (open_chat_stored(app)) slot(CLAY_ID("ObserverReads"), 190, 24);
                     slot(CLAY_ID("NewChatButton"), 80, 24);
                 }
+                if (app->memory_experiment) {
+                    CLAY({ .id = CLAY_ID("MemoryStatus"),
+                           .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(24) }, .padding = { 12, 8, 4, 0 } },
+                           .clip = { .horizontal = true } }) { label(app, app->memory_label, FONT_UI, COL_MUTED); }
+                }
                 CLAY({ .id = CLAY_ID("ChatMessages"),
                        .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } } }) {}
                 if (app->suggest_text[0]) { /* a name noticed in chat, to confirm */
@@ -2992,6 +3095,8 @@ static Rectangle host_element(void *ctx, const char *name)
     if (!strcmp(name, "ApplyLast")) return chat_view_last_apply_rect(app->chat_view);
     if (!strcmp(name, "NoteLast")) return chat_view_last_note_rect(app->chat_view, false);
     if (!strcmp(name, "CanonLast")) return chat_view_last_note_rect(app->chat_view, true);
+    if (!strcmp(name, "SourcesLast")) return chat_view_last_sources_rect(app->chat_view);
+    if (!strcmp(name, "MemorySourcesClose")) return app->memory_sources_open ? app->memory_sources_close : (Rectangle){0};
     if (!strcmp(name, "ChatOlder")) return chat_view_page_rect(app->chat_view, CHAT_PAGE_OLDER);
     if (!strcmp(name, "ChatNewer")) return chat_view_page_rect(app->chat_view, CHAT_PAGE_NEWER);
     if (!strcmp(name, "ChatLatest")) return chat_view_page_rect(app->chat_view, CHAT_PAGE_LATEST);
@@ -3045,6 +3150,25 @@ static void host_store_offline(void *ctx, bool offline)
 }
 static bool host_history_busy(void *ctx) { return ((App *)ctx)->history_pending; }
 static bool host_history_worker_busy(void *ctx) { return history_read_busy(ctx); }
+static bool host_memory_settled(void *ctx, long sequence)
+{
+    App *app = ctx; MemoryJobStatus status;
+    if (!app->memory_job || !memory_job_status(app->memory_job, &status) || !status.active ||
+        strcmp(status.scope.conversation_id, app->chat_id)) return false;
+    return sequence < 0 ? !status.enabled : status.enabled && status.scope.ingested_sequence >= sequence &&
+        status.scope.pending_sequence <= status.scope.ingested_sequence && !status.scope.index_pending;
+}
+static bool host_memory_enabled(void *ctx)
+{
+    App *app = ctx; MemoryJobStatus status;
+    return app->memory_job && memory_job_status(app->memory_job, &status) && status.enabled &&
+        !strcmp(status.scope.conversation_id, app->chat_id);
+}
+static char *host_memory_sources(void *ctx)
+{
+    App *app = ctx;
+    return app->memory_sources_open ? editor_text_utf8(app->memory_sources_editor) : chat_memory_sources(app->chat);
+}
 static void host_store_restart(void *ctx)
 {
     App *app = ctx;
@@ -3199,6 +3323,9 @@ static void app_destroy(App *app)
     app->recent_store = NULL;
     script_free(app->script);
     app->script = NULL;
+    if (app->chat) chat_cancel(app->chat);
+    memory_job_destroy(app->memory_job);
+    app->memory_job = NULL;
     atomic_store(&app->history_hold, false);
     chat_history_job_destroy(app->history_job);
     app->history_job = NULL;
@@ -3212,6 +3339,8 @@ static void app_destroy(App *app)
     if (app->graph_job_initialized) entity_backfill_job_destroy(&app->graph_job);
     if (app->names_job_initialized) name_detection_job_destroy(&app->names_job);
     observer_destroy(app->observer); /* cancels its request before the server stops */
+    chat_controller_destroy(&app->chat_controller); /* joins memory reads before dependencies below */
+    editor_destroy(app->memory_sources_editor);
     semantic_client_destroy(app->semantic);
     app->semantic = NULL;
     if (app->services_initialized) (void)service_supervisor_destroy(&app->services);
@@ -3221,7 +3350,6 @@ static void app_destroy(App *app)
     records_free(app->flist, app->nflist);
     entity_list_free(app->ents, app->nents);
     entity_detail_free(&app->ent);
-    chat_controller_destroy(&app->chat_controller); /* cancels any reply in progress */
     llm_server_destroy(app->llm);
     llm_server_destroy(app->embed);
     editor_destroy(app->editor);
@@ -3350,8 +3478,18 @@ int main(int argc, char **argv)
         /* Embeddings for the semantic index (a second, small server). */
         app.embed = llm_server_create(&ecfg);
         if (app.embed) llm_server_start(app.embed);
+        if (!app.llm || !app.embed) {
+            fprintf(stderr, "scribodo: could not allocate the pinned local model supervisors (no fake fallback)\n");
+            app_destroy(&app); return 1;
+        }
     }
     app.semantic = semantic_client_create(app.store, app.embed);
+    const char *memory_flag = getenv("SCRIBODO_MEMORY_EXPERIMENT");
+    app.memory_experiment = memory_flag && !strcmp(memory_flag, "1");
+    if (app.memory_experiment) {
+        app.memory_job = memory_job_create(app.store, app.semantic, app.llm);
+        if (!app.memory_job) { app_destroy(&app); return 1; }
+    }
     ChatSession *owned_chat = chat_create(app.llm);
     name_detection_job_set_server(&app.names_job, app.llm);
     /* TLS secrets are never written out for a remote model's traffic. */
@@ -3370,6 +3508,9 @@ int main(int argc, char **argv)
         chat_view_destroy(chat_view);
         chat_destroy(owned_chat);
     }
+    app.memory_sources_editor = editor_create(&app.fonts[FONT_CHAT]);
+    if (!app.memory_sources_editor) { app_destroy(&app); return 1; }
+    editor_set_modal_owner(app.memory_sources_editor, true);
     if (!reviewed_edit_controller_adopt(&app.reviewed_edit, app.editor, review)) review_destroy(review);
     app.record = record_view_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI]);
     app.prompt = prompt_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI]);
@@ -3427,7 +3568,8 @@ int main(int argc, char **argv)
                         host_status, host_open, host_drop, &app, app.chat, host_element, host_model_ready,
                         host_record_text, host_observer_enable, host_observer_idle, host_findings_text,
                         host_attached_text, host_explorer_text, host_observer_status, host_history_cache_bytes, host_store_offline,
-                        host_history_busy, host_history_hold, host_history_worker_busy, host_store_restart };
+                        host_history_busy, host_history_hold, host_history_worker_busy, host_store_restart,
+                        host_memory_settled, host_memory_enabled, host_memory_sources };
     if (script_path) {
         char err[256];
         app.script = script_load(script_path, getenv("SCRIBODO_SCRIPT_DIR"), getenv("SCRIBODO_SHOT_DIR"), err, sizeof(err));
@@ -3552,6 +3694,7 @@ int main(int argc, char **argv)
             }
         }
         history_poll(&app);
+        memory_tick(&app);
         /* Changes made here mark the lists at once; this catches the rest
          * (files added in Finder, other windows). Store queries cost more
          * than a directory read, so they're polled less often. */
@@ -3563,7 +3706,7 @@ int main(int argc, char **argv)
             /* Notes save themselves; uncommitted canon text counts as unsaved. */
             bool note_lost = record_view_active(app.record) && record_view_kind(app.record) == REC_NOTE &&
                              record_view_dirty(app.record) && !save_note(&app);
-            bool unsaved = editor_is_dirty(app.editor) || record_unsaved_canon(&app) || note_lost || unsaved_chat(&app);
+            bool unsaved = editor_is_dirty(app.editor) || record_unsaved_canon(&app) || note_lost || unsaved_chat(&app) || memory_controls_pending(&app);
             if (!unsaved || (app.close_armed && GetTime() - app.close_armed_at < 5.0)) {
                 running = false;
                 closed_by_window = true;
@@ -3572,7 +3715,9 @@ int main(int argc, char **argv)
             glfwSetWindowShouldClose(GetWindowHandle(), 0);
             app.close_armed = true;
             app.close_armed_at = GetTime();
-            set_status(&app, "Unsaved changes — save or copy what you need, or close again to discard");
+            set_status(&app, memory_controls_pending(&app)
+                ? "Memory settings are not committed yet; wait, or close again to discard pending settings and other unsaved changes"
+                : "Unsaved changes — save or copy what you need, or close again to discard");
         }
 
         if (IsFileDropped()) {
@@ -3590,7 +3735,7 @@ int main(int argc, char **argv)
         Clay_SetLayoutDimensions((Clay_Dimensions){ (float)GetScreenWidth(), (float)GetScreenHeight() });
 
         /* A prompt or menu takes all input until it closes. */
-        bool modal = prompt_active(app.prompt) || app.menu.active || app.settings_open;
+        bool modal = prompt_active(app.prompt) || app.menu.active || app.settings_open || app.memory_sources_open;
         input_block_mouse(modal);
         /* Clicks (pointer state reflects last frame's layout). */
         if (!modal && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
@@ -3716,9 +3861,10 @@ int main(int argc, char **argv)
                     static char reads_item[64];
                     snprintf(reads_item, sizeof(reads_item), "%s Observer reads this chat",
                              chat->observer_ignore ? "  " : "\xE2\x9C\x93");
-                    const char *items[] = { "Rename\xE2\x80\xA6", reads_item };
+                    const char *items[] = { "Rename\xE2\x80\xA6", reads_item, "Enable local memory (experimental)",
+                                            "Disable local memory", "Rebuild local memory" };
                     snprintf(app.menu_chat, sizeof(app.menu_chat), "%s", chat->id);
-                    menu_open(&app.menu, MT_CHAT, (int)i, mouse, items, 2);
+                    menu_open(&app.menu, MT_CHAT, (int)i, mouse, items, app.memory_experiment ? 5 : 2);
                     break;
                 }
             for (size_t i = 0; i < app.ndocs; i++)
@@ -3879,6 +4025,8 @@ int main(int argc, char **argv)
         bool rec_canon = false;
         long rec_index = chat_view_take_record(app.chat_view, &rec_canon);
         if (rec_index >= 0) record_from_reply(&app, rec_index, rec_canon);
+        long sources_index = chat_view_take_sources(app.chat_view);
+        if (sources_index >= 0) show_memory_sources(&app, sources_index);
         char *submitted = chat_view_take_submit(app.chat_view);
         if (submitted) send_chat(&app, submitted);
         if (chat_view_take_copied(app.chat_view)) set_status(&app, "Reply copied to the clipboard");
@@ -4035,7 +4183,9 @@ int main(int argc, char **argv)
             if (pick == 1 && app.menu.tag == MT_CHAT) {
                 const ChatSummary *cs = find_chat(&app, app.menu_chat);
                 if (cs) set_chat_observer(&app, app.menu_chat, cs->observer_ignore);
-            } else if (pick >= 0 && app.menu.tag == MT_CHAT) {
+            } else if (pick >= 2 && pick <= 4 && app.menu.tag == MT_CHAT && app.memory_experiment) {
+                memory_control(&app, pick == 2 ? MEMORY_JOB_ENABLE : pick == 3 ? MEMORY_JOB_DISABLE : MEMORY_JOB_REBUILD);
+            } else if (pick == 0 && app.menu.tag == MT_CHAT) {
                 const char *title = "";
                 for (size_t i = 0; i < app.nchats; i++)
                     if (!strcmp(app.chats[i].id, app.menu_chat)) title = app.chats[i].title;
@@ -4048,6 +4198,7 @@ int main(int argc, char **argv)
                 else reveal_document(&app, app.menu_doc);
             }
             if (app.settings_open) draw_model_settings(&app, screen);
+            if (app.memory_sources_open) draw_memory_sources(&app);
             if (prompt_active(app.prompt)) {
                 PromptResult pr = prompt_draw(app.prompt, screen);
                 if (pr == PR_CANCEL) prompt_close(app.prompt);

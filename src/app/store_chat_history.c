@@ -210,17 +210,19 @@ bool sdb_chat_window(Db *db, const char *project, const char *conversation,
             ? "SELECT m.role,LEFT(CAST(SUBSTRING(m.content,IF(m.seq=?, ?,1),?) AS BINARY),?),m.error,m.is_edit,m.truncated,"
               " LEFT(CAST(m.via AS BINARY),513),m.created_at,OCTET_LENGTH(m.content),"
                " OCTET_LENGTH(SUBSTRING(m.content,IF(m.seq=?, ?,1),?)),COALESCE(OCTET_LENGTH(m.via),0),m.seq,m.stopped"
-              " FROM messages m JOIN conversations c ON c.id=m.conversation_id"
-              " WHERE m.id IN (?,?,?,?,?,?,?,?) AND m.conversation_id=? AND c.project_id=? ORDER BY m.seq"
+               " ,COALESCE(OCTET_LENGTH(m.memory_sources),0),LEFT(CAST(m.memory_sources AS BINARY),16385)"
+               " FROM messages m JOIN conversations c ON c.id=m.conversation_id"
+               " WHERE m.id IN (?,?,?,?,?,?,?,?) AND m.conversation_id=? AND c.project_id=? ORDER BY m.seq"
             : "SELECT m.role,LEFT(CAST(SUBSTRING(m.content,IF(m.seq=?, ?,1),?) AS BINARY),?),m.error,m.is_edit,m.truncated,"
               " LEFT(CAST(m.via AS BINARY),513),m.created_at,OCTET_LENGTH(m.content),"
                " OCTET_LENGTH(SUBSTRING(m.content,IF(m.seq=?, ?,1),?)),COALESCE(OCTET_LENGTH(m.via),0),m.seq,m.stopped"
-              " FROM messages m JOIN conversations c ON c.id=m.conversation_id"
-              " WHERE m.id IN (?,?,?,?,?,?,?,?) AND m.conversation_id=? AND c.project_id=? ORDER BY m.seq DESC";
+               " ,COALESCE(OCTET_LENGTH(m.memory_sources),0),LEFT(CAST(m.memory_sources AS BINARY),16385)"
+               " FROM messages m JOIN conversations c ON c.id=m.conversation_id"
+               " WHERE m.id IN (?,?,?,?,?,?,?,?) AND m.conversation_id=? AND c.project_id=? ORDER BY m.seq DESC";
         DbRows row;
         ok = db_query(db, body_sql, args, 17, &row);
         if (!ok) break;
-        ok = row.nrows == batch && db_rows_has_columns(&row, 12);
+        ok = row.nrows == batch && db_rows_has_columns(&row, 14);
         for (size_t r = 0; ok && r < batch; r++) {
             int64_t seq = -1, expected = -1;
             ok = db_cell_i64(&row, r, 10, &seq) && db_cell_i64(&metadata, i + r, 1, &expected) && seq == expected;
@@ -228,22 +230,26 @@ bool sdb_chat_window(Db *db, const char *project, const char *conversation,
             if (!ok) break;
             size_t start = seq == focus ? request->start : 0;
             ChatMessage *m = &page.messages[page.count++];
-            const char *role = NULL, *text = NULL, *via = NULL;
-            uint64_t total = 0, part = 0, via_bytes = 0;
+            const char *role = NULL, *text = NULL, *via = NULL, *sources = NULL;
+            uint64_t total = 0, part = 0, via_bytes = 0, sources_bytes = 0;
             ok = read_row_bool(&row, r, 11, &m->stopped) && db_cell_text(&row, r, 0, &role) && (!strcmp(role, "user") || !strcmp(role, "assistant")) &&
                  db_cell_text(&row, r, 1, &text) && read_row_bool(&row, r, 2, &m->error) &&
                  read_row_bool(&row, r, 3, &m->is_edit) && read_row_bool(&row, r, 4, &m->truncated) &&
                  db_cell_nullable(&row, r, 5, &via) && db_cell_double(&row, r, 6, &m->ts) && m->ts >= 0 && m->ts < 0x1p63 &&
                  db_cell_u64(&row, r, 7, &total) && db_cell_u64(&row, r, 8, &part) && db_cell_u64(&row, r, 9, &via_bytes) &&
                  via_bytes <= 512 && (!via_bytes || (via && strlen(via) == via_bytes)) &&
-                 strlen(text) == (part > cap + 3 ? cap + 3 : part) && (!start || part);
+                  strlen(text) == (part > cap + 3 ? cap + 3 : part) && (!start || part) &&
+                  db_cell_u64(&row, r, 12, &sources_bytes) && sources_bytes <= CHAT_MEMORY_SOURCES_BYTES &&
+                  db_cell_nullable(&row, r, 13, &sources) &&
+                  (sources ? strlen(sources) == sources_bytes : sources_bytes == 0);
             if (ok) {
                 char clipped[CHAT_SOURCE_CHUNK_BYTES + 1];
                 size_t copied = utf8_clip(clipped, sizeof(clipped), text, cap);
                 m->content = malloc(copied + 1);
                 if (m->content) memcpy(m->content, clipped, copied + 1);
                 m->via = via ? strdup(via) : NULL;
-                ok = m->content && (!via || m->via);
+                m->memory_sources = sources ? strdup(sources) : NULL;
+                ok = m->content && (!via || m->via) && (!sources || m->memory_sources);
                 if (ok) {
                     m->role = !strcmp(role, "user") ? CHAT_USER : CHAT_ASSISTANT;
                     m->sequence_known = true; m->sequence = seq;

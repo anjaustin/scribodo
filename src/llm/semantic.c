@@ -1,5 +1,6 @@
 #define _DARWIN_C_SOURCE
 #include "semantic.h"
+#include "memory_vectors.h"
 
 #include "core/utf8.h"
 
@@ -83,7 +84,12 @@ bool semantic_ready(SemanticClient *client)
     cJSON *j = NULL;
     bool ok = qdrant(client, "GET", "/collections", NULL, &j);
     cJSON_Delete(j);
-    return ok && (!client->embed || llm_server_state(client->embed, NULL, 0) == LLM_READY);
+    return ok && semantic_embedding_ready(client);
+}
+
+bool semantic_embedding_ready(SemanticClient *client)
+{
+    return client && (!client->embed || llm_server_state(client->embed, NULL, 0) == LLM_READY);
 }
 
 /* ---- embeddings ------------------------------------------------------------- */
@@ -775,4 +781,368 @@ bool semantic_forget_collection(SemanticClient *client, const char *project_id)
     collection_for(client, project_id, name, sizeof(name));
     snprintf(path, sizeof(path), "/collections/%s", name);
     return qdrant(client, "DELETE", path, NULL, NULL);
+}
+
+/* ---- private conversation-memory projection (never the legacy index) ---- */
+
+static bool mv_fail(char *why, size_t n, const char *message)
+{
+    if (why && n) snprintf(why, n, "%s", message);
+    return false;
+}
+
+static void mv_sha(const char *text, size_t n, char out[65])
+{
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(text, (CC_LONG)n, digest);
+    for (size_t i = 0; i < sizeof(digest); i++) snprintf(out + i * 2, 3, "%02x", digest[i]);
+}
+
+static bool mv_hex(const char *s, size_t cap)
+{
+    if (!s || strnlen(s, cap) != 64) return false;
+    for (size_t i = 0; i < 64; i++)
+        if (!((s[i] >= '0' && s[i] <= '9') || (s[i] >= 'a' && s[i] <= 'f'))) return false;
+    return true;
+}
+
+bool memory_vectors_fingerprint(SemanticClient *client, char out[65])
+{
+    if (!client || !out) return false;
+    const char *identity = "fake-bag-of-words-v1";
+    if (client->embed) {
+        const LlmServerConfig *cfg = llm_server_config(client->embed);
+        LlmServerConfig pinned;
+        llm_server_embed_config(&pinned, NULL);
+        if (!cfg || !cfg->embedding || !mv_hex(cfg->sha256, sizeof(cfg->sha256)) || strcmp(cfg->sha256, pinned.sha256))
+            return false;
+        identity = cfg->sha256;
+    }
+    char key[512];
+    snprintf(key, sizeof(key), "memory-v1|%s|dim=%d|pool=last|normalize=l2|query=%s", identity, SEM_DIM, k_query_instruction);
+    mv_sha(key, strlen(key), out);
+    return true;
+}
+
+static bool mv_identifier(const char *s, size_t cap)
+{
+    size_t n = strnlen(s, cap);
+    if (!n || n == cap) return false;
+    for (size_t i = 0; i < n; i++)
+        if (!((s[i] >= 'a' && s[i] <= 'z') || (s[i] >= 'A' && s[i] <= 'Z') ||
+              (s[i] >= '0' && s[i] <= '9') || s[i] == '_' || s[i] == '-')) return false;
+    return true;
+}
+
+static bool mv_scope(const MemoryScope *s)
+{
+    return s && mv_identifier(s->database, sizeof(s->database)) &&
+           mv_identifier(s->id, sizeof(s->id)) && mv_identifier(s->project_id, sizeof(s->project_id)) &&
+           mv_identifier(s->conversation_id, sizeof(s->conversation_id)) && s->history_epoch > 0 &&
+           s->history_epoch <= INT64_MAX && s->policy_epoch > 0 && s->policy_epoch <= INT64_MAX &&
+           s->generation > 0 && s->generation <= INT64_MAX;
+}
+
+static bool mv_path(SemanticClient *c, const MemoryScope *s, const char *suffix, char out[400])
+{
+    char database[64] = "", fp[65];
+    if (!c || !mv_scope(s) || !memory_vectors_fingerprint(c, fp)) return false;
+    store_database(c->store, database, sizeof(database));
+    if (strcmp(database, s->database)) return false;
+    /* Admission checks the manager, but the endpoint belongs to the SQL
+     * connection that produced the scope. Freeze it before any network I/O:
+     * a concurrent database switch can never redirect old private text. */
+    int n = snprintf(out, 400, "/collections/%s__%s__memory_v1__%s__%llu%s", s->database, s->project_id, fp,
+                     (unsigned long long)s->generation, suffix);
+    return n > 0 && n < 400;
+}
+
+/* Reject ambiguous duplicate keys and pathological response objects before
+ * examining locators. Extra ordinary fields remain untrusted and ignored. */
+static bool mv_json_shape(const cJSON *j, unsigned depth, size_t *budget)
+{
+    if (!j || !*budget || depth > 32) return false;
+    --*budget;
+    if (!cJSON_IsObject(j) && !cJSON_IsArray(j)) return true;
+    size_t fields = 0;
+    const cJSON *x;
+    cJSON_ArrayForEach(x, j) {
+        if (cJSON_IsObject(j)) {
+            if (++fields > 128 || !x->string) return false;
+            for (const cJSON *previous = j->child; previous != x; previous = previous->next)
+                if (!strcmp(previous->string, x->string)) return false;
+        }
+        if (!mv_json_shape(x, depth + 1, budget)) return false;
+    }
+    return true;
+}
+
+/* Do not use the legacy helper: missing != unreachable and JSON must be exact.
+ * http_request's tcp: transport is hardwired to loopback, never a remote URL. */
+static bool mv_request(SemanticClient *c, const char *method, const char *path, cJSON *body, int *status, cJSON **out)
+{
+    *out = NULL;
+    *status = 0;
+    if (!c || !c->qkey[0]) return false;
+    char *encoded = body ? cJSON_PrintUnformatted(body) : NULL;
+    if (body && !encoded) return false;
+    HttpResult r = {0};
+    bool ok = http_request(c->qport, method, path, c->qkey, encoded, NULL, NULL, NULL, 15000, &r);
+    free(encoded);
+    *status = r.status;
+    if (ok && r.status >= 200 && r.status < 300) {
+        *out = r.body && r.len <= (1u << 20) ? json_parse_complete(r.body, r.len) : NULL;
+        size_t budget = 8192;
+        ok = cJSON_IsObject(*out) && mv_json_shape(*out, 0, &budget);
+    } else ok = ok && r.status == 404;
+    http_result_free(&r);
+    return ok;
+}
+
+static bool mv_string(const cJSON *obj, const char *key, const char *value)
+{
+    const cJSON *x = cJSON_GetObjectItemCaseSensitive(obj, key);
+    return cJSON_IsString(x) && !strcmp(x->valuestring, value);
+}
+
+static bool mv_ok(const cJSON *j) { return mv_string(j, "status", "ok"); }
+
+static bool mv_shape(const cJSON *j)
+{
+    const cJSON *result = cJSON_GetObjectItemCaseSensitive(j, "result");
+    const cJSON *config = cJSON_GetObjectItemCaseSensitive(result, "config");
+    const cJSON *params = cJSON_GetObjectItemCaseSensitive(config, "params");
+    const cJSON *vectors = cJSON_GetObjectItemCaseSensitive(params, "vectors");
+    const cJSON *size = cJSON_GetObjectItemCaseSensitive(vectors, "size");
+    /* Named vectors have no top-level size/distance and are not compatible. */
+    return mv_ok(j) && cJSON_IsObject(vectors) && cJSON_IsNumber(size) && size->valuedouble == SEM_DIM &&
+           mv_string(vectors, "distance", "Cosine");
+}
+
+bool memory_vectors_exists(SemanticClient *c, const MemoryScope *s, bool *exists, char *why, size_t n)
+{
+    if (why && n) why[0] = '\0';
+    if (exists) *exists = false;
+    char path[400];
+    if (!exists || !mv_path(c, s, "", path)) return mv_fail(why, n, "Invalid memory scope or embedding identity");
+    cJSON *j = NULL;
+    int status;
+    bool ok = mv_request(c, "GET", path, NULL, &status, &j);
+    if (ok && status != 404) {
+        ok = mv_shape(j);
+        *exists = ok;
+    }
+    cJSON_Delete(j);
+    return ok || mv_fail(why, n, "Memory collection unavailable or incompatible");
+}
+
+bool memory_vectors_create(SemanticClient *c, const MemoryScope *s, char *why, size_t n)
+{
+    bool exists;
+    if (!s || !s->enabled) return mv_fail(why, n, "Memory is not enabled");
+    if (!memory_vectors_exists(c, s, &exists, why, n)) return false;
+    if (exists) return true;
+    char path[400];
+    if (!mv_path(c, s, "", path)) return mv_fail(why, n, "Invalid memory scope");
+    cJSON *body = cJSON_CreateObject(), *j = NULL;
+    cJSON *vec = cJSON_AddObjectToObject(body, "vectors");
+    bool ok = vec && cJSON_AddNumberToObject(vec, "size", SEM_DIM) && cJSON_AddStringToObject(vec, "distance", "Cosine");
+    int status = 0;
+    ok = ok && mv_request(c, "PUT", path, body, &status, &j) && status != 404 && mv_ok(j) &&
+         cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(j, "result"));
+    cJSON_Delete(body);
+    cJSON_Delete(j);
+    /* A concurrent creator is safe only after validating its exact schema. */
+    bool verified = false;
+    if (!ok) return mv_fail(why, n, "Memory collection creation not acknowledged");
+    return memory_vectors_exists(c, s, &verified, why, n) && verified;
+}
+
+static bool mv_add_u64(cJSON *p, const char *key, uint64_t value)
+{
+    char text[24];
+    snprintf(text, sizeof(text), "%llu", (unsigned long long)value);
+    return cJSON_AddStringToObject(p, key, text) != NULL;
+}
+
+static cJSON *mv_scope_payload(const MemoryScope *s, const char *fp)
+{
+    cJSON *p = cJSON_CreateObject();
+    bool ok = p && cJSON_AddStringToObject(p, "schema", "memory_v1") && cJSON_AddStringToObject(p, "embedding", fp) &&
+              cJSON_AddStringToObject(p, "scope_id", s->id) && cJSON_AddStringToObject(p, "project_id", s->project_id) &&
+              cJSON_AddStringToObject(p, "conversation_id", s->conversation_id) &&
+              mv_add_u64(p, "history_epoch", s->history_epoch) && mv_add_u64(p, "policy_epoch", s->policy_epoch) &&
+              mv_add_u64(p, "generation", s->generation);
+    if (!ok) { cJSON_Delete(p); return NULL; }
+    return p;
+}
+
+static bool mv_text(const char *text, size_t *bytes)
+{
+    if (!text) return false;
+    size_t len = strnlen(text, MEMORY_UNIT_BYTES + 1);
+    if (!len || len > MEMORY_UNIT_BYTES) return false;
+    uint32_t cps[MEMORY_UNIT_BYTES];
+    size_t invalid = 0;
+    utf8_decode((const uint8_t *)text, len, cps, &invalid);
+    if (invalid) return false;
+    *bytes = len;
+    return true;
+}
+
+static cJSON *mv_vector(const float v[SEM_DIM])
+{
+    cJSON *a = cJSON_CreateArray();
+    if (!a) return NULL;
+    for (int i = 0; i < SEM_DIM; i++) {
+        cJSON *x = isfinite(v[i]) ? cJSON_CreateNumber(v[i]) : NULL;
+        if (!x || !cJSON_AddItemToArray(a, x)) { cJSON_Delete(x); cJSON_Delete(a); return NULL; }
+    }
+    return a;
+}
+
+static bool mv_completed(const cJSON *j)
+{
+    return mv_ok(j) && mv_string(cJSON_GetObjectItemCaseSensitive(j, "result"), "status", "completed");
+}
+
+bool memory_vectors_upsert(SemanticClient *c, const MemoryIndexLease *lease, char *why, size_t n)
+{
+    if (why && n) why[0] = '\0';
+    char path[400], fp[65], hash[65];
+    size_t bytes;
+    if (!lease || !lease->scope.enabled || !mv_path(c, &lease->scope, "/points?wait=true", path) ||
+        !mv_hex(lease->unit.id, sizeof(lease->unit.id)) || !mv_hex(lease->unit.text_hash, sizeof(lease->unit.text_hash)) ||
+        !mv_text(lease->unit.text, &bytes) || bytes != lease->unit.text_bytes)
+        return mv_fail(why, n, "Invalid, oversized, or noncanonical memory unit");
+    mv_sha(lease->unit.text, bytes, hash);
+    if (strcmp(hash, lease->unit.text_hash)) return mv_fail(why, n, "Memory text hash mismatch");
+    bool exists;
+    if (!memory_vectors_exists(c, &lease->scope, &exists, why, n)) return false;
+    if (!exists) return mv_fail(why, n, "Memory collection lost; rebuild SQL generation before creating");
+    memory_vectors_fingerprint(c, fp);
+    float v[SEM_DIM];
+    const char *text = lease->unit.text;
+    char err[256] = "";
+    /* Already checked <=2000 bytes and strict UTF-8: legacy clipping is a no-op. */
+    if (!semantic_embed(c, &text, 1, false, v, err, sizeof(err))) return mv_fail(why, n, err);
+    cJSON *p = mv_scope_payload(&lease->scope, fp), *body = cJSON_CreateObject(), *pt = cJSON_CreateObject();
+    bool ok = p && cJSON_AddStringToObject(p, "unit_id", lease->unit.id) &&
+              cJSON_AddStringToObject(p, "text_hash", lease->unit.text_hash);
+    char key[700], uuid[37];
+    snprintf(key, sizeof(key), "%s|%s|%s|%s|%s|%s|%llu|%llu|%llu|%s", lease->scope.database, lease->scope.id, lease->scope.project_id,
+             lease->scope.conversation_id, lease->unit.id, lease->unit.text_hash,
+             (unsigned long long)lease->scope.history_epoch, (unsigned long long)lease->scope.policy_epoch,
+             (unsigned long long)lease->scope.generation, fp);
+    point_id(key, uuid);
+    cJSON *vec = mv_vector(v), *pts = cJSON_AddArrayToObject(body, "points");
+    ok = ok && pt && vec && pts && cJSON_AddStringToObject(pt, "id", uuid);
+    if (ok && cJSON_AddItemToObject(pt, "payload", p)) p = NULL; else ok = false;
+    if (ok && cJSON_AddItemToObject(pt, "vector", vec)) vec = NULL; else ok = false;
+    if (ok && cJSON_AddItemToArray(pts, pt)) pt = NULL; else ok = false;
+    cJSON *j = NULL;
+    int status = 0;
+    ok = ok && mv_request(c, "PUT", path, body, &status, &j) && status != 404 && mv_completed(j);
+    cJSON_Delete(p); cJSON_Delete(vec); cJSON_Delete(pt); cJSON_Delete(body); cJSON_Delete(j);
+    return ok || mv_fail(why, n, "Memory upsert not completed");
+}
+
+static cJSON *mv_filter(const cJSON *scope)
+{
+    cJSON *f = cJSON_CreateObject(), *must = cJSON_AddArrayToObject(f, "must");
+    const cJSON *x;
+    bool ok = must != NULL;
+    cJSON_ArrayForEach(x, scope) {
+        cJSON *m = cJSON_CreateObject(), *value = cJSON_AddObjectToObject(m, "match");
+        if (!ok || !m || !value || !cJSON_AddStringToObject(m, "key", x->string) ||
+            !cJSON_AddStringToObject(value, "value", x->valuestring) || !cJSON_AddItemToArray(must, m)) {
+            cJSON_Delete(m); ok = false; break;
+        }
+    }
+    if (!ok) { cJSON_Delete(f); return NULL; }
+    return f;
+}
+
+/* A unit has one immutable hash within a SQL generation. Conflicting versions
+ * make the entire response ambiguous; identical repeats must not inflate RRF.
+ * Preserve the first rank/score, rather than trusting repeated score claims. */
+static bool mv_candidate_add(MemoryCandidate candidates[MEMORY_CANDIDATES], size_t *used,
+                             const MemoryScope *s, const char *id, const char *hash, double score)
+{
+    for (size_t i = 0; i < *used; i++)
+        if (!strcmp(candidates[i].unit_id, id)) return !strcmp(candidates[i].text_hash, hash);
+    if (*used >= MEMORY_CANDIDATES) return false;
+    MemoryCandidate *candidate = &candidates[(*used)++];
+    memcpy(candidate->unit_id, id, 65);
+    memcpy(candidate->text_hash, hash, 65);
+    candidate->history_epoch = s->history_epoch;
+    candidate->generation = s->generation;
+    candidate->score = score;
+    return true;
+}
+
+bool memory_vectors_search(SemanticClient *c, const MemoryScope *s, const char *query, size_t limit,
+                           MemoryCandidate out[MEMORY_CANDIDATES], size_t *count, char *why, size_t n)
+{
+    if (count) *count = 0;
+    if (why && n) why[0] = '\0';
+    char path[400], fp[65];
+    size_t bytes;
+    if (!count || !out || !limit || limit > MEMORY_CANDIDATES || !s || !s->enabled ||
+        !mv_path(c, s, "/points/search", path) || !mv_text(query, &bytes))
+        return mv_fail(why, n, "Invalid memory search scope or query");
+    bool exists;
+    if (!memory_vectors_exists(c, s, &exists, why, n)) return false;
+    if (!exists) return mv_fail(why, n, "Memory collection lost; SQL rebuild required");
+    float v[SEM_DIM];
+    char err[256] = "";
+    if (!semantic_embed(c, &query, 1, true, v, err, sizeof(err))) return mv_fail(why, n, err);
+    memory_vectors_fingerprint(c, fp);
+    cJSON *scope = mv_scope_payload(s, fp), *filter = scope ? mv_filter(scope) : NULL;
+    cJSON *body = cJSON_CreateObject(), *vec = mv_vector(v);
+    bool ok = scope && body && filter && vec && cJSON_AddNumberToObject(body, "limit", (double)limit) &&
+              cJSON_AddBoolToObject(body, "with_payload", true);
+    if (ok && cJSON_AddItemToObject(body, "vector", vec)) vec = NULL; else ok = false;
+    if (ok && cJSON_AddItemToObject(body, "filter", filter)) filter = NULL; else ok = false;
+    cJSON *j = NULL;
+    int status = 0;
+    ok = ok && mv_request(c, "POST", path, body, &status, &j) && status != 404 && mv_ok(j);
+    const cJSON *arr = cJSON_GetObjectItemCaseSensitive(j, "result"), *it;
+    ok = ok && cJSON_IsArray(arr) && (size_t)cJSON_GetArraySize(arr) <= limit;
+    MemoryCandidate candidates[MEMORY_CANDIDATES] = {0};
+    size_t used = 0;
+    cJSON_ArrayForEach(it, arr) {
+        if (!ok) break;
+        const cJSON *p = cJSON_GetObjectItemCaseSensitive(it, "payload"), *field;
+        const cJSON *score = cJSON_GetObjectItemCaseSensitive(it, "score");
+        ok = cJSON_IsObject(it) && cJSON_IsObject(p) && cJSON_IsNumber(score) && isfinite(score->valuedouble);
+        cJSON_ArrayForEach(field, scope) if (!mv_string(p, field->string, field->valuestring)) ok = false;
+        const cJSON *id = cJSON_GetObjectItemCaseSensitive(p, "unit_id"), *hash = cJSON_GetObjectItemCaseSensitive(p, "text_hash");
+        ok = ok && cJSON_IsString(id) && mv_hex(id->valuestring, 65) && cJSON_IsString(hash) && mv_hex(hash->valuestring, 65);
+        if (!ok) break;
+        ok = mv_candidate_add(candidates, &used, s, id->valuestring, hash->valuestring, score->valuedouble);
+    }
+    cJSON_Delete(scope); cJSON_Delete(filter); cJSON_Delete(vec); cJSON_Delete(body); cJSON_Delete(j);
+    if (!ok) return mv_fail(why, n, "Memory search rejected: malformed, conflicting, or wrong-scope locators (no partial results)");
+    memcpy(out, candidates, used * sizeof(*out));
+    *count = used;
+    return true;
+}
+
+bool memory_vectors_drop(SemanticClient *c, const MemoryScope *s, char *why, size_t n)
+{
+    bool exists;
+    if (!memory_vectors_exists(c, s, &exists, why, n)) return false;
+    if (!exists) return true;
+    char path[400], fp[65];
+    if (!mv_path(c, s, "/points/delete?wait=true", path) || !memory_vectors_fingerprint(c, fp))
+        return mv_fail(why, n, "Invalid memory scope");
+    cJSON *scope = mv_scope_payload(s, fp), *filter = scope ? mv_filter(scope) : NULL;
+    cJSON *body = cJSON_CreateObject(), *j = NULL;
+    bool ok = body && filter && cJSON_AddItemToObject(body, "filter", filter);
+    if (ok) filter = NULL;
+    int status = 0;
+    ok = ok && mv_request(c, "POST", path, body, &status, &j) && (status == 404 || mv_completed(j));
+    cJSON_Delete(scope); cJSON_Delete(filter); cJSON_Delete(body); cJSON_Delete(j);
+    return ok || mv_fail(why, n, "Memory scope deletion not completed");
 }

@@ -40,7 +40,13 @@ typedef struct {
     bool excerpt;    /* stored body is only a display range; not model history */
     bool excerpt_more;
     size_t excerpt_start; /* codepoint offset in the persisted original */
+    char *memory_sources; /* optional owned as-of local retrieval provenance, never model history */
 } ChatMessage;
+
+#define CHAT_MEMORY_SOURCES_BYTES (16u * 1024u)
+
+struct StoreManager;
+struct SemanticClient;
 
 typedef struct {
     const char *title;
@@ -81,6 +87,12 @@ bool chat_send_edit(ChatSession *s, const char *instruction, const char *passage
                     char *err, size_t errlen);
 void chat_cancel(ChatSession *s);
 bool chat_busy(ChatSession *s);
+/* Experimental, local-only retrieval. Idle UI command; borrowed dependencies
+ * outlive the session or must be cleared after joining its worker. */
+bool chat_memory_configure(ChatSession *s, struct StoreManager *store, struct SemanticClient *vectors,
+                            const char *project_dir, const char *conversation, bool enabled);
+/* Owned bounded as-of sources for the last prepared local reply; NULL if none. */
+char *chat_memory_sources(ChatSession *s);
 
 /* Load an existing conversation (replaces the current one). Not while busy.
  * Allocation/validation failure leaves the current conversation intact. */

@@ -14,6 +14,9 @@
 #include "core/json.h"
 #include "llm/http.h"
 #include "llm/llm_text.h"
+#include "llm/context_planner.h"
+#include "llm/memory_tokens.h"
+#include "app/store.h"
 
 #define CHAT_SLOT 0          /* slot 1 is reserved for the observer */
 #define SLOT_CTX_TOKENS 32768
@@ -69,6 +72,11 @@ struct ChatSession {
     bool finished_pending;   /* worker finished; UI fires the done callback */
     bool user_done_pending;  /* the user message is ready to persist */
     size_t user_index;
+    StoreManager *memory_store;
+    SemanticClient *memory_vectors;
+    bool memory_enabled;
+    char memory_project[PATH_MAX], memory_conversation[40];
+    StoreProjectIdentity memory_identity;
     ChatMessageDone on_done;
     void *on_done_ctx;
 };
@@ -131,6 +139,7 @@ void chat_clear(ChatSession *s)
         free(s->msgs[i].content);
         free(s->msgs[i].docs);
         free(s->msgs[i].via);
+        free(s->msgs[i].memory_sources);
     }
     free(s->msgs);
     s->msgs = NULL; s->cap = 0;
@@ -141,6 +150,9 @@ void chat_clear(ChatSession *s)
     free(s->edit_instruction); s->edit_instruction = NULL;
     free(s->edit_passage); s->edit_passage = NULL;
     s->has_doc = false;
+    s->memory_enabled = false;
+    s->memory_store = NULL; s->memory_vectors = NULL;
+    s->memory_project[0] = s->memory_conversation[0] = '\0';
     s->count = 0;
     s->target = s->user_index = 0;
     s->windowed = s->older = s->newer = false;
@@ -180,14 +192,19 @@ bool chat_load_messages(ChatSession *s, const ChatMessage *msgs, size_t n)
         loaded[i].content = strdup(msgs[i].content ? msgs[i].content : "");
         loaded[i].docs = msgs[i].docs ? strdup(msgs[i].docs) : NULL;
         loaded[i].via = msgs[i].via ? strdup(msgs[i].via) : NULL;
+        loaded[i].memory_sources = NULL;
+        bool provenance_ok = !msgs[i].memory_sources || strnlen(msgs[i].memory_sources, CHAT_MEMORY_SOURCES_BYTES + 1) <= CHAT_MEMORY_SOURCES_BYTES;
+        if (msgs[i].memory_sources && provenance_ok) loaded[i].memory_sources = strdup(msgs[i].memory_sources);
         ok = (msgs[i].role == CHAT_USER || msgs[i].role == CHAT_ASSISTANT) && loaded[i].content &&
-             (!msgs[i].docs || loaded[i].docs) && (!msgs[i].via || loaded[i].via);
+              (!msgs[i].docs || loaded[i].docs) && (!msgs[i].via || loaded[i].via) && provenance_ok &&
+              (!msgs[i].memory_sources || loaded[i].memory_sources);
     }
     if (!ok) {
         for (size_t i = 0; i < n; i++) {
             free(loaded[i].content);
             free(loaded[i].docs);
             free(loaded[i].via);
+            free(loaded[i].memory_sources);
         }
         free(loaded);
         return false;
@@ -296,7 +313,7 @@ bool chat_trim_saved(ChatSession *s)
         ChatMessage *m = &s->msgs[first];
         if (!m->sequence_known) break; /* never evict a failed save */
         bytes -= strlen(m->content ? m->content : "");
-        free(m->content); free(m->docs); free(m->via);
+        free(m->content); free(m->docs); free(m->via); free(m->memory_sources);
         first++;
     }
     if (first) {
@@ -331,6 +348,38 @@ size_t chat_request_text_bytes(ChatSession *s)
 }
 const ChatMessage *chat_message(ChatSession *s, size_t i) { return i < s->count ? &s->msgs[i] : NULL; }
 bool chat_busy(ChatSession *s) { return atomic_load(&s->busy); }
+
+bool chat_memory_configure(ChatSession *s, StoreManager *store, SemanticClient *vectors,
+                            const char *project, const char *conversation, bool enabled)
+{
+    if (!s || chat_busy(s)) return false;
+    s->memory_enabled = false;
+    if (!enabled || s->remote_selected) {
+        s->memory_enabled = false; s->memory_store = NULL; s->memory_vectors = NULL;
+        s->memory_project[0] = s->memory_conversation[0] = 0;
+        return true;
+    }
+    StoreProjectIdentity identity;
+    if (!store || !vectors || !project || !conversation || !project[0] || !conversation[0] ||
+        strnlen(project, PATH_MAX) == PATH_MAX || strnlen(conversation, 40) == 40 ||
+        !store_project_identity(store, project, &identity)) return false;
+    s->memory_store = store; s->memory_vectors = vectors;
+    snprintf(s->memory_project, sizeof(s->memory_project), "%s", project);
+    snprintf(s->memory_conversation, sizeof(s->memory_conversation), "%s", conversation);
+    s->memory_identity = identity;
+    s->memory_enabled = true;
+    return true;
+}
+
+char *chat_memory_sources(ChatSession *s)
+{
+    if (!s) return NULL;
+    pthread_mutex_lock(&s->mu);
+    const char *sources = s->count ? s->msgs[s->count - 1].memory_sources : NULL;
+    char *copy = sources ? strdup(sources) : NULL;
+    pthread_mutex_unlock(&s->mu);
+    return copy;
+}
 
 ChatHistoryStats chat_history_stats(ChatSession *s)
 {
@@ -802,6 +851,20 @@ static long server_count(const char *text, void *ctx)
     return n;
 }
 
+static long reference_count(const char *text, void *ctx)
+{
+    ChatSession *s = ctx;
+    return s->server ? server_count(text, s) : (long)strlen(text); /* explicit test backend only */
+}
+
+static bool memory_identity_current(ChatSession *s)
+{
+    StoreProjectIdentity now;
+    return store_project_identity(s->memory_store, s->memory_project, &now) &&
+           now.generation == s->memory_identity.generation && now.device == s->memory_identity.device &&
+           now.inode == s->memory_identity.inode && !strcmp(now.project_id, s->memory_identity.project_id);
+}
+
 static bool build_in_worker(ChatSession *s)
 {
     pthread_mutex_lock(&s->mu);
@@ -847,6 +910,51 @@ static bool build_in_worker(ChatSession *s)
                                       counter, s, &truncated);
     else if (ok)
         req = chat_build_request_ex(history.messages, history.count, s->has_doc ? &ctx : NULL, &names, slot_ctx, counter, s, &truncated);
+    char memory_notice[256] = "";
+    /* This branch precedes all store/vector work: switching to remote never
+     * exports local retrieval material, including through the edit path. */
+    if (req && s->memory_enabled && !s->via_remote && !s->edit_passage) {
+        MemoryPlan plan = {0};
+        MemoryTokenizer tokenizer = { .server = s->server, .cancel = &s->cancel, .timeout_ms = 10000 };
+        char fingerprint[65];
+        Db *db = NULL;
+        char project_id[64];
+        bool available = memory_tokenizer_fingerprint(&tokenizer, fingerprint) && memory_identity_current(s) &&
+            store_mode(s->memory_store, s->memory_project, project_id, sizeof(project_id), &db) == STORE_DB && db &&
+            !strcmp(project_id, s->memory_identity.project_id);
+        int64_t before = INT64_MAX;
+        for (size_t i = 0; i < history.count; i++)
+            if (history.messages[i].sequence_known && history.messages[i].sequence < before) before = history.messages[i].sequence;
+        const char *query = history.count ? history.messages[history.count - 1].content : "";
+        available = available && memory_plan_build(db, s->memory_vectors, project_id, s->memory_conversation,
+            query, before, false, reference_count, s, fingerprint, &s->cancel, &plan);
+        if (available && plan.count) {
+            char *with_memory = NULL;
+            long prompt_room = (long)slot_ctx - MAX_REPLY_TOKENS - 256;
+            bool admitted = prompt_room > 0 && memory_plan_apply(&plan, req, false, (size_t)prompt_room,
+                memory_request_tokens, &tokenizer, &with_memory) && memory_identity_current(s) &&
+                memory_plan_admit(db, &plan, false) && !atomic_load(&s->cancel);
+            if (admitted) {
+                char *sources = plan.count && plan.reference ? strdup(plan.reference) : NULL;
+                if (plan.count && !sources) admitted = false;
+                else {
+                    pthread_mutex_lock(&s->mu);
+                    free(s->msgs[s->target].memory_sources);
+                    s->msgs[s->target].memory_sources = sources;
+                    pthread_mutex_unlock(&s->mu);
+                }
+            }
+            free(req); req = admitted ? with_memory : NULL;
+            if (!admitted) {
+                free(with_memory);
+                snprintf(s->build_error, sizeof(s->build_error), "Memory admission changed or exact context budgeting failed; nothing was sent. Retry or narrow the request.");
+            } else snprintf(memory_notice, sizeof(memory_notice), "Local memory: %zu older excerpts; partial recall. Sources are as-of this reply, not canon.", plan.count);
+        } else snprintf(memory_notice, sizeof(memory_notice), "%s",
+            available && plan.readiness == MEMORY_DISABLED ? "Local memory disabled for this conversation; recent context only"
+            : "Local memory warming, partial or unavailable: no older excerpts admitted; recent context only");
+        memory_plan_free(&plan);
+        store_thread_done(s->memory_store);
+    }
     if (req && use_samp) {
         char *tuned = chat_apply_sampling(req, &samp, s->edit_passage != NULL);
         free(req);
@@ -856,6 +964,12 @@ static bool build_in_worker(ChatSession *s)
         char *adapted = remote_adapt_request(&s->remote, req);
         free(req);
         req = adapted;
+    }
+    if (!req) {
+        pthread_mutex_lock(&s->mu);
+        free(s->msgs[s->target].memory_sources);
+        s->msgs[s->target].memory_sources = NULL;
+        pthread_mutex_unlock(&s->mu);
     }
     bool history_limited = history.limited;
     chat_request_history_free(&history);
@@ -869,6 +983,10 @@ static bool build_in_worker(ChatSession *s)
                                     : "The document was too long for the model and was cut off for this message");
     else if (req && history_limited)
         snprintf(s->notice, sizeof(s->notice), "Only recent conversation history was prepared; older history was omitted from this request");
+    if (req && memory_notice[0]) {
+        size_t used = strlen(s->notice);
+        snprintf(s->notice + used, sizeof(s->notice) - used, "%s%s", used ? ". " : "", memory_notice);
+    }
     pthread_mutex_unlock(&s->mu);
     return req != NULL;
 }
@@ -1098,6 +1216,7 @@ static bool send_common(ChatSession *s, const char *text, const ChatContext *ctx
             free(s->msgs[i].content);
             free(s->msgs[i].docs);
             free(s->msgs[i].via);
+            free(s->msgs[i].memory_sources);
         }
         s->count = original_count;
         s->version++;
@@ -1160,6 +1279,11 @@ bool chat_select_remote(ChatSession *s, const RemoteConfig *remote)
     if (remote) s->remote = *remote;
     else memset(&s->remote, 0, sizeof(s->remote));
     s->remote_selected = remote != NULL;
+    if (remote) {
+        s->memory_enabled = false;
+        s->memory_store = NULL; s->memory_vectors = NULL;
+        s->memory_project[0] = s->memory_conversation[0] = 0;
+    }
     return true;
 }
 

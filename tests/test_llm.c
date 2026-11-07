@@ -23,6 +23,8 @@
 #include "../src/app/project_session.h"
 #include "../src/app/explorer_snapshot.h"
 #include "../src/app/chat_store.h"
+#include "llm/memory_tokens.h"
+#include "llm/context_planner.h"
 #include "../src/app/recent.h"
 #include "../src/app/renames.h"
 #include "../src/app/records.h"
@@ -785,6 +787,41 @@ static void test_window_storage_release(void)
     CHECK(chat_request_text_bytes(s) == 0);
     chat_unlock(s);
     free(rows); chat_destroy(s);
+}
+
+static void test_memory_remote_bypass(void)
+{
+    ChatSession *chat = chat_create(NULL);
+    CHECK(chat != NULL);
+    RemoteConfig remote = {0};
+    CHECK(chat_select_remote(chat, &remote));
+    /* Remote selection disables routing before inspecting local dependencies. */
+    CHECK(chat_memory_configure(chat, NULL, NULL, NULL, NULL, true));
+    CHECK(chat_select_remote(chat, NULL));
+    CHECK(!chat_memory_configure(chat, NULL, NULL, NULL, NULL, true));
+    CHECK(chat_memory_configure(chat, NULL, NULL, NULL, NULL, false));
+    chat_destroy(chat);
+}
+
+static void test_memory_preserves_cutoff_notice(void)
+{
+    char project[1200];
+    snprintf(project, sizeof(project), "%s/memory-warning-XXXXXX", g_dir);
+    CHECK(mkdtemp(project) != NULL);
+    CHECK(store_mark_imported(project, "p-a"));
+    SemanticClient *vectors = semantic_client_create(g_store, NULL);
+    ChatSession *chat = chat_create(NULL);
+    DoneCtx done = {0}; chat_on_message_done(chat, on_done, &done);
+    CHECK(chat_memory_configure(chat, g_store, vectors, project, "notice-chat", true));
+    char *doc = malloc(200001); CHECK(doc != NULL);
+    memset(doc, 'x', 200000); doc[200000] = 0;
+    ChatContext context = { .doc_title = "long.md", .doc_text = doc };
+    char why[256];
+    CHECK(chat_send(chat, "Discuss this document", &context, why, sizeof(why)));
+    wait_idle(chat, &done, 2);
+    const char *notice = chat_take_notice(chat);
+    CHECK(notice && strstr(notice, "cut off") && strstr(notice, "memory"));
+    free(doc); chat_destroy(chat); semantic_client_destroy(vectors);
 }
 
 static void test_chat_windows(void)
@@ -2118,6 +2155,46 @@ static void test_live(void)
     CHECK(r.status == 401);
     http_result_free(&r);
 
+    /* Matched oracle-source control: verify exact final-template accounting,
+     * then ask the pinned local model about one admitted reference. This is not
+     * an ANN/source-selection quality claim; those have separate SQL tests. */
+    {
+        atomic_bool cancelled; atomic_init(&cancelled, false);
+        MemoryTokenizer tokenizer = { .server = srv, .cancel = &cancelled, .timeout_ms = 10000 };
+        char fingerprint[65];
+        CHECK(memory_tokenizer_fingerprint(&tokenizer, fingerprint) && strlen(fingerprint) == 64);
+        MemoryPlan oracle = { .count = 1, .readiness = MEMORY_PARTIAL };
+        MemoryUnit *unit = &oracle.units[0];
+        memset(unit->id, 'a', 64); unit->id[64] = 0;
+        unit->text = strdup("The Asterholt observatory key is amber.");
+        unit->text_bytes = strlen(unit->text); unit->role = CHAT_USER; unit->sequence = 0;
+        oracle.text_bytes = unit->text_bytes;
+        const char *base = "{\"messages\":[{\"role\":\"system\",\"content\":\"Answer from the supplied reference.\"},"
+                           "{\"role\":\"user\",\"content\":\"What color is the Asterholt observatory key? Reply with the color only.\"}],"
+                           "\"max_tokens\":32,\"temperature\":0,\"stream\":false,\"cache_prompt\":false,\"id_slot\":0,"
+                           "\"chat_template_kwargs\":{\"enable_thinking\":false}}";
+        char *request = NULL;
+        CHECK(memory_source_tokens(unit->text, &tokenizer) > 0);
+        CHECK(memory_plan_apply(&oracle, base, false, 4096, memory_request_tokens, &tokenizer, &request));
+        if (request) {
+            long expected = memory_request_tokens(request, &tokenizer);
+            CHECK(expected > 0);
+            CHECK(http_request(llm_server_socket(srv), "POST", "/v1/chat/completions", llm_server_key(srv), request,
+                               NULL, NULL, &cancelled, 90000, &r));
+            cJSON *result = r.body ? json_parse_complete(r.body, r.len) : NULL;
+            cJSON *usage = cJSON_GetObjectItem(result, "usage");
+            cJSON *tokens = cJSON_GetObjectItem(usage, "prompt_tokens");
+            cJSON *choice = cJSON_GetArrayItem(cJSON_GetObjectItem(result, "choices"), 0);
+            cJSON *answer = cJSON_GetObjectItem(cJSON_GetObjectItem(choice, "message"), "content");
+            CHECK(r.status == 200 && cJSON_IsNumber(tokens) && tokens->valuedouble == (double)expected);
+            CHECK(cJSON_IsString(answer) && strcasestr(answer->valuestring, "amber"));
+            printf("    memory oracle: prompt_tokens=%ld answer=%.80s\n", expected,
+                   cJSON_IsString(answer) ? answer->valuestring : "(missing)");
+            cJSON_Delete(result); http_result_free(&r); free(request);
+        }
+        memory_plan_free(&oracle);
+    }
+
     ChatSession *s = chat_create(srv);
     DoneCtx d = { 0 };
     chat_on_message_done(s, on_done, &d);
@@ -2216,6 +2293,8 @@ int main(int argc, char **argv)
         { "bounded_request_history", test_bounded_request_history },
         { "worker_bounded_history", test_worker_bounded_history },
         { "chat_windows", test_chat_windows },
+        { "memory_remote_bypass", test_memory_remote_bypass },
+        { "memory_preserves_cutoff_notice", test_memory_preserves_cutoff_notice },
         { "window_storage_release", test_window_storage_release },
         { "chat_store", test_chat_store },
         { "chat_store_read_failures", test_chat_store_read_failures },

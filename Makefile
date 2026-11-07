@@ -57,9 +57,12 @@ $(RAYLIB_LIB): $(RAYLIB_OBJS)
 
 # --- Scribodo ----------------------------------------------------------------
 CORE_SRCS := src/core/utf8.c src/core/text_buffer.c src/core/undo.c src/core/wrap.c src/core/doc_io.c src/core/diff.c src/core/file_text.c src/app/frame_view_model.c
+CORE_SRCS += src/app/frame_metrics.c
 STORE_SRCS := src/app/db.c src/app/store.c src/app/project_store.c src/app/observer_store.c src/app/store_revisions.c src/app/store_records.c src/app/store_chats.c src/app/store_chat_history.c src/app/store_import.c src/app/store_entities.c src/app/backup.c src/app/backup_job.c src/app/service_supervisor.c src/app/entity_backfill_job.c src/app/name_detection_job.c src/app/project_session.c src/app/explorer_snapshot.c src/app/profile.c src/app/model_settings.c
 STORE_SRCS += src/app/chat_history_job.c
+STORE_SRCS += src/app/memory_store.c src/app/memory_job.c
 LLM_SRCS  := src/core/json.c src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/llm/chat_history.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/app/recent.c src/app/renames.c src/llm/observer.c src/llm/observer_text.c src/llm/observer_fake.c src/llm/observer_model.c src/llm/observer_job.c src/llm/semantic.c src/llm/remote.c src/llm/names.c src/llm/memfit.c $(STORE_SRCS)
+LLM_SRCS += src/llm/context_planner.c src/llm/memory_tokens.c
 LLM_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(LLM_SRCS)) $(BUILD)/third_party/cJSON/cJSON.o
 APP_SRCS  := src/main.c src/app/script.c src/app/chat_controller.c src/app/reviewed_edit_controller.c src/ui/font.c src/ui/clay_render.c src/ui/editor.c src/ui/input.c \
              src/ui/chat_view.c src/ui/review_view.c src/ui/record_view.c src/ui/findings_view.c src/ui/prompt_view.c src/ui/menu_view.c src/ui/vendor_impl.c
@@ -71,6 +74,9 @@ APP   := $(BUILD)/scribodo
 TESTS := $(BUILD)/test_core $(BUILD)/test_doc_io $(BUILD)/test_editor $(BUILD)/test_editor_faults $(BUILD)/test_db_rows $(BUILD)/test_observer_text $(BUILD)/test_observer_fake $(BUILD)/test_chat_history $(BUILD)/test_chat_view $(BUILD)/test_chat_view_faults $(BUILD)/test_components $(BUILD)/test_remote $(BUILD)/test_llm $(BUILD)/test_persistence_faults $(BUILD)/test_semantic_faults
 TESTS += $(BUILD)/test_chat_history_job
 TESTS += $(BUILD)/test_store_connections
+TESTS += $(BUILD)/test_frame_metrics $(BUILD)/test_context_planner
+TESTS += $(BUILD)/test_memory_job $(BUILD)/test_memory_tokens $(BUILD)/test_memory_vectors_faults $(BUILD)/test_context_planner_faults
+TESTS += $(BUILD)/test_memory_provenance
 
 .PHONY: all run test uitest uitest-real sanitize tsan cstest dbtest uitest-db backuptest remotetest offlinetest dependency-report clean distclean llama model llmtest
 
@@ -120,6 +126,29 @@ $(BUILD)/test_observer_text: $(BUILD)/src/llm/observer_text.o $(BUILD)/tests/tes
 
 $(BUILD)/test_chat_history: $(BUILD)/src/llm/chat_history.o $(BUILD)/tests/test_chat_history.o
 	$(CC) $(CFLAGS) $^ -o $@
+
+$(BUILD)/test_frame_metrics: src/app/frame_metrics.c tests/test_frame_metrics.c src/app/frame_metrics.h
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Isrc src/app/frame_metrics.c tests/test_frame_metrics.c -o $@
+
+# Deliberately headless: tests provide store/vector doubles. Do not link LLM_OBJS.
+CONTEXT_PLANNER_TEST_SRCS := src/llm/context_planner.c src/llm/llm_text.c src/core/utf8.c src/core/json.c src/core/json_vendor.c tests/test_context_planner.c
+$(BUILD)/test_context_planner: $(CONTEXT_PLANNER_TEST_SRCS) src/llm/context_planner.h src/app/memory_store.h src/llm/semantic.h
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Isrc -Ithird_party/cJSON $(CONTEXT_PLANNER_TEST_SRCS) -o $@
+
+$(BUILD)/test_context_planner_faults: $(CONTEXT_PLANNER_TEST_SRCS) src/llm/context_planner.h tests/fault_alloc.h $(BUILD)/tests/fault_alloc.o
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Isrc -Ithird_party/cJSON -include tests/fault_alloc.h -DPLANNER_FAULT_TEST $(CONTEXT_PLANNER_TEST_SRCS) $(BUILD)/tests/fault_alloc.o -o $@
+
+$(BUILD)/test_memory_job: tests/test_memory_job.c src/app/memory_job.c src/app/memory_job.h src/app/memory_store.h
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Isrc -Isrc/llm tests/test_memory_job.c -o $@ -lpthread
+
+MEMORY_TOKENS_TEST_SRCS := tests/test_memory_tokens.c src/llm/memory_tokens.c src/llm/llm_text.c src/core/utf8.c src/core/json.c src/core/json_vendor.c
+$(BUILD)/test_memory_tokens: $(MEMORY_TOKENS_TEST_SRCS) src/llm/memory_tokens.h
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -Isrc -Ithird_party/cJSON $(MEMORY_TOKENS_TEST_SRCS) -o $@ -lpthread
 
 # This headless test includes the worker with deterministic resource-failure
 # wrappers; no store service or UI is linked. Included by sanitize via TESTS.
@@ -171,6 +200,10 @@ SEMANTIC_FAULT_SRCS := $(CORE_SRCS) $(LLM_SRCS) src/core/json_vendor.c tests/tes
 $(BUILD)/test_semantic_faults: $(SEMANTIC_FAULT_SRCS) $(wildcard src/core/*.h src/app/*.h src/llm/*.h) tests/fault_alloc.h tests/test_state_fixture.h $(BUILD)/tests/fault_alloc.o third_party/cJSON/cJSON.c third_party/cJSON/cJSON.h
 	$(CC) $(CFLAGS) $(INCLUDES) -include tests/fault_alloc.h $(SEMANTIC_FAULT_SRCS) $(BUILD)/tests/fault_alloc.o -o $@ $(MARIADB_LIBS) -lpthread
 
+MEMORY_VECTORS_FAULT_SRCS := $(CORE_SRCS) $(LLM_SRCS) src/core/json_vendor.c tests/test_memory_vectors.c
+$(BUILD)/test_memory_vectors_faults: $(MEMORY_VECTORS_FAULT_SRCS) $(wildcard src/core/*.h src/app/*.h src/llm/*.h) tests/fault_alloc.h $(BUILD)/tests/fault_alloc.o | $(MARIADB_LIB)
+	$(CC) $(CFLAGS) $(INCLUDES) -include tests/fault_alloc.h $(MEMORY_VECTORS_FAULT_SRCS) $(BUILD)/tests/fault_alloc.o -o $@ $(MARIADB_LIBS) -lpthread
+
 test: $(TESTS)
 	@set -e; for t in $(TESTS); do echo "== $$t"; $(WATCHDOG) $(TEST_TIMEOUT) $$(basename $$t) ./$$t; echo; done
 	$(WATCHDOG) $(TEST_TIMEOUT) test_backup python3 tests/test_backup.py
@@ -218,8 +251,20 @@ $(BUILD)/test_db: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_db_core.o $(BUILD
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
 
 # Against the running local services (tools/services.sh up).
-dbtest: $(BUILD)/test_db
+$(BUILD)/test_memory_store: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_memory_store.o
+	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
+
+$(BUILD)/test_memory_vectors: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_memory_vectors.o
+	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
+
+$(BUILD)/test_memory_provenance: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_memory_provenance.o
+	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
+
+dbtest: $(BUILD)/test_db $(BUILD)/test_memory_store $(BUILD)/test_memory_vectors $(BUILD)/test_memory_provenance
 	$(WATCHDOG) 120 dbtest ./$(BUILD)/test_db
+	$(WATCHDOG) 120 memory-store ./$(BUILD)/test_memory_store
+	$(WATCHDOG) 120 memory-vectors ./$(BUILD)/test_memory_vectors
+	$(WATCHDOG) 120 memory-provenance ./$(BUILD)/test_memory_provenance --db
 
 # The app against the project store (needs tools/services.sh up): three runs
 # on one throwaway database and project folder: move and use, resume after
@@ -234,10 +279,14 @@ uitest-db: $(APP)
 	  python3 tests/seed_chat_window.py $$work/windowbook || fail=1; \
 	  SCRIBODO_STORE=db SCRIBODO_DB_NAME=$$db SCRIBODO_SCRIPT=tests/ui/store/7_chat_windows.scribo SCRIBODO_SCRIPT_DIR=$$work \
 	    SCRIBODO_SHOT_DIR=$$PWD/build/ui/store $(WATCHDOG) 180 ui-store-windows ./$(APP) 2>>build/ui/store/stderr.log || fail=1; \
-	  for s in tests/ui/store/8_unsaved_chat.scribo tests/ui/store/9_unsaved_close.scribo tests/ui/store/10_async_history.scribo; do \
+	  for s in tests/ui/store/8_unsaved_chat.scribo tests/ui/store/9_unsaved_close.scribo tests/ui/store/10_async_history.scribo tests/ui/store/11_frame_soak.scribo; do \
 	    SCRIBODO_STORE=db SCRIBODO_DB_NAME=$$db SCRIBODO_SCRIPT=$$s SCRIBODO_SCRIPT_DIR=$$work \
 	      SCRIBODO_SHOT_DIR=$$PWD/build/ui/store $(WATCHDOG) 180 ui-store-unsaved ./$(APP) 2>>build/ui/store/stderr.log || fail=1; \
 	  done; \
+	  python3 tests/seed_memory_chat.py $$work/memorybook || fail=1; \
+	  SCRIBODO_STORE=db SCRIBODO_DB_NAME=$$db SCRIBODO_MEMORY_EXPERIMENT=1 SCRIBODO_SCRIPT=tests/ui/store/12_memory_recall.scribo \
+	    SCRIBODO_SCRIPT_DIR=$$work SCRIBODO_SHOT_DIR=$$PWD/build/ui/store \
+	    $(WATCHDOG) 240 ui-store-memory ./$(APP) 2>>build/ui/store/stderr.log || fail=1; \
 	  SCRIBODO_STORE=db SCRIBODO_DB_NAME=$$db SCRIBODO_BACKUPS=$$work/backups SCRIBODO_SCRIPT=tests/ui/store/6_backup.scribo SCRIBODO_SCRIPT_DIR=$$work \
 	    SCRIBODO_SHOT_DIR=$$PWD/build/ui/store $(WATCHDOG) 240 ui-store ./$(APP) 2>>build/ui/store/stderr.log || fail=1; echo; \
 	  SCRIBODO_STORE=db SCRIBODO_DB_NAME=$$db SCRIBODO_SCRIPT=tests/ui/store/5_entities.scribo SCRIBODO_SCRIPT_DIR=$$work \
@@ -313,6 +362,10 @@ tsan: $(MARIADB_LIB) $(BUILD)/tests/fault_alloc.o
 	@mkdir -p build/tsan
 	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) tests/test_chat_history_job.c -o build/tsan/test_chat_history_job -lpthread
 	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) src/app/store.c tests/test_store_connections.c -o build/tsan/test_store_connections -lpthread
+	$(CC) -std=c11 -O1 -g -fsanitize=thread -Isrc src/app/frame_metrics.c tests/test_frame_metrics.c -o build/tsan/test_frame_metrics
+	$(CC) -std=c11 -O1 -g -fsanitize=thread -Isrc -Ithird_party/cJSON $(CONTEXT_PLANNER_TEST_SRCS) -o build/tsan/test_context_planner
+	$(CC) -std=c11 -O1 -g -fsanitize=thread -Isrc -Isrc/llm tests/test_memory_job.c -o build/tsan/test_memory_job -lpthread
+	$(CC) -std=c11 -O1 -g -fsanitize=thread -Isrc -Ithird_party/cJSON $(MEMORY_TOKENS_TEST_SRCS) -o build/tsan/test_memory_tokens -lpthread
 	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) $(CORE_SRCS) $(LLM_SRCS) src/core/json_vendor.c \
 	  tests/test_state_fixture.c tests/test_llm.c -o build/tsan/test_llm $(MARIADB_LIBS) -lpthread
 	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) $(CORE_SRCS) $(LLM_SRCS) src/core/json_vendor.c \
@@ -324,7 +377,7 @@ tsan: $(MARIADB_LIB) $(BUILD)/tests/fault_alloc.o
 	  -o build/tsan/test_chat_view $(MARIADB_LIBS) -lpthread -lm
 	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) -include tests/fault_alloc.h $(SEMANTIC_FAULT_SRCS) \
 	  $(BUILD)/tests/fault_alloc.o -o build/tsan/test_semantic_faults $(MARIADB_LIBS) -lpthread
-	@set -e; for t in test_chat_history_job test_store_connections test_llm test_components test_remote test_chat_view test_semantic_faults; do \
+	@set -e; for t in test_chat_history_job test_store_connections test_frame_metrics test_context_planner test_memory_job test_memory_tokens test_llm test_components test_remote test_chat_view test_semantic_faults; do \
 	  TSAN_OPTIONS=halt_on_error=1 $(WATCHDOG) 300 tsan-$$t ./build/tsan/$$t; echo; \
 	done
 

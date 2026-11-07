@@ -58,7 +58,9 @@ typedef struct {
 } ChatWindowPage;
 
 /* DB-only display windows: <=64 messages, <=64 KiB body bytes, <=8 KiB per
- * displayed body. Explicit excerpt flags prevent treating a partial original
+ * displayed body, plus <=64 * 16 KiB as-of provenance metadata separately
+ * budgeted from body bytes. Source ingestion pages never include provenance.
+ * Explicit excerpt flags prevent treating a partial original
  * as a complete model turn or applying it as a whole reviewed replacement. */
 bool chat_store_window(StoreManager *manager, const char *project_dir, const char *conversation,
                         const ChatWindowRequest *request, ChatWindowPage *out);

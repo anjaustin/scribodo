@@ -60,6 +60,9 @@ bool chat_request_history_copy(const ChatMessage *msgs, size_t n, bool remote, C
         copy[j] = msgs[indices[k]];
         copy[j].content = malloc(lengths[k] + 1);
         copy[j].docs = copy[j].via = NULL;
+        /* As-of local retrieval evidence is display metadata, never a recent
+         * model turn (including for the remote adapter). Do not even borrow it. */
+        copy[j].memory_sources = NULL;
         if (!copy[j].content) {
             /* Only initialized content pointers may be freed. */
             h.count = j;

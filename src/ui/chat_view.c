@@ -42,6 +42,7 @@ struct ChatView {
     uint64_t seen_version;
     bool copied;
     long apply_index;
+    long sources_index;
     long record_index;   /* reply whose Note/Canon link was clicked */
     long reveal_index;   /* scroll to this message on the next update */
     long flash_index;    /* briefly outline this message (a source being shown) */
@@ -52,6 +53,7 @@ struct ChatView {
     char assistant_name[64]; /* the label on replies */
     char author_name[64];    /* speaker labels with this name are not shown */
     Rectangle last_note, last_canon;
+    Rectangle last_sources;
     char *submitted;
     ChatPageAction page;
     Rectangle page_rect[4];
@@ -72,6 +74,7 @@ ChatView *chat_view_create(SFont *text_font, SFont *label_font, ChatSession *cha
     v->chat = chat;
     v->stick_to_end = true;
     v->apply_index = -1;
+    v->sources_index = -1;
     v->can_apply = true;
     snprintf(v->assistant_name, sizeof(v->assistant_name), "Scribodo");
     v->record_index = -1;
@@ -113,7 +116,7 @@ float chat_view_input_height(ChatView *v, float width)
     return floorf(h);
 }
 
-void chat_view_scroll_to_end(ChatView *v) { v->stick_to_end = true; v->presented = false; }
+void chat_view_scroll_to_end(ChatView *v) { v->stick_to_end = true; v->presented = false; v->sources_index = -1; }
 
 static void cache_free(MsgCache *c)
 {
@@ -127,10 +130,10 @@ void chat_view_history_changed(ChatView *v)
     for (size_t i = 0; i < v->ncache; i++) cache_free(&v->cache[i]);
     free(v->cache); v->cache = NULL; v->ncache = v->cache_capacity = 0;
     v->scroll = 0; v->stick_to_end = true;
-    v->apply_index = v->record_index = v->reveal_index = v->flash_index = -1;
+    v->apply_index = v->record_index = v->sources_index = v->reveal_index = v->flash_index = -1;
     v->page = (ChatPageAction){0};
     v->presented = false;
-    v->last_apply = v->last_note = v->last_canon = (Rectangle){0};
+    v->last_apply = v->last_note = v->last_canon = v->last_sources = (Rectangle){0};
     memset(v->page_rect, 0, sizeof(v->page_rect));
 }
 
@@ -225,12 +228,54 @@ static MsgCache *refresh(ChatView *v, size_t i, const char *content, bool markdo
 static float cached_height(ChatView *v, size_t i) { return i < v->ncache && v->cache[i].valid ? v->cache[i].height : LABEL_H; }
 static bool footer(const ChatMessage *m) { return m->excerpt || (m->role == CHAT_ASSISTANT && !m->streaming && !m->error && m->content[0]); }
 
+enum { FOOT_COPY, FOOT_APPLY, FOOT_NOTE, FOOT_CANON, FOOT_SOURCES, FOOT_PREV, FOOT_NEXT, FOOT_STATUS, FOOT_COUNT };
+typedef struct {
+    Rectangle rect[FOOT_COUNT];
+    const char *label[FOOT_COUNT];
+    float height;
+} FooterLayout;
+
+/* The same wrapped geometry is used for measuring, drawing, and input. No
+ * metadata is retained by the view; the session remains its sole owner. */
+static FooterLayout footer_layout(ChatView *v, const ChatMessage *m, bool window, float x, float y, float width)
+{
+    FooterLayout f = {0};
+    bool finished = m->role == CHAT_ASSISTANT && !m->streaming && !m->error;
+    if (footer(m)) {
+        f.label[FOOT_COPY] = m->excerpt ? "Copy excerpt" : "Copy";
+        if (m->excerpt) {
+            if (m->excerpt_start) f.label[FOOT_PREV] = "Earlier part";
+            if (m->excerpt_more) f.label[FOOT_NEXT] = "Next part";
+        } else {
+            if (v->can_apply) f.label[FOOT_APPLY] = "Apply to document";
+            if (!window || m->sequence_known) {
+                f.label[FOOT_NOTE] = "Note";
+                f.label[FOOT_CANON] = "Canon";
+            }
+            if (m->truncated || m->stopped)
+                f.label[FOOT_STATUS] = m->stopped ? "Stopped before the end" : "Reply stopped at the length limit";
+        }
+    }
+    if (finished && m->memory_sources && m->memory_sources[0]) f.label[FOOT_SOURCES] = "Sources";
+    float cx = 0, row = 0;
+    for (int k = 0; k < FOOT_COUNT; k++) {
+        if (!f.label[k]) continue;
+        float w = sfont_measure_utf8(v->label, f.label[k], (int)strlen(f.label[k]));
+        if (cx && cx + w > width) { cx = 0; row += LABEL_H; }
+        f.rect[k] = (Rectangle){x + cx, y + row + 2, w, LABEL_H};
+        cx += w + 12;
+        f.height = row + LABEL_H;
+    }
+    return f;
+}
+
 static float content_width(Rectangle list) { return list.width - 2 * PAD - 2 * BUBBLE_PAD; }
 
 /* Total height of the message list for the current layout (lock held). */
 static float total_height(ChatView *v, float width)
 {
     float y = PAD;
+    bool window = chat_window_info(v->chat).active;
     size_t n = chat_count(v->chat);
     for (size_t i = n; i < v->ncache; i++) cache_free(&v->cache[i]);
     if (n < v->ncache) {
@@ -245,7 +290,7 @@ static float total_height(ChatView *v, float width)
         const ChatMessage *m = chat_message(v->chat, i);
         refresh(v, i, m->content, m->role == CHAT_ASSISTANT && !m->is_edit, width);
         y += LABEL_H + cached_height(v, i) + 2 * BUBBLE_PAD + GAP;
-        if (footer(m)) y += LABEL_H;
+        y += footer_layout(v, m, window, 0, 0, width + 2 * BUBBLE_PAD).height;
         if (i < v->ncache && v->cache[i].preview) y += LABEL_H;
     }
     return y;
@@ -260,7 +305,7 @@ void chat_view_update(ChatView *v, Rectangle list, Rectangle input, bool input_f
     chat_unlock(v->chat);
     bool pointer_ready = pointer_presentation(v, outer, ver);
     if (!pointer_ready) {
-        v->apply_index = v->record_index = -1;
+        v->apply_index = v->record_index = v->sources_index = -1;
         v->page = (ChatPageAction){0};
     }
     memset(v->page_rect, 0, sizeof(v->page_rect));
@@ -280,7 +325,7 @@ void chat_view_update(ChatView *v, Rectangle list, Rectangle input, bool input_f
     ver = chat_version_locked(v->chat);
     float total = total_height(v, width);
     pointer_ready = pointer_presentation(v, outer, ver);
-    if (!pointer_ready) { v->apply_index = v->record_index = -1; v->page = (ChatPageAction){0}; }
+    if (!pointer_ready) { v->apply_index = v->record_index = v->sources_index = -1; v->page = (ChatPageAction){0}; }
     size_t n = chat_count(v->chat);
 
     Vector2 m = GetMousePosition();
@@ -291,6 +336,8 @@ void chat_view_update(ChatView *v, Rectangle list, Rectangle input, bool input_f
             v->stick_to_end = false;
             v->presented = false;
             pointer_ready = false;
+            v->apply_index = v->record_index = v->sources_index = -1;
+            v->page = (ChatPageAction){0};
         }
         /* "Copy" links under finished assistant replies. */
         if (pointer_ready && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
@@ -299,40 +346,25 @@ void chat_view_update(ChatView *v, Rectangle list, Rectangle input, bool input_f
                 const ChatMessage *msg = chat_message(v->chat, i);
                 y += LABEL_H + cached_height(v, i) + 2 * BUBBLE_PAD;
                 if (i < v->ncache && v->cache[i].preview) y += LABEL_H;
-                bool copyable = footer(msg) && i < v->ncache && v->cache[i].valid;
-                if (copyable) {
-                    if (msg->excerpt) {
-                        Rectangle prev = { list.x + PAD + 100, y, 80, LABEL_H }, next = { list.x + PAD + 190, y, 80, LABEL_H };
-                        size_t cps = 0;
-                        for (const unsigned char *p = (const unsigned char *)msg->content; *p; p++) cps += (*p & 0xC0) != 0x80;
-                        if (msg->excerpt_start && CheckCollisionPointRec(m, prev))
+                FooterLayout f = footer_layout(v, msg, info.active, list.x + PAD, y, list.width - 2 * PAD);
+                if (i < v->ncache && v->cache[i].valid) {
+                    for (int k = 0; k < FOOT_STATUS; k++) {
+                        if (!f.label[k] || !CheckCollisionPointRec(m, f.rect[k])) continue;
+                        if (k == FOOT_COPY) { input_set_clipboard(msg->content); v->copied = true; }
+                        else if (k == FOOT_APPLY) v->apply_index = (long)i;
+                        else if (k == FOOT_SOURCES) v->sources_index = (long)i;
+                        else if (k == FOOT_NOTE || k == FOOT_CANON) {
+                            v->record_index = (long)i; v->record_kind = k == FOOT_CANON;
+                        } else if (k == FOOT_PREV) {
                             v->page = (ChatPageAction){ CHAT_PAGE_PART, msg->sequence, msg->excerpt_start > 2048 ? msg->excerpt_start - 2048 : 0 };
-                        if (msg->excerpt_more && CheckCollisionPointRec(m, next))
+                        } else if (k == FOOT_NEXT) {
+                            size_t cps = 0;
+                            for (const unsigned char *p = (const unsigned char *)msg->content; *p; p++) cps += (*p & 0xC0) != 0x80;
                             v->page = (ChatPageAction){ CHAT_PAGE_PART, msg->sequence, msg->excerpt_start + cps };
-                        if (CheckCollisionPointRec(m, (Rectangle){list.x + PAD, y, 92, LABEL_H})) {
-                            input_set_clipboard(msg->content); v->copied = true;
                         }
-                        y += LABEL_H + GAP;
-                        continue;
                     }
-                    Rectangle copy = { list.x + PAD, y + 2, 40, LABEL_H };
-                    float nx = v->can_apply ? 184 : 52;
-                    Rectangle apply = v->can_apply ? (Rectangle){ list.x + PAD + 52, y + 2, 120, LABEL_H } : (Rectangle){ 0 };
-                    bool can_record = !info.active || msg->sequence_known;
-                    Rectangle note = can_record ? (Rectangle){ list.x + PAD + nx, y + 2, 40, LABEL_H } : (Rectangle){0};
-                    Rectangle canon = can_record ? (Rectangle){ list.x + PAD + nx + 50, y + 2, 50, LABEL_H } : (Rectangle){0};
-                    if (CheckCollisionPointRec(m, copy)) {
-                        input_set_clipboard(msg->content);
-                        v->copied = true;
-                    } else if (CheckCollisionPointRec(m, apply)) {
-                        v->apply_index = (long)i;
-                    } else if (CheckCollisionPointRec(m, note) || CheckCollisionPointRec(m, canon)) {
-                        v->record_index = (long)i;
-                        v->record_kind = CheckCollisionPointRec(m, canon) ? 1 : 0;
-                    }
-                    y += LABEL_H;
-                } else if (footer(msg)) y += LABEL_H;
-                y += GAP;
+                }
+                y += f.height + GAP;
             }
         }
     }
@@ -343,7 +375,7 @@ void chat_view_update(ChatView *v, Rectangle list, Rectangle input, bool input_f
         for (size_t i = 0; i < (size_t)v->reveal_index; i++) {
             const ChatMessage *msg = chat_message(v->chat, i);
             y += LABEL_H + cached_height(v, i) + 2 * BUBBLE_PAD + GAP;
-            if (footer(msg)) y += LABEL_H;
+            y += footer_layout(v, msg, info.active, 0, 0, list.width - 2 * PAD).height;
             if (i < v->ncache && v->cache[i].preview) y += LABEL_H;
         }
         v->scroll = y - PAD;
@@ -416,10 +448,19 @@ void chat_view_clear_input(ChatView *v)
 }
 
 Rectangle chat_view_last_apply_rect(const ChatView *v) { return v->last_apply; }
+Rectangle chat_view_last_sources_rect(const ChatView *v) { return v->last_sources; }
+
+long chat_view_take_sources(ChatView *v)
+{
+    long i = v->sources_index;
+    v->sources_index = -1;
+    return i;
+}
 
 void chat_view_reveal(ChatView *v, long index)
 {
     v->presented = false;
+    v->sources_index = -1;
     v->reveal_index = index;
     v->flash_index = index;
     v->flash_t = GetTime();
@@ -501,7 +542,7 @@ void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_foc
     }
     float y = list.y + PAD - v->scroll;
     bool blink = fmod(GetTime(), 1.0) < 0.6;
-    v->last_apply = v->last_note = v->last_canon = (Rectangle){ 0 };
+    v->last_apply = v->last_note = v->last_canon = v->last_sources = (Rectangle){ 0 };
     for (size_t i = 0; i < n; i++) {
         const ChatMessage *m = chat_message(v->chat, i);
         const MsgCache *c = refresh(v, i, m->content, m->role == CHAT_ASSISTANT && !m->is_edit, width);
@@ -539,35 +580,17 @@ void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_foc
             sfont_draw_utf8(v->label, preview, (int)strlen(preview), list.x + PAD, y, COL_LABEL);
             y += LABEL_H;
         }
-        if (m->excerpt) {
-            if (i == n - 1) v->last_apply = v->last_note = v->last_canon = (Rectangle){0};
-            sfont_draw_utf8(v->label, "Copy excerpt", 12, list.x + PAD, y + 2, COL_LINK);
-            if (m->excerpt_start) sfont_draw_utf8(v->label, "Earlier part", 12, list.x + PAD + 100, y + 2, COL_LINK);
-            if (m->excerpt_more) sfont_draw_utf8(v->label, "Next part", 9, list.x + PAD + 190, y + 2, COL_LINK);
-            y += LABEL_H;
-        } else if (m->role == CHAT_ASSISTANT && !m->streaming && !m->error && m->content[0]) {
-            sfont_draw_utf8(v->label, "Copy", 4, list.x + PAD, y + 2, COL_LINK);
-            /* "Apply to document" only with a document to apply it to. */
-            float nx = v->can_apply ? 184 : 52;
-            if (v->can_apply) {
-                const char *apply = "Apply to document";
-                sfont_draw_utf8(v->label, apply, (int)strlen(apply), list.x + PAD + 52, y + 2, COL_LINK);
-                v->last_apply = (Rectangle){ list.x + PAD + 52, y + 2, 120, LABEL_H };
-            }
-            if (!info.active || m->sequence_known) {
-                sfont_draw_utf8(v->label, "Note", 4, list.x + PAD + nx, y + 2, COL_LINK);
-                sfont_draw_utf8(v->label, "Canon", 5, list.x + PAD + nx + 50, y + 2, COL_LINK);
-                v->last_note = (Rectangle){ list.x + PAD + nx, y + 2, 40, LABEL_H };
-                v->last_canon = (Rectangle){ list.x + PAD + nx + 50, y + 2, 50, LABEL_H };
-            } else if (i == n - 1) v->last_note = v->last_canon = (Rectangle){0};
-            if (m->truncated || m->stopped) {
-                const char *note = m->stopped ? "Stopped before the end" : "Reply stopped at the length limit";
-                sfont_draw_utf8(v->label, note, (int)strlen(note), list.x + PAD + 296, y + 2, COL_LABEL);
-            }
-            y += LABEL_H;
-        }
-        y += GAP;
+        FooterLayout f = footer_layout(v, m, info.active, list.x + PAD, y, list.width - 2 * PAD);
+        for (int k = 0; k < FOOT_COUNT; k++)
+            if (f.label[k]) sfont_draw_utf8(v->label, f.label[k], (int)strlen(f.label[k]), f.rect[k].x, f.rect[k].y,
+                                          k == FOOT_STATUS ? COL_LABEL : COL_LINK);
+        if (f.label[FOOT_APPLY] || i == n - 1) v->last_apply = f.rect[FOOT_APPLY];
+        if (f.label[FOOT_NOTE] || i == n - 1) v->last_note = f.rect[FOOT_NOTE];
+        if (f.label[FOOT_CANON] || i == n - 1) v->last_canon = f.rect[FOOT_CANON];
+        if (f.label[FOOT_SOURCES] || i == n - 1) v->last_sources = f.rect[FOOT_SOURCES];
+        y += f.height + GAP;
     }
+    if (!pointer_presentation(v, outer, chat_version_locked(v->chat))) v->sources_index = -1;
     v->presented_list = outer;
     v->presented_scroll = v->scroll;
     v->presented_layout = v->layout_revision;
@@ -583,13 +606,14 @@ void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_foc
 
 void chat_view_set_can_apply(ChatView *v, bool can)
 {
-    if (v->can_apply != can) v->presented = false;
+    if (v->can_apply != can) { v->presented = false; v->sources_index = -1; }
     v->can_apply = can;
 }
 
 void chat_view_set_assistant_name(ChatView *v, const char *name)
 {
     v->presented = false;
+    v->sources_index = -1;
     snprintf(v->assistant_name, sizeof(v->assistant_name), "%s", name && name[0] ? name : "Scribodo");
     for (size_t i = 0; i < v->ncache; i++) v->cache[i].src_len = (size_t)-1; /* re-lay out */
 }
@@ -597,6 +621,7 @@ void chat_view_set_assistant_name(ChatView *v, const char *name)
 void chat_view_set_author_name(ChatView *v, const char *name)
 {
     v->presented = false;
+    v->sources_index = -1;
     snprintf(v->author_name, sizeof(v->author_name), "%s", name ? name : "");
     for (size_t i = 0; i < v->ncache; i++) v->cache[i].src_len = (size_t)-1;
 }

@@ -80,6 +80,8 @@ static bool ensure_trailing_newline(int fd)
 
 bool chat_store_append_files(StoreManager *manager, const char *project_dir, const char *id, const char *title, const ChatMessage *m)
 {
+    if (m->memory_sources && strnlen(m->memory_sources, CHAT_MEMORY_SOURCES_BYTES + 1) > CHAT_MEMORY_SOURCES_BYTES)
+        return false;
     char path[1200];
     if (!path_for(project_dir, id, path, sizeof(path))) return false;
     struct stat st;
@@ -104,6 +106,7 @@ bool chat_store_append_files(StoreManager *manager, const char *project_dir, con
     if (ok && m->truncated) ok = cJSON_AddBoolToObject(j, "truncated", true);
     if (ok && m->stopped) ok = cJSON_AddBoolToObject(j, "stopped", true);
     if (ok && m->via && m->via[0]) ok = cJSON_AddStringToObject(j, "via", m->via);
+    if (ok && m->memory_sources) ok = cJSON_AddStringToObject(j, "memory_sources", m->memory_sources);
     /* The documents a user message was sent with; an empty list is recorded
      * too, so "nothing attached" is never confused with "not recorded". */
     if (ok && m->role == CHAT_USER && m->docs) {
@@ -363,6 +366,14 @@ bool chat_store_load_files(const char *project_dir, const char *id, ChatMessage 
                 cJSON *via = cJSON_GetObjectItem(j, "via");
                 message->via = cJSON_IsString(via) && via->valuestring[0] ? strdup(via->valuestring) : NULL;
                 if (ok && cJSON_IsString(via) && via->valuestring[0] && !message->via) ok = false;
+                cJSON *sources = cJSON_GetObjectItem(j, "memory_sources");
+                if (sources && !cJSON_IsNull(sources)) {
+                    if (!cJSON_IsString(sources) || strlen(sources->valuestring) > CHAT_MEMORY_SOURCES_BYTES) ok = false;
+                    else if (ok) {
+                        message->memory_sources = strdup(sources->valuestring);
+                        if (!message->memory_sources) ok = false;
+                    }
+                }
                 cJSON *ts = cJSON_GetObjectItem(j, "ts");
                 message->ts = ts ? cJSON_GetNumberValue(ts) : 0; /* legacy logs may omit it */
                 if (!isfinite(message->ts) || message->ts < 0 || message->ts >= 0x1p63) ok = false;
@@ -433,6 +444,7 @@ void chat_store_free_messages(ChatMessage *msgs, size_t n)
         free(msgs[i].content);
         free(msgs[i].docs);
         free(msgs[i].via);
+        free(msgs[i].memory_sources);
     }
     free(msgs);
 }

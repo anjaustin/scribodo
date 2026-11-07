@@ -1,0 +1,61 @@
+# Seed with tests/seed_chat_window.py; valid standalone or after store test 7.
+# Optional repeated/duration-controlled version: tools/history_frame_soak.sh.
+wait 5
+open "$DIR/windowbook/one.md"
+click_element ChatItem0
+wait_history
+expect chat_count 64
+expect chat_cache_max 67108864
+click_element ChatInput
+key A cmd
+type "frame soak composition survives"
+measure_frames start
+# SOAK_CYCLE_BEGIN
+# Keep an actual history worker/result held while drawing and editing.
+history_hold yes
+click_element ChatOlder
+expect history_busy yes
+wait 600
+click_element ChatInput
+key END
+type "x"
+key BACKSPACE
+key A cmd
+key C cmd
+expect clipboard "frame soak composition survives"
+key ESC
+expect history_busy no
+expect chat_count 64
+history_hold no
+wait_history
+click_element ChatLatest
+wait_history
+expect chat_count 64
+expect chat_cache_max 67108864
+# Repeat with the visible Cancel button, not a send or a delayed send.
+history_hold yes
+click_element ChatOlder
+expect history_busy yes
+wait 600
+click_element ChatInput
+key END
+type "y"
+key BACKSPACE
+click_element SendButton
+expect history_busy no
+expect chat_busy no
+expect chat_count 64
+history_hold no
+wait_history
+click_element ChatLatest
+wait_history
+expect chat_cache_max 67108864
+key L cmd
+key A cmd
+key C cmd
+expect clipboard "frame soak composition survives"
+# SOAK_CYCLE_END
+expect chat_count 64
+expect chat_cache_max 67108864
+expect chat_last_not "frame soak composition survives"
+measure_frames stop

@@ -570,8 +570,64 @@ static const char *const k_migration_008[] = {
     NULL,
 };
 
+/* 009: experimental opt-in chat memory. No scope is created by migration.
+ * Composite keys prevent cross-project/source associations in SQL itself. */
+static const char *const k_migration_009[] = {
+    /* One-time linear backfill. Future source changes recompute once at write,
+     * not once per bounded chunk / candidate read. */
+    "ALTER TABLE messages ADD COLUMN IF NOT EXISTS source_hash CHAR(64) COLLATE utf8mb4_bin"
+    " GENERATED ALWAYS AS (SHA2(content,256)) PERSISTENT",
+    "ALTER TABLE messages ADD COLUMN IF NOT EXISTS memory_sources TEXT NULL",
+    "ALTER TABLE messages ADD CONSTRAINT IF NOT EXISTS memory_sources_bounded"
+    " CHECK (memory_sources IS NULL OR OCTET_LENGTH(memory_sources)<=16384)",
+    "ALTER TABLE conversations ADD UNIQUE KEY IF NOT EXISTS memory_conversation (project_id,id)",
+    "ALTER TABLE messages ADD UNIQUE KEY IF NOT EXISTS memory_message (conversation_id,id)",
+    "CREATE TABLE IF NOT EXISTS memory_scopes ("
+    " id VARCHAR(40) PRIMARY KEY, project_id VARCHAR(40) NOT NULL, conversation_id VARCHAR(40) NOT NULL,"
+    " enabled TINYINT NOT NULL DEFAULT 0, history_epoch BIGINT UNSIGNED NOT NULL DEFAULT 1,"
+    " policy_epoch BIGINT UNSIGNED NOT NULL DEFAULT 1, generation BIGINT UNSIGNED NOT NULL DEFAULT 1,"
+    " cursor_seq BIGINT NOT NULL DEFAULT -1, byte_offset BIGINT UNSIGNED NOT NULL DEFAULT 0,"
+    " pending_seq BIGINT NOT NULL DEFAULT -1, lease_owner VARCHAR(63) NOT NULL DEFAULT '',"
+    " tokenizer VARCHAR(191) NULL,"
+    " lease_until DATETIME(6) NULL, fence BIGINT UNSIGNED NOT NULL DEFAULT 0,"
+    " attempts INT NOT NULL DEFAULT 0, retry_after DATETIME(6) NULL,"
+    " UNIQUE KEY scope_conversation (project_id,conversation_id), UNIQUE KEY scope_owner (id,project_id,conversation_id),"
+    " FOREIGN KEY (project_id,conversation_id) REFERENCES conversations(project_id,id) ON DELETE CASCADE"
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+    "CREATE TABLE IF NOT EXISTS memory_receipts ("
+    " scope_id VARCHAR(40) NOT NULL, project_id VARCHAR(40) NOT NULL, conversation_id VARCHAR(40) NOT NULL,"
+    " message_id BIGINT NOT NULL, generation BIGINT UNSIGNED NOT NULL, sequence BIGINT NOT NULL,"
+    " source_hash CHAR(64) NOT NULL, byte_offset BIGINT UNSIGNED NOT NULL, complete TINYINT NOT NULL, eligible TINYINT NOT NULL,"
+    " PRIMARY KEY (scope_id,generation,message_id),"
+    " FOREIGN KEY (scope_id,project_id,conversation_id) REFERENCES memory_scopes(id,project_id,conversation_id) ON DELETE CASCADE,"
+    " FOREIGN KEY (conversation_id,message_id) REFERENCES messages(conversation_id,id) ON DELETE CASCADE"
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+    "CREATE TABLE IF NOT EXISTS memory_units ("
+    " id CHAR(64) PRIMARY KEY, scope_id VARCHAR(40) NOT NULL, project_id VARCHAR(40) NOT NULL, conversation_id VARCHAR(40) NOT NULL,"
+    " message_id BIGINT NOT NULL, sequence BIGINT NOT NULL, history_epoch BIGINT UNSIGNED NOT NULL,"
+    " policy_epoch BIGINT UNSIGNED NOT NULL, generation BIGINT UNSIGNED NOT NULL, byte_start BIGINT UNSIGNED NOT NULL,"
+    " source_hash CHAR(64) NOT NULL, text_hash CHAR(64) NOT NULL, text VARCHAR(2000) NOT NULL,"
+    " tokens INT NOT NULL, tokenizer VARCHAR(191) NOT NULL, role ENUM('user','assistant') NOT NULL,"
+    " CHECK (OCTET_LENGTH(text)<=2000 AND tokens>=0 AND tokens<=512),"
+    " UNIQUE KEY unit_range (scope_id,generation,message_id,byte_start),"
+    " UNIQUE KEY unit_scope (id,scope_id), KEY unit_order (scope_id,generation,sequence,byte_start), FULLTEXT KEY unit_text (text),"
+    " FOREIGN KEY (scope_id,project_id,conversation_id) REFERENCES memory_scopes(id,project_id,conversation_id) ON DELETE CASCADE,"
+    " FOREIGN KEY (conversation_id,message_id) REFERENCES messages(conversation_id,id) ON DELETE CASCADE"
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+    "CREATE TABLE IF NOT EXISTS memory_outbox ("
+    " id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, scope_id VARCHAR(40) NOT NULL, unit_id CHAR(64) NOT NULL,"
+    " generation BIGINT UNSIGNED NOT NULL, state VARCHAR(12) NOT NULL DEFAULT 'pending', attempts INT NOT NULL DEFAULT 0,"
+    " owner VARCHAR(63) NOT NULL DEFAULT '', fence BIGINT UNSIGNED NOT NULL DEFAULT 0,"
+    " lease_until DATETIME(6) NULL, retry_after DATETIME(6) NULL,"
+    " UNIQUE KEY delivery (unit_id,generation), KEY admission (scope_id,generation,state,id),"
+    " FOREIGN KEY (unit_id,scope_id) REFERENCES memory_units(id,scope_id) ON DELETE CASCADE"
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+    NULL,
+};
+
 static const char *const *const k_migrations[] = { k_migration_001, k_migration_002, k_migration_003, k_migration_004,
-                                                   k_migration_005, k_migration_006, k_migration_007, k_migration_008 };
+                                                   k_migration_005, k_migration_006, k_migration_007, k_migration_008,
+                                                   k_migration_009 };
 
 int db_schema_version(Db *db)
 {

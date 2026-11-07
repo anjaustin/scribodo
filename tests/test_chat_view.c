@@ -193,6 +193,140 @@ static void window_layouts(void)
     chat_view_destroy(view); chat_destroy(chat); free(font.advance);
 }
 
+static void sources_actions(void)
+{
+    SFont font = { .size = 16, .line_height = 20, .tofu_advance = 8 };
+    font.advance = malloc(SFONT_LUT_SIZE * sizeof(float));
+    CHECK(font.advance != NULL);
+    for (size_t i = 0; i < SFONT_LUT_SIZE; i++) font.advance[i] = 8;
+    char *owned = strdup("As-of retrieval: note 7, revision 2; not current canon");
+    CHECK(owned != NULL);
+    ChatSession *chat = chat_create(NULL);
+    ChatView *view = chat_view_create(&font, &font, chat);
+    ChatMessage rows[8];
+    for (size_t i = 0; i < 8; i++)
+        rows[i] = (ChatMessage){ .role = CHAT_ASSISTANT, .content = "reply", .memory_sources = owned,
+                                 .sequence_known = true, .sequence = (int64_t)i };
+    Rectangle list = {0,0,250,202}, input = {0,202,250,100};
+    CHECK(chat_load_window(chat, rows, 8, false, false));
+    chat_view_update(view, list, input, false); chat_view_draw(view, list, input, false);
+    Rectangle shown = chat_view_last_sources_rect(view);
+    CHECK(shown.width > 0 && shown.x >= 0 && shown.x + shown.width <= list.width);
+    CHECK(shown.y >= list.y && shown.y + shown.height <= list.height);
+    Rectangle others[] = { chat_view_last_apply_rect(view), chat_view_last_note_rect(view, false), chat_view_last_note_rect(view, true) };
+    for (size_t i = 0; i < sizeof(others) / sizeof(others[0]); i++) {
+        Rectangle r = others[i];
+        CHECK(r.x + r.width <= list.width);
+        CHECK(shown.x + shown.width <= r.x || r.x + r.width <= shown.x ||
+              shown.y + shown.height <= r.y || r.y + r.height <= shown.y);
+    }
+    g_stub_mouse = (Vector2){shown.x + shown.width / 2, shown.y + shown.height / 2};
+    g_stub_mouse_pressed = true;
+    chat_view_update(view, list, input, false);
+    CHECK(chat_view_take_sources(view) == 7);
+    CHECK(chat_view_take_sources(view) == -1);
+    bool canon = false;
+    CHECK(chat_view_take_apply(view) == -1 && chat_view_take_record(view, &canon) == -1);
+    CHECK(!chat_view_take_copied(view));
+    chat_view_update(view, list, input, false); /* leave an action queued */
+    g_stub_wheel = 1;
+    chat_view_update(view, list, input, false);
+    CHECK(chat_view_take_sources(view) == -1);
+    g_stub_wheel = 0; g_stub_mouse_pressed = false;
+    chat_view_reveal(view, 7);
+    chat_view_update(view, list, input, false); chat_view_draw(view, list, input, false);
+    shown = chat_view_last_sources_rect(view);
+    g_stub_mouse = (Vector2){shown.x + shown.width / 2, shown.y + shown.height / 2};
+    g_stub_mouse_pressed = true;
+
+    /* Pending source indices must not survive a window replacement. */
+    chat_view_update(view, list, input, false);
+    CHECK(chat_load_window(chat, rows, 8, true, false));
+    chat_view_history_changed(view);
+    CHECK(chat_view_take_sources(view) == -1);
+    CHECK(chat_view_last_sources_rect(view).width == 0);
+    chat_view_update(view, list, input, false);
+    CHECK(chat_view_take_sources(view) == -1);
+    g_stub_mouse_pressed = false;
+    chat_view_draw(view, list, input, false);
+    shown = chat_view_last_sources_rect(view);
+    g_stub_mouse = (Vector2){shown.x + shown.width / 2, shown.y + shown.height / 2};
+    g_stub_mouse_pressed = true; g_stub_wheel = 3;
+    chat_view_update(view, list, input, false);
+    CHECK(chat_view_take_sources(view) == -1);
+    g_stub_mouse_pressed = false; g_stub_wheel = 0;
+    chat_view_reveal(view, 7);
+    chat_view_update(view, list, input, false); chat_view_draw(view, list, input, false);
+    shown = chat_view_last_sources_rect(view);
+    g_stub_mouse = (Vector2){shown.x + shown.width / 2, shown.y + shown.height / 2};
+    chat_view_set_can_apply(view, false);
+    g_stub_mouse_pressed = true;
+    chat_view_update(view, list, input, false);
+    CHECK(chat_view_take_sources(view) == -1 && chat_view_take_apply(view) == -1);
+    g_stub_mouse_pressed = false;
+    chat_view_draw(view, list, input, false);
+    shown = chat_view_last_sources_rect(view);
+    g_stub_mouse = (Vector2){shown.x + shown.width / 2, shown.y + shown.height / 2};
+    g_stub_mouse_pressed = true;
+    chat_view_update(view, list, input, false);
+    CHECK(chat_view_take_sources(view) == 7);
+    /* A resize invalidates pending indices and old pixels, even without a reset. */
+    chat_view_update(view, list, input, false);
+    Rectangle wider = list; wider.width = 400;
+    chat_view_update(view, wider, input, false);
+    CHECK(chat_view_take_sources(view) == -1);
+    g_stub_mouse_pressed = false;
+
+    /* Provenance availability is independent of recording eligibility. */
+    rows[0].sequence_known = false;
+    CHECK(chat_load_messages(chat, rows, 1));
+    chat_enable_window(chat);
+    chat_view_history_changed(view);
+    chat_view_update(view, list, input, false); chat_view_draw(view, list, input, false);
+    CHECK(chat_view_last_sources_rect(view).width > 0);
+    CHECK(chat_view_last_note_rect(view, false).width == 0 && chat_view_last_note_rect(view, true).width == 0);
+    rows[0].sequence_known = true;
+
+    /* Reloaded excerpts retain provenance but never acquire Apply/Note/Canon. */
+    chat_clear(chat);
+    rows[0].excerpt = true; rows[0].excerpt_start = 2048; rows[0].excerpt_more = true;
+    CHECK(chat_load_window(chat, rows, 1, true, true));
+    chat_view_history_changed(view);
+    chat_view_update(view, list, input, false); chat_view_draw(view, list, input, false);
+    shown = chat_view_last_sources_rect(view);
+    CHECK(shown.width > 0 && chat_view_last_apply_rect(view).width == 0);
+    CHECK(chat_view_last_note_rect(view, false).width == 0 && chat_view_last_note_rect(view, true).width == 0);
+    g_stub_mouse = (Vector2){shown.x + shown.width / 2, shown.y + shown.height / 2};
+    g_stub_mouse_pressed = true;
+    chat_view_update(view, list, input, false);
+    CHECK(chat_view_take_sources(view) == 0 && chat_view_take_page(view).kind == CHAT_PAGE_NONE);
+    g_stub_mouse_pressed = false;
+
+    rows[0].excerpt = false;
+    for (int kind = 0; kind < 4; kind++) {
+        rows[0].memory_sources = kind == 0 ? NULL : kind == 1 ? "" : owned;
+        rows[0].role = kind == 2 ? CHAT_USER : CHAT_ASSISTANT;
+        CHECK(chat_load_messages(chat, rows, 1));
+        if (kind == 3) {
+            chat_lock(chat);
+            ((ChatMessage *)chat_message(chat, 0))->streaming = true;
+            chat_unlock(chat);
+        }
+        chat_view_history_changed(view);
+        chat_view_update(view, list, input, false); chat_view_draw(view, list, input, false);
+        CHECK(chat_view_last_sources_rect(view).width == 0);
+        CHECK(chat_view_take_sources(view) == -1);
+    }
+    chat_view_destroy(view);
+    CHECK(!strcmp(owned, "As-of retrieval: note 7, revision 2; not current canon"));
+    chat_lock(chat);
+    CHECK(!strcmp(chat_message(chat, 0)->memory_sources, owned));
+    chat_unlock(chat);
+    free(owned); /* caller strings were copied by the session, never freed by the view */
+    chat_destroy(chat); free(font.advance);
+    g_stub_mouse = (Vector2){-1000, -1000};
+}
+
 #ifdef CHAT_VIEW_FAULT_TEST
 static void layout_allocations(void)
 {
@@ -235,6 +369,7 @@ int main(void)
     TestCase tests[] = { { "attachment_revisions", attachment_revisions },
                          { "window_layouts", window_layouts }, { "presented_actions", presented_actions },
                          { "concurrent_presentation", concurrent_presentation },
+                         { "sources_actions", sources_actions },
 #ifdef CHAT_VIEW_FAULT_TEST
                          { "layout_allocations", layout_allocations },
 #endif
