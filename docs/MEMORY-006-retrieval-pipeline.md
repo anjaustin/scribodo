@@ -196,6 +196,18 @@ disabled-Rebuild and cutoff-warning hardening; the final-code short run and
 regressions above cover those later changes. Service RSS, real-model fidelity,
 whole-manuscript quality and OS input latency remain unmeasured by this workload.
 
+The completed held-history UI/frame soak measured **3,875.811 seconds** across
+225,900 frame intervals, with **2,886 checks passed and zero failures**. Interframe
+p50/p95/p99 were 17.250/18.250/18.500 ms; maximum was 65.040 ms. Sampled app-only
+RSS peaked at 172,288 KiB and ended at 90,016 KiB across 3,834 samples with no
+sampling errors. The initial 32 KiB sample was process startup, not a steady-state
+memory baseline, so it cannot establish retained-memory growth. Process wall time
+was 3,877.822 seconds, exit status was zero, and disposable database cleanup
+completed. This was the owned launch-time binary snapshot with the fake backend,
+not final-code or sustained real-model acceptance. Interframe timing includes
+waits/vsync; service RSS and OS input latency were not measured. The requested
+60-minute frame-count workload took about 64.6 measured minutes on this run.
+
 **Still required:** saved-document-revision retrieval, T1 source-linked briefs,
 optional measured T2 checkpoints, shared generative-background admission before
 summary work, workload-wide deadlines/in-flight cancellation, old-generation
