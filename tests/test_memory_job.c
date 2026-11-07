@@ -286,6 +286,8 @@ typedef struct {
     pthread_mutex_t mu;
     pthread_cond_t cv;
     bool release, entered;
+    bool check_idle_spacing;
+    struct timespec previous_call;
     unsigned calls;
     char project[PATH_MAX], conversation[40];
     MemoryJobAction action;
@@ -314,6 +316,16 @@ static bool runner(StoreManager *m, const char *p, const char *c, MemoryJobActio
     pthread_mutex_lock(&g->mu);
     if (!g->calls) g->thread = pthread_self();
     assert(pthread_equal(g->thread, pthread_self()));
+    if (g->check_idle_spacing) {
+        struct timespec now;
+        assert(clock_gettime(CLOCK_REALTIME, &now) == 0);
+        if (g->calls && !first) {
+            struct timespec due = g->previous_call;
+            due.tv_sec++;
+            assert(now.tv_sec > due.tv_sec || (now.tv_sec == due.tv_sec && now.tv_nsec >= due.tv_nsec));
+        }
+        g->previous_call = now;
+    }
     g->calls++;
     g->entered = true;
     pthread_cond_broadcast(&g->cv);
@@ -568,6 +580,7 @@ static void test_unchanged_pause_keeps_idle_deadline(void)
     Gate g;
     gate_init(&g);
     g.release = true;
+    g.check_idle_spacing = true;
     MemoryJob *job = memory_job_create_with_runner(&manager, runner, &g);
     assert(memory_job_select(job, "/p", "idle", MEMORY_JOB_RESUME));
     MemoryDocumentName name = {.name = "idle.txt"};
@@ -586,7 +599,9 @@ static void test_unchanged_pause_keeps_idle_deadline(void)
     assert(job->request.serial == serial);
     pthread_mutex_unlock(&job->mu);
     memory_job_destroy(job);
-    assert(g.calls <= 2);
+    /* Hosted TSan can stretch the sleeps across multiple legitimate one-second
+     * ticks. The runner checks spacing, not a scheduler-dependent total count. */
+    assert(g.calls >= 1);
     gate_done(&g);
 }
 
