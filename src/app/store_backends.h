@@ -11,6 +11,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "app/chat_store.h"
 #include "app/chat_history.h"
@@ -19,11 +20,31 @@
 #include "app/store.h"
 
 /* revisions */
+/* A successful normal record (origin="save", any_match=false) is an explicit
+ * saved-write receipt: call ONLY after a successful filesystem save. It advances
+ * saved_revision_id even when recorded=false; imports must not use this contract.
+ * Other origins and any_match snapshots never authorize saved content.
+ * id_out is optional; provide at least 40 bytes when a complete ID is required
+ * (the legacy output-buffer API otherwise truncates to idlen). */
 bool sdb_revision_record(Db *db, const char *project_id, const char *doc_path, const char *text, const char *origin,
                          const char *note, bool any_match, bool *recorded, char *id_out, size_t idlen);
 size_t sdb_revision_list(Db *db, const char *project_id, const char *doc_path, Revision **out);
 bool sdb_revision_list_checked(Db *db, const char *project_id, const char *doc_path, Revision **out, size_t *count);
 char *sdb_revision_load(Db *db, const char *project_id, const char *doc_path, const Revision *rev);
+
+typedef struct {
+    char database[64], project_id[40], document_id[40], revision_id[40], source_hash[65];
+    uint64_t bytes;
+} SavedRevisionIdentity;
+
+/* SQL-only checked metadata for an existing document's saved receipt; no content
+ * hydration, creation, snapshot, or automatic memory consent. doc_name must be a
+ * strict basename. False (including absent/malformed data) zeroes out.
+ * A receipt does NOT prove the filesystem still matches: an attachment resolver
+ * must independently verify disk existence/hash/path containment and dirty-buffer
+ * eligibility before using this identity. The saved FK restricts deletion of a
+ * referenced revision; explicitly clear receipts before deleting their owners. */
+bool sdb_saved_revision_identity(Db *db, const char *project_id, const char *doc_name, SavedRevisionIdentity *out);
 
 /* records (notes, canon, findings) */
 bool sdb_record_append(Db *db, const char *project_id, RecordKind kind, const char *id, const char *status,

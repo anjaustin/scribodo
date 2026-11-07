@@ -188,3 +188,6 @@ summary work, workload-wide deadlines/in-flight cancellation, old-generation
 cleanup, broader multilingual/held-out recall comparisons, real-service memory
 and sustained-use gates. The memory feature is not default-on and GAP-003 remains
 P0. The other four product gaps remain deferred.
+
+[MEMORY-007](MEMORY-007-saved-revision-authority.md) supplies the next saved-revision
+authority prerequisite without broadening this chat-only retrieval experiment.

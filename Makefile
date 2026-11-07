@@ -61,6 +61,7 @@ CORE_SRCS += src/app/frame_metrics.c
 STORE_SRCS := src/app/db.c src/app/store.c src/app/project_store.c src/app/observer_store.c src/app/store_revisions.c src/app/store_records.c src/app/store_chats.c src/app/store_chat_history.c src/app/store_import.c src/app/store_entities.c src/app/backup.c src/app/backup_job.c src/app/service_supervisor.c src/app/entity_backfill_job.c src/app/name_detection_job.c src/app/project_session.c src/app/explorer_snapshot.c src/app/profile.c src/app/model_settings.c
 STORE_SRCS += src/app/chat_history_job.c
 STORE_SRCS += src/app/memory_store.c src/app/memory_job.c
+STORE_SRCS += src/app/memory_saved_file.c
 LLM_SRCS  := src/core/json.c src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/llm/chat_history.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/app/recent.c src/app/renames.c src/llm/observer.c src/llm/observer_text.c src/llm/observer_fake.c src/llm/observer_model.c src/llm/observer_job.c src/llm/semantic.c src/llm/remote.c src/llm/names.c src/llm/memfit.c $(STORE_SRCS)
 LLM_SRCS += src/llm/context_planner.c src/llm/memory_tokens.c
 LLM_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(LLM_SRCS)) $(BUILD)/third_party/cJSON/cJSON.o
@@ -77,6 +78,7 @@ TESTS += $(BUILD)/test_store_connections
 TESTS += $(BUILD)/test_frame_metrics $(BUILD)/test_context_planner
 TESTS += $(BUILD)/test_memory_job $(BUILD)/test_memory_tokens $(BUILD)/test_memory_vectors_faults $(BUILD)/test_context_planner_faults
 TESTS += $(BUILD)/test_memory_provenance
+TESTS += $(BUILD)/test_memory_saved_file
 
 .PHONY: all run test uitest uitest-real sanitize tsan cstest dbtest uitest-db backuptest remotetest offlinetest dependency-report clean distclean llama model llmtest
 
@@ -260,11 +262,19 @@ $(BUILD)/test_memory_vectors: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_memor
 $(BUILD)/test_memory_provenance: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_memory_provenance.o
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
 
-dbtest: $(BUILD)/test_db $(BUILD)/test_memory_store $(BUILD)/test_memory_vectors $(BUILD)/test_memory_provenance
+$(BUILD)/test_memory_saved_file: src/app/memory_saved_file.c src/app/memory_saved_file.h tests/test_memory_saved_file.c
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Isrc -Itests tests/test_memory_saved_file.c -o $@
+
+$(BUILD)/test_saved_revision: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_saved_revision.o
+	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
+
+dbtest: $(BUILD)/test_db $(BUILD)/test_memory_store $(BUILD)/test_memory_vectors $(BUILD)/test_memory_provenance $(BUILD)/test_saved_revision
 	$(WATCHDOG) 120 dbtest ./$(BUILD)/test_db
 	$(WATCHDOG) 120 memory-store ./$(BUILD)/test_memory_store
 	$(WATCHDOG) 120 memory-vectors ./$(BUILD)/test_memory_vectors
 	$(WATCHDOG) 120 memory-provenance ./$(BUILD)/test_memory_provenance --db
+	$(WATCHDOG) 120 saved-revision ./$(BUILD)/test_saved_revision
 
 # The app against the project store (needs tools/services.sh up): three runs
 # on one throwaway database and project folder: move and use, resume after

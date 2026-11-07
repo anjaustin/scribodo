@@ -625,9 +625,23 @@ static const char *const k_migration_009[] = {
     NULL,
 };
 
+/* 010: explicit saved-write receipts, never inferred from historical origins.
+ * The generated digest backfills old content linearly and is persisted at write. */
+static const char *const k_migration_010[] = {
+    "ALTER TABLE revisions ADD COLUMN IF NOT EXISTS source_hash CHAR(64) COLLATE utf8mb4_bin"
+    " GENERATED ALWAYS AS (SHA2(content,256)) PERSISTENT",
+    "ALTER TABLE revisions ADD UNIQUE KEY IF NOT EXISTS revision_document (document_id,id)",
+    "ALTER TABLE documents ADD UNIQUE KEY IF NOT EXISTS document_project (project_id,id)",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS saved_revision_id VARCHAR(40) COLLATE utf8mb4_bin NULL",
+    /* RESTRICT deletion rather than clearing the document id in this composite key. */
+    "ALTER TABLE documents ADD FOREIGN KEY IF NOT EXISTS document_saved_revision"
+    " (id,saved_revision_id) REFERENCES revisions(document_id,id) ON DELETE RESTRICT",
+    NULL,
+};
+
 static const char *const *const k_migrations[] = { k_migration_001, k_migration_002, k_migration_003, k_migration_004,
                                                    k_migration_005, k_migration_006, k_migration_007, k_migration_008,
-                                                   k_migration_009 };
+                                                   k_migration_009, k_migration_010 };
 
 int db_schema_version(Db *db)
 {

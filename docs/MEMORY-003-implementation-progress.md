@@ -89,6 +89,11 @@ fenced index outbox/projections, SQL-validated retrieval-only planning and as-of
 reply sources. It remains chat-only, experimental and default-off; document
 revision retrieval and generated T1/T2 briefs are still unfinished.
 
+[MEMORY-007](MEMORY-007-saved-revision-authority.md) adds a separate saved-revision
+receipt and bounded disk verification, so unsaved AI/restore/source snapshots
+cannot masquerade as saved attachment authority. It is a prerequisite only;
+document-memory ingestion/retrieval and attachment-set fences remain pending.
+
 1. Windowed/paged `ChatSession` and UI viewport/cache integration. `open_chat()`
    still loads the complete conversation and the UI still retains archive-sized
   state. Do not declare host memory bounded end-to-end yet.

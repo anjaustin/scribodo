@@ -57,6 +57,8 @@ bool sdb_revision_record(Db *db, const char *project_id, const char *doc_path, c
                          const char *note, bool any_match, bool *recorded, char *id_out, size_t idlen)
 {
     if (recorded) *recorded = false;
+    if (id_out && idlen) id_out[0] = '\0';
+    if (!db || !project_id || !doc_path || !text || !origin || db_in_transaction(db)) return false;
     char doc[40];
     if (!store_document_id_db(db, project_id, base_name(doc_path), true, doc, sizeof(doc))) return false;
     char hash[17];
@@ -71,20 +73,22 @@ bool sdb_revision_record(Db *db, const char *project_id, const char *doc_path, c
     db_rows_free(&lock);
     DbRows r;
     bool same = false;
+    char revision_id[40] = "";
     if (ok && db_query(db,
-                       any_match ? "SELECT id FROM revisions WHERE document_id = ? AND hash = ? ORDER BY seq DESC LIMIT 1"
-                                 : "SELECT id, hash FROM revisions WHERE document_id = ? ORDER BY seq DESC LIMIT 1",
-                       any_match ? (DbArg[2]){ DB_S(doc), DB_S(hash) } : (DbArg[2]){ DB_S(doc), DB_S(NULL) },
-                       any_match ? 2 : 1, &r)) {
-        const char *existing_id = NULL, *existing_hash = NULL;
-        bool valid = r.nrows <= 1 && db_rows_has_columns(&r, any_match ? 1 : 2);
+                       any_match ? "SELECT id, 1 FROM revisions WHERE document_id = ? AND source_hash = SHA2(?,256) ORDER BY seq DESC LIMIT 1"
+                                 : "SELECT id, source_hash = SHA2(?,256) FROM revisions WHERE document_id = ? ORDER BY seq DESC LIMIT 1",
+                       any_match ? (DbArg[2]){ DB_S(doc), DB_S(text) } : (DbArg[2]){ DB_S(text), DB_S(doc) },
+                       2, &r)) {
+        const char *existing_id = NULL;
+        int64_t matches = 0;
+        bool valid = r.nrows <= 1 && db_rows_has_columns(&r, 2);
         if (r.nrows == 1)
-            valid = db_cell_text(&r, 0, 0, &existing_id) &&
-                    (any_match || db_cell_text(&r, 0, 1, &existing_hash));
+            valid = db_cell_text(&r, 0, 0, &existing_id) && strlen(existing_id) < sizeof(revision_id) &&
+                    db_cell_i64(&r, 0, 1, &matches) && (matches == 0 || matches == 1);
         ok = ok && valid;
-        if (ok && r.nrows == 1 && (any_match || !strcmp(existing_hash, hash))) {
+        if (ok && r.nrows == 1 && matches) {
             same = true;
-            if (id_out) snprintf(id_out, idlen, "%s", existing_id);
+            snprintf(revision_id, sizeof(revision_id), "%s", existing_id);
         }
         db_rows_free(&r);
     } else {
@@ -99,11 +103,60 @@ bool sdb_revision_record(Db *db, const char *project_id, const char *doc_path, c
                     a, 7, NULL) &&
              db_run(db, "UPDATE documents SET current_revision_id = ? WHERE id = ?", (DbArg[2]){ DB_S(id), DB_S(doc) }, 2,
                     NULL);
-        if (ok && id_out) snprintf(id_out, idlen, "%s", id);
-        if (ok && recorded) *recorded = true;
+        if (ok) snprintf(revision_id, sizeof(revision_id), "%s", id);
     }
+    if (ok && !any_match && !strcmp(origin, "save"))
+        ok = db_run(db, "UPDATE documents SET saved_revision_id = ? WHERE id = ?",
+                    (DbArg[2]){ DB_S(revision_id), DB_S(doc) }, 2, NULL);
     if (ok) ok = db_commit(db);
-    else db_rollback(db);
+    if (!ok) db_rollback(db);
+    if (ok && recorded) *recorded = !same;
+    if (ok && id_out) snprintf(id_out, idlen, "%s", revision_id);
+    return ok;
+}
+
+static bool identity_text(const char *s, size_t limit)
+{
+    if (!s || !s[0] || strnlen(s, limit) >= limit) return false;
+    for (const unsigned char *p = (const unsigned char *)s; *p; p++)
+        if (*p < 32 || *p == 127) return false;
+    return true;
+}
+
+bool sdb_saved_revision_identity(Db *db, const char *project_id, const char *doc_name, SavedRevisionIdentity *out)
+{
+    if (!out) return false;
+    memset(out, 0, sizeof(*out));
+    if (!db || !identity_text(project_id, sizeof(out->project_id)) || !identity_text(doc_name, 256) ||
+        strchr(doc_name, '/') || strchr(doc_name, '\\') || strstr(doc_name, "..") || !strcmp(doc_name, "."))
+        return false;
+    char doc[40];
+    if (!store_document_id_db(db, project_id, doc_name, false, doc, sizeof(doc))) return false;
+    DbRows rows;
+    if (!db_query(db, "SELECT DATABASE(),p.id,d.id,r.id,r.source_hash,OCTET_LENGTH(r.content)"
+                      " FROM projects p JOIN documents d ON d.project_id=p.id"
+                      " JOIN revisions r ON r.document_id=d.id AND r.id=d.saved_revision_id"
+                      " WHERE p.id=? AND d.id=? AND d.name=?",
+                  (DbArg[3]){ DB_S(project_id), DB_S(doc), DB_S(doc_name) }, 3, &rows)) return false;
+    const char *values[5] = {0};
+    const size_t limits[5] = {64, 40, 40, 40, 65};
+    SavedRevisionIdentity identity = {0};
+    bool ok = rows.nrows == 1 && db_rows_has_columns(&rows, 6);
+    for (size_t i = 0; ok && i < 5; i++)
+        ok = db_cell_text(&rows, 0, i, &values[i]) && identity_text(values[i], limits[i]);
+    if (ok) {
+        ok = !strcmp(values[1], project_id) && !strcmp(values[2], doc) && strlen(values[4]) == 64 &&
+             strspn(values[4], "0123456789abcdef") == 64 && db_cell_u64(&rows, 0, 5, &identity.bytes);
+    }
+    if (ok) {
+        snprintf(identity.database, sizeof(identity.database), "%s", values[0]);
+        snprintf(identity.project_id, sizeof(identity.project_id), "%s", values[1]);
+        snprintf(identity.document_id, sizeof(identity.document_id), "%s", values[2]);
+        snprintf(identity.revision_id, sizeof(identity.revision_id), "%s", values[3]);
+        snprintf(identity.source_hash, sizeof(identity.source_hash), "%s", values[4]);
+        *out = identity;
+    }
+    db_rows_free(&rows);
     return ok;
 }
 
