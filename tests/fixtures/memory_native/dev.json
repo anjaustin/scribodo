@@ -1,0 +1,74 @@
+{
+  "cases": [
+    {
+      "name": "exact_unicode",
+      "history": [
+        {"role":"user","content":"The Durnhaven conservator Maël keeps 58 violet seals."},
+        {"role":"assistant","content":"I have that as your note for the conservator."},
+        {"role":"user","content":"Use that count for this draft."}
+      ],
+      "question":"How many violet seals does Maël keep in this draft?",
+      "expected":"58; do not change the count or invent a different source."
+    },
+    {
+      "name":"unaccepted_proposal",
+      "history":[
+        {"role":"user","content":"We are brainstorming a harbor scene. No final choice for the keeper's coat color."},
+        {"role":"assistant","content":"One possibility is a cobalt coat."},
+        {"role":"user","content":"Maybe. Keep cobalt as an option; I have not chosen a color."}
+      ],
+      "question":"Which coat color did I decide on?",
+      "expected":"No final decision; cobalt is an option, not an accepted choice."
+    },
+    {
+      "name":"rejected_plan",
+      "history":[
+        {"role":"user","content":"For this draft, Lena should leave by ferry."},
+        {"role":"assistant","content":"The departure scene can take place on the ferry."},
+        {"role":"user","content":"Change that: she takes the night train. The ferry plan is abandoned."}
+      ],
+      "question":"Continue planning the departure. Which transport should we use, and which plan did we discard?",
+      "expected":"Use night train; ferry was abandoned. New proposals must not be presented as prior decisions."
+    },
+    {
+      "name":"resume_open_work",
+      "history":[
+        {"role":"user","content":"For the tower scene keep the narrator unreliable. Do not resolve whether the bell was really heard."},
+        {"role":"assistant","content":"Next we can draft the staircase scene while leaving the bell ambiguous."},
+        {"role":"user","content":"Yes. Next write the staircase scene. We still need to choose whether Lena or Oren is narrating."}
+      ],
+      "question":"Where did we leave off: what is next, what remains undecided, and what constraint must remain?",
+      "expected":"Next staircase scene; narrator Lena or Oren undecided; preserve unreliability and deliberate bell ambiguity. No invented prior scene facts."
+    },
+    {
+      "name":"deliberate_ambiguity",
+      "history":[
+        {"role":"user","content":"There are two accounts of the fire: Mira says the lamp fell; Oren says someone pushed it."},
+        {"role":"assistant","content":"We could reveal who is lying later."},
+        {"role":"user","content":"Do not settle who is lying. Both accounts must remain plausible in this draft."}
+      ],
+      "question":"What caused the fire in our current draft?",
+      "expected":"Cause deliberately unresolved; retain fallen-versus-pushed accounts without choosing a cause or treating resolution as a pending obligation."
+    },
+    {
+      "name":"partial_evidence",
+      "history":[
+        {"role":"user","content":"This excerpt covers the harbor at dawn. We have not searched the full manuscript."},
+        {"role":"assistant","content":"These notes alone do not cover every chapter."},
+        {"role":"user","content":"Only these notes are available for this question."}
+      ],
+      "question":"Does a silver astrolabe appear anywhere else in the whole manuscript?",
+      "expected":"Cannot determine from these partial notes. Do not assert whole-manuscript absence or pretend to have searched it."
+    },
+    {
+      "name":"current_override",
+      "history":[
+        {"role":"user","content":"Usually I like my letters terse."},
+        {"role":"assistant","content":"I can use terse language as a default for letters."},
+        {"role":"user","content":"That is just a default, not a rule against changing style."}
+      ],
+      "question":"For this letter I want a warm, expansive style. Draft two sentences thanking my mentor. Do not force it terse.",
+      "expected":"Draft two warm sentences honoring the current request, not a terse-style refusal. Do not fabricate remembered personal history."
+    }
+  ]
+}

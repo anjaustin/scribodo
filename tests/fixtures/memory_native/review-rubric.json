@@ -1,0 +1,19 @@
+{
+  "protocol": "native-continuity-review-v1",
+  "status": "Operationalizes the frozen preregistration; not a changed threshold or new held-out protocol",
+  "unit": "One complete visible response, its exact request, immutable Sources receipt, and frozen task clauses",
+  "axes": {
+    "mechanics": "Record driver/error/truncation status separately; a truncated answer fails completion even if an early sentence is correct.",
+    "source_admission": "Record source IDs, eligible source roles and scope, receipt binding, and whether the compared arms received the same originals. Source presence is not semantic success.",
+    "factual_fidelity": "Require all requested details to match supplied originals. Flag invented remembered facts and false claims of a complete search. For quotations, require original wording.",
+    "author_intent": "Preserve who proposed each option and whether the author accepted, rejected, deferred, or superseded it. Do not turn an assistant suggestion into author authority.",
+    "open_state": "Separate next actions and pending choices from deliberate ambiguity. Do not invent an obligation to resolve something the author explicitly left unresolved.",
+    "current_task": "Answer the actual recall question or perform the requested drafting. Current explicit author instructions override historical preferences. New prose is allowed when drafting, but invented prior decisions are not.",
+    "citations": "Any asserted source handle must bind to the supplied excerpt. Do not infer a citation requirement where the frozen task did not impose one.",
+    "completion": "Assess the entire response, including later contradictions, unsolicited reopening of discarded choices, repetition, and truncation. Never score only the best sentence."
+  },
+  "verdicts": ["pass", "fail", "uncertain", "not_applicable"],
+  "required_review_fields": ["task", "layout", "presentation", "axis_verdicts", "failure_evidence", "rationale"],
+  "screen": "A candidate advances only if every frozen DEV case in both layouts completes without a semantic failure. Uncertain judgments block advancement pending resolution. No aggregate score can hide a privacy or authority failure.",
+  "interpretation": "Even a perfect small DEV screen is not held-out acceptance, Qdrant retrieval accuracy, whole-manuscript coverage, or a production SLA."
+}

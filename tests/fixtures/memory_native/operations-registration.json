@@ -1,0 +1,31 @@
+{
+  "protocol": "native-operation-dev-v1",
+  "split": "development; not held-out evidence",
+  "question": "Does an explicit author-selected Recall/Draft operation improve faithfulness without adding memory tiers or an automatic router?",
+  "cases": "The six recall tasks and current-override draft task from dev.json, plus an accepted_proposal counterfactual and draft_proposed/draft_ambiguity cases using the corresponding source episodes",
+  "layouts": ["alternating", "consecutive_user"],
+  "arms": ["generalist", "specialized"],
+  "presentation": "episode in both arms",
+  "selection": "Same three eligible original SQL episode units in both arms; frozen discovery seam, real native hydration/admission/inference; no Qdrant discovery claim",
+  "operation_selection": "Explicit fixture author selection, not inferred by a model or classifier",
+  "expected_answers": 40,
+  "reply_tokens": 1024,
+  "effective_context": 8192,
+  "temperature": 0,
+  "repeat_penalty": 1.05,
+  "cache_prompt": true,
+  "memory_prepare_ms": 500,
+  "optional_source_bytes": 16384,
+  "optional_source_tokens": 4096,
+  "receipt_bytes": 16384,
+  "t1_enabled": false,
+  "t2_enabled": false,
+  "arm_order": "Counterbalanced by SQL conversation serial; no generated answer is saved to later history",
+  "review": "Review all complete visible responses. Separately record sources/scope, factual and author-role fidelity, accepted/proposed/rejected choices, pending versus protected ambiguity, exact current-task execution, draft constraint preservation, citations and truncation. Novel prose is allowed in Draft but cannot be claimed as a remembered decision.",
+  "screen": "All 20 specialized task/layout cases must complete with no semantic failures before proposing a production opt-in operation prototype. Report generalist comparisons by operation/layout; do not hide subgroup regressions in a mean. A pass is not fresh held-out acceptance, an SLA, default-on approval, or a T1/T2 qualification.",
+  "stop": "Do not revise these prompts to make this fixture green. If specialization remains unreliable, report the limit and leave production routing unchanged. Any changed contract requires a separately identified experiment.",
+  "personas": {
+    "recall": "You report evidence to the author. For this Recall operation, answer the current question from the supplied original excerpts and conversation; do not draft scenes, brainstorm alternatives, or invent missing facts. Preserve who said what and whether the author accepted, rejected, or merely considered an idea. Distinguish a pending decision from ambiguity the author deliberately wants preserved. A past preference does not override the author's current request. Report only what the available evidence establishes; partial evidence cannot prove manuscript-wide absence. Use natural language, not invented status labels. If citing a source, use only a handle actually supplied and quote its original words accurately. Give the answer directly; do not turn a historical suggestion into a new commitment or ask to reopen a rejected choice.",
+    "draft": "You draft prose for the author. For this Draft operation, perform the current writing request in its requested length and form. New imagery and wording are proposals, not remembered facts or accepted author decisions. Use the supplied original excerpts to preserve the author's actual choices and constraints; do not promote an earlier assistant suggestion into an author decision. Do not resolve a choice or ambiguity the author asked to preserve unless the current author request explicitly changes it. The current request may override an earlier preference. Return the requested draft without a recap, advice, or extra alternatives unless asked. The author alone decides whether to accept the draft; you cannot change their documents."
+  }
+}

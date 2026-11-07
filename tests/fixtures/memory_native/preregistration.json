@@ -1,0 +1,29 @@
+{
+  "protocol": "native-continuity-dev-v1",
+  "split": "development; not held-out evidence",
+  "purpose": "Native ChatSession selection-ceiling comparison before T1 or changed retrieval",
+  "presentations": ["legacy", "compact", "episode"],
+  "layouts": ["alternating", "consecutive_user"],
+  "selected_sources": "Same eligible SQL episode units in every presentation; frozen discovery seam; no Qdrant selection claim",
+  "effective_context": 8192,
+  "max_reply": 1024,
+  "temperature": 0,
+  "repeat_penalty": 1.05,
+  "cache_prompt": true,
+  "memory_prepare_ms": 500,
+  "optional_source_tokens": 4096,
+  "optional_source_bytes": 16384,
+  "sources_receipt_bytes": 16384,
+  "t1_enabled": false,
+  "t2_enabled": false,
+  "review": {
+    "mechanics": "Every case must finish without error/truncation and admit the same original IDs across presentations. Failure is a separate mechanical gate, not a model-quality result.",
+    "semantics": "Review complete native visible responses against all offline expected clauses; flag unsupported recall facts, proposed-to-decided promotion, loss of deliberate ambiguity, wrong current task, or ignored current-author override.",
+    "candidate_screen": "No semantic failures in this small development corpus before advancing to generated-aid experiments. Passing is not a held-out/general quality claim.",
+    "automatic_scoring": false,
+    "human_or_assistant_review_required": true,
+    "production_sla": false
+  },
+  "cost_exclusions": ["complete generation usage if reasoning is stripped", "service RSS", "sustained-hour behavior", "UI frame timing"],
+  "stop": "If original-only native candidates remain unreliable, leave T1/T2/default-on blocked and report the capability boundary. Do not tune a new held-out set."
+}
