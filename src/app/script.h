@@ -51,6 +51,8 @@
  *   expect explorer_has "row"    a row the Explorer lists (exact)
  *   expect observer_status "substring"
  *   expect running no            (only valid as the last command, after close)
+ *   store_offline yes|no         force this test's StoreManager offline/online
+ *   expect chat_unsaved yes|no   whether DB turns lack committed sequence receipts
  */
 #ifndef SCRIBODO_SCRIPT_H
 #define SCRIBODO_SCRIPT_H
@@ -90,6 +92,7 @@ typedef struct {
     /* The observer's status line (malloc'd). */
     char *(*observer_status)(void *ctx);
     size_t (*history_cache_bytes)(void *ctx);
+    void (*store_offline)(void *ctx, bool offline); /* scripted service failure, not a production menu */
 } ScriptHost;
 
 typedef struct Script Script;

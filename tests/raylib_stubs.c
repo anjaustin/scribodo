@@ -8,6 +8,9 @@
 #include "ui/font.h"
 
 double g_stub_time = 0.0;
+Vector2 g_stub_mouse = { -1000.0f, -1000.0f };
+float g_stub_wheel;
+bool g_stub_mouse_pressed;
 static char *g_clipboard = NULL;
 
 double GetTime(void) { return g_stub_time; }
@@ -18,13 +21,13 @@ void SetClipboardText(const char *text)
 }
 const char *GetClipboardText(void) { return g_clipboard; }
 
-Vector2 GetMousePosition(void) { return (Vector2){ -1000.0f, -1000.0f }; }
-Vector2 GetMouseWheelMoveV(void) { return (Vector2){ 0 }; }
+Vector2 GetMousePosition(void) { return g_stub_mouse; }
+Vector2 GetMouseWheelMoveV(void) { return (Vector2){ 0, g_stub_wheel }; }
 bool CheckCollisionPointRec(Vector2 p, Rectangle r)
 {
     return p.x >= r.x && p.x < r.x + r.width && p.y >= r.y && p.y < r.y + r.height;
 }
-bool IsMouseButtonPressed(int b) { (void)b; return false; }
+bool IsMouseButtonPressed(int b) { return b == MOUSE_BUTTON_LEFT && g_stub_mouse_pressed; }
 bool IsMouseButtonDown(int b) { (void)b; return false; }
 bool IsKeyDown(int k) { (void)k; return false; }
 bool IsKeyPressed(int k) { (void)k; return false; }

@@ -21,7 +21,7 @@ typedef struct {
     int64_t message_id, seq;
     uint64_t byte_offset, total_bytes;
     ChatRole role;
-    bool error, is_edit, truncated, remote;
+    bool error, is_edit, truncated, remote, stopped;
     double created_at;
     char *text; /* owned exact UTF-8 bytes, <= CHUNK_BYTES, NUL terminated */
 } ChatSourceChunk;

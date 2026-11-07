@@ -168,6 +168,35 @@ static void chat_send_faults(void)
     }
 }
 
+static void window_shrink_faults(void)
+{
+    ChatMessage *rows = calloc(1024, sizeof(*rows));
+    CHECK(rows != NULL);
+    for (size_t i = 0; i < 1024; i++) rows[i] = (ChatMessage){ .role = i % 2 ? CHAT_ASSISTANT : CHAT_USER,
+        .content = "saved", .sequence_known = true, .sequence = (int64_t)i };
+    for (int persistent = 0; persistent < 2; persistent++) {
+        ChatSession *s = chat_create(NULL);
+        CHECK(chat_load_messages(s, rows, 1024)); chat_enable_window(s);
+        if (persistent) fault_alloc_after(0); else fault_alloc_once_after(0);
+        CHECK(chat_trim_saved(s));
+        chat_lock(s);
+        CHECK(chat_count(s) == 64 && chat_find_sequence(s, 1023) == 63 && chat_allocated_slots(s) == 1024);
+        CHECK(!strcmp(chat_message(s, 0)->content, "saved"));
+        chat_unlock(s);
+        if (persistent) {
+            CHECK(!chat_trim_saved(s));
+            chat_lock(s); CHECK(chat_allocated_slots(s) == 1024); chat_unlock(s);
+        }
+        fault_alloc_after(-1);
+        CHECK(!chat_trim_saved(s)); /* same text/version, refused capacity shrink is retried */
+        chat_lock(s);
+        CHECK(chat_allocated_slots(s) <= 128 && chat_count(s) == 64 && chat_find_sequence(s, 1023) == 63);
+        chat_unlock(s);
+        chat_destroy(s);
+    }
+    free(rows);
+}
+
 static void writer_faults(void)
 {
     SourceRef source = { .kind = SRC_DOC, .quote = "A quote" };
@@ -240,6 +269,7 @@ int main(void)
                         { "request_history_allocations", request_history_faults },
                         { "chat_load_allocations", chat_load_faults },
                         { "chat_send_allocations", chat_send_faults },
+                        { "window_shrink_allocations", window_shrink_faults },
                          { "chat_allocations", chat_faults }, { "writer_allocations", writer_faults } };
     int rc = run_tests(tests, sizeof(tests) / sizeof(tests[0]));
     test_state_fixture_destroy(root, store);

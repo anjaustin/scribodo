@@ -674,3 +674,19 @@ Do not treat these as remediation targets without a changed product decision:
 - Navigation is still synchronous; observer/file/backup compatibility readers,
   sustained-use and percentile latency gates remain explicit follow-up work.
   No memory jobs, Qdrant projection or generated briefs are implemented yet.
+
+### History-window adversarial follow-up
+
+- Reproduced stale presentation selecting a different reply/action, archive-sized
+  slot retention after trimming/clear, blank window replacement on empty
+  navigation, and unsaved DB chat loss on project switch/close.
+- Added presentation revision guards, capacity release/retry, empty-range refusal
+  and explicit unsaved lifecycle/discard protection. Layout/retention failure
+  tests and outage-driven store UI regressions cover the remediations; TSan now
+  includes the chat view with a concurrent fake worker.
+- Evidence and residual limits are in `REDTEAM-015-history-windows.md`. No change
+  to the pinned model, remote data-exit policy, memory-MVP scope or deferred
+  asynchronous/soak requirements is implied. The sample edit remains excluded.
+- A second pass reproduced stopped-reply flags being lost by both persistence
+  backends. Migration 008 and file/DB/import/export/source/window round trips now
+  preserve them; unrecoverable historical flags default false.

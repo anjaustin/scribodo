@@ -115,6 +115,7 @@ void chat_unlock(ChatSession *s);
 size_t chat_count(ChatSession *s);                    /* lock held */
 const ChatMessage *chat_message(ChatSession *s, size_t i); /* lock held */
 uint64_t chat_version(ChatSession *s);
+uint64_t chat_version_locked(ChatSession *s); /* lock held; presentation snapshots */
 
 /* Last request's owned history materialization (not documents, model context or
  * the UI/archive). Read on any thread. Counters reset when the session clears. */
@@ -125,6 +126,11 @@ typedef struct {
 ChatHistoryStats chat_history_stats(ChatSession *s);
 
 /* ---- exposed for tests ------------------------------------------------ */
+
+/* Allocated message slots, not just visible rows (lock held). */
+size_t chat_allocated_slots(ChatSession *s);
+/* Retained request/context string bytes; diagnostic scan, lock held. */
+size_t chat_request_text_bytes(ChatSession *s);
 
 /* Token counter: returns the number of tokens in `text`, or -1 if unknown
  * (the builder then falls back to a conservative estimate). */

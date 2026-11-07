@@ -213,6 +213,10 @@ uitest-db: $(APP)
 	  python3 tests/seed_chat_window.py $$work/windowbook || fail=1; \
 	  SCRIBODO_STORE=db SCRIBODO_DB_NAME=$$db SCRIBODO_SCRIPT=tests/ui/store/7_chat_windows.scribo SCRIBODO_SCRIPT_DIR=$$work \
 	    SCRIBODO_SHOT_DIR=$$PWD/build/ui/store $(WATCHDOG) 180 ui-store-windows ./$(APP) 2>>build/ui/store/stderr.log || fail=1; \
+	  for s in tests/ui/store/8_unsaved_chat.scribo tests/ui/store/9_unsaved_close.scribo; do \
+	    SCRIBODO_STORE=db SCRIBODO_DB_NAME=$$db SCRIBODO_SCRIPT=$$s SCRIBODO_SCRIPT_DIR=$$work \
+	      SCRIBODO_SHOT_DIR=$$PWD/build/ui/store $(WATCHDOG) 180 ui-store-unsaved ./$(APP) 2>>build/ui/store/stderr.log || fail=1; \
+	  done; \
 	  SCRIBODO_STORE=db SCRIBODO_DB_NAME=$$db SCRIBODO_BACKUPS=$$work/backups SCRIBODO_SCRIPT=tests/ui/store/6_backup.scribo SCRIBODO_SCRIPT_DIR=$$work \
 	    SCRIBODO_SHOT_DIR=$$PWD/build/ui/store $(WATCHDOG) 240 ui-store ./$(APP) 2>>build/ui/store/stderr.log || fail=1; echo; \
 	  SCRIBODO_STORE=db SCRIBODO_DB_NAME=$$db SCRIBODO_SCRIPT=tests/ui/store/5_entities.scribo SCRIBODO_SCRIPT_DIR=$$work \
@@ -292,9 +296,12 @@ tsan: $(MARIADB_LIB) $(BUILD)/tests/fault_alloc.o
 	  tests/test_state_fixture.c tests/test_components.c -o build/tsan/test_components $(MARIADB_LIBS) -lpthread
 	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) $(CORE_SRCS) $(LLM_SRCS) src/core/json_vendor.c \
 	  tests/test_state_fixture.c tests/test_remote.c -o build/tsan/test_remote $(MARIADB_LIBS) -lpthread
+	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) $(CORE_SRCS) $(LLM_SRCS) src/core/json_vendor.c \
+	  src/ui/chat_view.c src/ui/editor.c src/ui/input.c tests/raylib_stubs.c tests/test_chat_view.c \
+	  -o build/tsan/test_chat_view $(MARIADB_LIBS) -lpthread -lm
 	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) -include tests/fault_alloc.h $(SEMANTIC_FAULT_SRCS) \
 	  $(BUILD)/tests/fault_alloc.o -o build/tsan/test_semantic_faults $(MARIADB_LIBS) -lpthread
-	@set -e; for t in test_llm test_components test_remote test_semantic_faults; do \
+	@set -e; for t in test_llm test_components test_remote test_chat_view test_semantic_faults; do \
 	  TSAN_OPTIONS=halt_on_error=1 $(WATCHDOG) 300 tsan-$$t ./build/tsan/$$t; echo; \
 	done
 

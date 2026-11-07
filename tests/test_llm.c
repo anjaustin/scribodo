@@ -490,7 +490,7 @@ static void test_chat_store(void)
     char id[40];
     chat_store_new_id(id, sizeof(id));
     ChatMessage u = { .role = CHAT_USER, .content = "Who is Zoë Ångström?\nTwo lines." };
-    ChatMessage a = { .role = CHAT_ASSISTANT, .content = "The keeper’s granddaughter." };
+    ChatMessage a = { .role = CHAT_ASSISTANT, .content = "The keeper’s granddaughter.", .stopped = true };
     CHECK(chat_store_append(g_store, g_dir, id, "Who is Zoë", &u));
     CHECK(chat_store_append(g_store, g_dir, id, "ignored", &a));
     /* Simulate a crash mid-write: a torn final line must be skipped. */
@@ -504,6 +504,7 @@ static void test_chat_store(void)
     CHECK(chat_store_load(g_store, g_dir, id, &msgs, &n));
     CHECK(n == 2 && msgs[0].role == CHAT_USER && !strcmp(msgs[0].content, u.content));
     CHECK(msgs[1].role == CHAT_ASSISTANT && !strcmp(msgs[1].content, a.content));
+    CHECK(n == 2 && !msgs[0].stopped && msgs[1].stopped && !msgs[1].error && !msgs[1].truncated);
     chat_store_free_messages(msgs, n);
     ChatSummary *list;
     size_t k = chat_store_list(g_store, g_dir, &list);
@@ -755,6 +756,37 @@ static void test_fake_backend(void)
     chat_destroy(s);
 }
 
+static void test_window_storage_release(void)
+{
+    ChatSession *s = chat_create(NULL);
+    ChatMessage *rows = calloc(10000, sizeof(*rows));
+    CHECK(s && rows);
+    for (size_t i = 0; i < 10000; i++) rows[i] = (ChatMessage){ .role = i % 2 ? CHAT_ASSISTANT : CHAT_USER,
+        .content = "saved", .sequence_known = true, .sequence = (int64_t)i };
+    CHECK(chat_load_messages(s, rows, 10000));
+    chat_enable_window(s);
+    CHECK(chat_trim_saved(s));
+    chat_lock(s);
+    CHECK(chat_count(s) == 64 && chat_find_sequence(s, 9999) == 63);
+    CHECK(chat_allocated_slots(s) <= 128);
+    chat_unlock(s);
+    DoneCtx d = {0};
+    chat_on_message_done(s, on_done, &d);
+    ChatContext context = { .doc_title = "one.md", .doc_text = "Release this owned context on clear" };
+    char why[256];
+    CHECK(chat_send(s, "new", &context, why, sizeof(why)));
+    wait_idle(s, &d, 2);
+    chat_lock(s);
+    CHECK(chat_request_text_bytes(s) > 0);
+    chat_unlock(s);
+    chat_clear(s);
+    chat_lock(s);
+    CHECK(chat_allocated_slots(s) == 0);
+    CHECK(chat_request_text_bytes(s) == 0);
+    chat_unlock(s);
+    free(rows); chat_destroy(s);
+}
+
 static void test_chat_windows(void)
 {
     ChatSession *s = chat_create(NULL);
@@ -791,8 +823,14 @@ static void test_chat_windows(void)
     rows[2].sequence = 0;
     CHECK(!chat_load_window(s, rows, 64, true, false));
     rows[2].sequence = 6;
+    rows[1].streaming = true;
+    CHECK(!chat_load_window(s, rows, 64, true, false));
+    rows[1].streaming = false;
     rows[1].excerpt = true;
     rows[1].excerpt_more = true;
+    rows[1].excerpt_start = SIZE_MAX;
+    CHECK(!chat_load_window(s, rows, 64, true, false));
+    rows[1].excerpt_start = 0;
     CHECK(chat_load_window(s, rows, 64, true, false));
     ChatRequestHistory history;
     ChatMessage excerpt_turns[] = { rows[0], rows[1], { .role = CHAT_USER, .content = "current" } };
@@ -2178,6 +2216,7 @@ int main(int argc, char **argv)
         { "bounded_request_history", test_bounded_request_history },
         { "worker_bounded_history", test_worker_bounded_history },
         { "chat_windows", test_chat_windows },
+        { "window_storage_release", test_window_storage_release },
         { "chat_store", test_chat_store },
         { "chat_store_read_failures", test_chat_store_read_failures },
         { "concurrent_file_readers", test_concurrent_file_readers },

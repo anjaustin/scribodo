@@ -132,7 +132,17 @@ void chat_clear(ChatSession *s)
         free(s->msgs[i].docs);
         free(s->msgs[i].via);
     }
+    free(s->msgs);
+    s->msgs = NULL; s->cap = 0;
+    free(s->request); s->request = NULL;
+    free(s->ctx_title); s->ctx_title = NULL;
+    free(s->ctx_text); s->ctx_text = NULL;
+    free_docs(s);
+    free(s->edit_instruction); s->edit_instruction = NULL;
+    free(s->edit_passage); s->edit_passage = NULL;
+    s->has_doc = false;
     s->count = 0;
+    s->target = s->user_index = 0;
     s->windowed = s->older = s->newer = false;
     s->history_stats = (ChatHistoryStats){0};
     s->notice[0] = s->notice_out[0] = '\0';
@@ -244,6 +254,7 @@ bool chat_load_window(ChatSession *s, const ChatMessage *msgs, size_t n, bool ol
     for (size_t i = 0; i < n; i++) {
         if (!msgs[i].sequence_known || msgs[i].sequence < 0 || msgs[i].sequence > INT_MAX || !msgs[i].content ||
             !(msgs[i].ts >= 0 && msgs[i].ts < 0x1p63) || (i && msgs[i - 1].sequence >= msgs[i].sequence) ||
+            msgs[i].streaming || msgs[i].excerpt_start > (size_t)INT64_MAX - 8192 ||
             (!msgs[i].excerpt && (msgs[i].excerpt_start || msgs[i].excerpt_more))) return false;
         size_t len = strnlen(msgs[i].content, 8193);
         if (len > 8192 || len > 65536 - bytes || (msgs[i].excerpt && !len) ||
@@ -260,14 +271,25 @@ bool chat_load_window(ChatSession *s, const ChatMessage *msgs, size_t n, bool ol
     return true;
 }
 
+static void shrink_message_slots(ChatSession *s)
+{
+    size_t capacity = s->count > 128 ? s->count : 128;
+    if (s->cap <= capacity) return;
+    ChatMessage *smaller = realloc(s->msgs, capacity * sizeof(*smaller));
+    if (smaller) { s->msgs = smaller; s->cap = capacity; }
+}
+
 bool chat_trim_saved(ChatSession *s)
 {
     if (chat_busy(s)) return false;
     pthread_mutex_lock(&s->mu);
-    if (!s->windowed || s->newer || s->finished_pending || s->user_done_pending || s->trimmed_version == s->version) {
+    if (!s->windowed || s->newer || s->finished_pending || s->user_done_pending) {
         pthread_mutex_unlock(&s->mu);
         return false;
     }
+    /* Retry a refused shrink even if the transcript itself has not changed. */
+    shrink_message_slots(s);
+    if (s->trimmed_version == s->version) { pthread_mutex_unlock(&s->mu); return false; }
     size_t bytes = 0, first = 0;
     for (size_t i = 0; i < s->count; i++) bytes += strlen(s->msgs[i].content ? s->msgs[i].content : "");
     while (s->count - first > 2 && (s->count - first > 64 || bytes > 1024 * 1024)) {
@@ -285,6 +307,7 @@ bool chat_trim_saved(ChatSession *s)
         s->older = true;
         s->version++;
     }
+    shrink_message_slots(s);
     s->trimmed_version = s->version;
     pthread_mutex_unlock(&s->mu);
     return first != 0;
@@ -293,6 +316,19 @@ bool chat_trim_saved(ChatSession *s)
 void chat_lock(ChatSession *s) { pthread_mutex_lock(&s->mu); }
 void chat_unlock(ChatSession *s) { pthread_mutex_unlock(&s->mu); }
 size_t chat_count(ChatSession *s) { return s->count; }
+uint64_t chat_version_locked(ChatSession *s) { return s->version; }
+size_t chat_allocated_slots(ChatSession *s) { return s->cap; }
+size_t chat_request_text_bytes(ChatSession *s)
+{
+    size_t bytes = 0;
+    const char *strings[] = { s->request, s->ctx_title, s->ctx_text, s->edit_instruction, s->edit_passage };
+    for (size_t i = 0; i < sizeof(strings) / sizeof(strings[0]); i++) if (strings[i]) bytes += strlen(strings[i]) + 1;
+    for (size_t i = 0; i < s->nctx_docs; i++) {
+        if (s->ctx_docs[i].title) bytes += strlen(s->ctx_docs[i].title) + 1;
+        if (s->ctx_docs[i].text) bytes += strlen(s->ctx_docs[i].text) + 1;
+    }
+    return bytes;
+}
 const ChatMessage *chat_message(ChatSession *s, size_t i) { return i < s->count ? &s->msgs[i] : NULL; }
 bool chat_busy(ChatSession *s) { return atomic_load(&s->busy); }
 

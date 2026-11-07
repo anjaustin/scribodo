@@ -298,6 +298,10 @@ static void test_chat_windows(void)
     CHECK(sdb_chat_window(db, pid, cid, &request, &page));
     CHECK(page.count == 64 && page.messages[0].sequence == first && !page.newer);
     chat_window_page_free(&page);
+    request = (ChatWindowRequest){ .direction = CHAT_WINDOW_BEFORE, .sequence = 0 };
+    CHECK(!sdb_chat_window(db, pid, cid, &request, &page) && !page.messages && !page.count);
+    request = (ChatWindowRequest){ .direction = CHAT_WINDOW_AFTER, .sequence = 9999 * 3 };
+    CHECK(!sdb_chat_window(db, pid, cid, &request, &page) && !page.messages && !page.count);
     request = (ChatWindowRequest){ .direction = CHAT_WINDOW_FOCUS, .sequence = 41 * 3 };
     CHECK(sdb_chat_window(db, pid, cid, &request, &page));
     CHECK(page.count == 42 && !page.older && page.newer && !strcmp(page.messages[41].content, "message 41"));
@@ -311,7 +315,7 @@ static void test_chat_windows(void)
         large[i + 3] = (char)(0x80 + (i / 4) % 61);
     }
     large[24000] = '\0';
-    ChatMessage message = { .role = CHAT_ASSISTANT, .content = large, .via = " " };
+    ChatMessage message = { .role = CHAT_ASSISTANT, .content = large, .via = " ", .stopped = true };
     int64_t sequence = -1;
     CHECK(sdb_chat_append_sequenced(db, pid, cid, "Window fixture", &message, &sequence) && sequence == 29998);
     size_t offset = 0, reconstructed = 0, pieces = 0;
@@ -321,6 +325,7 @@ static void test_chat_windows(void)
         CHECK(sdb_chat_window(db, pid, cid, &request, &page));
         const ChatMessage *m = &page.messages[page.count - 1];
         CHECK(m->sequence == sequence && m->excerpt && m->excerpt_start == offset && m->via && !strcmp(m->via, " "));
+        CHECK(m->stopped && !m->error && !m->truncated);
         size_t bytes = strlen(m->content);
         CHECK(bytes <= 8192 && bytes % 4 == 0 && !memcmp(large + reconstructed, m->content, bytes));
         offset += bytes / 4; reconstructed += bytes;
@@ -541,7 +546,7 @@ static void test_backends(void)
 
     /* Chats: messages in order, referenced documents by id. */
     ChatMessage u = { .role = CHAT_USER, .content = "compare", .docs = "Chapter One.md\nnotes.md" };
-    ChatMessage a = { .role = CHAT_ASSISTANT, .content = "They differ.", .via = "Frontier \xC2\xB7 api.example.com" };
+    ChatMessage a = { .role = CHAT_ASSISTANT, .content = "They differ.", .via = "Frontier \xC2\xB7 api.example.com", .stopped = true };
     CHECK(sdb_chat_append(db, pid, "20261104-150000-abcd", "Compare", &u) && sdb_chat_append(db, pid, "20261104-150000-abcd", "x", &a));
     CHECK(store_rename_document(g_store, pid, "notes.md", "Notes.md"));
     {
@@ -560,7 +565,13 @@ static void test_backends(void)
     CHECK(sdb_chat_load(db, pid, "20261104-150000-abcd", &msgs, &nm) && nm == 2 && msgs[0].role == CHAT_USER &&
           !strcmp(msgs[1].content, "They differ.") && msgs[0].docs && !strcmp(msgs[0].docs, "Chapter One.md\nNotes.md"));
     CHECK(nm == 2 && !msgs[0].via && msgs[1].via && !strcmp(msgs[1].via, "Frontier \xC2\xB7 api.example.com"));
+    CHECK(nm == 2 && !msgs[0].stopped && msgs[1].stopped && !msgs[1].error && !msgs[1].truncated);
     chat_store_free_messages(msgs, nm);
+    ChatSourceCursor stopped_cursor = {0};
+    ChatSourcePage stopped_page;
+    CHECK(sdb_chat_source_page(db, pid, "20261104-150000-abcd", &stopped_cursor, &stopped_page));
+    CHECK(stopped_page.count == 2 && !stopped_page.chunks[0].stopped && stopped_page.chunks[1].stopped);
+    chat_source_page_free(&stopped_page);
     CHECK(sdb_chat_rename(db, pid, "20261104-150000-abcd", "Comparing chapters"));
     /* The author's "don't observe this chat" is kept with it. */
     {
@@ -668,7 +679,7 @@ static void test_import(void)
     const time_t revs_ts_oldest = 1700000000, note_ts = 1700000000;
     char cmd0[1400];
     ChatMessage u = { .role = CHAT_USER, .content = "hello", .docs = "ch1.md" };
-    ChatMessage a = { .role = CHAT_ASSISTANT, .content = "hi" };
+    ChatMessage a = { .role = CHAT_ASSISTANT, .content = "hi", .stopped = true };
     CHECK(chat_store_append(g_store, proj, "20261104-160000-abcd", "Greeting", &u) && chat_store_append(g_store, proj, "20261104-160000-abcd", "x", &a));
     /* A rename made before the import. */
     char doc2[600];
@@ -737,7 +748,8 @@ static void test_import(void)
     ChatMessage *msgs = NULL;
     size_t nm = 0;
     CHECK(chat_store_load(g_store, proj, "20261104-160000-abcd", &msgs, &nm) && nm == 2 && msgs[0].docs &&
-          !strcmp(msgs[0].docs, "Chapter One.md"));
+           !strcmp(msgs[0].docs, "Chapter One.md"));
+    CHECK(nm == 2 && !msgs[0].stopped && msgs[1].stopped && !msgs[1].truncated && !msgs[1].error);
     ChatSourcePage source_page;
     ChatSourceCursor source_cursor = {0};
     CHECK(chat_store_source_page(g_store, proj, "20261104-160000-abcd", &source_cursor, &source_page) &&
@@ -810,6 +822,10 @@ static void test_import(void)
             CHECK(stat(snapfile, &sst) == 0); /* a real exported snapshot */
         }
         records_free(en, nen);
+        msgs = NULL; nm = 0;
+        CHECK(chat_store_load(g_store, ex, "20261104-160000-abcd", &msgs, &nm));
+        CHECK(nm == 2 && !msgs[0].stopped && msgs[1].stopped && !msgs[1].truncated && !msgs[1].error);
+        chat_store_free_messages(msgs, nm);
         ost = project_store_observer_state_load(g_store, ex);
         CHECK(ost && cJSON_GetArraySize(cJSON_GetObjectItem(cJSON_GetObjectItem(ost, "docs"), "Chapter One.md")) == 1);
         cJSON_Delete(ost);

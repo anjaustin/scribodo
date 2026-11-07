@@ -55,6 +55,10 @@ struct ChatView {
     char *submitted;
     ChatPageAction page;
     Rectangle page_rect[4];
+    bool presented;
+    uint64_t layout_revision, presented_layout, presented_version;
+    Rectangle presented_list;
+    float presented_scroll;
 };
 
 static float adv(uint32_t cp, void *ctx) { return sfont_advance((const SFont *)ctx, cp); }
@@ -109,7 +113,7 @@ float chat_view_input_height(ChatView *v, float width)
     return floorf(h);
 }
 
-void chat_view_scroll_to_end(ChatView *v) { v->stick_to_end = true; }
+void chat_view_scroll_to_end(ChatView *v) { v->stick_to_end = true; v->presented = false; }
 
 static void cache_free(MsgCache *c)
 {
@@ -125,6 +129,17 @@ void chat_view_history_changed(ChatView *v)
     v->scroll = 0; v->stick_to_end = true;
     v->apply_index = v->record_index = v->reveal_index = v->flash_index = -1;
     v->page = (ChatPageAction){0};
+    v->presented = false;
+    v->last_apply = v->last_note = v->last_canon = (Rectangle){0};
+    memset(v->page_rect, 0, sizeof(v->page_rect));
+}
+
+static bool pointer_presentation(ChatView *v, Rectangle list, uint64_t version)
+{
+    Rectangle shown = v->presented_list;
+    return v->presented && v->presented_version == version && v->presented_layout == v->layout_revision &&
+           v->presented_scroll == v->scroll && shown.x == list.x && shown.y == list.y &&
+           shown.width == list.width && shown.height == list.height;
 }
 
 size_t chat_view_cache_bytes(const ChatView *v)
@@ -155,7 +170,7 @@ static MsgCache *refresh(ChatView *v, size_t i, const char *content, bool markdo
     if (i >= v->ncache) {
         if (i >= SIZE_MAX / sizeof(MsgCache)) return NULL;
         MsgCache *c = realloc(v->cache, (i + 1) * sizeof(MsgCache));
-        if (!c) return NULL;
+        if (!c) { v->layout_revision++; return NULL; }
         v->cache = c;
         for (size_t k = v->ncache; k <= i; k++) {
             memset(&v->cache[k], 0, sizeof(MsgCache));
@@ -185,6 +200,7 @@ static MsgCache *refresh(ChatView *v, size_t i, const char *content, bool markdo
     if (!cps) {
         free(shown);
         cache_free(c);
+        v->layout_revision++;
         return NULL;
     }
     size_t n = utf8_decode((const uint8_t *)text, tlen, cps, NULL);
@@ -194,7 +210,7 @@ static MsgCache *refresh(ChatView *v, size_t i, const char *content, bool markdo
     bool ok = tb_set(&staged.buf, cps, n);
     free(cps);
     ok = ok && wrap_compute(&staged.layout, &staged.buf, width > 20 ? width : 20, adv, v->text) == 0;
-    if (!ok) { cache_free(&staged); cache_free(c); return NULL; }
+    if (!ok) { cache_free(&staged); cache_free(c); v->layout_revision++; return NULL; }
     cache_free(c);
     *c = staged;
     c->src_len = len;
@@ -202,6 +218,7 @@ static MsgCache *refresh(ChatView *v, size_t i, const char *content, bool markdo
     c->width = width;
     c->height = (float)c->layout.count * v->text->line_height;
     c->valid = true; c->markdown = markdown; c->preview = preview;
+    v->layout_revision++;
     return c;
 }
 
@@ -236,24 +253,34 @@ static float total_height(ChatView *v, float width)
 
 void chat_view_update(ChatView *v, Rectangle list, Rectangle input, bool input_focused)
 {
+    Rectangle outer = list;
     chat_lock(v->chat);
     ChatWindowInfo info = chat_window_info(v->chat);
+    uint64_t ver = chat_version_locked(v->chat);
     chat_unlock(v->chat);
+    bool pointer_ready = pointer_presentation(v, outer, ver);
+    if (!pointer_ready) {
+        v->apply_index = v->record_index = -1;
+        v->page = (ChatPageAction){0};
+    }
     memset(v->page_rect, 0, sizeof(v->page_rect));
     if (info.active) {
         for (int k = CHAT_PAGE_OLDER; k <= CHAT_PAGE_LATEST; k++) {
             Rectangle r = { list.x + PAD + (k - 1) * 72, list.y, 68, PAGE_HEADER };
             v->page_rect[k] = r;
             bool enabled = k == CHAT_PAGE_OLDER ? info.older : k == CHAT_PAGE_NEWER ? info.newer : true;
-            if (enabled && !input_mouse_blocked() && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(GetMousePosition(), r))
+            if (pointer_ready && enabled && !input_mouse_blocked() && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
+                CheckCollisionPointRec(GetMousePosition(), outer) && CheckCollisionPointRec(GetMousePosition(), r))
                 v->page = (ChatPageAction){ .kind = (ChatPageKind)k };
         }
         list.y += PAGE_HEADER; list.height -= PAGE_HEADER;
     }
     float width = content_width(list);
-    uint64_t ver = chat_version(v->chat); /* takes the lock itself: read before locking */
     chat_lock(v->chat);
+    ver = chat_version_locked(v->chat);
     float total = total_height(v, width);
+    pointer_ready = pointer_presentation(v, outer, ver);
+    if (!pointer_ready) { v->apply_index = v->record_index = -1; v->page = (ChatPageAction){0}; }
     size_t n = chat_count(v->chat);
 
     Vector2 m = GetMousePosition();
@@ -262,9 +289,11 @@ void chat_view_update(ChatView *v, Rectangle list, Rectangle input, bool input_f
         if (wheel != 0.0f) {
             v->scroll -= wheel * v->text->line_height * 1.5f;
             v->stick_to_end = false;
+            v->presented = false;
+            pointer_ready = false;
         }
         /* "Copy" links under finished assistant replies. */
-        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        if (pointer_ready && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             float y = list.y + PAD - v->scroll;
             for (size_t i = 0; i < n; i++) {
                 const ChatMessage *msg = chat_message(v->chat, i);
@@ -390,6 +419,7 @@ Rectangle chat_view_last_apply_rect(const ChatView *v) { return v->last_apply; }
 
 void chat_view_reveal(ChatView *v, long index)
 {
+    v->presented = false;
     v->reveal_index = index;
     v->flash_index = index;
     v->flash_t = GetTime();
@@ -445,15 +475,20 @@ static void draw_rows(ChatView *v, const MsgCache *c, float x, float y, Color co
 
 void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_focused)
 {
+    Rectangle outer = list;
     chat_lock(v->chat);
     ChatWindowInfo info = chat_window_info(v->chat);
     chat_unlock(v->chat);
+    memset(v->page_rect, 0, sizeof(v->page_rect));
     if (info.active) {
+        BeginScissorMode((int)list.x, (int)list.y, (int)list.width, (int)list.height);
         const char *labels[] = { "", "Older", "Newer", "Latest" };
         for (int k = CHAT_PAGE_OLDER; k <= CHAT_PAGE_LATEST; k++) {
             bool enabled = k == CHAT_PAGE_OLDER ? info.older : k == CHAT_PAGE_NEWER ? info.newer : true;
+            v->page_rect[k] = (Rectangle){ list.x + PAD + (k - 1) * 72, list.y, 68, PAGE_HEADER };
             sfont_draw_utf8(v->label, labels[k], (int)strlen(labels[k]), list.x + PAD + (k - 1) * 72, list.y + 3, enabled ? COL_LINK : COL_LABEL);
         }
+        EndScissorMode();
         list.y += PAGE_HEADER; list.height -= PAGE_HEADER;
     }
     float width = content_width(list);
@@ -533,6 +568,11 @@ void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_foc
         }
         y += GAP;
     }
+    v->presented_list = outer;
+    v->presented_scroll = v->scroll;
+    v->presented_layout = v->layout_revision;
+    v->presented_version = chat_version_locked(v->chat);
+    v->presented = true;
     chat_unlock(v->chat);
     EndScissorMode();
 
@@ -541,16 +581,22 @@ void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_foc
     editor_draw(v->input, input, input_focused);
 }
 
-void chat_view_set_can_apply(ChatView *v, bool can) { v->can_apply = can; }
+void chat_view_set_can_apply(ChatView *v, bool can)
+{
+    if (v->can_apply != can) v->presented = false;
+    v->can_apply = can;
+}
 
 void chat_view_set_assistant_name(ChatView *v, const char *name)
 {
+    v->presented = false;
     snprintf(v->assistant_name, sizeof(v->assistant_name), "%s", name && name[0] ? name : "Scribodo");
     for (size_t i = 0; i < v->ncache; i++) v->cache[i].src_len = (size_t)-1; /* re-lay out */
 }
 
 void chat_view_set_author_name(ChatView *v, const char *name)
 {
+    v->presented = false;
     snprintf(v->author_name, sizeof(v->author_name), "%s", name ? name : "");
     for (size_t i = 0; i < v->ncache; i++) v->cache[i].src_len = (size_t)-1;
 }

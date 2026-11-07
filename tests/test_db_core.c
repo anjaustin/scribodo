@@ -22,8 +22,8 @@ void test_db(void)
     }
     bool migrated = db_migrate(db, err, sizeof(err));
     if (!migrated) fprintf(stderr, "    %s\n", err);
-    CHECK(migrated && db_schema_version(db) == 7);
-    CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 7); /* idempotent */
+    CHECK(migrated && db_schema_version(db) == 8);
+    CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 8); /* idempotent */
 
     /* Author text with quotes, backslashes, SQL and Unicode goes through
      * prepared statements untouched. */
@@ -112,14 +112,24 @@ void test_migration(void)
         CHECK(db_run(db, "INSERT INTO projects (id, name, path, path_hash, created_at, updated_at) VALUES ('p-1','b','/b','h',1,1)",
                      NULL, 0, NULL));
         CHECK(db_run(db, "INSERT INTO documents (id, project_id, name, created_at) VALUES ('d-1','p-1','ch.md',1)", NULL, 0, NULL));
+        CHECK(db_run(db, "INSERT INTO conversations (id,project_id,title,created_at,updated_at) VALUES ('c-1','p-1','old',1,1)", NULL, 0, NULL));
+        CHECK(db_run(db, "INSERT INTO messages (conversation_id,seq,role,content,created_at) VALUES ('c-1',0,'assistant','old partial',1)", NULL, 0, NULL));
         /* Inserted out of time order: seq must follow time for old rows. */
         CHECK(db_run(db, "INSERT INTO revisions (id, document_id, hash, content, origin, created_at) VALUES"
                          " ('r-b','d-1','h2','second','save',20), ('r-a','d-1','h1','first','save',10)",
                      NULL, 0, NULL));
         bool migrated = db_migrate(db, err, sizeof(err));
         if (!migrated) fprintf(stderr, "    %s\n", err);
-        CHECK(migrated && db_schema_version(db) == 7);
+        CHECK(migrated && db_schema_version(db) == 8);
         DbRows r;
+        CHECK(db_query(db, "SELECT stopped FROM messages WHERE conversation_id='c-1'", NULL, 0, &r) &&
+              r.nrows == 1 && !strcmp(db_cell(&r, 0, 0), "0"));
+        db_rows_free(&r);
+        CHECK(db_run(db, "UPDATE messages SET stopped=1 WHERE conversation_id='c-1'", NULL, 0, NULL));
+        CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 8);
+        CHECK(db_query(db, "SELECT stopped FROM messages WHERE conversation_id='c-1'", NULL, 0, &r) &&
+              r.nrows == 1 && !strcmp(db_cell(&r, 0, 0), "1"));
+        db_rows_free(&r);
         CHECK(db_query(db, "SELECT id FROM revisions ORDER BY seq", NULL, 0, &r) && r.nrows == 2 &&
               !strcmp(db_cell(&r, 0, 0), "r-a") && !strcmp(db_cell(&r, 1, 0), "r-b"));
         db_rows_free(&r);

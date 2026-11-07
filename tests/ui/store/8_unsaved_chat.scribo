@@ -1,0 +1,26 @@
+wait 5
+mkdir "$DIR/unsaved-other"
+write "$DIR/unsaved-other/one.md" "A second project's prose."
+open "$DIR/unsaved-other/one.md"
+open "$DIR/windowbook/one.md"
+click_element ChatItem0
+click_element ChatInput
+type "unsaved project-switch sentinel"
+key ENTER
+store_offline yes
+wait_chat
+expect chat_unsaved yes
+expect chat_last "unsaved project-switch sentinel"
+open "$DIR/unsaved-other/one.md"
+expect chat_unsaved yes
+expect chat_last "unsaved project-switch sentinel"
+store_offline no
+click_element ChatLatest
+expect chat_unsaved yes
+expect chat_last "unsaved project-switch sentinel"
+# Starting a new chat needs explicit confirmation before discarding this reply.
+click_element NewChatItem
+expect chat_unsaved yes
+expect status "Unsaved chat"
+click_element NewChatItem
+expect chat_count 0

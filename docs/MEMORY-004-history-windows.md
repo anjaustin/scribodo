@@ -22,8 +22,9 @@ future slices. This extends [MEMORY-003](MEMORY-003-implementation-progress.md).
   including sources outside the current window or within a large original.
 - A failed save prevents paging/replacement and subsequent sends from silently
   losing unsaved DB turns. No automatic retry is introduced for an uncertain SQL
-  commit; such retries would require an idempotent append protocol. An explicit
-  new-chat/clear action retains its existing discard behavior.
+  commit; such retries would require an idempotent append protocol. Unsaved DB
+  chat remains bound to its original project after a document-project switch;
+  New chat and close require a second action to confirm discarding it.
 - Note/canon links are withheld for unsaved DB replies. Copy and reviewed edits
   can still preserve/use a complete reply without inventing a persisted source.
 
@@ -60,12 +61,19 @@ callbacks. Failed allocations leave the old conversation intact. Pending reviewe
 edits keep their request indices stable while the worker runs; paging is refused
 then. After callbacks, only saved prefix rows may be evicted. Layouts and queued
 positional actions are reset after a window swap or eviction.
+Clicks also require a matching fresh presentation; a transition-frame action is
+ignored until the replacement geometry/content has been drawn. Empty Older/Newer
+requests keep the current window instead of replacing it with a blank view.
 
 Normal retained saved history is capped at 64 rows / 1 MiB body text, protecting
 the latest two turns even if larger. A request can temporarily add two rows. The
 existing current-request and response byte limits still apply. Unsaved legacy
 adoption failures prioritize preservation over this normal retention target;
 those records are not discarded to make a memory counter look bounded.
+Excess message-slot capacity is reclaimed after eviction, with a data-preserving
+retry if shrinking fails. Clear releases message arrays and completed request
+contexts after joining the worker. Persistent allocation failure can retain an
+oversized allocation and is not treated as successful hard-cap enforcement.
 
 `ChatView` hashes/decodes/wraps at most 8 KiB per message. It retains only the
 current window's layouts and reclaims them on replacement/clear. Cache rebuilds
@@ -129,6 +137,11 @@ under ASan/UBSan, `make tsan`, `make uitest uitest-db`, `make llmtest uitest-rea
 adapter/history/layout translation units. All completed successfully in this
 implementation pass; the four analyzed translation units emitted no diagnostics.
 Evidence logs are `build/window-*.log`. These are local results, not hosted CI.
+The subsequent red/green audit, pointer/retention fixes and unsaved lifecycle
+checks are recorded in [REDTEAM-015](REDTEAM-015-history-windows.md).
+Stopped-reply metadata now survives file/DB persistence, bounded readers and
+compatibility import/export (schema migration 008). Older records default to
+not-stopped; a stopped flag lost by earlier versions cannot be reconstructed.
 
 ## Explicit remaining work
 

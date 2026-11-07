@@ -121,6 +121,8 @@ typedef struct {
     double status_time;
     bool close_armed;
     double close_armed_at;
+    bool chat_discard_armed;
+    double chat_discard_at;
 
     /* Model and chat */
     LlmServer *llm;
@@ -1672,12 +1674,27 @@ static char *attached_text(App *app, const char *name)
     return out;
 }
 
+static bool unsaved_chat(App *app)
+{
+    chat_lock(app->chat);
+    bool unsaved = chat_window_info(app->chat).unsaved;
+    chat_unlock(app->chat);
+    return unsaved;
+}
+
 static void new_chat(App *app)
 {
     if (chat_busy(app->chat)) {
         set_status(app, "Wait for the reply to finish (or press Stop)");
         return;
     }
+    if (unsaved_chat(app) && !(app->chat_discard_armed && GetTime() - app->chat_discard_at < 5.0)) {
+        app->chat_discard_armed = true;
+        app->chat_discard_at = GetTime();
+        set_status(app, "Unsaved chat — copy what you need, then click New chat again to discard");
+        return;
+    }
+    app->chat_discard_armed = false;
     chat_clear(app->chat);
     chat_view_history_changed(app->chat_view);
     project_session_clear_chat(&app->session);
@@ -2909,6 +2926,12 @@ static const char *host_status(void *ctx)
     return GetTime() - app->status_time < 6.0 ? app->status : "";
 }
 static size_t host_history_cache_bytes(void *ctx) { return chat_view_cache_bytes(((App *)ctx)->chat_view); }
+static void host_store_offline(void *ctx, bool offline)
+{
+    App *app = ctx;
+    store_set_offline(app->store, offline);
+    app->lists_dirty = true;
+}
 static void host_open(void *ctx, const char *path) { open_path(ctx, path); }
 static char *host_record_text(void *ctx)
 {
@@ -3262,7 +3285,7 @@ int main(int argc, char **argv)
     ScriptHost host = { app.editor, &app.explorer_w, &app.observer_w, &app.editor_rect,
                         host_status, host_open, host_drop, &app, app.chat, host_element, host_model_ready,
                         host_record_text, host_observer_enable, host_observer_idle, host_findings_text,
-                        host_attached_text, host_explorer_text, host_observer_status, host_history_cache_bytes };
+                        host_attached_text, host_explorer_text, host_observer_status, host_history_cache_bytes, host_store_offline };
     if (script_path) {
         char err[256];
         app.script = script_load(script_path, getenv("SCRIBODO_SCRIPT_DIR"), getenv("SCRIBODO_SHOT_DIR"), err, sizeof(err));
@@ -3375,10 +3398,14 @@ int main(int argc, char **argv)
             if (!app.chat_project[0] && nmsg > 0 && app.project_dir[0]) {
                 adopt_chat(&app);
             } else if (strcmp(app.chat_project, app.project_dir) != 0) {
-                chat_clear(app.chat);
-                chat_view_history_changed(app.chat_view);
-                project_session_clear_chat(&app.session);
-                attach_reset(&app); /* the old project's documents aren't this one's */
+                if (unsaved_chat(&app)) {
+                    set_status(&app, "Unsaved chat kept with the previous project; copy it or explicitly start a new chat");
+                } else {
+                    chat_clear(app.chat);
+                    chat_view_history_changed(app.chat_view);
+                    project_session_clear_chat(&app.session);
+                    attach_reset(&app); /* the old project's documents aren't this one's */
+                }
             }
         }
         /* Changes made here mark the lists at once; this catches the rest
@@ -3392,7 +3419,7 @@ int main(int argc, char **argv)
             /* Notes save themselves; uncommitted canon text counts as unsaved. */
             bool note_lost = record_view_active(app.record) && record_view_kind(app.record) == REC_NOTE &&
                              record_view_dirty(app.record) && !save_note(&app);
-            bool unsaved = editor_is_dirty(app.editor) || record_unsaved_canon(&app) || note_lost;
+            bool unsaved = editor_is_dirty(app.editor) || record_unsaved_canon(&app) || note_lost || unsaved_chat(&app);
             if (!unsaved || (app.close_armed && GetTime() - app.close_armed_at < 5.0)) {
                 running = false;
                 closed_by_window = true;
@@ -3401,7 +3428,7 @@ int main(int argc, char **argv)
             glfwSetWindowShouldClose(GetWindowHandle(), 0);
             app.close_armed = true;
             app.close_armed_at = GetTime();
-            set_status(&app, "Unsaved changes \xE2\x80\x94 press \xE2\x8C\x98S to save, or close again to discard");
+            set_status(&app, "Unsaved changes — save or copy what you need, or close again to discard");
         }
 
         if (IsFileDropped()) {

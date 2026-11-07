@@ -564,8 +564,14 @@ static const char *const k_migration_007[] = {
     NULL,
 };
 
+/* Historical stopped state was not stored and cannot be reconstructed. */
+static const char *const k_migration_008[] = {
+    "ALTER TABLE messages ADD COLUMN IF NOT EXISTS stopped TINYINT(1) NOT NULL DEFAULT 0",
+    NULL,
+};
+
 static const char *const *const k_migrations[] = { k_migration_001, k_migration_002, k_migration_003, k_migration_004,
-                                                   k_migration_005, k_migration_006, k_migration_007 };
+                                                   k_migration_005, k_migration_006, k_migration_007, k_migration_008 };
 
 int db_schema_version(Db *db)
 {

@@ -385,6 +385,10 @@ static void run_expect(Script *s, ScriptHost *h, Tokens *t)
         size_t bytes = h->history_cache_bytes(h->ctx);
         ok = bytes <= strtoull(t->tok[2], NULL, 10);
         snprintf(detail, sizeof(detail), "got %zu cache bytes", bytes);
+    } else if (!strcmp(what, "chat_unsaved") && t->n == 3 && h->chat) {
+        chat_lock(h->chat);
+        ok = chat_window_info(h->chat).unsaved == yes(t->tok[2]);
+        chat_unlock(h->chat);
     } else if (!strcmp(what, "chat_last") && t->n == 3 && h->chat) {
         chat_lock(h->chat);
         size_t n = chat_count(h->chat);
@@ -600,6 +604,10 @@ static bool run_line(Script *s, ScriptHost *h)
     }
     if (!strcmp(cmd, "observer") && t.n == 2 && h->observer_enable) {
         h->observer_enable(h->ctx, !strcmp(t.tok[1], "on"));
+        return false;
+    }
+    if (!strcmp(cmd, "store_offline") && t.n == 2 && h->store_offline) {
+        h->store_offline(h->ctx, yes(t.tok[1]));
         return false;
     }
     if (!strcmp(cmd, "wait_observer") && h->observer_idle) {

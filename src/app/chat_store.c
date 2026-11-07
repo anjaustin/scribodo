@@ -102,6 +102,7 @@ bool chat_store_append_files(StoreManager *manager, const char *project_dir, con
     if (ok && m->error) ok = cJSON_AddBoolToObject(j, "error", true);
     if (ok && m->is_edit) ok = cJSON_AddBoolToObject(j, "edit", true);
     if (ok && m->truncated) ok = cJSON_AddBoolToObject(j, "truncated", true);
+    if (ok && m->stopped) ok = cJSON_AddBoolToObject(j, "stopped", true);
     if (ok && m->via && m->via[0]) ok = cJSON_AddStringToObject(j, "via", m->via);
     /* The documents a user message was sent with; an empty list is recorded
      * too, so "nothing attached" is never confused with "not recorded". */
@@ -333,7 +334,8 @@ bool chat_store_load_files(const char *project_dir, const char *id, ChatMessage 
                                           .content = strdup(content->valuestring),
                                            .error = cJSON_IsTrue(cJSON_GetObjectItem(j, "error")),
                                           .is_edit = cJSON_IsTrue(cJSON_GetObjectItem(j, "edit")),
-                                          .truncated = cJSON_IsTrue(cJSON_GetObjectItem(j, "truncated")) };
+                                          .truncated = cJSON_IsTrue(cJSON_GetObjectItem(j, "truncated")),
+                                          .stopped = cJSON_IsTrue(cJSON_GetObjectItem(j, "stopped")) };
                 ok = message->content != NULL;
                 cJSON *docs = cJSON_GetObjectItem(j, "docs"), *it;
                 size_t len = 1;

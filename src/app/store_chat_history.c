@@ -62,7 +62,7 @@ bool sdb_chat_source_page(Db *db, const char *project, const char *conversation,
                       "SELECT m.id, m.seq, m.role,"
                       " SUBSTRING(CAST(m.content AS BINARY), IF(m.seq = ?, ?, 1), ?),"
                       " m.error, m.is_edit, m.truncated, m.created_at,"
-                      " (m.via IS NOT NULL AND OCTET_LENGTH(m.via) > 0), OCTET_LENGTH(m.content)"
+                      " (m.via IS NOT NULL AND OCTET_LENGTH(m.via) > 0), OCTET_LENGTH(m.content), m.stopped"
                       " FROM messages m JOIN conversations c ON c.id = m.conversation_id"
                       " WHERE m.conversation_id = ? AND c.project_id = ? AND m.seq >= ? AND m.seq <= ?"
                       " ORDER BY m.seq LIMIT 1", args, 7, &rows)) { ok = false; break; }
@@ -75,7 +75,7 @@ bool sdb_chat_source_page(Db *db, const char *project, const char *conversation,
         }
         ChatSourceChunk chunk = {0};
         const char *role = NULL, *text = NULL;
-        ok = rows.nrows == 1 && db_rows_has_columns(&rows, 10) &&
+        ok = rows.nrows == 1 && db_rows_has_columns(&rows, 11) && read_bool(&rows, 10, &chunk.stopped) &&
              db_cell_i64(&rows, 0, 0, &chunk.message_id) && chunk.message_id > 0 &&
              db_cell_i64(&rows, 0, 1, &chunk.seq) && chunk.seq >= next.seq && chunk.seq <= next.end_seq &&
              db_cell_text(&rows, 0, 2, &role) && (!strcmp(role, "user") || !strcmp(role, "assistant")) &&
@@ -209,18 +209,18 @@ bool sdb_chat_window(Db *db, const char *project, const char *conversation,
         const char *body_sql = ascending
             ? "SELECT m.role,LEFT(CAST(SUBSTRING(m.content,IF(m.seq=?, ?,1),?) AS BINARY),?),m.error,m.is_edit,m.truncated,"
               " LEFT(CAST(m.via AS BINARY),513),m.created_at,OCTET_LENGTH(m.content),"
-              " OCTET_LENGTH(SUBSTRING(m.content,IF(m.seq=?, ?,1),?)),COALESCE(OCTET_LENGTH(m.via),0),m.seq"
+               " OCTET_LENGTH(SUBSTRING(m.content,IF(m.seq=?, ?,1),?)),COALESCE(OCTET_LENGTH(m.via),0),m.seq,m.stopped"
               " FROM messages m JOIN conversations c ON c.id=m.conversation_id"
               " WHERE m.id IN (?,?,?,?,?,?,?,?) AND m.conversation_id=? AND c.project_id=? ORDER BY m.seq"
             : "SELECT m.role,LEFT(CAST(SUBSTRING(m.content,IF(m.seq=?, ?,1),?) AS BINARY),?),m.error,m.is_edit,m.truncated,"
               " LEFT(CAST(m.via AS BINARY),513),m.created_at,OCTET_LENGTH(m.content),"
-              " OCTET_LENGTH(SUBSTRING(m.content,IF(m.seq=?, ?,1),?)),COALESCE(OCTET_LENGTH(m.via),0),m.seq"
+               " OCTET_LENGTH(SUBSTRING(m.content,IF(m.seq=?, ?,1),?)),COALESCE(OCTET_LENGTH(m.via),0),m.seq,m.stopped"
               " FROM messages m JOIN conversations c ON c.id=m.conversation_id"
               " WHERE m.id IN (?,?,?,?,?,?,?,?) AND m.conversation_id=? AND c.project_id=? ORDER BY m.seq DESC";
         DbRows row;
         ok = db_query(db, body_sql, args, 17, &row);
         if (!ok) break;
-        ok = row.nrows == batch && db_rows_has_columns(&row, 11);
+        ok = row.nrows == batch && db_rows_has_columns(&row, 12);
         for (size_t r = 0; ok && r < batch; r++) {
             int64_t seq = -1, expected = -1;
             ok = db_cell_i64(&row, r, 10, &seq) && db_cell_i64(&metadata, i + r, 1, &expected) && seq == expected;
@@ -230,7 +230,7 @@ bool sdb_chat_window(Db *db, const char *project, const char *conversation,
             ChatMessage *m = &page.messages[page.count++];
             const char *role = NULL, *text = NULL, *via = NULL;
             uint64_t total = 0, part = 0, via_bytes = 0;
-            ok = db_cell_text(&row, r, 0, &role) && (!strcmp(role, "user") || !strcmp(role, "assistant")) &&
+            ok = read_row_bool(&row, r, 11, &m->stopped) && db_cell_text(&row, r, 0, &role) && (!strcmp(role, "user") || !strcmp(role, "assistant")) &&
                  db_cell_text(&row, r, 1, &text) && read_row_bool(&row, r, 2, &m->error) &&
                  read_row_bool(&row, r, 3, &m->is_edit) && read_row_bool(&row, r, 4, &m->truncated) &&
                  db_cell_nullable(&row, r, 5, &via) && db_cell_double(&row, r, 6, &m->ts) && m->ts >= 0 && m->ts < 0x1p63 &&
@@ -257,7 +257,9 @@ bool sdb_chat_window(Db *db, const char *project, const char *conversation,
         db_rows_free(&row);
         i += batch;
     }
-    if (ok && request->direction == CHAT_WINDOW_FOCUS && !page.count) ok = false;
+    /* A stale/inapplicable navigation request must not erase the displayed
+     * window and masquerade as an empty conversation. Only Latest may be empty. */
+    if (ok && request->direction != CHAT_WINDOW_LATEST && !page.count) ok = false;
     db_rows_free(&metadata);
     if (ok && !ascending) {
         for (size_t i = 0; i < page.count / 2; i++) {

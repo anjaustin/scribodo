@@ -1,0 +1,18 @@
+wait 5
+open "$DIR/windowbook/one.md"
+click_element ChatItem0
+click_element ChatInput
+type "unsaved close sentinel"
+key ENTER
+store_offline yes
+wait_chat
+expect chat_unsaved yes
+expect chat_last "unsaved close sentinel"
+close
+expect status "Unsaved changes"
+expect chat_unsaved yes
+expect chat_last "unsaved close sentinel"
+store_offline no
+# A second close is an explicit discard, like the existing prose guard.
+close
+expect running no

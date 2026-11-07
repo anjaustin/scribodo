@@ -247,14 +247,14 @@ static bool import_chats(Db *db, const char *project_dir, const char *pid, IdMap
         if (ok && list[i].observer_ignore) ok = sdb_chat_set_observer(db, pid, cid, false);
         for (size_t k = 0; ok && k < n; k++) {
             uint64_t added = 0;
-            DbArg a[9] = { DB_S(cid), DB_I(k), DB_S(msgs[k].role == CHAT_USER ? "user" : "assistant"),
+            DbArg a[10] = { DB_S(cid), DB_I(k), DB_S(msgs[k].role == CHAT_USER ? "user" : "assistant"),
                            DB_S(msgs[k].content ? msgs[k].content : ""), DB_I(msgs[k].error ? 1 : 0),
                            DB_I(msgs[k].is_edit ? 1 : 0), DB_I(msgs[k].truncated ? 1 : 0), DB_D(msgs[k].ts ? msgs[k].ts : t0),
-                           DB_S(msgs[k].via && msgs[k].via[0] ? msgs[k].via : NULL) };
+                           DB_S(msgs[k].via && msgs[k].via[0] ? msgs[k].via : NULL), DB_I(msgs[k].stopped ? 1 : 0) };
             ok = db_run(db,
                         "INSERT IGNORE INTO messages (conversation_id, seq, role, content, error, is_edit, truncated, created_at,"
-                        " via) VALUES (?,?,?,?,?,?,?,?,?)",
-                        a, 9, &added);
+                        " via, stopped) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                        a, 10, &added);
             if (!ok || !added || !msgs[k].docs || !msgs[k].docs[0]) continue;
             char *copy = strdup(msgs[k].docs);
             if (!copy) { ok = false; break; }
