@@ -17,6 +17,7 @@
 #include "llm/context_planner.h"
 #include "llm/memory_tokens.h"
 #include "app/store.h"
+#include "app/memory_documents.h"
 
 #define CHAT_SLOT 0          /* slot 1 is reserved for the observer */
 #define SLOT_CTX_TOKENS 32768
@@ -77,6 +78,8 @@ struct ChatSession {
     bool memory_enabled;
     char memory_project[PATH_MAX], memory_conversation[40];
     StoreProjectIdentity memory_identity;
+    atomic_uint_fast64_t memory_attachment_epoch;
+    uint64_t request_attachment_epoch;
     ChatMessageDone on_done;
     void *on_done_ctx;
 };
@@ -119,6 +122,7 @@ ChatSession *chat_create(LlmServer *server)
     pthread_mutex_init(&s->mu, NULL);
     atomic_init(&s->cancel, false);
     atomic_init(&s->busy, false);
+    atomic_init(&s->memory_attachment_epoch, 0);
     return s;
 }
 
@@ -371,6 +375,16 @@ bool chat_memory_configure(ChatSession *s, StoreManager *store, SemanticClient *
     return true;
 }
 
+void chat_memory_attachments_changed(ChatSession *s)
+{
+    if (s) atomic_fetch_add(&s->memory_attachment_epoch, 1);
+}
+
+uint64_t chat_memory_attachment_version(ChatSession *s)
+{
+    return s ? atomic_load(&s->memory_attachment_epoch) : 0;
+}
+
 char *chat_memory_sources(ChatSession *s)
 {
     if (!s) return NULL;
@@ -442,7 +456,7 @@ char *chat_build_request_ex(const ChatMessage *msgs, size_t n, const ChatContext
     long budget = (long)(ctx_tokens > 0 ? ctx_tokens : SLOT_CTX_TOKENS) - MAX_REPLY_TOKENS - 256;
 
     /* System prompt: persona, then the attached documents (stable prefix). */
-    const ChatDoc single = { ctx ? ctx->doc_title : NULL, ctx ? ctx->doc_text : NULL };
+    const ChatDoc single = { .title = ctx ? ctx->doc_title : NULL, .text = ctx ? ctx->doc_text : NULL };
     const ChatDoc *docs = ctx && ctx->ndocs ? ctx->docs : (ctx && ctx->doc_text ? &single : NULL);
     size_t nd = ctx && ctx->ndocs ? ctx->ndocs : (docs ? 1 : 0);
     char **text = nd ? calloc(nd, sizeof(char *)) : NULL;
@@ -915,6 +929,12 @@ static bool build_in_worker(ChatSession *s)
      * exports local retrieval material, including through the edit path. */
     if (req && s->memory_enabled && !s->via_remote && !s->edit_passage) {
         MemoryPlan plan = {0};
+        MemoryDocumentSet documents = {0};
+        MemoryDocumentName attachment_names[MEMORY_DOCUMENTS_MAX] = {0};
+        size_t nattachments = 0;
+        for (size_t i = 0; i < s->nctx_docs && nattachments < MEMORY_DOCUMENTS_MAX; i++)
+            if (memory_document_name_copy(s->ctx_docs[i].title, s->ctx_docs[i].unsaved, &attachment_names[nattachments]))
+                nattachments++;
         MemoryTokenizer tokenizer = { .server = s->server, .cancel = &s->cancel, .timeout_ms = 10000 };
         char fingerprint[65];
         Db *db = NULL;
@@ -926,14 +946,25 @@ static bool build_in_worker(ChatSession *s)
         for (size_t i = 0; i < history.count; i++)
             if (history.messages[i].sequence_known && history.messages[i].sequence < before) before = history.messages[i].sequence;
         const char *query = history.count ? history.messages[history.count - 1].content : "";
-        available = available && memory_plan_build(db, s->memory_vectors, project_id, s->memory_conversation,
-            query, before, false, reference_count, s, fingerprint, &s->cancel, &plan);
+        MemoryScope scope;
+        if (available && memory_scope_get(db, project_id, s->memory_conversation, &scope) && scope.enabled)
+            available = memory_documents_capture(s->memory_store, s->memory_project, &s->memory_identity,
+                attachment_names, nattachments, false, &s->cancel, &documents);
+        available = available && s->request_attachment_epoch == chat_memory_attachment_version(s) &&
+            memory_plan_build_with_documents(db, s->memory_vectors, project_id, s->memory_conversation,
+                query, before, false, reference_count, s, fingerprint, &s->cancel, &plan, &documents);
         if (available && plan.count) {
             char *with_memory = NULL;
+            MemoryDocumentSet admission_documents = {0};
             long prompt_room = (long)slot_ctx - MAX_REPLY_TOKENS - 256;
             bool admitted = prompt_room > 0 && memory_plan_apply(&plan, req, false, (size_t)prompt_room,
                 memory_request_tokens, &tokenizer, &with_memory) && memory_identity_current(s) &&
-                memory_plan_admit(db, &plan, false) && !atomic_load(&s->cancel);
+                s->request_attachment_epoch == chat_memory_attachment_version(s) &&
+                memory_documents_capture(s->memory_store, s->memory_project, &s->memory_identity,
+                    attachment_names, nattachments, false, &s->cancel, &admission_documents) &&
+                memory_documents_same(&documents, &admission_documents) &&
+                memory_plan_admit_with_documents(db, &plan, &admission_documents, false) &&
+                s->request_attachment_epoch == chat_memory_attachment_version(s) && !atomic_load(&s->cancel);
             if (admitted) {
                 char *sources = plan.count && plan.reference ? strdup(plan.reference) : NULL;
                 if (plan.count && !sources) admitted = false;
@@ -1134,6 +1165,7 @@ static bool send_common(ChatSession *s, const char *text, const ChatContext *ctx
     }
     join_worker(s);
     s->via_remote = s->remote_selected;
+    s->request_attachment_epoch = chat_memory_attachment_version(s);
 
     pthread_mutex_lock(&s->mu);
     size_t original_count = s->count;
@@ -1164,6 +1196,8 @@ static bool send_common(ChatSession *s, const char *text, const ChatContext *ctx
         for (size_t i = 0; ok && i < ctx->ndocs; i++) {
             s->ctx_docs[i].title = strdup(ctx->docs[i].title ? ctx->docs[i].title : "untitled");
             s->ctx_docs[i].text = strdup(ctx->docs[i].text ? ctx->docs[i].text : "");
+            s->ctx_docs[i].unsaved = ctx->docs[i].unsaved || !ctx->docs[i].title || !ctx->docs[i].title[0] ||
+                                    strnlen(ctx->docs[i].title, 256) >= 256;
             s->nctx_docs++;
             ok = s->ctx_docs[i].title && s->ctx_docs[i].text;
             size_t len = strlen(ctx->docs[i].title ? ctx->docs[i].title : "");

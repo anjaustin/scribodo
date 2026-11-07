@@ -138,7 +138,7 @@ static void chat_send_faults(void)
 {
     /* Only UI-thread preparation allocations are injected. The fake worker has
      * its own thread-local allocator state. Each failed send must be atomic. */
-    ChatDoc docs[] = { { "one.md", "first document" }, { "two.md", "second document" } };
+    ChatDoc docs[] = { { .title = "one.md", .text = "first document" }, { .title = "two.md", .text = "second document" } };
     ChatContext contexts[] = { {0}, { .doc_title = "one.md", .doc_text = "a document" },
                                { .docs = docs, .ndocs = 2 } };
     for (size_t k = 0; k < 4; k++) {

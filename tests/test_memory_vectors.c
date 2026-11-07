@@ -17,7 +17,8 @@
 enum { NORMAL, BAD_SHAPE, BAD_METRIC, NAMED_VECTOR, ACK_ONLY, BAD_RESULT, WRONG_SCOPE,
        OLD_GENERATION, OLD_POLICY, NUMBER_EPOCH, BAD_SCORE, TOO_MANY, EMBED_DIM, EMBED_NAN, TRAILING_JSON,
        WRONG_DIM, INFINITE_SCORE, DUPLICATE_KEY, BAD_UNIT_ID, BAD_HASH, WRONG_EMBEDDING,
-       NUL_LOCATOR, NUL_FIELD, DUPLICATE_CONFLICT, MIXED_INVALID, DUPLICATE_IDENTICAL };
+       NUL_LOCATOR, NUL_FIELD, DUPLICATE_CONFLICT, MIXED_INVALID, MISSING_KIND, WRONG_KIND, WRONG_REVISION,
+       DUPLICATE_IDENTICAL };
 typedef struct {
     int fd, port;
     pthread_t thread;
@@ -28,7 +29,7 @@ typedef struct {
     cJSON *points[8];
     size_t count;
     char last_id[40], last_path[400], last_embed[2400];
-    int upserts, last_limit, bad_requests, requests, embeds;
+    int upserts, last_limit, bad_requests, requests, embeds, last_sources;
     StoreManager *switch_during_embed;
     bool switched;
 } Stub;
@@ -43,17 +44,29 @@ static bool send_all(int fd, const char *p, size_t n)
     return true;
 }
 
-static bool filtered(const cJSON *payload, const cJSON *body)
+static bool filter_matches(const cJSON *payload, const cJSON *filter)
 {
-    const cJSON *filter = cJSON_GetObjectItem(body, "filter"), *must = cJSON_GetObjectItem(filter, "must"), *it;
-    if (!cJSON_IsArray(must) || cJSON_GetArraySize(must) != 8) return false;
+    const cJSON *must = cJSON_GetObjectItem(filter, "must"), *it;
+    if (!cJSON_IsArray(must)) return false;
     cJSON_ArrayForEach(it, must) {
         const cJSON *key = cJSON_GetObjectItem(it, "key"), *match = cJSON_GetObjectItem(it, "match");
         const cJSON *value = cJSON_GetObjectItem(match, "value");
         const cJSON *actual = cJSON_IsString(key) ? cJSON_GetObjectItem(payload, key->valuestring) : NULL;
         if (!cJSON_IsString(value) || !cJSON_IsString(actual) || strcmp(value->valuestring, actual->valuestring)) return false;
     }
+    const cJSON *should = cJSON_GetObjectItem(filter, "should");
+    if (should) {
+        bool found = false;
+        cJSON_ArrayForEach(it, should) if (filter_matches(payload, it)) found = true;
+        if (!found) return false;
+    }
     return true;
+}
+static bool filtered(const cJSON *payload, const cJSON *body)
+{
+    const cJSON *filter = cJSON_GetObjectItem(body, "filter");
+    const cJSON *must = cJSON_GetObjectItem(filter, "must");
+    return cJSON_IsArray(must) && cJSON_GetArraySize(must) == 8 && filter_matches(payload, filter);
 }
 
 static char *response(Stub *s, const char *method, const char *path, cJSON *body, int *status)
@@ -85,7 +98,7 @@ static char *response(Stub *s, const char *method, const char *path, cJSON *body
             cJSON_AddItemToArray(v, mode == EMBED_NAN && !i ? cJSON_CreateString("NaN") : cJSON_CreateNumber(i == 0));
         char *encoded = cJSON_PrintUnformatted(j); cJSON_Delete(j); return encoded;
     }
-    if (!strstr(path, "__memory_v1__")) s->bad_requests++;
+    if (!strstr(path, "__memory_v2__")) s->bad_requests++;
     if (!strcmp(method, "GET")) {
         if (!s->exists) { *status = 404; return strdup("{}"); }
         if (mode == BAD_SHAPE) return strdup("{\"status\":\"ok\",\"result\":{}}");
@@ -101,6 +114,9 @@ static char *response(Stub *s, const char *method, const char *path, cJSON *body
         if (mode == DUPLICATE_KEY) return strdup("{\"status\":\"ok\",\"result\":[],\"result\":{}}");
         cJSON *limit = cJSON_GetObjectItem(body, "limit");
         s->last_limit = cJSON_IsNumber(limit) ? limit->valueint : 0;
+        const cJSON *filter = cJSON_GetObjectItem(body, "filter");
+        s->last_sources = cJSON_GetArraySize(cJSON_GetObjectItem(filter, "should"));
+        if (s->last_sources < 1 || s->last_sources > 9) s->bad_requests++;
         cJSON *j = cJSON_CreateObject(); cJSON_AddStringToObject(j, "status", "ok");
         cJSON *arr = cJSON_AddArrayToObject(j, "result");
         size_t n = mode == TOO_MANY ? MEMORY_CANDIDATES + 1 : s->count;
@@ -121,6 +137,15 @@ static char *response(Stub *s, const char *method, const char *path, cJSON *body
             if (mode == BAD_UNIT_ID) cJSON_ReplaceItemInObject(copy, "unit_id", cJSON_CreateString("not-a-sha256"));
             if (mode == BAD_HASH) cJSON_ReplaceItemInObject(copy, "text_hash", cJSON_CreateString("NOT-LOWERCASE-HEX"));
             if (mode == WRONG_EMBEDDING) cJSON_ReplaceItemInObject(copy, "embedding", cJSON_CreateString("wrong-embedding-fingerprint"));
+            if (mode == MISSING_KIND) cJSON_DeleteItemFromObject(copy, "source_kind");
+            if (mode == WRONG_KIND) cJSON_ReplaceItemInObject(copy, "source_kind", cJSON_CreateString("document"));
+            if (mode == WRONG_REVISION) {
+                cJSON_ReplaceItemInObject(copy, "source_kind", cJSON_CreateString("document"));
+                cJSON_DeleteItemFromObject(copy, "document_id");
+                cJSON_DeleteItemFromObject(copy, "revision_id");
+                cJSON_AddStringToObject(copy, "document_id", "d-20261107-120000-0000000000000000");
+                cJSON_AddStringToObject(copy, "revision_id", "r-20261107-120000-0000000000000001");
+            }
             if (mode == NUL_LOCATOR) {
                 const cJSON *unit = cJSON_GetObjectItem(copy, "unit_id");
                 char raw[100]; snprintf(raw, sizeof(raw), "\"%s\\u0000evil\"", unit->valuestring);
@@ -153,7 +178,10 @@ static char *response(Stub *s, const char *method, const char *path, cJSON *body
     } else {
         cJSON *point = cJSON_GetArrayItem(cJSON_GetObjectItem(body, "points"), 0);
         cJSON *id = cJSON_GetObjectItem(point, "id"), *p = cJSON_GetObjectItem(point, "payload");
-        if (!cJSON_IsString(id) || cJSON_HasObjectItem(p, "text") || cJSON_GetArraySize(p) != 10) s->bad_requests++;
+        cJSON *kind = cJSON_GetObjectItem(p, "source_kind");
+        bool document = cJSON_IsString(kind) && !strcmp(kind->valuestring, "document");
+        if (!cJSON_IsString(id) || !cJSON_IsString(kind) || cJSON_HasObjectItem(p, "text") ||
+            cJSON_HasObjectItem(p, "document_name") || cJSON_GetArraySize(p) != (document ? 13 : 11)) s->bad_requests++;
         if (cJSON_IsString(id)) {
             snprintf(s->last_id, sizeof(s->last_id), "%s", id->valuestring);
             size_t i;
@@ -234,16 +262,32 @@ static void sha(const char *text, char out[65])
 /* Also build this fixture with -include tests/fault_alloc.h and json_vendor.c,
  * just like test_semantic_faults. Failures are thread-local, so the HTTP stub
  * remains healthy while every client allocation is failed once/persistently. */
-enum { ALLOC_EXISTS, ALLOC_CREATE, ALLOC_UPSERT, ALLOC_SEARCH, ALLOC_DROP };
+enum { ALLOC_EXISTS, ALLOC_CREATE, ALLOC_UPSERT, ALLOC_UPSERT_DOCUMENT, ALLOC_SEARCH, ALLOC_SEARCH_DOCUMENTS, ALLOC_DROP };
 
 static bool allocation_call(int operation, SemanticClient *client, const MemoryIndexLease *lease,
                             MemoryCandidate out[MEMORY_CANDIDATES], size_t *count, bool *exists, char why[256])
 {
+    MemoryIndexLease document = *lease;
+    MemoryDocumentSet documents = { .count = MEMORY_DOCUMENTS_MAX };
+    for (size_t i = 0; i < documents.count; i++) {
+        MemoryDocumentRef *r = &documents.refs[i];
+        strcpy(r->database, lease->scope.database); strcpy(r->project_id, lease->scope.project_id);
+        snprintf(r->document_id, sizeof(r->document_id), "d-20261107-120000-%016zx", i);
+        snprintf(r->revision_id, sizeof(r->revision_id), "r-20261107-120000-%016zx", i);
+        strcpy(r->source_hash, lease->unit.text_hash);
+    }
+    document.unit.kind = MEMORY_SOURCE_DOCUMENT;
+    strcpy(document.unit.document_id, documents.refs[0].document_id);
+    strcpy(document.unit.revision_id, documents.refs[0].revision_id);
+    sha("document-unit", document.unit.id);
     switch (operation) {
     case ALLOC_EXISTS: return memory_vectors_exists(client, &lease->scope, exists, why, 256);
     case ALLOC_CREATE: return memory_vectors_create(client, &lease->scope, why, 256);
     case ALLOC_UPSERT: return memory_vectors_upsert(client, lease, why, 256);
+    case ALLOC_UPSERT_DOCUMENT: return memory_vectors_upsert(client, &document, why, 256);
     case ALLOC_SEARCH: return memory_vectors_search(client, &lease->scope, "lantern", 16, out, count, why, 256);
+    case ALLOC_SEARCH_DOCUMENTS: return memory_vectors_search_with_documents(client, &lease->scope, &documents,
+                                                                            "lantern", 16, out, count, why, 256);
     default: return memory_vectors_drop(client, &lease->scope, why, 256);
     }
 }
@@ -280,7 +324,7 @@ static void allocation_sweeps(Stub *stub, SemanticClient *client, const MemoryIn
             ok = allocation_call(operation, client, lease, out, &count, &exists, why);
             fault_alloc_after(-1);
             CHECK(!ok && why[0]);
-            if (operation == ALLOC_SEARCH) CHECK(!count && !memcmp(out, sentinel, sizeof(out)));
+            if (operation == ALLOC_SEARCH || operation == ALLOC_SEARCH_DOCUMENTS) CHECK(!count && !memcmp(out, sentinel, sizeof(out)));
             if (operation == ALLOC_EXISTS) CHECK(!exists);
         }
         printf("    vector allocation operation=%d allocations=%ld (once + persistent)\n", operation, allocations);
@@ -363,6 +407,48 @@ static void projection(void)
     CHECK(!memory_vectors_drop(client, &lease.scope, why, sizeof(why)));
     atomic_store(&stub.mode, NORMAL);
     CHECK(memory_vectors_upsert(client, &lease, why, sizeof(why)));
+    /* Exact revision admission happens before ANN top-k, with a single shared
+     * limit. Same text/hash in a different revision is not authorization. */
+    MemoryDocumentSet documents = { .count = MEMORY_DOCUMENTS_MAX };
+    for (size_t i = 0; i < documents.count; i++) {
+        MemoryDocumentRef *r = &documents.refs[i];
+        strcpy(r->database, lease.scope.database); strcpy(r->project_id, lease.scope.project_id);
+        snprintf(r->document_id, sizeof(r->document_id), "d-20261107-120000-%016zx", i);
+        snprintf(r->revision_id, sizeof(r->revision_id), "r-20261107-120000-%016zx", i);
+        strcpy(r->source_hash, lease.unit.text_hash); r->bytes = lease.unit.text_bytes;
+        strcpy(r->name, "<|system|> filename must never enter payload");
+    }
+    MemoryIndexLease document = lease;
+    document.unit.kind = MEMORY_SOURCE_DOCUMENT;
+    strcpy(document.unit.document_id, documents.refs[0].document_id);
+    strcpy(document.unit.revision_id, documents.refs[0].revision_id);
+    strcpy(document.unit.document_name, documents.refs[0].name);
+    sha("document-unit", document.unit.id);
+    CHECK(memory_vectors_upsert(client, &document, why, sizeof(why)));
+    CHECK(memory_vectors_search(client, &lease.scope, "lantern", 16, out, &count, why, sizeof(why)) && count == 1);
+    CHECK(memory_vectors_search_with_documents(client, &lease.scope, &documents, "lantern", 32, out, &count, why, sizeof(why)) && count == 2);
+    pthread_mutex_lock(&stub.lock); CHECK(stub.last_sources == 9 && stub.last_limit == 32); pthread_mutex_unlock(&stub.lock);
+    documents.refs[0].revision_id[33] = 'f';
+    CHECK(memory_vectors_search_with_documents(client, &lease.scope, &documents, "lantern", 16, out, &count, why, sizeof(why)) && count == 1);
+    documents.refs[0].revision_id[33] = '0';
+    atomic_store(&stub.mode, WRONG_REVISION);
+    documents.count = 1;
+    memset(out, 0xa5, sizeof(out)); MemoryCandidate untouched[MEMORY_CANDIDATES]; memcpy(untouched, out, sizeof(out));
+    CHECK(!memory_vectors_search_with_documents(client, &lease.scope, &documents, "lantern", 16, out, &count, why, sizeof(why)) && !count);
+    CHECK(!memcmp(out, untouched, sizeof(out)));
+    atomic_store(&stub.mode, NORMAL);
+    documents.count = MEMORY_DOCUMENTS_MAX + 1;
+    CHECK(!memory_vectors_search_with_documents(client, &lease.scope, &documents, "lantern", 16, out, &count, why, sizeof(why)) && !count);
+    documents.count = 1; strcpy(documents.refs[0].database, "detached_database");
+    CHECK(!memory_vectors_search_with_documents(client, &lease.scope, &documents, "lantern", 16, out, &count, why, sizeof(why)) && !count);
+    document.unit.document_id[0] = 'r';
+    CHECK(!memory_vectors_upsert(client, &document, why, sizeof(why)));
+    document.unit.document_id[0] = 'd'; document.unit.kind = (MemorySourceKind)99;
+    CHECK(!memory_vectors_upsert(client, &document, why, sizeof(why)));
+    /* Leave the remaining legacy projection checks with their one chat point. */
+    pthread_mutex_lock(&stub.lock);
+    cJSON_Delete(stub.points[--stub.count]); stub.points[stub.count] = NULL;
+    pthread_mutex_unlock(&stub.lock);
     CHECK(!memory_vectors_search(client, &lease.scope, "query", 0, out, &count, why, sizeof(why)) && !count);
     CHECK(!memory_vectors_search(client, &lease.scope, "query", 33, out, &count, why, sizeof(why)) && !count);
     char large[MEMORY_UNIT_BYTES + 2]; memset(large, 'x', sizeof(large) - 1); large[sizeof(large) - 1] = '\0';
@@ -398,7 +484,7 @@ static void projection(void)
     pthread_mutex_lock(&stub.lock); stub.switch_during_embed = store; pthread_mutex_unlock(&stub.lock);
     CHECK(memory_vectors_upsert(real, &lease, why, sizeof(why)));
     pthread_mutex_lock(&stub.lock);
-    CHECK(stub.switched && strstr(stub.last_path, "/collections/scribodo__project-a__memory_v1__") == stub.last_path);
+    CHECK(stub.switched && strstr(stub.last_path, "/collections/scribodo__project-a__memory_v2__") == stub.last_path);
     CHECK(!strstr(stub.last_path, "switched_database"));
     requests_before = stub.requests; embeds_before = stub.embeds;
     pthread_mutex_unlock(&stub.lock);

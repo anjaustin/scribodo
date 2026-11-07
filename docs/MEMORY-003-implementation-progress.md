@@ -94,6 +94,11 @@ receipt and bounded disk verification, so unsaved AI/restore/source snapshots
 cannot masquerade as saved attachment authority. It is a prerequisite only;
 document-memory ingestion/retrieval and attachment-set fences remain pending.
 
+[MEMORY-008](MEMORY-008-saved-document-retrieval.md) implements scope-local saved
+revision ingestion and attachment-filtered recall, including detach/save/dirty
+admission fences and typed Sources. It remains default-off; T1/shared generative
+admission, optional measured T2, cleanup/deadlines and quality gates are pending.
+
 1. Windowed/paged `ChatSession` and UI viewport/cache integration. `open_chat()`
    still loads the complete conversation and the UI still retains archive-sized
   state. Do not declare host memory bounded end-to-end yet.

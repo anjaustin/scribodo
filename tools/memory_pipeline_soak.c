@@ -313,7 +313,7 @@ static bool lose_collection(MemoryScope *before)
     REQUIRE(!strcmp(before->database, database) && !strcmp(before->project_id, project_id));
     char embedding[65], path[400], socket[24], key_path[PATH_MAX], key[128];
     REQUIRE(memory_vectors_fingerprint(vectors, embedding));
-    int n = snprintf(path, sizeof(path), "/collections/%s__%s__memory_v1__%s__%" PRIu64,
+    int n = snprintf(path, sizeof(path), "/collections/%s__%s__memory_v2__%s__%" PRIu64,
                      database, project_id, embedding, before->generation);
     REQUIRE(n > 0 && n < (int)sizeof(path));
     const char *port = getenv("SCRIBODO_QDRANT_PORT");

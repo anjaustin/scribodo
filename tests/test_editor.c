@@ -694,6 +694,31 @@ static void test_fuzz_editor(void)
     free(g_snaps);
 }
 
+typedef struct { Editor *editor; unsigned calls; char *before; } MutationFence;
+static void before_mutation(void *context)
+{
+    MutationFence *fence = context;
+    if (!fence->calls++) fence->before = editor_text_utf8(fence->editor);
+}
+
+static void mutation_fence(void)
+{
+    Editor *e = new_editor("original saved prose");
+    MutationFence fence = { .editor = e };
+    editor_on_will_change(e, before_mutation, &fence);
+    CHECK(editor_replace_range_utf8(e, 0, editor_length(e), "restored unsaved prose"));
+    CHECK(fence.calls && fence.before && !strcmp(fence.before, "original saved prose"));
+    free(fence.before); fence.before = NULL; fence.calls = 0;
+    editor_undo(e);
+    CHECK(fence.calls && fence.before && !strcmp(fence.before, "restored unsaved prose"));
+    free(fence.before); fence.before = NULL; fence.calls = 0;
+    CHECK(editor_set_text_utf8(e, "new snapshot"));
+    CHECK(fence.calls && fence.before && !strcmp(fence.before, "original saved prose"));
+    free(fence.before);
+    editor_on_will_change(e, NULL, NULL);
+    editor_destroy(e);
+}
+
 int main(void)
 {
     init_font();
@@ -704,6 +729,7 @@ int main(void)
         return 1;
     }
     TestCase tests[] = {
+        { "pre-mutation admission fence", mutation_fence },
         { "typing_undo_is_per_word", test_typing_undo_is_per_word },
         { "word_motion_and_delete", test_word_motion_and_delete },
         { "selection_replace_and_paste", test_selection_replace_and_paste },

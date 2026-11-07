@@ -37,6 +37,13 @@ static void attachment_revisions(void)
     captured = c.attachment_revision;
     chat_controller_clear_attachments(&c);
     CHECK(c.nattached == 0 && !c.attach_touched && c.attachment_revision > captured);
+    char overlong[257]; memset(overlong, 'x', sizeof(overlong) - 1); overlong[sizeof(overlong) - 1] = 0;
+    captured = c.attachment_revision;
+    CHECK(!chat_controller_add_attachment(&c, overlong) && !c.nattached && c.attachment_revision == captured);
+    CHECK(chat_controller_add_attachment(&c, "one.md"));
+    captured = c.attachment_revision;
+    CHECK(!chat_controller_rename_attachment(&c, "one.md", overlong));
+    CHECK(c.attachment_revision == captured && !strcmp(c.attached[0], "one.md"));
 }
 
 static void store_finished(ChatSession *chat, size_t index, void *context)

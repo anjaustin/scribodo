@@ -208,7 +208,7 @@ static void memory_tests(void)
     CHECK(memory_lexical_candidates(db,&s,"rarewhalefact",1,cs,&n)&&n==1);
     MemoryCandidate first=n?cs[0]:(MemoryCandidate){0}; MemoryUnit u; bool found=false;
     CHECK(memory_candidate_hydrate(db,&s,&first,&u,&found)&&found);
-    if(found) CHECK(!strcmp(u.text,"rarewhalefact first request"));
+    if(found) CHECK(u.kind==MEMORY_SOURCE_CHAT && !u.document_id[0] && !u.revision_id[0] && !strcmp(u.text,"rarewhalefact first request"));
     memory_unit_free(&u);
     MemoryScope wrong=s; snprintf(wrong.project_id,sizeof(wrong.project_id),"other");
     CHECK(memory_candidate_hydrate(db,&wrong,&first,&u,&found)&&!found);

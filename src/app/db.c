@@ -639,9 +639,36 @@ static const char *const k_migration_010[] = {
     NULL,
 };
 
+/* 011: typed, scope-local saved-document memory. No source bodies are copied
+ * into receipts; the saved pointer, not the editor's current pointer, owns it. */
+static const char *const k_migration_011[] = {
+    "ALTER TABLE memory_units ADD COLUMN IF NOT EXISTS source_kind ENUM('chat','document') NOT NULL DEFAULT 'chat',"
+    " MODIFY message_id BIGINT NULL, MODIFY sequence BIGINT NULL,"
+    " ADD COLUMN IF NOT EXISTS document_id VARCHAR(40) NULL, ADD COLUMN IF NOT EXISTS revision_id VARCHAR(40) NULL",
+    "ALTER TABLE memory_units ADD CONSTRAINT IF NOT EXISTS memory_unit_shape CHECK"
+    " ((source_kind='chat' AND message_id IS NOT NULL AND sequence IS NOT NULL AND document_id IS NULL AND revision_id IS NULL)"
+    " OR (source_kind='document' AND message_id IS NULL AND sequence IS NULL AND document_id IS NOT NULL AND revision_id IS NOT NULL)),"
+    " ADD UNIQUE KEY IF NOT EXISTS document_range(scope_id,generation,revision_id,byte_start),"
+    " ADD FOREIGN KEY IF NOT EXISTS memory_unit_document(project_id,document_id) REFERENCES documents(project_id,id) ON DELETE CASCADE,"
+    " ADD FOREIGN KEY IF NOT EXISTS memory_unit_revision(document_id,revision_id) REFERENCES revisions(document_id,id) ON DELETE CASCADE",
+    "CREATE TABLE IF NOT EXISTS memory_document_receipts ("
+    " scope_id VARCHAR(40) NOT NULL,project_id VARCHAR(40) NOT NULL,conversation_id VARCHAR(40) NOT NULL,"
+    " generation BIGINT UNSIGNED NOT NULL,document_id VARCHAR(40) NOT NULL,revision_id VARCHAR(40) NOT NULL,"
+    " source_hash CHAR(64) NOT NULL,source_bytes BIGINT UNSIGNED NOT NULL,byte_offset BIGINT UNSIGNED NOT NULL DEFAULT 0,"
+    " complete TINYINT NOT NULL DEFAULT 0,lease_owner VARCHAR(63) NOT NULL DEFAULT '',lease_until DATETIME(6) NULL,"
+    " fence BIGINT UNSIGNED NOT NULL DEFAULT 0,attempts INT NOT NULL DEFAULT 0,retry_after DATETIME(6) NULL,"
+    " PRIMARY KEY(scope_id,generation,revision_id),"
+    " CHECK(source_bytes<=16777216 AND byte_offset<=source_bytes),"
+    " FOREIGN KEY(scope_id,project_id,conversation_id) REFERENCES memory_scopes(id,project_id,conversation_id) ON DELETE CASCADE,"
+    " FOREIGN KEY(project_id,document_id) REFERENCES documents(project_id,id) ON DELETE CASCADE,"
+    " FOREIGN KEY(document_id,revision_id) REFERENCES revisions(document_id,id) ON DELETE CASCADE"
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+    NULL,
+};
+
 static const char *const *const k_migrations[] = { k_migration_001, k_migration_002, k_migration_003, k_migration_004,
                                                    k_migration_005, k_migration_006, k_migration_007, k_migration_008,
-                                                   k_migration_009, k_migration_010 };
+                                                   k_migration_009, k_migration_010, k_migration_011 };
 
 int db_schema_version(Db *db)
 {

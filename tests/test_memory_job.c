@@ -19,6 +19,62 @@ static MemoryScope sql_scope;
 static unsigned sets, rebuilds, ingests, claims, upserts, acks, creates, exists_calls;
 static bool collection_exists, backend_ok, ack_ok, claim_work;
 static bool tokenizer_ready = true, embed_ready = true;
+static unsigned captures, document_seeds, document_ingests, document_admissions;
+static bool capture_ok = true, document_admit_ok = true;
+static bool document_complete, document_complete_ok = true;
+static bool document_progress_available = true;
+static unsigned document_completions;
+static char ingested_document[256];
+
+bool memory_documents_capture(StoreManager *store, const char *project,
+                               const StoreProjectIdentity *identity, const MemoryDocumentName *names,
+                               size_t count, bool remote, const atomic_bool *cancel, MemoryDocumentSet *out)
+{
+    assert(store == &manager && project && identity && !remote && !cancel);
+    captures++;
+    *out = (MemoryDocumentSet){0};
+    for (size_t i = 0; i < count; i++) {
+        if (names[i].dirty) continue;
+        snprintf(out->refs[out->count++].name, sizeof(out->refs[0].name), "%s", names[i].name);
+    }
+    return capture_ok;
+}
+
+bool memory_documents_seed(Db *db, const MemoryScope *scope, const MemoryDocumentSet *documents)
+{
+    assert(db == &database && scope && documents);
+    document_seeds++;
+    return true;
+}
+
+bool memory_documents_admit(Db *db, const MemoryScope *scope, const MemoryDocumentSet *documents)
+{
+    assert(db == &database && scope->generation == sql_scope.generation && documents->count);
+    document_admissions++;
+    return document_admit_ok;
+}
+
+bool memory_documents_complete(Db *db, const MemoryScope *scope, const MemoryDocumentSet *documents,
+                                bool *complete)
+{
+    assert(db == &database && scope->generation == sql_scope.generation && documents->count);
+    document_completions++;
+    *complete = document_complete;
+    return document_complete_ok;
+}
+
+bool memory_document_ingest_step(Db *db, const MemoryScope *scope, const MemoryDocumentSet *documents,
+                                  const char *owner, MemoryTokenCount count, void *context,
+                                  const char *fingerprint, bool *progress, char *why, size_t len)
+{
+    assert(db == &database && scope->generation == sql_scope.generation && documents->count);
+    assert(owner && count == memory_source_tokens && context && fingerprint[0] == 'a');
+    (void)why; (void)len;
+    document_ingests++;
+    snprintf(ingested_document, sizeof(ingested_document), "%s", documents->refs[0].name);
+    *progress = document_progress_available;
+    return true;
+}
 LlmState llm_server_state(LlmServer *server, char *message, size_t length)
 {
     (void)server; (void)message; (void)length;
@@ -436,12 +492,21 @@ static void test_unchanged_pause_keeps_idle_deadline(void)
     g.release = true;
     MemoryJob *job = memory_job_create_with_runner(&manager, runner, &g);
     assert(memory_job_select(job, "/p", "idle", MEMORY_JOB_RESUME));
+    MemoryDocumentName name = {.name = "idle.txt"};
+    assert(memory_job_documents(job, "/p", "idle", &name, 1, 1));
     wait_status(job, "idle");
+    pthread_mutex_lock(&job->mu);
+    uint64_t serial = job->request.serial;
+    pthread_mutex_unlock(&job->mu);
     for (unsigned i = 0; i < 100; i++) {
         memory_job_pause(job, false);
+        assert(memory_job_documents(job, "/p", "idle", &name, 1, 1));
         struct timespec delay = {0, 2000000};
         nanosleep(&delay, NULL);
     }
+    pthread_mutex_lock(&job->mu);
+    assert(job->request.serial == serial);
+    pthread_mutex_unlock(&job->mu);
     memory_job_destroy(job);
     assert(g.calls <= 2);
     gate_done(&g);
@@ -542,11 +607,16 @@ static void test_consent_fifo_while_paused(void)
         assert(memory_job_select(job, "/p", names[i], i % 2 ? MEMORY_JOB_ENABLE : MEMORY_JOB_REBUILD));
     assert(memory_job_select(job, "/p", "B", MEMORY_JOB_RESUME));
     assert(!memory_job_select(job, "/p", "rejected", MEMORY_JOB_DISABLE));
+    MemoryDocumentName document = {.name = "bound.txt"};
+    for (uint64_t version = 1; version < 100; version++)
+        assert(memory_job_documents(job, "/p", "B", &document, 1, version));
     pthread_mutex_lock(&job->mu);
     assert(!strcmp(job->request.conversation, "B"));
     assert(job->control_count == MEMORY_JOB_CONTROL_CAPACITY);
+    assert(job->request.document_count == 1 && job->request.document_version == 99);
     pthread_mutex_unlock(&job->mu);
     memory_job_clear(job);
+    assert(!memory_job_documents(job, "/p", "B", &document, 1, 100));
     assert(memory_job_status(job, &status) && !status.active && status.controls_pending);
     assert(memory_job_select(job, "/p", "B", MEMORY_JOB_RESUME));
     control_release(&g);
@@ -629,11 +699,14 @@ static void test_production_control_does_not_run_resources(void)
 {
     unsigned prior_sets = sets, prior_ingests = ingests, prior_claims = claims;
     unsigned prior_exists = exists_calls, prior_upserts = upserts, prior_creates = creates;
+    unsigned prior_captures = captures, prior_documents = document_ingests;
     MemoryJob *job = memory_job_create(&manager, (SemanticClient *)&manager, NULL);
     assert(job);
     memory_job_pause(job, true);
     assert(memory_job_select(job, "/p", "A", MEMORY_JOB_DISABLE));
     assert(memory_job_select(job, "/p", "B", MEMORY_JOB_RESUME));
+    MemoryDocumentName document = {.name = "paused.txt"};
+    assert(memory_job_documents(job, "/p", "B", &document, 1, 1));
     for (unsigned i = 0; i < 5000; i++) {
         MemoryJobStatus status;
         memory_job_status(job, &status);
@@ -648,6 +721,117 @@ static void test_production_control_does_not_run_resources(void)
     assert(sets == prior_sets + 1);
     assert(ingests == prior_ingests && claims == prior_claims);
     assert(exists_calls == prior_exists && upserts == prior_upserts && creates == prior_creates);
+    assert(captures == prior_captures && document_ingests == prior_documents);
+}
+
+static void test_document_binding_iterations(void)
+{
+    MemoryJob job = {.manager = &manager, .selected = true, .serial = 1};
+    job.vectors = (SemanticClient *)&job;
+    assert(pthread_mutex_init(&job.mu, NULL) == 0);
+    assert(pthread_cond_init(&job.wake, NULL) == 0);
+    MemoryRequest request = {.action = MEMORY_JOB_RESUME, .serial = 1};
+    strcpy(request.project, "/p");
+    strcpy(request.conversation, "A");
+    store_project_identity(&manager, "/p", &request.identity);
+    job.request = request;
+    MemoryWorkerState state = {0};
+    MemoryJobStatus status = {.active = true};
+    sql_scope.enabled = true;
+    backend_ok = true; collection_exists = true; claim_work = false;
+    MemoryDocumentName names[] = {{.name = "A.txt"}, {.name = "B.txt"}};
+    assert(!memory_job_documents(NULL, "/p", "A", names, 1, 1));
+    assert(!memory_job_documents(&job, "/wrong", "A", names, 1, 1));
+    assert(!memory_job_documents(&job, "/p", "wrong", names, 1, 1));
+    assert(!memory_job_documents(&job, "/p", "A", NULL, 1, 1));
+    assert(!memory_job_documents(&job, "/p", "A", names, 9, 1));
+    assert(memory_job_documents(&job, "/p", "A", names, 1, 1));
+    names[0].name[0] = 'X'; /* Snapshot owns its names. */
+    request = job.request;
+    unsigned before = captures, seeded = document_seeds, steps = document_ingests;
+    unsigned chat_before = ingests, claims_before = claims;
+    assert(production_step(&job, &request, &state, &status));
+    assert(captures == before + 1 && document_seeds == seeded + 1);
+    assert(document_ingests == steps + 1 && !strcmp(ingested_document, "A.txt"));
+    assert(status.document_sources == 1 && status.document_steps == 1);
+    assert(status.documents_pending);
+    assert(ingests == chat_before + 1 && claims == claims_before + 1);
+    for (unsigned i = 0; i < 5; i++) assert(production_step(&job, &request, &state, &status));
+    assert(captures == before + 1 && document_seeds == seeded + 1);
+    assert(status.documents_pending); /* Progress is not proof of completion. */
+    document_progress_available = false;
+    assert(production_step(&job, &request, &state, &status));
+    assert(status.documents_pending); /* Leased/failed work may make no progress. */
+    document_complete = true;
+    assert(production_step(&job, &request, &state, &status));
+    assert(!status.documents_pending && status.document_sources == 1);
+    document_complete_ok = false;
+    assert(production_step(&job, &request, &state, &status));
+    assert(status.documents_pending); /* An unavailable SQL check fails closed. */
+    document_complete_ok = true; document_complete = false;
+    document_progress_available = true;
+    assert(memory_job_select(&job, "/p", "A", MEMORY_JOB_ENABLE));
+    assert(job.request.document_count == 1 && job.request.document_version == 1);
+    assert(job.controls[0].document_count == 0); /* NAV never rewrites consent. */
+    job.control_count = 0; /* Direct iteration seam; no worker owns this job. */
+
+    /* Detaching stops retained SQL receipts from being continued next tick. */
+    assert(memory_job_documents(&job, "/p", "A", NULL, 0, 2));
+    request = job.request; steps = document_ingests;
+    unsigned completions_before = document_completions;
+    assert(production_step(&job, &request, &state, &status));
+    assert(!state.documents.count && !status.document_sources && document_ingests == steps);
+    assert(!status.documents_pending && document_completions == completions_before);
+    assert(memory_job_documents(&job, "/p", "A", names + 1, 1, 3));
+    request = job.request;
+    assert(production_step(&job, &request, &state, &status));
+    assert(!strcmp(ingested_document, "B.txt"));
+    names[1].dirty = true;
+    assert(memory_job_documents(&job, "/p", "A", names + 1, 1, 4));
+    request = job.request; steps = document_ingests;
+    assert(production_step(&job, &request, &state, &status));
+    assert(!state.documents.count && document_ingests == steps);
+
+    names[1].dirty = false;
+    assert(memory_job_documents(&job, "/p", "A", names + 1, 1, 5));
+    request = job.request;
+    assert(production_step(&job, &request, &state, &status));
+    capture_ok = false;
+    assert(memory_job_documents(&job, "/p", "A", names + 1, 1, 6));
+    request = job.request; steps = document_ingests;
+    assert(production_step(&job, &request, &state, &status));
+    assert(!state.documents.count && document_ingests == steps);
+    capture_ok = true;
+    assert(memory_job_documents(&job, "/p", "A", names + 1, 1, 7));
+    request = job.request;
+    assert(production_step(&job, &request, &state, &status));
+    document_admit_ok = false; before = captures; steps = document_ingests;
+    assert(production_step(&job, &request, &state, &status));
+    assert(!state.documents.count && document_ingests == steps);
+    document_admit_ok = true;
+    assert(production_step(&job, &request, &state, &status));
+    assert(captures == before && document_ingests == steps);
+
+    state.failures = 3; /* Binding refresh must not restart backend retries. */
+    assert(memory_job_documents(&job, "/p", "A", names + 1, 1, 8));
+    request = job.request;
+    assert(production_step(&job, &request, &state, &status));
+    assert(state.failures == 3 && document_ingests == steps + 1);
+    before = captures;
+    sql_scope.generation++;
+    assert(production_step(&job, &request, &state, &status));
+    assert(captures == before + 1 && state.failures == 0);
+    job.paused = true; before = captures;
+    assert(memory_job_documents(&job, "/p", "A", names + 1, 1, 9));
+    request = job.request;
+    assert(!production_step(&job, &request, &state, &status));
+    assert(captures == before);
+    assert(memory_job_select(&job, "/p", "B", MEMORY_JOB_RESUME));
+    assert(!job.request.document_count && !job.request.document_version);
+    memory_job_clear(&job);
+    assert(!job.request.document_count && !job.request.document_version);
+    pthread_cond_destroy(&job.wake);
+    pthread_mutex_destroy(&job.mu);
 }
 
 static void test_destroy_owns_inflight_control(void)
@@ -737,6 +921,7 @@ int main(void)
     test_production_control_does_not_run_resources();
     test_paused_committed_consent_snapshot();
     test_disabled_rebuild_fifo_drains();
+    test_document_binding_iterations();
     puts("memory_job: all tests passed");
     return 0;
 }

@@ -61,6 +61,8 @@ struct Script {
     int wait_history;
     int wait_memory;
     long memory_sequence;
+    int wait_memory_documents;
+    long memory_documents_count;
     int wait_status;    /* frames left to wait for the status to contain wait_text */
     char wait_text[256];
     int wait_observer;  /* frames left to wait for the observer to go idle */
@@ -673,6 +675,18 @@ static bool run_line(Script *s, ScriptHost *h)
         s->pc--;
         return true;
     }
+    if (!strcmp(cmd, "wait_memory_documents") && h->memory_documents_settled && (t.n == 2 || t.n == 3)) {
+        char *end;
+        long count = strtol(t.tok[1], &end, 10);
+        if (!t.tok[1][0] || *end || count < 0 || count > 8) { report(s, false, "invalid document count"); return false; }
+        long frames = 1800;
+        if (t.n == 3) {
+            frames = strtol(t.tok[2], &end, 10);
+            if (!t.tok[2][0] || *end || frames < 1 || frames > 120000) { report(s, false, "invalid document wait"); return false; }
+        }
+        s->memory_documents_count = count; s->wait_memory_documents = (int)frames; s->pc--;
+        return true;
+    }
     if (!strcmp(cmd, "wait_memory") && h->memory_settled && (t.n == 2 || t.n == 3)) {
         char *end;
         bool off = !strcmp(t.tok[1], "off");
@@ -846,6 +860,15 @@ bool script_frame(Script *s, ScriptHost *h)
                 s->pc++;
                 new_batch(s);
                 continue;
+            }
+            return true;
+        }
+        if (s->wait_memory_documents > 0) {
+            bool done = h->memory_documents_settled(h->ctx, s->memory_documents_count);
+            if (done || --s->wait_memory_documents == 0) {
+                s->wait_memory_documents = 0;
+                report(s, done, done ? NULL : "saved document ingestion/outbox did not settle");
+                s->pc++; new_batch(s); continue;
             }
             return true;
         }

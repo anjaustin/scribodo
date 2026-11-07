@@ -62,6 +62,7 @@ STORE_SRCS := src/app/db.c src/app/store.c src/app/project_store.c src/app/obser
 STORE_SRCS += src/app/chat_history_job.c
 STORE_SRCS += src/app/memory_store.c src/app/memory_job.c
 STORE_SRCS += src/app/memory_saved_file.c
+STORE_SRCS += src/app/memory_documents.c src/app/memory_document_store.c
 LLM_SRCS  := src/core/json.c src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/llm/chat_history.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/app/recent.c src/app/renames.c src/llm/observer.c src/llm/observer_text.c src/llm/observer_fake.c src/llm/observer_model.c src/llm/observer_job.c src/llm/semantic.c src/llm/remote.c src/llm/names.c src/llm/memfit.c $(STORE_SRCS)
 LLM_SRCS += src/llm/context_planner.c src/llm/memory_tokens.c
 LLM_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(LLM_SRCS)) $(BUILD)/third_party/cJSON/cJSON.o
@@ -79,6 +80,7 @@ TESTS += $(BUILD)/test_frame_metrics $(BUILD)/test_context_planner
 TESTS += $(BUILD)/test_memory_job $(BUILD)/test_memory_tokens $(BUILD)/test_memory_vectors_faults $(BUILD)/test_context_planner_faults
 TESTS += $(BUILD)/test_memory_provenance
 TESTS += $(BUILD)/test_memory_saved_file
+TESTS += $(BUILD)/test_memory_document_capture
 
 .PHONY: all run test uitest uitest-real sanitize tsan cstest dbtest uitest-db backuptest remotetest offlinetest dependency-report clean distclean llama model llmtest
 
@@ -269,12 +271,20 @@ $(BUILD)/test_memory_saved_file: src/app/memory_saved_file.c src/app/memory_save
 $(BUILD)/test_saved_revision: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_saved_revision.o
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
 
-dbtest: $(BUILD)/test_db $(BUILD)/test_memory_store $(BUILD)/test_memory_vectors $(BUILD)/test_memory_provenance $(BUILD)/test_saved_revision
+$(BUILD)/test_memory_document_capture: src/app/memory_documents.c src/app/memory_documents.h src/app/memory_saved_file.c tests/test_memory_document_capture.c
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Isrc -Itests src/app/memory_documents.c src/app/memory_saved_file.c tests/test_memory_document_capture.c -o $@
+
+$(BUILD)/test_memory_documents: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_memory_documents.o
+	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
+
+dbtest: $(BUILD)/test_db $(BUILD)/test_memory_store $(BUILD)/test_memory_vectors $(BUILD)/test_memory_provenance $(BUILD)/test_saved_revision $(BUILD)/test_memory_documents
 	$(WATCHDOG) 120 dbtest ./$(BUILD)/test_db
 	$(WATCHDOG) 120 memory-store ./$(BUILD)/test_memory_store
 	$(WATCHDOG) 120 memory-vectors ./$(BUILD)/test_memory_vectors
 	$(WATCHDOG) 120 memory-provenance ./$(BUILD)/test_memory_provenance --db
 	$(WATCHDOG) 120 saved-revision ./$(BUILD)/test_saved_revision
+	$(WATCHDOG) 180 memory-documents ./$(BUILD)/test_memory_documents
 
 # The app against the project store (needs tools/services.sh up): three runs
 # on one throwaway database and project folder: move and use, resume after
@@ -297,6 +307,10 @@ uitest-db: $(APP)
 	  SCRIBODO_STORE=db SCRIBODO_DB_NAME=$$db SCRIBODO_MEMORY_EXPERIMENT=1 SCRIBODO_SCRIPT=tests/ui/store/12_memory_recall.scribo \
 	    SCRIBODO_SCRIPT_DIR=$$work SCRIBODO_SHOT_DIR=$$PWD/build/ui/store \
 	    $(WATCHDOG) 240 ui-store-memory ./$(APP) 2>>build/ui/store/stderr.log || fail=1; \
+	  python3 tests/seed_memory_document.py $$work/memorydocbook || fail=1; \
+	  SCRIBODO_STORE=db SCRIBODO_DB_NAME=$$db SCRIBODO_MEMORY_EXPERIMENT=1 SCRIBODO_SCRIPT=tests/ui/store/13_memory_documents.scribo \
+	    SCRIBODO_SCRIPT_DIR=$$work SCRIBODO_SHOT_DIR=$$PWD/build/ui/store \
+	    $(WATCHDOG) 300 ui-store-memory-documents ./$(APP) 2>>build/ui/store/stderr.log || fail=1; \
 	  SCRIBODO_STORE=db SCRIBODO_DB_NAME=$$db SCRIBODO_BACKUPS=$$work/backups SCRIBODO_SCRIPT=tests/ui/store/6_backup.scribo SCRIBODO_SCRIPT_DIR=$$work \
 	    SCRIBODO_SHOT_DIR=$$PWD/build/ui/store $(WATCHDOG) 240 ui-store ./$(APP) 2>>build/ui/store/stderr.log || fail=1; echo; \
 	  SCRIBODO_STORE=db SCRIBODO_DB_NAME=$$db SCRIBODO_SCRIPT=tests/ui/store/5_entities.scribo SCRIBODO_SCRIPT_DIR=$$work \

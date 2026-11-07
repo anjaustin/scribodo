@@ -26,10 +26,12 @@ bool chat_controller_has_attachment(const ChatController *controller, const char
 
 bool chat_controller_add_attachment(ChatController *controller, const char *name)
 {
-    if (!controller || !name || !name[0] || controller->nattached >= CHAT_CONTROLLER_MAX_ATTACH) return false;
+    if (!controller || !name || !name[0] || strlen(name) >= sizeof(controller->attached[0]) ||
+        controller->nattached >= CHAT_CONTROLLER_MAX_ATTACH) return false;
     if (chat_controller_has_attachment(controller, name)) return true;
     snprintf(controller->attached[controller->nattached++], sizeof(controller->attached[0]), "%s", name);
     controller->attachment_revision++;
+    chat_memory_attachments_changed(controller->chat);
     return true;
 }
 
@@ -40,25 +42,29 @@ bool chat_controller_remove_attachment(ChatController *controller, size_t index)
             (controller->nattached - index - 1) * sizeof(controller->attached[0]));
     controller->nattached--;
     controller->attachment_revision++;
+    chat_memory_attachments_changed(controller->chat);
     return true;
 }
 
 bool chat_controller_rename_attachment(ChatController *controller, const char *from, const char *to)
 {
-    if (!controller || !from || !to || !to[0]) return false;
+    if (!controller || !from || !to || !to[0] || strlen(to) >= sizeof(controller->attached[0])) return false;
     bool renamed = false;
     for (size_t i = 0; i < controller->nattached; i++) {
         if (strcmp(controller->attached[i], from)) continue;
         snprintf(controller->attached[i], sizeof(controller->attached[i]), "%s", to);
         renamed = true;
     }
-    if (renamed) controller->attachment_revision++;
+    if (renamed) { controller->attachment_revision++; chat_memory_attachments_changed(controller->chat); }
     return renamed;
 }
 
 void chat_controller_mark_attachments_changed(ChatController *controller)
 {
-    if (controller) { controller->attach_touched = true; controller->attachment_revision++; }
+    if (controller) {
+        controller->attach_touched = true; controller->attachment_revision++;
+        chat_memory_attachments_changed(controller->chat);
+    }
 }
 
 void chat_controller_use_no_attachments(ChatController *controller)
@@ -68,6 +74,7 @@ void chat_controller_use_no_attachments(ChatController *controller)
     controller->nattached = 0;
     controller->attach_touched = true;
     controller->attachment_revision++;
+    chat_memory_attachments_changed(controller->chat);
 }
 
 void chat_controller_clear_attachments(ChatController *controller)
@@ -77,6 +84,7 @@ void chat_controller_clear_attachments(ChatController *controller)
     controller->nattached = 0;
     controller->attach_touched = false;
     controller->attachment_revision++;
+    chat_memory_attachments_changed(controller->chat);
 }
 
 void chat_controller_destroy(ChatController *controller)

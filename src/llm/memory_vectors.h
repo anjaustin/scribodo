@@ -4,6 +4,7 @@
 
 #include "llm/semantic.h"
 #include "app/memory_store.h"
+#include "app/memory_documents.h"
 
 /* 64 lowercase hex characters plus NUL; includes model and embedding protocol.
  * NULL embedding servers use a distinct deterministic-test namespace. */
@@ -21,6 +22,9 @@ bool memory_vectors_upsert(SemanticClient *client, const MemoryIndexLease *lease
  * are deduplicated, retaining the first rank/score. Extra payload fields
  * (including injected text) are ignored, never hydrated. */
 bool memory_vectors_search(SemanticClient *client, const MemoryScope *scope, const char *query, size_t limit,
+                           MemoryCandidate out[MEMORY_CANDIDATES], size_t *count, char *why, size_t whylen);
+bool memory_vectors_search_with_documents(SemanticClient *client, const MemoryScope *scope,
+                           const MemoryDocumentSet *documents, const char *query, size_t limit,
                            MemoryCandidate out[MEMORY_CANDIDATES], size_t *count, char *why, size_t whylen);
 /* Deletes only this exact scope/epochs/generation, NOT other conversations
  * sharing the project collection. Missing collections are already clean. */

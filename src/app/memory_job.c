@@ -13,6 +13,9 @@ typedef struct {
     StoreProjectIdentity identity;
     MemoryJobAction action;
     uint64_t serial;
+    MemoryDocumentName names[MEMORY_DOCUMENTS_MAX];
+    size_t document_count;
+    uint64_t document_version;
 } MemoryRequest;
 
 typedef struct {
@@ -20,6 +23,12 @@ typedef struct {
     MemoryScope repair;
     unsigned failures;
     struct timespec retry;
+    bool scope_known, documents_captured, documents_seeded;
+    MemoryScope scope, document_scope;
+    MemoryDocumentSet documents;
+    MemoryDocumentName names[MEMORY_DOCUMENTS_MAX];
+    size_t document_count;
+    uint64_t document_version;
 } MemoryWorkerState;
 
 struct MemoryJob {
@@ -71,6 +80,12 @@ static bool same_projection(const MemoryScope *a, const MemoryScope *b)
         a->policy_epoch == b->policy_epoch;
 }
 
+static bool same_generation(const MemoryScope *a, const MemoryScope *b)
+{
+    return !strcmp(a->id, b->id) && !strcmp(a->database, b->database) &&
+        a->generation == b->generation;
+}
+
 static bool fresh_scope(MemoryJob *job, const MemoryRequest *request, Db *db,
                          MemoryJobStatus *status)
 {
@@ -98,6 +113,50 @@ static void backend_failure(MemoryWorkerState *state, MemoryJobStatus *status, c
              detail[0] ? detail : "backend unavailable");
 }
 
+static bool same_names(const MemoryDocumentName *a, const MemoryDocumentName *b, size_t count)
+{
+    for (size_t i = 0; i < count; i++)
+        if (a[i].dirty != b[i].dirty || strcmp(a[i].name, b[i].name)) return false;
+    return true;
+}
+
+static bool prepare_documents(MemoryJob *job, const MemoryRequest *request, Db *db,
+                              MemoryWorkerState *state, MemoryJobStatus *status)
+{
+    bool changed = !state->documents_captured ||
+        !same_generation(&state->document_scope, &status->scope) ||
+        state->document_version != request->document_version ||
+        state->document_count != request->document_count ||
+        !same_names(state->names, request->names, request->document_count);
+    if (changed) {
+        /* Discard first: a failed capture must never retain old authorization. */
+        state->documents = (MemoryDocumentSet){0};
+        state->documents_seeded = false;
+        state->documents_captured = false;
+        state->document_scope = status->scope;
+        state->document_version = request->document_version;
+        state->document_count = request->document_count;
+        memcpy(state->names, request->names, sizeof(state->names));
+        if (!admitted(job, request)) return false;
+        MemoryDocumentSet captured = {0};
+        if (memory_documents_capture(job->manager, request->project, &request->identity,
+                                      request->names, request->document_count, false, NULL, &captured))
+            state->documents = captured;
+        state->documents_captured = true;
+    }
+    status->document_sources = state->documents.count;
+    status->documents_pending = state->documents.count != 0;
+    if (!admitted(job, request)) return false;
+    if (!state->documents_seeded) {
+        if (!memory_documents_seed(db, &status->scope, &state->documents)) {
+            reason(status, "Partial coverage: document seeding unavailable.");
+            return true; /* Do not make chat durability depend on document work. */
+        }
+        state->documents_seeded = true;
+    }
+    return true;
+}
+
 static bool production_step(MemoryJob *job, const MemoryRequest *request,
                             MemoryWorkerState *state, MemoryJobStatus *status)
 {
@@ -113,6 +172,14 @@ static bool production_step(MemoryJob *job, const MemoryRequest *request,
         return false;
     }
     if (!fresh_scope(job, request, db, status)) return false;
+
+    if (state->scope_known && !same_generation(&state->scope, &status->scope)) {
+        state->failures = 0;
+        state->retry = (struct timespec){0};
+        state->repair_pending = false;
+    }
+    state->scope_known = true;
+    state->scope = status->scope;
 
     if (job->tokenizer.server && llm_server_state(job->tokenizer.server, NULL, 0) != LLM_READY) {
         reason(status, "Partial coverage: local tokenizer is not ready; no attempt consumed.");
@@ -154,23 +221,57 @@ static bool production_step(MemoryJob *job, const MemoryRequest *request,
     /* SQL ingestion remains available during index outages. Never make author
      * message durability depend on embeddings or Qdrant. */
     if (!fresh_scope(job, request, db, status)) return false;
+    state->scope = status->scope;
+    MemoryScope pinned = status->scope;
+    if (!prepare_documents(job, request, db, state, status)) return false;
     char fingerprint[65];
     if (!memory_tokenizer_fingerprint(&job->tokenizer, fingerprint)) {
         reason(status, "Partial coverage: local tokenizer identity unavailable.");
         return false;
     }
+    if (!fresh_scope(job, request, db, status) || !same_projection(&pinned, &status->scope))
+        return false;
     if (!memory_ingest_step(db, status->scope.id, "memory-worker", memory_source_tokens,
                             &job->tokenizer, fingerprint, &progress, why, sizeof(why))) {
         snprintf(status->why, sizeof(status->why), "Partial coverage: ingestion failed: %.190s", why);
         return false;
     }
     if (progress) status->ingested_steps++;
+    bool document_progress = false;
+    if (!fresh_scope(job, request, db, status) || !same_projection(&pinned, &status->scope))
+        return progress;
+    pinned = status->scope; /* the first chat claim may have just pinned the tokenizer */
+    if (state->documents_seeded && state->documents.count) {
+        if (!memory_documents_admit(db, &pinned, &state->documents)) {
+            /* A saved receipt changed without a new UI snapshot. Wait for the
+             * next binding version, rather than recapturing files every tick. */
+            state->documents = (MemoryDocumentSet){0};
+            status->document_sources = 0;
+            status->documents_pending = false;
+            reason(status, "Partial coverage: document binding changed; waiting for refresh.");
+        } else if (admitted(job, request) &&
+                   !memory_document_ingest_step(db, &pinned, &state->documents, "memory-worker",
+                       memory_source_tokens, &job->tokenizer, fingerprint, &document_progress, why, sizeof(why))) {
+            snprintf(status->why, sizeof(status->why), "Partial coverage: document ingestion failed: %.175s", why);
+        }
+    }
+    if (document_progress) status->document_steps++;
+    progress = progress || document_progress;
+    if (state->documents.count) {
+        if (!fresh_scope(job, request, db, status) || !same_projection(&pinned, &status->scope))
+            return progress;
+        bool complete = false;
+        if (state->documents_seeded &&
+            memory_documents_complete(db, &pinned, &state->documents, &complete))
+            status->documents_pending = !complete;
+        else status->documents_pending = true;
+    }
     bool embedding_wait = index_ready && !semantic_embedding_ready(job->vectors);
     if (embedding_wait) {
         index_ready = false;
         reason(status, "Partial coverage: embedding model is not ready; no index attempt consumed.");
     }
-    if (index_ready && fresh_scope(job, request, db, status)) {
+    if (index_ready && fresh_scope(job, request, db, status) && same_projection(&pinned, &status->scope)) {
         MemoryIndexLease lease = {0};
         bool claimed = false;
         if (!memory_outbox_claim(db, status->scope.id, "memory-worker", &lease, &claimed)) {
@@ -190,7 +291,9 @@ static bool production_step(MemoryJob *job, const MemoryRequest *request,
                 reason(status, "Partial coverage: scope changed or paused; index lease deferred.");
             else if (!delivered) backend_failure(state, status, why);
             else reason(status, "Partial coverage: stale/expired index acknowledgment; not counted.");
-        } else reason(status, "Partial coverage / idle: no claimable work (not proof of completeness).");
+        } else reason(status, lease.maintenance ? "Partial coverage: retiring stale derived index jobs."
+                                               : "Partial coverage / idle: no claimable work (not proof of completeness).");
+        progress = progress || lease.maintenance;
         memory_index_lease_free(&lease);
     }
     if (!index_ready && !state->failures && !embedding_wait)
@@ -298,8 +401,11 @@ static void *memory_main(void *arg)
                         job->request.identity.device == control.identity.device &&
                         job->request.identity.inode == control.identity.inode &&
                         !strcmp(job->request.identity.project_id, control.identity.project_id)) {
-                        result.ingested_steps = job->status.ingested_steps;
-                        result.indexed = job->status.indexed;
+                         result.ingested_steps = job->status.ingested_steps;
+                         result.indexed = job->status.indexed;
+                         result.document_steps = job->status.document_steps;
+                         result.document_sources = job->status.document_sources;
+                         result.documents_pending = job->status.documents_pending;
                         job->status = result; /* committed consent is visible even while resource work is paused */
                     }
                     serial = 0;
@@ -429,10 +535,54 @@ bool memory_job_select(MemoryJob *job, const char *project, const char *conversa
         job->control_count++;
     }
     request.action = MEMORY_JOB_RESUME;
+    if (job->selected && !strcmp(job->request.project, project) &&
+        !strcmp(job->request.conversation, conversation)) {
+        memcpy(request.names, job->request.names, sizeof(request.names));
+        request.document_count = job->request.document_count;
+        request.document_version = job->request.document_version;
+    }
     job->request = request;
     job->selected = true;
     job->status = (MemoryJobStatus){.active = true};
     reason(&job->status, "Memory selection pending; consent not yet resolved.");
+    pthread_cond_signal(&job->wake);
+    pthread_mutex_unlock(&job->mu);
+    return true;
+}
+
+bool memory_job_documents(MemoryJob *job, const char *project, const char *conversation,
+                          const MemoryDocumentName *names, size_t count, uint64_t version)
+{
+    if (!job || !project || !conversation || count > MEMORY_DOCUMENTS_MAX || (count && !names))
+        return false;
+    for (size_t i = 0; i < count; i++)
+        if (!names[i].name[0] || strnlen(names[i].name, sizeof(names[i].name)) == sizeof(names[i].name))
+            return false;
+    pthread_mutex_lock(&job->mu);
+    if (job->stopping || !job->selected || strcmp(job->request.project, project) ||
+        strcmp(job->request.conversation, conversation)) {
+        pthread_mutex_unlock(&job->mu);
+        return false;
+    }
+    if (job->request.document_version == version && job->request.document_count == count &&
+        same_names(job->request.names, names, count)) {
+        pthread_mutex_unlock(&job->mu);
+        return true;
+    }
+    if (job->serial == UINT64_MAX) {
+        pthread_mutex_unlock(&job->mu);
+        return false;
+    }
+    memset(job->request.names, 0, sizeof(job->request.names));
+    for (size_t i = 0; i < count; i++) {
+        snprintf(job->request.names[i].name, sizeof(job->request.names[i].name), "%s", names[i].name);
+        job->request.names[i].dirty = names[i].dirty;
+    }
+    job->request.document_count = count;
+    job->request.document_version = version;
+    job->request.serial = ++job->serial;
+    job->status.document_sources = 0;
+    job->status.documents_pending = count != 0;
     pthread_cond_signal(&job->wake);
     pthread_mutex_unlock(&job->mu);
     return true;
@@ -443,6 +593,7 @@ void memory_job_clear(MemoryJob *job)
     if (!job) return;
     pthread_mutex_lock(&job->mu);
     job->selected = false;
+    job->request = (MemoryRequest){0};
     job->status = (MemoryJobStatus){0};
     pthread_cond_signal(&job->wake);
     pthread_mutex_unlock(&job->mu);

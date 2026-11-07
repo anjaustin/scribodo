@@ -43,6 +43,7 @@
 #include "app/backup_job.h"
 #include "app/chat_history_job.h"
 #include "app/memory_job.h"
+#include "app/memory_documents.h"
 #include "app/service_supervisor.h"
 #include "app/entity_backfill_job.h"
 #include "app/name_detection_job.h"
@@ -143,6 +144,8 @@ typedef struct {
     bool memory_experiment, memory_sources_open;
     char memory_bound_project[PATH_MAX], memory_bound_chat[40], memory_label[280];
     uint64_t memory_bound_generation;
+    MemoryDocumentName memory_names[MEMORY_DOCUMENTS_MAX];
+    size_t memory_nnames;
     Editor *memory_sources_editor;
     Rectangle memory_sources_close;
     union {
@@ -530,8 +533,33 @@ static bool memory_controls_pending(App *app)
     return app->memory_job && memory_job_status(app->memory_job, &status) && status.controls_pending;
 }
 
+static void memory_editor_will_change(void *context)
+{
+    App *app = context;
+    const char *path = editor_path(app->editor);
+    if (path && chat_controller_has_attachment(&app->chat_controller, base_name(path)))
+        chat_memory_attachments_changed(app->chat);
+}
+
+static void memory_document_names(App *app)
+{
+    MemoryDocumentName names[MEMORY_DOCUMENTS_MAX] = {0};
+    size_t count = app->nattached < MEMORY_DOCUMENTS_MAX ? app->nattached : MEMORY_DOCUMENTS_MAX;
+    const char *open = editor_path(app->editor);
+    for (size_t i = 0; i < count; i++) {
+        snprintf(names[i].name, sizeof(names[i].name), "%s", app->attached[i]);
+        names[i].dirty = open && !strcmp(base_name(open), app->attached[i]) && editor_is_dirty(app->editor);
+    }
+    if (count != app->memory_nnames || memcmp(names, app->memory_names, sizeof(names))) {
+        memcpy(app->memory_names, names, sizeof(names));
+        app->memory_nnames = count;
+        chat_memory_attachments_changed(app->chat);
+    }
+}
+
 static void memory_tick(App *app)
 {
+    memory_document_names(app);
     if (!app->memory_job) return;
     StoreProjectIdentity identity;
     bool bound = app->chat_id[0] && !strcmp(app->chat_project, app->project_dir) &&
@@ -539,7 +567,7 @@ static void memory_tick(App *app)
     if (!bound) {
         if (app->memory_bound_chat[0]) memory_job_clear(app->memory_job);
         app->memory_bound_chat[0] = app->memory_bound_project[0] = 0;
-        snprintf(app->memory_label, sizeof(app->memory_label), "Memory (experimental, chat-only): disabled/unavailable");
+        snprintf(app->memory_label, sizeof(app->memory_label), "Memory (experimental): disabled/unavailable");
         return;
     }
     if (strcmp(app->memory_bound_project, app->chat_project) || strcmp(app->memory_bound_chat, app->chat_id) ||
@@ -550,10 +578,12 @@ static void memory_tick(App *app)
             app->memory_bound_generation = identity.generation;
         }
     }
+    memory_job_documents(app->memory_job, app->chat_project, app->chat_id, app->memory_names,
+        app->memory_nnames, chat_memory_attachment_version(app->chat));
     memory_job_pause(app->memory_job, chat_busy(app->chat) || chat_remote_selected(app->chat) || history_read_busy(app));
     MemoryJobStatus status;
     if (memory_job_status(app->memory_job, &status))
-        snprintf(app->memory_label, sizeof(app->memory_label), "Memory (chat-only): %.240s", status.why);
+        snprintf(app->memory_label, sizeof(app->memory_label), "Memory (chat/saved attachments): %.220s", status.why);
 }
 
 static void memory_control(App *app, MemoryJobAction action)
@@ -835,6 +865,7 @@ static bool record_revision(App *app, const char *origin, const char *note)
     bool ok = text && revisions_record(app->store, app->project_dir, editor_path(app->editor), text, origin, note, NULL);
     free(text);
     if (!ok) set_status(app, store_says(app, "Could not record a revision in .scribodo/revisions"));
+    if (ok && !strcmp(origin, "save")) chat_memory_attachments_changed(app->chat);
     app->lists_dirty = true;
     return ok;
 }
@@ -2603,6 +2634,7 @@ static int draw_attach_row(App *app, Rectangle r)
 
 static void send_chat(App *app, char *text)
 {
+    memory_document_names(app);
     if (chat_busy(app->chat)) {
         set_status(app, "A reply is already running; your input is kept. Stop it before sending");
         free(text); return;
@@ -2663,7 +2695,9 @@ static void send_chat(App *app, char *text)
             snprintf(missing + strlen(missing), sizeof(missing) - strlen(missing), "%s%s", missing[0] ? ", " : "", app->attached[i]);
             continue;
         }
-        cdocs[ncd] = (ChatDoc){ app->attached[i], texts[ncd] };
+        cdocs[ncd] = (ChatDoc){ .title = app->attached[i], .text = texts[ncd],
+            .unsaved = editor_path(app->editor) && !strcmp(base_name(editor_path(app->editor)), app->attached[i]) &&
+                       editor_is_dirty(app->editor) };
         ncd++;
     }
     /* An edit request sends (and records) only the edited document. */
@@ -3169,6 +3203,14 @@ static char *host_memory_sources(void *ctx)
     App *app = ctx;
     return app->memory_sources_open ? editor_text_utf8(app->memory_sources_editor) : chat_memory_sources(app->chat);
 }
+static bool host_memory_documents_settled(void *ctx, long count)
+{
+    App *app = ctx; MemoryJobStatus status;
+    return count >= 0 && app->memory_job && memory_job_status(app->memory_job, &status) &&
+        status.active && status.enabled && !status.controls_pending && !status.documents_pending &&
+        status.document_sources == (size_t)count && !status.scope.index_pending &&
+        !strcmp(status.scope.conversation_id, app->chat_id);
+}
 static void host_store_restart(void *ctx)
 {
     App *app = ctx;
@@ -3502,6 +3544,7 @@ int main(int argc, char **argv)
         set_status(&app, msg);
     }
     app.editor = editor_create(&app.fonts[FONT_PROSE]);
+    editor_on_will_change(app.editor, memory_editor_will_change, &app);
     ChatView *chat_view = owned_chat ? chat_view_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI], owned_chat) : NULL;
     ReviewView *review = review_create(&app.fonts[FONT_PROSE], &app.fonts[FONT_UI]);
     if (!chat_controller_adopt(&app.chat_controller, owned_chat, chat_view)) {
@@ -3569,7 +3612,7 @@ int main(int argc, char **argv)
                         host_record_text, host_observer_enable, host_observer_idle, host_findings_text,
                         host_attached_text, host_explorer_text, host_observer_status, host_history_cache_bytes, host_store_offline,
                         host_history_busy, host_history_hold, host_history_worker_busy, host_store_restart,
-                        host_memory_settled, host_memory_enabled, host_memory_sources };
+                        host_memory_settled, host_memory_enabled, host_memory_sources, host_memory_documents_settled };
     if (script_path) {
         char err[256];
         app.script = script_load(script_path, getenv("SCRIBODO_SCRIPT_DIR"), getenv("SCRIBODO_SHOT_DIR"), err, sizeof(err));
@@ -3980,6 +4023,7 @@ int main(int argc, char **argv)
         }
         bool idle = app.dragging == DRAG_NONE && !modal;
         editor_update(app.editor, app.editor_rect, idle && app.focus == FOCUS_DOC);
+        memory_document_names(&app); /* dirty-buffer transitions fence preparation immediately */
         chat_view_set_can_apply(app.chat_view, editor_path(app.editor) != NULL && !editor_is_read_only(app.editor));
         chat_view_update(app.chat_view, app.chat_list_rect, app.chat_input_rect, idle && app.focus == FOCUS_CHAT);
         ChatPageAction page_action = chat_view_take_page(app.chat_view);

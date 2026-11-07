@@ -82,3 +82,6 @@ scope-local typed revision units, bounded revision ingestion receipts/outbox,
 SQL hydration/acknowledgment for those source types, attachment-filtered recall,
 typed source provenance and final admission, then T1/shared generative admission,
 optional measured T2, cleanup/deadlines and held-out quality/resource gates.
+
+The subsequent [MEMORY-008](MEMORY-008-saved-document-retrieval.md) slice adds
+typed revision ingestion/recall and current attachment admission on this authority.

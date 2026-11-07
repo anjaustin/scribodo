@@ -33,6 +33,8 @@
 #define EDITOR_MAX_CHARS (DOC_MAX_FILE_BYTES)
 
 struct Editor {
+    void (*will_change)(void *);
+    void *will_change_context;
     TextBuffer buf;
     UndoLog undo;
     WrapLayout layout;
@@ -171,6 +173,7 @@ static void set_notice(Editor *e, const char *msg)
 static int insert_chars(Editor *e, int pos, const uint32_t *cps, int n)
 {
     if (n < 0 || tb_len(&e->buf) + (size_t)n > e->max_chars) return 0;
+    if (e->will_change) e->will_change(e->will_change_context);
     if (!tb_insert(&e->buf, (size_t)pos, cps, (size_t)n)) return 0;
     anchor_op(e, true, (size_t)pos, (size_t)n);
     if (!undo_record_insert(&e->undo, (size_t)pos, cps, (size_t)n)) undo_lost(e);
@@ -181,6 +184,7 @@ static int insert_chars(Editor *e, int pos, const uint32_t *cps, int n)
 static void delete_chars(Editor *e, int pos, int n)
 {
     if (n <= 0) return;
+    if (e->will_change) e->will_change(e->will_change_context);
     uint32_t stack[256];
     uint32_t *tmp = n <= 256 ? stack : malloc((size_t)n * sizeof(uint32_t));
     bool recorded = false;
@@ -485,6 +489,7 @@ static void set_cursor(Editor *e, UndoCursor c)
 static void do_undo(Editor *e, bool redo)
 {
     UndoCursor c;
+    if (e->will_change) e->will_change(e->will_change_context);
     bool ok = redo ? undo_redo(&e->undo, &e->buf, &c) : undo_undo(&e->undo, &e->buf, &c);
     if (!ok) return;
     mark_changed(e);
@@ -613,6 +618,11 @@ Editor *editor_create(SFont *font)
     return e;
 }
 
+void editor_on_will_change(Editor *e, void (*callback)(void *), void *context)
+{
+    if (e) { e->will_change = callback; e->will_change_context = context; }
+}
+
 void editor_destroy(Editor *e)
 {
     if (!e) return;
@@ -632,6 +642,7 @@ bool editor_load_file(Editor *e, const char *path, char *err, size_t errlen)
         return false;
     }
     char *path_copy = strdup(path);
+    if (e->will_change) e->will_change(e->will_change_context);
     if (!path_copy || !tb_set(&e->buf, d.cps, d.len)) {
         free(path_copy);
         doc_load_free(&d);
@@ -681,6 +692,7 @@ bool editor_load_file(Editor *e, const char *path, char *err, size_t errlen)
 
 void editor_close(Editor *e)
 {
+    if (e->will_change) e->will_change(e->will_change_context);
     tb_set(&e->buf, NULL, 0);
     reset_undo(e);
     stb_textedit_initialize_state(&e->st, 0);
@@ -1304,6 +1316,7 @@ void editor_set_placeholder(Editor *e, const char *placeholder)
 
 void editor_clear(Editor *e)
 {
+    if (e->will_change) e->will_change(e->will_change_context);
     tb_set(&e->buf, NULL, 0);
     reset_undo(e);
     stb_textedit_initialize_state(&e->st, 0);
@@ -1321,6 +1334,7 @@ bool editor_set_text_utf8(Editor *e, const char *utf8)
     if (!cps) return false;
     n = sanitize_text(cps, n);
     if (n > e->max_chars) n = e->max_chars;
+    if (e->will_change) e->will_change(e->will_change_context);
     bool ok = tb_set(&e->buf, cps, n);
     free(cps);
     if (!ok) return false;

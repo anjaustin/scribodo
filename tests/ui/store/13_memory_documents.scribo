@@ -1,0 +1,53 @@
+wait 5
+open "$DIR/memorydocbook/one.md"
+# Successful save grants a separate receipt, not mere revision-history presence.
+key S cmd
+click_element ChatItem0
+wait_history
+expect attached "one.md"
+right_click_element ChatItem0
+click_element MenuItem2
+wait_memory 129 7200
+wait_memory_documents 1 7200
+click_element ChatInput
+type "What color is the Vesperwell archive seal?"
+key ENTER
+wait_chat
+expect memory_sources "cobalt"
+expect memory_sources "one.md"
+expect memory_sources "revision="
+# Detachment excludes old derived document locators from the next request.
+click_element AttachRemove0
+wait_memory_documents 0 1800
+click_element ChatInput
+type "Recall the Vesperwell archive seal color."
+key ENTER
+wait_chat
+expect memory_sources_not "cobalt"
+expect memory_sources_not "revision="
+# Reattached but dirty text is foreground only; it cannot authorize a revision.
+click_element AttachAdd
+click_element MenuItem0
+click_element Editor
+key A cmd
+type "The Vesperwell archive seal is violet."
+expect dirty yes
+wait_memory_documents 0 1800
+click_element ChatInput
+type "Which color is the Vesperwell archive seal now?"
+key ENTER
+wait_chat
+expect memory_sources_not "cobalt"
+expect memory_sources_not "violet"
+# Saving advances the receipt even if revision history already contained text.
+click_element Editor
+key S cmd
+expect dirty no
+wait_memory_documents 1 7200
+click_element ChatInput
+type "Tell me the Vesperwell archive seal color from the saved document."
+key ENTER
+wait_chat
+expect memory_sources "violet"
+expect memory_sources_not "cobalt"
+expect memory_sources "revision="

@@ -1,5 +1,6 @@
 #define _DARWIN_C_SOURCE
 #include "memory_store.h"
+#include "memory_documents.h"
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -76,7 +77,9 @@ static bool scope_row(const DbRows *r, MemoryScope *s)
 void memory_unit_free(MemoryUnit *unit)
 {
     if (!unit) return;
-    free(unit->text);
+    char *text = unit->text;
+    unit->text = NULL;
+    free(text);
     memset(unit, 0, sizeof(*unit));
 }
 
@@ -354,7 +357,7 @@ bool memory_candidate_hydrate(Db *db, const MemoryScope *s, const MemoryCandidat
                           " AND s.conversation_id=? AND s.enabled=1 AND s.history_epoch=?"
                           " AND s.policy_epoch=? AND s.generation=? AND u.history_epoch=s.history_epoch"
                           " AND u.policy_epoch=s.policy_epoch AND u.generation=s.generation"
-                          " AND u.source_hash=m.source_hash AND u.tokenizer=s.tokenizer AND u.role=m.role"
+                           " AND u.source_kind='chat' AND u.source_hash=m.source_hash AND u.tokenizer=s.tokenizer AND u.role=m.role"
                           " AND u.text_hash=SHA2(u.text,256) AND (" ELIGIBLE ")"
                           " AND OCTET_LENGTH(u.text)<=2000 AND u.tokens<=512 AND DATABASE()=? AND s.tokenizer=?",
                        (DbArg[]){ DB_S(c->unit_id), DB_S(c->text_hash), DB_S(s->id), DB_S(s->project_id),
@@ -399,7 +402,7 @@ bool memory_lexical_candidates(Db *db, const MemoryScope *s, const char *q, size
                           " FROM memory_units u JOIN memory_scopes s ON s.id=u.scope_id"
                           " WHERE s.id=? AND s.project_id=? AND s.conversation_id=? AND s.enabled=1"
                           " AND s.history_epoch=? AND s.policy_epoch=? AND s.generation=?"
-                          " AND u.generation=s.generation AND u.tokenizer=s.tokenizer"
+                           " AND u.source_kind='chat' AND u.generation=s.generation AND u.tokenizer=s.tokenizer"
                           " AND u.history_epoch=s.history_epoch AND u.policy_epoch=s.policy_epoch"
                           " AND DATABASE()=? AND s.tokenizer=? AND MATCH(u.text) AGAINST (? IN NATURAL LANGUAGE MODE)>0"
                           " ORDER BY score DESC,u.id LIMIT ?",
@@ -425,6 +428,35 @@ bool memory_lexical_candidates(Db *db, const MemoryScope *s, const char *q, size
     return ok;
 }
 
+/* Index retention is not model authorization. Reconstruct only current SQL
+ * identity for generic outbox delivery, never an attachment allowset. */
+static bool index_hydrate(Db *db, const MemoryScope *s, const MemoryCandidate *c, MemoryUnit *u, bool *found)
+{
+    MemoryDocumentSet set = {0};
+    DbRows r;
+    if (!db_query(db, "SELECT d.id,r.id,r.source_hash,OCTET_LENGTH(r.content),d.name FROM memory_units u"
+                      " JOIN documents d ON d.id=u.document_id AND d.project_id=u.project_id"
+                      " JOIN revisions r ON r.document_id=d.id AND r.id=d.saved_revision_id"
+                      " WHERE u.id=? AND u.scope_id=? AND u.source_kind='document' AND u.revision_id=r.id FOR UPDATE",
+                  (DbArg[]){ DB_S(c->unit_id), DB_S(s->id) }, 2, &r)) return false;
+    if (r.nrows) {
+        MemoryDocumentRef *ref = &set.refs[0];
+        bool decoded = r.nrows == 1 && copy_cell(&r, 0, 0, ref->document_id, sizeof(ref->document_id)) &&
+                       copy_cell(&r, 0, 1, ref->revision_id, sizeof(ref->revision_id)) &&
+                       copy_cell(&r, 0, 2, ref->source_hash, sizeof(ref->source_hash)) &&
+                       db_cell_u64(&r, 0, 3, &ref->bytes);
+        /* Names are display-only and may grow beyond the captured-name bound.
+         * A changed/oversized source is stale, not a poison queue head. */
+        snprintf(ref->name, sizeof(ref->name), "document");
+        snprintf(ref->database, sizeof(ref->database), "%s", s->database);
+        snprintf(ref->project_id, sizeof(ref->project_id), "%s", s->project_id);
+        if (decoded && ref->bytes <= 16777216 && !strcmp(ref->project_id, s->project_id)) set.count = 1;
+    }
+    db_rows_free(&r);
+    if (!set.count) return memory_candidate_hydrate(db, s, c, u, found);
+    return memory_candidate_hydrate_with_documents(db, s, &set, c, u, found);
+}
+
 bool memory_outbox_claim(Db *db, const char *id, const char *owner, MemoryIndexLease *out, bool *claimed)
 {
     if (out) memset(out, 0, sizeof(*out));
@@ -445,51 +477,63 @@ bool memory_outbox_claim(Db *db, const char *id, const char *owner, MemoryIndexL
     }
     /* A crashed third delivery is terminal after its lease expires. Retire at
      * most 64 active-generation jobs per poll; never scan retired generations. */
+    uint64_t retired = 0;
     ok = ok && db_run(db, "UPDATE memory_outbox SET state='failed',lease_until=NULL"
                           " WHERE scope_id=? AND generation=? AND state='leased' AND attempts>=3"
                           " AND lease_until<=NOW(6) ORDER BY id LIMIT 64",
-                      (DbArg[]){ DB_S(id), DB_I(out->scope.generation) }, 2, NULL);
-    ok = ok && db_query(db, "SELECT id,fence,unit_id FROM memory_outbox WHERE scope_id=? AND generation=?"
-                            " AND attempts<3 AND state IN ('pending','leased')"
-                            " AND (lease_until IS NULL OR lease_until<=NOW(6))"
-                            " AND (retry_after IS NULL OR retry_after<=NOW(6)) ORDER BY id LIMIT 1 FOR UPDATE",
-                        (DbArg[]){ DB_S(id), DB_I(out->scope.generation) }, 2, &r);
-    MemoryCandidate c = {0};
-    if (ok && !r.nrows) {
-        db_rows_free(&r);
-        memory_index_lease_free(out);
-        return db_commit(db);
-    }
-    if (ok) {
-        ok = r.ncols == 3 && db_cell_u64(&r, 0, 0, &out->id) && out->id > 0 && out->id <= INT64_MAX &&
-             db_cell_u64(&r, 0, 1, &out->fence) && out->fence < INT64_MAX &&
-             copy_cell(&r, 0, 2, c.unit_id, sizeof(c.unit_id));
-        db_rows_free(&r);
-    }
-    ok = ok && db_query(db, "SELECT text_hash FROM memory_units WHERE id=?", (DbArg[]){ DB_S(c.unit_id) }, 1, &r);
-    if (ok) {
-        ok = r.nrows == 1 && copy_cell(&r, 0, 0, c.text_hash, sizeof(c.text_hash));
-        db_rows_free(&r);
-    }
-    c.history_epoch = out->scope.history_epoch;
-    c.generation = out->scope.generation;
-    bool found = false;
-    ok = ok && memory_candidate_hydrate(db, &out->scope, &c, &out->unit, &found);
-    /* Stale sources are classified as undeliverable, never sent to embedder. */
-    ok = ok && db_run(db, "UPDATE memory_outbox SET owner=?,fence=fence+1,attempts=attempts+1,"
-                          " lease_until=DATE_ADD(NOW(6),INTERVAL 30 SECOND),state=? WHERE id=?",
-                      (DbArg[]){ DB_S(owner), DB_S(found ? "leased" : "done"), DB_I(out->id) }, 3, NULL);
-    if (ok) {
-        ok = db_commit(db);
+                      (DbArg[]){ DB_S(id), DB_I(out->scope.generation) }, 2, &retired);
+    bool maintenance = retired != 0;
+    /* Retire stale heads in one bounded batch rather than sleeping after each
+     * locator. Include terminal cleanup above in the same 64-job budget. */
+    for (uint64_t job = retired; ok && job < 64; job++) {
+        ok = db_query(db, "SELECT id,fence,unit_id FROM memory_outbox WHERE scope_id=? AND generation=?"
+                          " AND attempts<3 AND state IN ('pending','leased')"
+                          " AND (lease_until IS NULL OR lease_until<=NOW(6))"
+                          " AND (retry_after IS NULL OR retry_after<=NOW(6)) ORDER BY id LIMIT 1 FOR UPDATE",
+                      (DbArg[]){ DB_S(id), DB_I(out->scope.generation) }, 2, &r);
+        MemoryCandidate c = {0};
+        if (ok && !r.nrows) {
+            db_rows_free(&r);
+            break;
+        }
+        if (ok) {
+            ok = r.ncols == 3 && db_cell_u64(&r, 0, 0, &out->id) && out->id > 0 && out->id <= INT64_MAX &&
+                 db_cell_u64(&r, 0, 1, &out->fence) && out->fence < INT64_MAX &&
+                 copy_cell(&r, 0, 2, c.unit_id, sizeof(c.unit_id));
+            db_rows_free(&r);
+        }
+        ok = ok && db_query(db, "SELECT text_hash FROM memory_units WHERE id=?", (DbArg[]){ DB_S(c.unit_id) }, 1, &r);
+        if (ok) {
+            ok = r.nrows == 1 && copy_cell(&r, 0, 0, c.text_hash, sizeof(c.text_hash));
+            db_rows_free(&r);
+        }
+        c.history_epoch = out->scope.history_epoch;
+        c.generation = out->scope.generation;
+        bool found = false;
+        /* Malformed SQL locators are undeliverable, not poison queue heads.
+         * Genuine SQL failures still roll the entire bounded batch back. */
+        if (ok && valid_hash(c.unit_id) && valid_hash(c.text_hash)) {
+            ok = index_hydrate(db, &out->scope, &c, &out->unit, &found);
+        }
+        ok = ok && db_run(db, "UPDATE memory_outbox SET owner=?,fence=fence+1,attempts=attempts+1,"
+                             " lease_until=DATE_ADD(NOW(6),INTERVAL 30 SECOND),state=? WHERE id=?",
+                         (DbArg[]){ DB_S(owner), DB_S(found ? "leased" : "done"), DB_I(out->id) }, 3, NULL);
         if (ok && found) {
             ++out->fence;
             snprintf(out->owner, sizeof(out->owner), "%s", owner);
             *claimed = true;
+            break;
         }
+        if (ok) maintenance = true;
+    }
+    if (ok) {
+        ok = db_commit(db);
     } else {
         db_rollback(db);
     }
-    if (!ok || !found) memory_index_lease_free(out);
+    if (!ok) *claimed = false;
+    if (!*claimed) memory_index_lease_free(out);
+    out->maintenance = ok && maintenance;
     return ok;
 }
 
@@ -497,6 +541,7 @@ bool memory_outbox_ack(Db *db, const MemoryIndexLease *l, bool delivered)
 {
     if (!db || !l || !valid_scope(&l->scope) || !l->scope.enabled || !l->id || l->id > INT64_MAX ||
         !l->fence || l->fence > INT64_MAX || !valid_text(l->owner, 63) || !valid_hash(l->unit.id) ||
+        !valid_hash(l->unit.text_hash) ||
         db_in_transaction(db) || !db_begin(db)) return false;
     DbRows r;
     bool ok = db_query(db, "SELECT id FROM memory_scopes WHERE id=? AND project_id=? AND conversation_id=?"
@@ -509,15 +554,27 @@ bool memory_outbox_ack(Db *db, const MemoryIndexLease *l, bool delivered)
         ok = r.nrows == 1;
         db_rows_free(&r);
     }
+    MemoryCandidate candidate = {0};
+    snprintf(candidate.unit_id, sizeof(candidate.unit_id), "%s", l->unit.id);
+    snprintf(candidate.text_hash, sizeof(candidate.text_hash), "%s", l->unit.text_hash);
+    candidate.history_epoch = l->scope.history_epoch;
+    candidate.generation = l->scope.generation;
+    MemoryUnit canonical = {0};
+    bool found = false;
+    ok = ok && index_hydrate(db, &l->scope, &candidate, &canonical, &found) && found;
+    memory_unit_free(&canonical);
     uint64_t changed = 0;
     ok = ok && db_run(db, "UPDATE memory_outbox o JOIN memory_units u ON u.id=o.unit_id AND u.scope_id=o.scope_id"
                           " JOIN memory_scopes s ON s.id=o.scope_id AND s.tokenizer=u.tokenizer"
-                          " JOIN messages m ON m.id=u.message_id AND m.conversation_id=u.conversation_id"
+                           " LEFT JOIN messages m ON m.id=u.message_id AND m.conversation_id=u.conversation_id"
+                           " LEFT JOIN documents d ON d.id=u.document_id AND d.project_id=u.project_id"
+                           " LEFT JOIN revisions r ON r.document_id=d.id AND r.id=d.saved_revision_id"
                           " SET o.state=IF(?='done','done',IF(o.attempts>=3,'failed','pending')),"
                           " o.lease_until=NULL,o.retry_after=DATE_ADD(NOW(6),INTERVAL 5 SECOND)"
                           " WHERE o.id=? AND o.scope_id=? AND o.unit_id=? AND o.generation=? AND o.owner=?"
                           " AND o.fence=? AND o.state='leased' AND o.lease_until>NOW(6)"
-                          " AND u.source_hash=m.source_hash AND u.role=m.role AND (" ELIGIBLE ")",
+                           " AND ((u.source_kind='chat' AND u.source_hash=m.source_hash AND u.role=m.role AND (" ELIGIBLE "))"
+                           " OR (u.source_kind='document' AND u.revision_id=r.id AND u.source_hash=r.source_hash))",
                       (DbArg[]){ DB_S(delivered ? "done" : "pending"), DB_I(l->id), DB_S(l->scope.id),
                                  DB_S(l->unit.id), DB_I(l->scope.generation), DB_S(l->owner), DB_I(l->fence) },
                       7, &changed) && changed == 1;

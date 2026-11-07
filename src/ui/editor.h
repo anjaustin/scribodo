@@ -26,6 +26,9 @@ typedef struct {
 } EditorStats;
 
 Editor *editor_create(SFont *font);
+/* Called before buffer mutation/replacement, including undo and programmatic
+ * restores. May fire for a failed/no-op edit; must not mutate the editor. */
+void editor_on_will_change(Editor *e, void (*callback)(void *), void *context);
 void editor_destroy(Editor *e);
 
 /* Load a UTF-8 text file. A missing file opens as an empty document that is

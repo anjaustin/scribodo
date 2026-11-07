@@ -141,10 +141,11 @@ On first launch the app checks the model file against its pinned hash (once), th
 
 **Experimental local conversation memory:** launch with
 `SCRIBODO_MEMORY_EXPERIMENT=1`, open a stored chat, and right-click it to explicitly
-enable/disable/rebuild memory. This retrieves older chat excerpts only, never
+enable/disable/rebuild memory. This retrieves older chat and currently attached
+saved local revision excerpts, never
 silently exports them to a remote provider, and shows read-only as-of **Sources**.
-It is default-off; document-revision retrieval and generated briefs are not yet
-implemented. See [the pipeline and remaining gates](docs/MEMORY-006-retrieval-pipeline.md).
+It is default-off; unsaved buffers are foreground-only and generated briefs are
+not implemented. See [saved-document retrieval and remaining gates](docs/MEMORY-008-saved-document-retrieval.md).
 
 **Projects and documents:** a project is a folder of `.md` and `.txt` files.
 - On launch, Scribodo reopens the project and document you last had open. The first time, it shows a welcome screen: **Open folder…**, **New project…**, **Open the sample**, and your recent projects.

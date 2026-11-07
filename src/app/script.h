@@ -109,6 +109,7 @@ typedef struct {
     bool (*memory_settled)(void *ctx, long sequence);
     bool (*memory_enabled)(void *ctx);
     char *(*memory_sources)(void *ctx); /* owned as-of source snapshot */
+    bool (*memory_documents_settled)(void *ctx, long count);
 } ScriptHost;
 
 typedef struct Script Script;

@@ -3,6 +3,7 @@
 
 #include "app/store.h"
 #include "app/memory_store.h"
+#include "app/memory_documents.h"
 #include "llm/memory_vectors.h"
 #include "llm/memory_tokens.h"
 
@@ -19,6 +20,8 @@ typedef struct {
     bool active, enabled, controls_pending;
     MemoryScope scope;
     size_t ingested_steps, indexed;
+    size_t document_steps, document_sources;
+    bool documents_pending;
     char why[256];
 } MemoryJobStatus;
 
@@ -34,6 +37,10 @@ void memory_job_destroy(MemoryJob *job);
  * global controls_pending snapshot before sending or closing. */
 bool memory_job_select(MemoryJob *job, const char *project_dir, const char *conversation,
                        MemoryJobAction action);
+/* Copies the current explicit attachment binding (at most eight names). Route
+ * mismatches reject; unchanged snapshots do not wake or consume FIFO capacity. */
+bool memory_job_documents(MemoryJob *job, const char *project_dir, const char *conversation,
+                          const MemoryDocumentName *names, size_t count, uint64_t version);
 /* Clears navigation/status only, never accepted consent controls. */
 void memory_job_clear(MemoryJob *job);
 /* Cooperatively yields resource steps, not SQL consent controls; cannot

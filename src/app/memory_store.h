@@ -1,4 +1,4 @@
-/* Experimental PARTIAL, chat-only local conversation memory (no documents or briefs).
+/* Experimental PARTIAL local conversation memory (no generated briefs).
  * SQL owns eligibility and source text;
  * vectors are only untrusted locators. No function falls back to file history. */
 #ifndef SCRIBODO_MEMORY_STORE_H
@@ -23,8 +23,12 @@ typedef struct {
     char tokenizer[192]; /* generation-pinned fingerprint; empty until first claim */
 } MemoryScope;
 
+typedef enum { MEMORY_SOURCE_CHAT = 0, MEMORY_SOURCE_DOCUMENT = 1 } MemorySourceKind;
+
 typedef struct {
     char id[65], text_hash[65], source_hash[65];
+    MemorySourceKind kind;
+    char document_id[40], revision_id[40], document_name[256];
     int64_t message_id, sequence;
     uint64_t byte_start;
     size_t text_bytes, tokens;
@@ -43,6 +47,7 @@ typedef struct {
     char owner[64];
     MemoryScope scope;
     MemoryUnit unit;
+    bool maintenance; /* committed stale/terminal retirement; may be true without a lease */
 } MemoryIndexLease;
 
 typedef long (*MemoryTokenCount)(const char *text, void *context);
@@ -60,6 +65,8 @@ bool memory_message_intent(Db *db, const char *project, const char *conversation
  * Unknown/failed counts fail closed. progress=false may mean caught up/leased. */
 bool memory_ingest_step(Db *db, const char *scope, const char *owner, MemoryTokenCount count,
                         void *context, const char *tokenizer, bool *progress, char *why, size_t whylen);
+/* At most 64 jobs are retired/claimed per call. With claimed=false, out owns
+ * nothing; maintenance alone reports committed retirement work to the worker. */
 bool memory_outbox_claim(Db *db, const char *scope, const char *owner, MemoryIndexLease *out, bool *claimed);
 /* Acknowledgment is conditional on the current live lease, fence and scope
  * epochs/generation. A failed delivery backs off; it never advances ingestion. */

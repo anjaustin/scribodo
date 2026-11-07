@@ -24,11 +24,13 @@ def main():
         ("planner_tokenizer", "planner", ("if (strcmp(plan.scope.tokenizer, ops->tokenizer))", "if (false)")),
         ("planner_request_integrity", "planner", ("json_parse_complete(base_request, base_bytes)", "json_parse(base_request)")),
         ("planner_final_budget", "planner", ("if ((uint64_t)tokens <= prompt_budget)", "if (true)")),
+        ("planner_document_authorization", "planner", ("bool authorized = false;", "bool authorized = true;")),
+        ("planner_document_detach", "planner", ("!documents_same(&plan->documents, documents)", "false")),
         ("worker_control", "worker", None),
         ("worker_pause_controls", "worker", ("if (job->control_count) {", "if (job->control_count && !job->paused) {")),
         ("worker_idle_pacing", "worker", ("if (job->request.serial == serial && !time_due(navigation_due, now))", "if (false)")),
         ("worker_control_backoff", "worker", ("if (!time_due(control_due, now))", "if (false)")),
-        ("worker_clear_controls", "worker", ("job->selected = false;\n    job->status = (MemoryJobStatus){0};", "job->selected = false;\n    job->control_count = 0;\n    job->status = (MemoryJobStatus){0};")),
+        ("worker_clear_controls", "worker", ("job->selected = false;\n    job->request = (MemoryRequest){0};", "job->selected = false;\n    job->control_count = 0;\n    job->request = (MemoryRequest){0};")),
         ("worker_cold_tokenizer", "worker", ("if (job->tokenizer.server && llm_server_state(job->tokenizer.server, NULL, 0) != LLM_READY)", "if (false)")),
     ]
     cc = shlex.split(os.environ.get("CC", "cc"))

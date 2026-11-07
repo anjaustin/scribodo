@@ -5,6 +5,7 @@
 
 #include <stdatomic.h>
 #include "app/memory_store.h"
+#include "app/memory_documents.h"
 #include "llm/semantic.h"
 
 #define MEMORY_PLAN_BYTES (16u * 1024u)
@@ -17,6 +18,7 @@ typedef enum {
 
 typedef struct {
     MemoryScope scope;
+    MemoryDocumentSet documents; /* owned immutable refs only, never source bodies */
     MemoryUnit units[MEMORY_PLAN_UNITS];
     size_t count, text_bytes, tokens, candidates;
     bool lexical_ok, semantic_ok, limited;
@@ -34,6 +36,8 @@ typedef struct {
     bool (*hydrate)(void *, const MemoryScope *, const MemoryCandidate *, MemoryUnit *, bool *);
     MemoryTokenCount count;
     const char *tokenizer; /* expected current generation's source-count protocol */
+    const MemoryDocumentSet *documents;
+    bool (*documents_current)(void *, const MemoryScope *, const MemoryDocumentSet *);
 } MemoryRecallOps;
 
 void memory_plan_free(MemoryPlan *plan);
@@ -47,9 +51,14 @@ bool memory_plan_recall(const MemoryRecallOps *ops, const char *project, const c
 bool memory_plan_build(Db *db, SemanticClient *vectors, const char *project, const char *conversation,
                         const char *query, int64_t older_than, bool remote, MemoryTokenCount count,
                         void *count_context, const char *tokenizer, const atomic_bool *cancel, MemoryPlan *out);
+bool memory_plan_build_with_documents(Db *db, SemanticClient *vectors, const char *project, const char *conversation,
+                        const char *query, int64_t older_than, bool remote, MemoryTokenCount count,
+                        void *count_context, const char *tokenizer, const atomic_bool *cancel, MemoryPlan *out,
+                        const MemoryDocumentSet *documents);
 /* Recheck immediately before dispatch. An immutable plan describes its admission
  * point, not permanent current eligibility. No network/model work in this call. */
 bool memory_plan_admit(Db *db, const MemoryPlan *plan, bool remote);
+bool memory_plan_admit_with_documents(Db *db, const MemoryPlan *plan, const MemoryDocumentSet *documents, bool remote);
 /* Count the COMPLETE templated request, including role/generation framing.
  * Unknown counts fail closed; no estimate is accepted for memory admission. */
 typedef long (*MemoryRequestTokens)(const char *request_json, void *context);

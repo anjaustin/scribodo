@@ -51,6 +51,7 @@ struct SemanticClient;
 typedef struct {
     const char *title;
     const char *text;
+    bool unsaved; /* dirty open buffer: foreground input only, never saved memory */
 } ChatDoc;
 
 /* Reference material for a request. `docs` (several attached documents)
@@ -91,6 +92,10 @@ bool chat_busy(ChatSession *s);
  * outlive the session or must be cleared after joining its worker. */
 bool chat_memory_configure(ChatSession *s, struct StoreManager *store, struct SemanticClient *vectors,
                             const char *project_dir, const char *conversation, bool enabled);
+/* UI mutation fence, safe while preparation is running. Changes affect future
+ * admissions, not a promise to retract requests already admitted. */
+void chat_memory_attachments_changed(ChatSession *s);
+uint64_t chat_memory_attachment_version(ChatSession *s);
 /* Owned bounded as-of sources for the last prepared local reply; NULL if none. */
 char *chat_memory_sources(ChatSession *s);
 
