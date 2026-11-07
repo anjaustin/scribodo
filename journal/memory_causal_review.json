@@ -1,0 +1,61 @@
+{
+  "kind": "assistant_manual_DEV_diagnostic_review_not_quality_acceptance",
+  "parity": {
+    "run": "build/mc-l7ens7nd",
+    "comparison_sha256": "d31cb2431226b762c0fe4396d8871cf93dfd5ea5916dbf470c78e8ef413c2dbf",
+    "template_and_token_matches": 3,
+    "cases": [
+      {"index":1,"llama_state":"correct count","reference_state":"correct count","shared_prefix_tokens":34,"interpretation":"Entire greedy control continuation matches"},
+      {"index":4,"llama_state":"wrong weather task","reference_state":"wrong weather task; truncated","shared_prefix_tokens":157,"interpretation":"Independent reference reproduces task abandonment"},
+      {"index":26,"llama_state":"invents causes while claiming ambiguity","reference_state":"invents causes and plans a future resolution","shared_prefix_tokens":4,"interpretation":"Independent reference reproduces unsupported drafting/authority failure; not exact output identity"}
+    ]
+  },
+  "task_contrast": {
+    "run":"build/mb-z034xk06",
+    "events_sha256":"c9ecf77fa038ef4cad3723bdc78010257a8f44781131c44407d136d43b63c13b",
+    "minimal_records":[
+      {"state":"proposed","persona":"neutral","recall_state":"pass","recall_role":"pass","classification":"PROPOSED","classification_state":"pass","classification_format":"pass"},
+      {"state":"proposed","persona":"creative","recall_state":"pass","recall_role":"pass","classification":"PROPOSED","classification_state":"pass","classification_format":"pass","note":"Offers additional hues after correctly answering; not promoted to prior author decisions"},
+      {"state":"chosen","persona":"neutral","recall_state":"pass","recall_role":"pass","classification":"CHOSEN","classification_state":"pass","classification_format":"pass"},
+      {"state":"chosen","persona":"creative","recall_state":"pass","recall_role":"pass","classification":"PROPOSED","classification_state":"fail","classification_format":"pass","evidence":"Open recall: The author explicitly chose saffron; classification: PROPOSED"},
+      {"state":"protected","persona":"neutral","recall_state":"pass","recall_role":"fail","classification":"PENDING","classification_state":"fail","classification_format":"pass","note":"Correctly preserves both accounts, but attributes the author's prohibition to the assistant in the full response"},
+      {"state":"protected","persona":"creative","recall_state":"pass","recall_role":"pass","classification":"PENDING","classification_state":"fail","classification_format":"pass","note":"Open recall preserves ambiguity but adds unsolicited clue-development suggestions; not a clean current-task quality pass"},
+      {"state":"pending","persona":"neutral","recall_state":"pass","recall_role":"pass","classification":"PENDING","classification_state":"pass","classification_format":"pass"},
+      {"state":"pending","persona":"creative","recall_state":"fail","recall_role":"pass","classification":"PROTECTED","classification_state":"fail","classification_format":"pass","evidence":"Open recall offers Option B (hold off) despite the author's requirement to decide before the next scene"}
+    ],
+    "native_records":[
+      {"state":"protected","persona":"neutral","recall_state":"pass","recall_task":"pass","classification_state":"fail","classification_format":"fail","classification_visible_label":"PENDING","note":"Full classification contains explanation and an unexpected closing thought delimiter; its final label remains wrong"},
+      {"state":"protected","persona":"creative","recall_state":"fail","recall_task":"fail","classification_state":"uncertain","classification_format":"fail","classification_truncated":true,"note":"Recall invents fire mechanics. Classification favors PROTECTED but makes PENDING optional, drafts prose, and truncates; not a clean substantive or protocol pass"},
+      {"state":"pending","persona":"neutral","recall_state":"pass","recall_task":"pass","classification_state":"pass","classification_format":"fail","classification_visible_label":"PENDING","note":"Full recall contains a speaker misattribution before the closing thought delimiter; the final recall answer is faithful. Full classifier text is PENDING followed by closing thought delimiter and PENDING again"},
+      {"state":"pending","persona":"creative","recall_state":"fail","recall_task":"fail","classification_state":"uncertain","classification_format":"fail","note":"Recall offers new drafting options and attributes Oren's reported push as Oren's push. Classification offers both PENDING and PROTECTED rather than binding the current author instruction"}
+    ],
+    "completion":"All 24 finish except native_protected_creative_classify, which reaches 512 tokens",
+    "interpretation":"A classifier result is an output requiring label binding, not a direct observation of latent comprehension"
+  },
+  "binding_contrasts": {
+    "penalty_1_05_run":"build/mb-2hlvobbp",
+    "penalty_1_05_events_sha256":"0aa5d7e996ee4132416f8caa5e93a735fc9e562be6caf8d14355bff142c4fc21",
+    "penalty_1_0_run":"build/mb-83f16k34",
+    "penalty_1_0_events_sha256":"bd53c42ca81adc9d9ba150ae4ff34688bb4d5c10cd6899e85446617fceef901e",
+    "record_note":"Each row covers four questions at each repetition penalty. Reversed/defined/boolean answers below are byte-identical across penalties. Sentence judgment concerns underlying author state, not every role/format/task clause.",
+    "records":[
+      {"state":"proposed","persona":"neutral","expected_label":"PROPOSED","reversed":"PROPOSED","defined":"CHOSEN","boolean_expected":"NO","boolean":"NO","sentence_state_1_05":"pass","sentence_state_1_0":"pass"},
+      {"state":"proposed","persona":"creative","expected_label":"PROPOSED","reversed":"CHOSEN","defined":"CHOSEN","boolean_expected":"NO","boolean":"NO","sentence_state_1_05":"pass","sentence_state_1_0":"pass"},
+      {"state":"chosen","persona":"neutral","expected_label":"CHOSEN","reversed":"CHOSEN","defined":"CHOSEN","boolean_expected":"YES","boolean":"YES","sentence_state_1_05":"pass","sentence_state_1_0":"pass"},
+      {"state":"chosen","persona":"creative","expected_label":"CHOSEN","reversed":"CHOSEN","defined":"CHOSEN","boolean_expected":"YES","boolean":"YES","sentence_state_1_05":"pass","sentence_state_1_0":"pass"},
+      {"state":"protected","persona":"neutral","expected_label":"PROTECTED","reversed":"PENDING","defined":"PROTECTED","boolean_expected":"NO","boolean":"NO","sentence_state_1_05":"pass","sentence_state_1_0":"pass"},
+      {"state":"protected","persona":"creative","expected_label":"PROTECTED","reversed":"PENDING","defined":"PROTECTED","boolean_expected":"NO","boolean":"NO","sentence_state_1_05":"pass","sentence_state_1_0":"pass"},
+      {"state":"pending","persona":"neutral","expected_label":"PENDING","reversed":"PENDING","defined":"PENDING","boolean_expected":"YES","boolean":"YES","sentence_state_1_05":"pass","sentence_state_1_0":"pass"},
+      {"state":"pending","persona":"creative","expected_label":"PENDING","reversed":"PENDING","defined":"PROTECTED","boolean_expected":"YES","boolean":"NO","sentence_state_1_05":"pass","sentence_state_1_0":"pass","note":"At penalty 1.0, the sentence condition produces two sentences and attributes part of the assistant's suggestion to the author: underlying obligation is correct, but this is not a complete protocol/role pass"}
+    ],
+    "completion":"All 64 responses finish without truncation",
+    "conclusion":"Equivalent question forms can change the reported author state with unchanged evidence; repetition penalty is not necessary for these label/boolean errors"
+  },
+  "limits":[
+    "Manual assistant review, not independent human adjudication",
+    "Synthetic and already-used native DEV inputs only; no held-out release inference",
+    "The neutral-persona intervention also changes prompt length",
+    "Observed output consistency does not reveal a unique neural/training mechanism",
+    "No automatic classifier, semantic ledger, model replacement or production prompt change is qualified"
+  ]
+}
