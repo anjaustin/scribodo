@@ -202,14 +202,22 @@ static void lease_args(const MemoryNamespaceLease *l, DbArg a[10])
     a[8] = DB_I(l->namespace_version);
     a[9] = DB_S(l->embedding_fingerprint);
 }
-bool memory_gc_namespace_claim(Db *db, const MemoryScope *s, const char *owner,
-                               MemoryNamespaceLease *out, bool *claimed)
+bool memory_gc_namespace_claim_project(Db *db, const char *database, const char *project, const char *owner,
+                                       MemoryNamespaceLease *out, bool *claimed)
 {
     if (out) memset(out, 0, sizeof(*out));
     if (claimed) *claimed = false;
-    if (!db || !out || !claimed || !scope_valid(s) || !text(owner, 64) || db_in_transaction(db) || !db_begin(db)) return false;
-    uint64_t generation;
-    bool ok = lock_scope(db, s, &generation);
+    if (!db || !out || !claimed || !namespace_component(database, 64) || !namespace_component(project, 41) ||
+        !text(owner, 64) || db_in_transaction(db) || !db_begin(db)) return false;
+    MemoryScope authority = {0};
+    snprintf(authority.database, sizeof(authority.database), "%s", database);
+    snprintf(authority.project_id, sizeof(authority.project_id), "%s", project);
+    const MemoryScope *s = &authority;
+    DbRows project_row = {0};
+    bool ok = db_query(db, "SELECT id FROM projects WHERE id=? AND DATABASE()=? FOR UPDATE",
+                       (DbArg[]){ DB_S(project), DB_S(database) }, 2, &project_row);
+    if (ok) ok = project_row.nrows == 1;
+    db_rows_free(&project_row);
     /* A process can die after its third network request, before ack. Retire a
      * bounded expired terminal lease instead of presenting it as in flight. */
     if (ok) ok = db_run(db, "UPDATE memory_retired_namespaces SET state='failed',lease_until=NULL,"
@@ -260,6 +268,17 @@ bool memory_gc_namespace_claim(Db *db, const MemoryScope *s, const char *owner,
     }
     return ok;
 }
+bool memory_gc_namespace_claim(Db *db, const MemoryScope *s, const char *owner,
+                               MemoryNamespaceLease *out, bool *claimed)
+{
+    if (!scope_valid(s)) {
+        if (out) memset(out, 0, sizeof(*out));
+        if (claimed) *claimed = false;
+        return false;
+    }
+    return memory_gc_namespace_claim_project(db, s->database, s->project_id, owner, out, claimed);
+}
+
 bool memory_gc_namespace_ack(Db *db, const MemoryNamespaceLease *l, bool delivered)
 {
     if (!db || !lease_valid(l) || db_in_transaction(db)) return false;
@@ -284,14 +303,10 @@ bool memory_gc_namespace_prepare(Db *db, const MemoryNamespaceLease *l)
                        (DbArg[]){ DB_S(l->scope.project_id), DB_S(l->scope.database) }, 2, &r);
     if (ok) ok = r.nrows == 1;
     db_rows_free(&r);
-    /* Stabilize existing writers while adopting the floor. Scope controls take
-     * the same project lock; conversation FK locks also fence new owners. */
-    if (ok) ok = db_query(db, "SELECT id FROM conversations WHERE project_id=? FOR UPDATE",
-                         (DbArg[]){ DB_S(l->scope.project_id) }, 1, &r);
-    db_rows_free(&r);
-    if (ok) ok = db_query(db, "SELECT id FROM memory_scopes WHERE project_id=? FOR UPDATE",
-                         (DbArg[]){ DB_S(l->scope.project_id) }, 1, &r);
-    db_rows_free(&r);
+    /* Scope creation/enable/rebuild takes this same project lock before any
+     * generation change. It therefore stabilizes eligibility without fetching
+     * or locking an unbounded list of every conversation/scope in the project.
+     * Ordinary appends cannot enable a scope or lower its generation. */
     DbArg a[10];
     lease_args(l, a);
     if (ok) ok = db_query(db, "SELECT j.id FROM memory_retired_namespaces j WHERE " LIVE " AND" RETIRED

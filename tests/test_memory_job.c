@@ -68,6 +68,9 @@ bool memory_gc_namespace_claim(Db *db, const MemoryScope *scope, const char *own
 { (void)db; (void)scope; (void)owner; *lease = (MemoryNamespaceLease){0}; *claimed = false; return true; }
 bool memory_gc_namespace_ack(Db *db, const MemoryNamespaceLease *lease, bool delivered)
 { (void)db; (void)lease; (void)delivered; return true; }
+bool memory_gc_namespace_claim_project(Db *db, const char *database_name, const char *project_name,
+                                       const char *owner, MemoryNamespaceLease *lease, bool *claimed)
+{ (void)database_name; (void)project_name; return memory_gc_namespace_claim(db, NULL, owner, lease, claimed); }
 bool memory_vectors_fingerprint(SemanticClient *client, char out[65])
 { (void)client; memset(out, 'a', 64); out[64] = 0; return true; }
 bool memory_vectors_retire_namespace(SemanticClient *client, const MemoryNamespaceLease *lease, char *why, size_t size)
@@ -92,6 +95,7 @@ bool memory_brief_fail(Db *db, const MemoryBriefLease *lease, bool retryable, bo
 { (void)db; (void)lease; (void)retryable; (void)canceled; return true; }
 void memory_brief_lease_free(MemoryBriefLease *lease) { *lease = (MemoryBriefLease){0}; }
 static bool tokenizer_ready = true, embed_ready = true;
+static bool ingestion_ok = true;
 static unsigned captures, document_seeds, document_ingests, document_admissions;
 static bool capture_ok = true, document_admit_ok = true;
 static bool document_complete, document_complete_ok = true;
@@ -248,8 +252,8 @@ bool memory_ingest_step(Db *db, const char *scope, const char *owner, MemoryToke
     assert(db == &database && scope && owner && count == memory_source_tokens && context && fingerprint);
     (void)why; (void)len;
     ingests++;
-    *progress = true;
-    return true;
+    *progress = ingestion_ok;
+    return ingestion_ok;
 }
 
 bool memory_outbox_claim(Db *db, const char *scope, const char *owner, MemoryIndexLease *out, bool *claimed)
@@ -553,7 +557,11 @@ static void test_bounded_production(void)
     job.tokenizer.server = (LlmServer *)&job;
     tokenizer_ready = false;
     unsigned cold_ingests = ingests, cold_claims = claims;
-    assert(!production_step(&job, &request, &state, &status));
+    unsigned cold_gc = project_gc_calls;
+    state.next_maintenance_ms = 0;
+    project_gc_rows = 64;
+    assert(production_step(&job, &request, &state, &status));
+    assert(project_gc_calls == cold_gc + 1 && status.gc_rows >= 64);
     assert(ingests == cold_ingests && claims == cold_claims && state.failures == 0);
     tokenizer_ready = true; embed_ready = false;
     assert(production_step(&job, &request, &state, &status));
@@ -561,6 +569,13 @@ static void test_bounded_production(void)
     embed_ready = true;
     assert(production_step(&job, &request, &state, &status));
     assert(claims == cold_claims + 1 && state.failures == 0);
+    ingestion_ok = false;
+    state.next_maintenance_ms = 0;
+    project_gc_rows = 64;
+    unsigned failed_gc = project_gc_calls;
+    assert(production_step(&job, &request, &state, &status));
+    assert(project_gc_calls == failed_gc + 1 && !project_gc_rows);
+    ingestion_ok = true;
     job.tokenizer.server = NULL;
     request.action = MEMORY_JOB_DISABLE;
     unsigned prior_ingests = ingests;

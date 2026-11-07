@@ -146,6 +146,13 @@ bool memory_gc_namespace_enqueue(Db *db, const MemoryScope *scope, const char *f
     return ok; /* Queue persistence itself is exercised by the real SQL suite. */
 }
 
+bool memory_gc_namespace_claim_project(Db *db, const char *database, const char *project,
+                                       const char *owner, MemoryNamespaceLease *lease, bool *claimed)
+{
+    (void)database; (void)project;
+    return memory_gc_namespace_claim(db, NULL, owner, lease, claimed);
+}
+
 bool memory_gc_namespace_claim(Db *db, const MemoryScope *scope, const char *owner,
                                MemoryNamespaceLease *lease, bool *claimed)
 {

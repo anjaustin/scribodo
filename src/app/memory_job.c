@@ -223,18 +223,20 @@ static bool production_maintenance(MemoryJob *job, const MemoryRequest *request,
     if (status->scope.database[0]) snprintf(database, sizeof(database), "%s", status->scope.database);
     else store_database(job->manager, database, sizeof(database));
     MemoryScope maintenance_scope = {0};
-    bool progress = memory_gc_project_step(db, database, request->identity.project_id, 64, &gc, &maintenance_scope) && gc.total;
+    bool maintained = memory_gc_project_step(db, database, request->identity.project_id, 64, &gc, &maintenance_scope);
+    bool progress = maintained && gc.total;
     status->gc_rows += gc.total;
     MemoryNamespaceLease retired = {0}; bool claimed = false;
-    if (maintenance_scope.id[0] && admitted(job, request) &&
-        memory_gc_namespace_claim(db, &maintenance_scope, "memory-worker", &retired, &claimed) && claimed) {
+    if (maintained && admitted(job, request) &&
+        memory_gc_namespace_claim_project(db, database, request->identity.project_id, "memory-worker", &retired, &claimed) && claimed) {
         char why[256];
         SemanticClient *bounded = semantic_client_bounded(job->vectors, NULL, memory_budget_now_ms() + 1500);
         bool delivered = bounded && memory_vectors_retire_namespace_on_db(bounded, db, &retired, why, sizeof(why));
         semantic_client_destroy(bounded);
         if (memory_gc_namespace_ack(db, &retired, delivered) && delivered) { status->gc_namespaces++; progress = true; }
     }
-    if (busy || progress || !job->briefs_enabled || !job->generative_gate || status->documents_pending ||
+    if (busy || progress || !job->briefs_enabled || !job->generative_gate ||
+        (job->tokenizer.server && llm_server_state(job->tokenizer.server, NULL, 0) != LLM_READY) || status->documents_pending ||
         status->scope.index_pending || !admitted(job, request)) return progress;
     pthread_mutex_lock(&job->mu);
     bool current = !job->stopping && !job->paused && !job->control_count && job->request.serial == request->serial;
@@ -266,22 +268,11 @@ static bool production_maintenance(MemoryJob *job, const MemoryRequest *request,
     return progress;
 }
 
-static bool production_step(MemoryJob *job, const MemoryRequest *request,
+static bool production_work(MemoryJob *job, const MemoryRequest *request, Db *db, const char *project_id,
                             MemoryWorkerState *state, MemoryJobStatus *status)
 {
-    char project_id[64] = {0}, why[256] = {0};
-    Db *db = NULL;
-    if (!admitted(job, request)) return false;
-    if (store_mode(job->manager, request->project, project_id, sizeof(project_id), &db) != STORE_DB || !db) {
-        reason(status, "Memory paused: SQL project unavailable; no file-history fallback.");
-        return false;
-    }
-    if (strcmp(project_id, request->identity.project_id) || !admitted(job, request)) {
-        reason(status, "Memory paused: project/store identity changed; select again.");
-        return false;
-    }
-    if (!fresh_scope(job, request, db, status))
-        return production_maintenance(job, request, db, state, status, true);
+    char why[256] = {0};
+    if (!fresh_scope(job, request, db, status)) return false;
 
     if (state->scope_known && !same_generation(&state->scope, &status->scope)) {
         state->failures = 0;
@@ -409,6 +400,26 @@ static bool production_step(MemoryJob *job, const MemoryRequest *request,
     }
     if (!index_ready && !state->failures && !embedding_wait)
         reason(status, "Partial coverage: index unavailable; SQL ingestion only.");
+    return progress;
+}
+
+static bool production_step(MemoryJob *job, const MemoryRequest *request,
+                            MemoryWorkerState *state, MemoryJobStatus *status)
+{
+    char project_id[64] = {0};
+    Db *db = NULL;
+    if (!admitted(job, request)) return false;
+    if (store_mode(job->manager, request->project, project_id, sizeof(project_id), &db) != STORE_DB || !db) {
+        reason(status, "Memory paused: SQL project unavailable; no file-history fallback.");
+        return false;
+    }
+    if (strcmp(project_id, request->identity.project_id) || !admitted(job, request)) {
+        reason(status, "Memory paused: project/store identity changed; select again.");
+        return false;
+    }
+    bool progress = production_work(job, request, db, project_id, state, status);
+    /* Retired data does not depend on current consent, tokenizer readiness or
+     * successful ingestion. All authorized exits share the maintenance tick. */
     return production_maintenance(job, request, db, state, status, progress) || progress;
 }
 

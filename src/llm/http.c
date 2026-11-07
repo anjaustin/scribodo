@@ -210,10 +210,11 @@ static bool wait_ready(int fd, short events, atomic_bool *cancel, double deadlin
         int wait = remaining >= 100 ? 100 : (int)ceil(remaining);
         struct pollfd pfd = { .fd = fd, .events = events };
         int rc = poll(&pfd, 1, wait);
+        int poll_error = rc < 0 ? errno : 0;
         if (!active(cancel, deadline, err, errlen)) return false;
         if (rc > 0) return true;
-        if (rc < 0 && errno != EINTR) {
-            snprintf(err, errlen, "poll: %s", strerror(errno));
+        if (rc < 0 && poll_error != EINTR) {
+            snprintf(err, errlen, "poll: %s", strerror(poll_error));
             return false;
         }
     }

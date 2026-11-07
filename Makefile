@@ -85,6 +85,7 @@ TESTS += $(BUILD)/test_memory_saved_file
 TESTS += $(BUILD)/test_memory_document_capture
 TESTS += $(BUILD)/test_memory_document_cache $(BUILD)/test_memory_budget $(BUILD)/test_generative_gate
 TESTS += $(BUILD)/test_http_deadlines $(BUILD)/test_db_deadlines $(BUILD)/test_memory_brief_model
+TESTS += $(BUILD)/test_http_poll_errno
 
 .PHONY: all run test uitest uitest-real sanitize tsan cstest dbtest uitest-db backuptest remotetest offlinetest dependency-report clean distclean llama model llmtest
 
@@ -173,6 +174,10 @@ $(BUILD)/test_generative_gate: tests/test_generative_gate.c src/llm/generative_g
 $(BUILD)/test_http_deadlines: tests/test_http_deadlines.c src/llm/http.c src/llm/http.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -Isrc -Itests tests/test_http_deadlines.c src/llm/http.c -o $@ -lpthread
+
+$(BUILD)/test_http_poll_errno: tests/test_http_poll_errno.c src/llm/http.c src/llm/http.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Isrc -Itests tests/test_http_poll_errno.c -o $@ -lpthread
 
 $(BUILD)/test_db_deadlines: tests/test_db_deadlines.c src/app/db.c src/app/db.h | $(MARIADB_LIB)
 	@mkdir -p $(BUILD)

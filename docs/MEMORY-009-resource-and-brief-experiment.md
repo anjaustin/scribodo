@@ -136,3 +136,35 @@ Still required: successful quality evidence under a separately registered protoc
 regression/preemption, and final hosted validation. Prior fake-backend hour soaks
 are not substitutes. T2 is contingent on demonstrated T1 value; no complete MVP
 or quality-gate success is claimed here.
+
+## Post-implementation red-team remediation (2026-11-07)
+
+Three review passes covered worker lifecycle/maintenance, borrowed SQL routing,
+namespace floor/lease authority, cache invalidation, foreground admission,
+brief source revalidation, and HTTP deadline/cancellation paths. Four findings
+were remediated:
+
+| Finding | Remediation and regression |
+|---|---|
+| Enabled scopes skipped cleanup on cold-tokenizer or ingestion-failure exits | Authorized worker exits now share the independently paced maintenance step. Tests inject retired rows on both exits and require cleanup without ingestion/index progress. |
+| Retirement fetched/locked all conversation and scope IDs in a project | Use the project lock already required by scope creation/enable/rebuild, then recheck the exact job and active writers. A real SQL regression holds an unrelated author conversation lock while retirement succeeds; no unbounded ID list is hydrated. |
+| Known namespace jobs became unclaimable after the final scope disappeared | Exact project/database-authorized claims survive scope deletion. Original job IDs/generation/fingerprint remain mandatory; retirement still adopts a floor before HTTP. Regressions delete the last conversation, reject a wrong database, isolate another project, retire the job, and verify a later scope starts above the floor. Retirement transport no longer requires meaningless live-scope epochs. |
+| Deadline checking could overwrite `errno` after `poll()` | Capture the poll error immediately. A deterministic successful-clock/errno-clobber fixture verifies interrupted polls retry and genuine errors retain their identity; the reverted-behavior mutant is killed. |
+
+Validation after remediation:
+
+- `make -j8 all test dbtest`: pass; real SQL GC suite **334 checks**.
+- `make -j8 sanitize`, sanitized `dbtest`, and `make tsan`: pass.
+- `make uitest-db backuptest`: pass, including T1 mechanical Sources and
+  backup/restore acceptance.
+- Both memory mutation suites pass; compiled errno-clobber mutant is killed.
+- Clang static analysis of GC/job/store/cache, chat/planner, gate/budget/brief,
+  and HTTP modules reports no diagnostics after the fix.
+- `git diff --check`: pass. Logs are retained as
+  `build/memory-redteam-{pass3,final-*}.log`.
+
+No further correctness finding remained in these focused passes. This is not a
+proof of bug freedom, a quality-gate pass, a real-model sustained-use result, or
+a foreground latency SLA. The negative frozen DEV/held-out results above remain
+unchanged; retrieval and T1 remain default-off. The author's pre-existing sample
+edit is excluded from the remediation commits.

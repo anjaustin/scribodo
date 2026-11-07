@@ -119,7 +119,17 @@ static void namespace_jobs(void)
     CHECK(!memory_gc_namespace_prepare(db,&second));
     CHECK(!memory_gc_namespace_ack(db,&second,true));
     run("UPDATE memory_scopes SET enabled=0 WHERE id='ss'");
+    /* An unrelated conversation may be busy with an author transaction.
+     * Retirement uses the project control lock, not every conversation row. */
+    Db *busy = db_open(&config,err,sizeof(err));
+    CHECK(busy && db_begin(busy));
+    DbRows locked = {0};
+    CHECK(db_query(busy,"SELECT id FROM conversations WHERE id='sibling' FOR UPDATE",NULL,0,&locked));
+    db_rows_free(&locked);
+    run("SET SESSION innodb_lock_wait_timeout=1");
     CHECK(memory_gc_namespace_prepare(db,&second));
+    db_rollback(busy);
+    db_close(busy);
     CHECK(!db_in_transaction(db));
     CHECK(scalar("SELECT generation_floor FROM memory_namespace_floor WHERE project_id='p'")==1);
     CHECK(memory_gc_namespace_ack(db,&second,true));
@@ -515,6 +525,32 @@ static void late_creator(void)
     else unsetenv("SCRIBODO_QDRANT_PORT");
     free(saved_port);
 }
+static void orphaned_namespace_jobs(void)
+{
+    run("INSERT INTO projects(id,name,path,path_hash,created_at,updated_at) VALUES('orphan','o','/orphan','orphan',1,1)");
+    run("INSERT INTO conversations(id,project_id,title,created_at,updated_at) VALUES('orphan-c','orphan','o',1,1)");
+    MemoryScope original;
+    CHECK(memory_scope_set(db,"orphan","orphan-c",true,&original));
+    CHECK(memory_gc_namespace_enqueue(db,&original,fp,2));
+    run("DELETE FROM conversations WHERE id='orphan-c'");
+    MemoryGcStats stats;
+    MemoryScope maintained;
+    CHECK(memory_gc_project_step(db,config.database,"orphan",64,&stats,&maintained));
+    CHECK(!maintained.id[0] && !stats.total);
+    MemoryNamespaceLease lease;
+    bool claimed = true;
+    CHECK(!memory_gc_namespace_claim_project(db,"wrong","orphan","orphan-worker",&lease,&claimed) && !claimed);
+    CHECK(memory_gc_namespace_claim_project(db,config.database,"other","orphan-worker",&lease,&claimed) && !claimed);
+    CHECK(memory_gc_namespace_claim_project(db,config.database,"orphan","orphan-worker",&lease,&claimed) && claimed);
+    CHECK(!strcmp(lease.scope.id,original.id) && !strcmp(lease.scope.conversation_id,"orphan-c"));
+    CHECK(lease.scope.generation==original.generation);
+    CHECK(memory_gc_namespace_prepare(db,&lease) && !db_in_transaction(db));
+    CHECK(memory_gc_namespace_ack(db,&lease,true));
+    run("INSERT INTO conversations(id,project_id,title,created_at,updated_at) VALUES('orphan-new','orphan','new',1,1)");
+    MemoryScope fresh;
+    CHECK(memory_scope_set(db,"orphan","orphan-new",true,&fresh) && fresh.generation>original.generation);
+}
+
 int main(void)
 {
     MemoryGcStats st;
@@ -533,8 +569,9 @@ int main(void)
         const TestCase tests[]={{"bounded derived cleanup",bounded_cleanup},{"durable namespace retirement",namespace_jobs},
                                 {"floor-safe scope admission",floor_admission},
                                 {"project-wide disabled-scope maintenance",project_queue},
-                                {"project maintenance generation race",project_generation_race}};
-        result=run_tests(tests,5);
+                                 {"project maintenance generation race",project_generation_race},
+                                 {"namespace cleanup without surviving scopes",orphaned_namespace_jobs}};
+        result=run_tests(tests,6);
         const TestCase race_tests[] = {{"late creator postcheck", late_creator}};
         if (run_tests(race_tests, 1)) result = 1;
     } else fprintf(stderr,"%s\n",err);

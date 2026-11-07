@@ -1000,7 +1000,14 @@ bool memory_vectors_retire_namespace_on_db(SemanticClient *c, Db *db, const Memo
 {
     if (why && n) why[0] = '\0';
     char database[64] = "", path[400];
-    if (!c || !l || !mv_scope(&l->scope) || !mv_hex(l->embedding_fingerprint, sizeof(l->embedding_fingerprint)) ||
+    /* Retirement authority is its SQL job, not a live conversation's epochs:
+     * the originating scope may already have been deleted. */
+    if (!c || !l || !mv_identifier(l->scope.database, sizeof(l->scope.database)) ||
+        !mv_identifier(l->scope.project_id, sizeof(l->scope.project_id)) ||
+        !mv_identifier(l->scope.id, sizeof(l->scope.id)) ||
+        !mv_identifier(l->scope.conversation_id, sizeof(l->scope.conversation_id)) ||
+        !l->scope.generation || l->scope.generation > INT64_MAX ||
+        !mv_hex(l->embedding_fingerprint, sizeof(l->embedding_fingerprint)) ||
         (l->namespace_version != 1 && l->namespace_version != 2))
         return mv_fail(why, n, "Invalid retired memory namespace");
     if (!semantic_database(c, database, sizeof(database))) return mv_fail(why, n, "Retired namespace store unavailable");

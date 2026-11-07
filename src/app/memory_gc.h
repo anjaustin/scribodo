@@ -41,8 +41,12 @@ bool memory_gc_namespace_enqueue(Db *, const MemoryScope *old, const char *embed
  * attempts with backoff. Blocked shared namespaces consume no attempts. */
 bool memory_gc_namespace_claim(Db *, const MemoryScope *owner_scope, const char *owner,
                                MemoryNamespaceLease *, bool *claimed);
+/* Exact project authority works after all conversation scopes are gone. Jobs
+ * retain original identities; no namespace discovery is performed. */
+bool memory_gc_namespace_claim_project(Db *, const char *database, const char *project,
+                                       const char *owner, MemoryNamespaceLease *, bool *claimed);
 bool memory_gc_namespace_ack(Db *, const MemoryNamespaceLease *, bool delivered);
-/* Internal vector deletion guard. Locks project/scopes, verifies live lease and
+/* Internal vector deletion guard. Locks project, verifies live lease and
  * active writers, raises the monotonic floor, then COMMITS BEFORE returning.
  * No transaction/locks survive into network I/O. */
 bool memory_gc_namespace_prepare(Db *, const MemoryNamespaceLease *);
