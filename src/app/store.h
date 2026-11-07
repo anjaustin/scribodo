@@ -35,12 +35,22 @@ void store_stop(StoreManager *manager);
 bool store_online(const StoreManager *manager);
 /* The database in use ("scribodo", or a test database). */
 void store_database(StoreManager *manager, char *out, size_t outlen);
+/* Bounded configuration snapshot; clears out on failure (including truncation).
+ * deadline_ms is a positive absolute CLOCK_MONOTONIC deadline. */
+bool store_database_until(StoreManager *manager, char *out, size_t outlen,
+                          const atomic_bool *cancel, double deadline_ms);
 /* Force the manager offline. Marked projects pause; no file-history fallback. */
 void store_set_offline(StoreManager *manager, bool offline);
 
 /* This thread's connection, or NULL when offline. A connection that fails
  * mid-use is dropped and reopened on the next call. */
 Db *store_db(StoreManager *manager);
+/* Deadline-bounded first connection for optional foreground work. Reuses this
+ * thread's valid cached connection; cancellation/expiry does not take the
+ * manager offline or dispose of an already cached connection. The deadline
+ * is absolute CLOCK_MONOTONIC milliseconds. Subsequent SQL needs its own
+ * socket cancellation guard; this API only bounds connection/session setup. */
+Db *store_db_until(StoreManager *manager, const atomic_bool *cancel, double deadline_ms);
 void store_thread_done(StoreManager *manager); /* close this thread's connection */
 /* Can the database be reached? (a short, separate connection: safe on any
  * thread; the UI thread then calls store_start). */
@@ -66,6 +76,17 @@ typedef struct {
     char project_id[64];
     unsigned long long device, inode;
 } StoreProjectIdentity;
+
+/* Verify routing using an already borrowed connection owned by this thread.
+ * Never opens, replaces or closes a connection, nor takes the manager mutex.
+ * Only STORE_DB or STORE_PAUSED is returned; failures clear project_id.
+ * No active author transaction is permitted. deadline_ms == 0 allows background
+ * work; positive deadlines require the caller's SQL socket cancellation guard.
+ * The manager must outlive this call and its owning worker. */
+StoreMode store_mode_borrowed(StoreManager *manager, const char *project_dir,
+                              const StoreProjectIdentity *expected, Db *borrowed,
+                              const atomic_bool *cancel, double deadline_ms,
+                              char *project_id, size_t idlen);
 
 /* Local-only snapshot for async submission/publication checks: never opens a
  * connection or queries SQL. Uses the actual directory identity, not marker

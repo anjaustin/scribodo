@@ -47,11 +47,14 @@ typedef struct {
 
 struct StoreManager;
 struct SemanticClient;
+struct GenerativeGate;
+struct MemoryDocumentCache;
 
 typedef struct {
     const char *title;
     const char *text;
     bool unsaved; /* dirty open buffer: foreground input only, never saved memory */
+    bool truncated; /* bounded explicit snapshot; preserve a visible cutoff notice */
 } ChatDoc;
 
 /* Reference material for a request. `docs` (several attached documents)
@@ -96,6 +99,9 @@ bool chat_memory_configure(ChatSession *s, struct StoreManager *store, struct Se
  * admissions, not a promise to retract requests already admitted. */
 void chat_memory_attachments_changed(ChatSession *s);
 uint64_t chat_memory_attachment_version(ChatSession *s);
+bool chat_set_generative_gate(ChatSession *s, struct GenerativeGate *gate);
+bool chat_memory_set_document_cache(ChatSession *s, struct MemoryDocumentCache *cache);
+bool chat_memory_set_briefs_enabled(ChatSession *s, bool enabled);
 /* Owned bounded as-of sources for the last prepared local reply; NULL if none. */
 char *chat_memory_sources(ChatSession *s);
 

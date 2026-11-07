@@ -9,6 +9,7 @@
 #define SCRIBODO_DB_H
 
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -29,6 +30,11 @@ typedef struct Db Db;
 bool db_config_default(DbConfig *c, char *err, size_t errlen);
 
 Db *db_open(const DbConfig *c, char *err, size_t errlen);
+/* Connect and configure a session under one absolute CLOCK_MONOTONIC deadline
+ * in milliseconds. Invalid/expired deadlines do no network I/O. Uses numeric
+ * IP hosts (or localhost, normalized to 127.0.0.1) to avoid blocking DNS.
+ * Cancellation/expiry shuts down the socket before disposing of the handle. */
+Db *db_open_until(const DbConfig *c, const atomic_bool *cancel, double deadline_ms, char *err, size_t errlen);
 void db_close(Db *db);
 /* Apply any migrations not yet applied (each in its own transaction). */
 bool db_migrate(Db *db, char *err, size_t errlen);
@@ -42,6 +48,12 @@ void db_rollback(Db *db);
 const char *db_error(Db *db);
 /* The connection was lost (the caller should drop it and reconnect). */
 bool db_broken(Db *db);
+/* Borrowed descriptor, or -1 (including NULL). Never close it externally.
+ * A cancellation guard should immediately dup() it and own that duplicate:
+ * Connector/C may close its descriptor on error, allowing descriptor reuse.
+ * Only shutdown a descriptor for this SAME owning connection. Stop/join the
+ * guard before owner cleanup; discard the connection after cancellation. */
+int db_socket(Db *db);
 /* Inside db_begin .. commit/rollback (callers that group statements join
  * the caller's transaction instead of starting their own). */
 bool db_in_transaction(Db *db);

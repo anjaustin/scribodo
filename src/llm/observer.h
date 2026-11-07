@@ -29,6 +29,7 @@
 #include "app/records.h"
 #include "llm/server.h"
 #include "llm/semantic.h"
+#include "llm/generative_gate.h"
 
 typedef struct Observer Observer;
 
@@ -36,6 +37,11 @@ typedef struct Observer Observer;
  * UI tests. All supplied dependencies are borrowed until observer_destroy(). */
 Observer *observer_create(StoreManager *store, LlmServer *server, SemanticClient *semantic);
 void observer_destroy(Observer *o);
+/* Optional shared generation admission (NULL preserves legacy behavior).
+ * Only changes while no worker job is running; returns false otherwise.
+ * Borrowed until detached or observer_destroy() has joined the worker. Set
+ * before enabling a project; destroy the gate only after all users join. */
+bool observer_set_generative_gate(Observer *o, GenerativeGate *gate);
 
 /* Switch project ("" for none): cancels the current job and starts over
  * from that project's stored state. */

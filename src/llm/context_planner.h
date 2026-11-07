@@ -6,6 +6,7 @@
 #include <stdatomic.h>
 #include "app/memory_store.h"
 #include "app/memory_documents.h"
+#include "app/memory_brief_store.h"
 #include "llm/semantic.h"
 
 #define MEMORY_PLAN_BYTES (16u * 1024u)
@@ -20,6 +21,9 @@ typedef struct {
     MemoryScope scope;
     MemoryDocumentSet documents; /* owned immutable refs only, never source bodies */
     MemoryUnit units[MEMORY_PLAN_UNITS];
+    MemoryBrief briefs[MEMORY_BRIEF_INPUTS]; /* original inputs owned for provenance, not full-text rendering */
+    size_t brief_count;
+    char brief_model_fingerprint[65];
     size_t count, text_bytes, tokens, candidates;
     bool lexical_ok, semantic_ok, limited;
     MemoryReadiness readiness;
@@ -54,7 +58,14 @@ bool memory_plan_build(Db *db, SemanticClient *vectors, const char *project, con
 bool memory_plan_build_with_documents(Db *db, SemanticClient *vectors, const char *project, const char *conversation,
                         const char *query, int64_t older_than, bool remote, MemoryTokenCount count,
                         void *count_context, const char *tokenizer, const atomic_bool *cancel, MemoryPlan *out,
-                        const MemoryDocumentSet *documents);
+                         const MemoryDocumentSet *documents);
+/* Optional second stage after raw recall. Parent enforces env/local-only and
+ * the shared recall deadline. Counts the full rendered reference outside SQL;
+ * drops whole briefs first, never existing raw excerpts. Failure leaves the
+ * original plan intact. Call once; count/context need not outlive this call. */
+bool memory_plan_add_briefs(Db *db, MemoryPlan *plan, int64_t older_than,
+                            const char *expected_model_fingerprint,
+                            MemoryTokenCount count, void *context);
 /* Recheck immediately before dispatch. An immutable plan describes its admission
  * point, not permanent current eligibility. No network/model work in this call. */
 bool memory_plan_admit(Db *db, const MemoryPlan *plan, bool remote);

@@ -58,6 +58,16 @@ static void saved_files(void)
     digest(body, hash);
     atomic_bool cancel; atomic_init(&cancel, false);
     CHECK(memory_saved_file_matches(dir, "one.md", &identity, hash, strlen(body), false, false, &cancel));
+    MemorySavedFileVerification verification = {0};
+    CHECK(!memory_saved_file_recheck(dir, "one.md", &identity, strlen(body), &cancel, &verification));
+    CHECK(!verification.started && !verification.ready);
+    size_t budget = 1;
+    CHECK(memory_saved_file_verify_step(dir, "one.md", &identity, hash, strlen(body), &cancel, &budget, &verification));
+    CHECK(verification.started && !verification.ready && verification.offset == 1 && budget == 0);
+    budget = MEMORY_SAVED_FILE_STEP_BYTES;
+    CHECK(memory_saved_file_verify_step(dir, "one.md", &identity, hash, strlen(body), &cancel, &budget, &verification));
+    CHECK(verification.ready && verification.offset == strlen(body));
+    CHECK(memory_saved_file_recheck(dir, "one.md", &identity, strlen(body), &cancel, &verification));
     /* A same-content replacement must not inherit the opened file identity. */
     snprintf(other, sizeof(other), "%s/replacement.md", dir);
     f = fopen(other, "w"); CHECK(f != NULL); if (f) { fputs(body, f); fclose(f); }

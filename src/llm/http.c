@@ -3,6 +3,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <math.h>
 #include <poll.h>
 #include <time.h>
 #include <stdio.h>
@@ -180,28 +181,62 @@ void http_result_free(HttpResult *r)
 static double now_ms(void)
 {
     struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return INFINITY;
     return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
 }
 
-/* Send everything, but never block past `deadline` or after `cancel`: the
- * socket has a 250 ms send timeout, so a server that stops reading cannot
- * wedge the caller (red-team 003: Stop and quit used to hang). */
+static bool active(atomic_bool *cancel, double deadline, char *err, size_t errlen)
+{
+    if (cancel && atomic_load(cancel)) {
+        snprintf(err, errlen, "cancelled");
+        return false;
+    }
+    if (now_ms() >= deadline) {
+        snprintf(err, errlen, "timed out");
+        return false;
+    }
+    return true;
+}
+
+/* Every readiness wait is capped by both the deadline and cancellation slice.
+ * Check again after poll: readiness is not permission to do I/O after expiry. */
+static bool wait_ready(int fd, short events, atomic_bool *cancel, double deadline,
+                       char *err, size_t errlen)
+{
+    for (;;) {
+        if (!active(cancel, deadline, err, errlen)) return false;
+        double remaining = deadline - now_ms();
+        if (remaining <= 0) continue;
+        int wait = remaining >= 100 ? 100 : (int)ceil(remaining);
+        struct pollfd pfd = { .fd = fd, .events = events };
+        int rc = poll(&pfd, 1, wait);
+        if (!active(cancel, deadline, err, errlen)) return false;
+        if (rc > 0) return true;
+        if (rc < 0 && errno != EINTR) {
+            snprintf(err, errlen, "poll: %s", strerror(errno));
+            return false;
+        }
+    }
+}
+
+/* Socket stays nonblocking for its entire lifetime, including after poll. */
 static bool send_all(int fd, const char *p, size_t n, atomic_bool *cancel, double deadline, char *err, size_t errlen)
 {
     while (n) {
-        if (cancel && atomic_load(cancel)) {
-            snprintf(err, errlen, "cancelled");
-            return false;
-        }
-        if (now_ms() > deadline) {
-            snprintf(err, errlen, "timed out sending");
-            return false;
-        }
-        ssize_t w = send(fd, p, n, 0);
+        if (!active(cancel, deadline, err, errlen)) return false;
+        size_t take = n > 16384 ? 16384 : n;
+        ssize_t w = send(fd, p, take, 0);
         if (w < 0) {
-            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) continue;
+            if (errno == EINTR) continue;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                if (!wait_ready(fd, POLLOUT, cancel, deadline, err, errlen)) return false;
+                continue;
+            }
             snprintf(err, errlen, "send: %s", strerror(errno));
+            return false;
+        }
+        if (w == 0) {
+            snprintf(err, errlen, "send: connection closed");
             return false;
         }
         p += w;
@@ -215,26 +250,22 @@ static bool connect_bounded(int fd, const struct sockaddr *addr, socklen_t addrl
                             char *err, size_t errlen)
 {
     int fl = fcntl(fd, F_GETFL);
-    fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+    if (fl < 0 || fcntl(fd, F_SETFL, fl | O_NONBLOCK) < 0) {
+        snprintf(err, errlen, "fcntl: %s", strerror(errno));
+        return false;
+    }
+    if (!active(cancel, deadline, err, errlen)) return false;
     int rc = connect(fd, addr, addrlen);
     if (rc != 0 && errno != EINPROGRESS && errno != EAGAIN) {
         snprintf(err, errlen, "connect: %s", strerror(errno));
         return false;
     }
     while (rc != 0) {
-        if (cancel && atomic_load(cancel)) {
-            snprintf(err, errlen, "cancelled");
-            return false;
-        }
-        if (now_ms() > deadline) {
-            snprintf(err, errlen, "timed out connecting");
-            return false;
-        }
-        struct pollfd pfd = { .fd = fd, .events = POLLOUT };
-        if (poll(&pfd, 1, 100) > 0) {
+        if (!wait_ready(fd, POLLOUT, cancel, deadline, err, errlen)) return false;
+        {
             int soerr = 0;
             socklen_t sl = sizeof(soerr);
-            getsockopt(fd, SOL_SOCKET, SO_ERROR, &soerr, &sl);
+            if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &soerr, &sl) < 0) soerr = errno;
             if (soerr) {
                 snprintf(err, errlen, "connect: %s", strerror(soerr));
                 return false;
@@ -242,17 +273,15 @@ static bool connect_bounded(int fd, const struct sockaddr *addr, socklen_t addrl
             rc = 0;
         }
     }
-    fcntl(fd, F_SETFL, fl);
-    struct timeval tv = { 0, 250000 };
-    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-    return true;
+    return active(cancel, deadline, err, errlen);
 }
 
-bool http_request(const char *socket_path, const char *method, const char *path,
+static bool request(const char *socket_path, const char *method, const char *path,
                   const char *bearer, const char *body, HttpLineFn on_line, void *ctx,
-                  atomic_bool *cancel, int timeout_ms, HttpResult *res)
+                  atomic_bool *cancel, int timeout_ms, double hard_deadline, HttpResult *res)
 {
     memset(res, 0, sizeof(*res));
+    if (!active(cancel, hard_deadline, res->error, sizeof(res->error))) return false;
     /* "tcp:PORT" is 127.0.0.1:PORT (the local Qdrant); anything else is a
      * Unix socket path. There is no way to name another host. */
     bool tcp = !strncmp(socket_path, "tcp:", 4);
@@ -289,6 +318,7 @@ bool http_request(const char *socket_path, const char *method, const char *path,
         salen = sizeof(addr);
     }
     double deadline = now_ms() + (timeout_ms > 0 ? timeout_ms : 30000);
+    if (hard_deadline < deadline) deadline = hard_deadline;
     if (!connect_bounded(fd, sa, salen, cancel, deadline, res->error, sizeof(res->error))) {
         close(fd);
         return false;
@@ -317,34 +347,22 @@ bool http_request(const char *socket_path, const char *method, const char *path,
     http_decoder_init(&d, on_line, ctx);
     char buf[16384];
     bool ok = true;
+    /* Legacy timeout remains an idle timeout, restarted only by received data. */
+    double receive_deadline = now_ms() + (timeout_ms > 0 ? timeout_ms : 100);
     for (;;) {
-        if (cancel && atomic_load(cancel)) {
-            snprintf(res->error, sizeof(res->error), "cancelled");
-            ok = false;
-            break;
-        }
-        struct pollfd pfd = { .fd = fd, .events = POLLIN };
-        int wait = 100; /* poll in short slices so cancellation is prompt */
-        int waited = 0, pr = 0;
-        while ((pr = poll(&pfd, 1, wait)) == 0) {
-            waited += wait;
-            if ((cancel && atomic_load(cancel)) || waited >= timeout_ms) break;
-        }
-        if (pr == 0) {
-            snprintf(res->error, sizeof(res->error), cancel && atomic_load(cancel) ? "cancelled" : "timed out");
-            ok = false;
-            break;
-        }
-        if (pr < 0) {
-            if (errno == EINTR) continue;
-            snprintf(res->error, sizeof(res->error), "poll: %s", strerror(errno));
+        double until = receive_deadline < hard_deadline ? receive_deadline : hard_deadline;
+        if (!wait_ready(fd, POLLIN, cancel, until, res->error, sizeof(res->error))) {
             ok = false;
             break;
         }
         ssize_t r = recv(fd, buf, sizeof(buf), 0);
         if (r < 0) {
-            if (errno == EINTR) continue;
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) continue;
             snprintf(res->error, sizeof(res->error), "recv: %s", strerror(errno));
+            ok = false;
+            break;
+        }
+        if (!active(cancel, hard_deadline, res->error, sizeof(res->error))) {
             ok = false;
             break;
         }
@@ -352,24 +370,64 @@ bool http_request(const char *socket_path, const char *method, const char *path,
             http_decoder_finish(&d);
             break;
         }
-        if (!http_decoder_feed(&d, buf, (size_t)r)) {
-            snprintf(res->error, sizeof(res->error), "malformed HTTP response");
-            ok = false;
-            break;
+        receive_deadline = now_ms() + (timeout_ms > 0 ? timeout_ms : 100);
+        /* Bound decoder work between checks, including streaming callbacks. */
+        for (size_t off = 0; off < (size_t)r && !d.stopped; ) {
+            if (!active(cancel, hard_deadline, res->error, sizeof(res->error))) {
+                ok = false;
+                break;
+            }
+            size_t take = (size_t)r - off;
+            if (take > 1024) take = 1024;
+            /* A callback can consume the remaining budget. Do not deliver
+             * another line from the same receive buffer after it expires. */
+            if (on_line && isfinite(hard_deadline)) take = 1;
+            if (!http_decoder_feed(&d, buf + off, take)) {
+                snprintf(res->error, sizeof(res->error), "malformed HTTP response");
+                ok = false;
+                break;
+            }
+            off += take;
         }
-        if (d.done || d.stopped) break;
+        if (!ok || d.done || d.stopped) break;
     }
     close(fd);
     res->status = d.status;
-    if (!on_line) {
-        res->body = d.body;
-        res->len = d.body_len;
-        d.body = NULL;
+    if (ok && !active(cancel, hard_deadline, res->error, sizeof(res->error))) ok = false;
+    if (ok && !d.done && !d.stopped) {
+        snprintf(res->error, sizeof(res->error), "incomplete HTTP response");
+        ok = false;
     }
     if (ok && d.status == 0) {
         snprintf(res->error, sizeof(res->error), "no HTTP response");
         ok = false;
     }
+    if (!on_line && ok) {
+        res->body = d.body;
+        res->len = d.body_len;
+        d.body = NULL;
+    }
     http_decoder_free(&d);
     return ok;
+}
+
+bool http_request(const char *socket_path, const char *method, const char *path,
+                  const char *bearer, const char *body, HttpLineFn on_line, void *ctx,
+                  atomic_bool *cancel, int timeout_ms, HttpResult *res)
+{
+    return request(socket_path, method, path, bearer, body, on_line, ctx,
+                   cancel, timeout_ms, INFINITY, res);
+}
+
+bool http_request_until(const char *socket_path, const char *method, const char *path,
+                        const char *bearer, const char *body, HttpLineFn on_line, void *ctx,
+                        atomic_bool *cancel, int timeout_ms, double deadline_ms, HttpResult *res)
+{
+    if (!isfinite(deadline_ms) || deadline_ms <= 0) {
+        memset(res, 0, sizeof(*res));
+        snprintf(res->error, sizeof(res->error), "invalid deadline");
+        return false;
+    }
+    return request(socket_path, method, path, bearer, body, on_line, ctx,
+                   cancel, timeout_ms, deadline_ms, res);
 }

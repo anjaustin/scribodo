@@ -10,6 +10,7 @@
 
 void test_db(void)
 {
+    CHECK(db_socket(NULL) == -1);
     DbConfig c;
     char err[512] = "";
     CHECK(db_config_default(&c, err, sizeof(err)));
@@ -20,10 +21,11 @@ void test_db(void)
         fprintf(stderr, "    %s\n", err);
         return;
     }
+    CHECK(db_socket(db) >= 0);
     bool migrated = db_migrate(db, err, sizeof(err));
     if (!migrated) fprintf(stderr, "    %s\n", err);
-    CHECK(migrated && db_schema_version(db) == 11);
-    CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 11); /* idempotent */
+    CHECK(migrated && db_schema_version(db) == 13);
+    CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 13); /* idempotent */
 
     /* Author text with quotes, backslashes, SQL and Unicode goes through
      * prepared statements untouched. */
@@ -148,7 +150,7 @@ void test_migration(void)
         CHECK(db_run(db, "DELETE FROM schema_migrations WHERE version=9", NULL, 0, NULL));
         CHECK(db_migrate_upto(db, 9, err, sizeof(err)) && db_schema_version(db) == 9);
         CHECK(db_run(db, "UPDATE documents SET current_revision_id='r-b' WHERE id='d-1'", NULL, 0, NULL));
-        CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 11);
+        CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 13);
         CHECK(db_query(db, "SELECT saved_revision_id IS NULL AND current_revision_id='r-b' FROM documents WHERE id='d-1'",
                        NULL, 0, &r) && r.nrows == 1 && !strcmp(db_cell(&r, 0, 0), "1"));
         db_rows_free(&r);
@@ -156,9 +158,14 @@ void test_migration(void)
               r.nrows == 1 && !strcmp(db_cell(&r, 0, 0), "2"));
         db_rows_free(&r);
         CHECK(db_run(db, "DELETE FROM schema_migrations WHERE version>=10", NULL, 0, NULL));
-        CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 11);
-        CHECK(db_run(db, "DELETE FROM schema_migrations WHERE version=11", NULL, 0, NULL));
-        CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 11);
+        CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 13);
+        CHECK(db_run(db, "DELETE FROM schema_migrations WHERE version>=11", NULL, 0, NULL));
+        CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 13);
+        CHECK(db_run(db, "DELETE FROM schema_migrations WHERE version=12", NULL, 0, NULL));
+        CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 13);
+        CHECK(db_query(db, "SELECT COUNT(*) FROM memory_retired_namespaces", NULL, 0, &r) &&
+              r.nrows == 1 && !strcmp(db_cell(&r, 0, 0), "0"));
+        db_rows_free(&r);
         CHECK(db_query(db, "SELECT stopped FROM messages WHERE conversation_id='c-1'", NULL, 0, &r) &&
               r.nrows == 1 && !strcmp(db_cell(&r, 0, 0), "1"));
         db_rows_free(&r);

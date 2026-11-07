@@ -24,7 +24,35 @@ struct SemanticClient {
     LlmServer *embed;
     char qkey[128];
     char qport[24];
+    atomic_bool *cancel;
+    double deadline_ms;
 };
+
+SemanticClient *semantic_client_bounded(SemanticClient *client, atomic_bool *cancel, double deadline_ms)
+{
+    if (!client || !isfinite(deadline_ms) || deadline_ms <= 0) return NULL;
+    SemanticClient *copy = malloc(sizeof(*copy));
+    if (copy) { *copy = *client; copy->cancel = cancel; copy->deadline_ms = deadline_ms; }
+    return copy;
+}
+
+static bool semantic_http(SemanticClient *client, const char *socket, const char *method, const char *path,
+                           const char *key, const char *body, int timeout_ms, HttpResult *result)
+{
+    if (client->deadline_ms > 0)
+        return http_request_until(socket, method, path, key, body, NULL, NULL, client->cancel,
+                                  timeout_ms, client->deadline_ms, result);
+    return http_request(socket, method, path, key, body, NULL, NULL, NULL, timeout_ms, result);
+}
+
+static bool semantic_database(SemanticClient *client, char *out, size_t size)
+{
+    if (!client || !out || !size) return false;
+    if (client->deadline_ms > 0)
+        return store_database_until(client->store, out, size, client->cancel, client->deadline_ms);
+    store_database(client->store, out, size);
+    return out[0] != 0;
+}
 
 SemanticClient *semantic_client_create(StoreManager *store, LlmServer *embed)
 {
@@ -59,7 +87,7 @@ static bool qdrant(SemanticClient *client, const char *method, const char *path,
     char *js = body ? cJSON_PrintUnformatted(body) : NULL;
     if (body && !js) return false;
     HttpResult r;
-    bool ok = http_request(client->qport, method, path, client->qkey, js, NULL, NULL, NULL, 15000, &r) && r.status >= 200 &&
+    bool ok = semantic_http(client, client->qport, method, path, client->qkey, js, 15000, &r) && r.status >= 200 &&
               r.status < 300;
     if (!ok && getenv("SCRIBODO_SEM_DEBUG"))
         fprintf(stderr, "qdrant %s %s -> %d %s %.300s\n", method, path, r.status, r.error, r.body ? r.body : "");
@@ -195,8 +223,8 @@ bool semantic_embed(SemanticClient *client, const char *const *texts, size_t n, 
         return false;
     }
     HttpResult r = { 0 };
-    bool ok = http_request(llm_server_socket(client->embed), "POST", "/v1/embeddings", llm_server_key(client->embed), body, NULL,
-                                   NULL, NULL, 120000, &r) &&
+    bool ok = semantic_http(client, llm_server_socket(client->embed), "POST", "/v1/embeddings", llm_server_key(client->embed), body,
+                            120000, &r) &&
               r.status == 200 && r.body;
     free(body);
     cJSON *j = ok ? json_parse_complete(r.body, r.len) : NULL;
@@ -877,7 +905,7 @@ static bool mv_path(SemanticClient *c, const MemoryScope *s, const char *suffix,
 {
     char database[64] = "", fp[65];
     if (!c || !mv_scope(s) || !memory_vectors_fingerprint(c, fp)) return false;
-    store_database(c->store, database, sizeof(database));
+    if (!semantic_database(c, database, sizeof(database))) return false;
     if (strcmp(database, s->database)) return false;
     /* Admission checks the manager, but the endpoint belongs to the SQL
      * connection that produced the scope. Freeze it before any network I/O:
@@ -917,14 +945,14 @@ static bool mv_request(SemanticClient *c, const char *method, const char *path, 
     char *encoded = body ? cJSON_PrintUnformatted(body) : NULL;
     if (body && !encoded) return false;
     HttpResult r = {0};
-    bool ok = http_request(c->qport, method, path, c->qkey, encoded, NULL, NULL, NULL, 15000, &r);
+    bool ok = semantic_http(c, c->qport, method, path, c->qkey, encoded, 15000, &r);
     free(encoded);
     *status = r.status;
-    if (ok && r.status >= 200 && r.status < 300) {
+    if (ok && ((r.status >= 200 && r.status < 300) || r.status == 404)) {
         *out = r.body && r.len <= (1u << 20) ? json_parse_complete(r.body, r.len) : NULL;
         size_t budget = 8192;
         ok = cJSON_IsObject(*out) && mv_json_shape(*out, 0, &budget);
-    } else ok = ok && r.status == 404;
+    } else ok = false;
     http_result_free(&r);
     return ok;
 }
@@ -937,6 +965,25 @@ static bool mv_string(const cJSON *obj, const char *key, const char *value)
 
 static bool mv_ok(const cJSON *j) { return mv_string(j, "status", "ok"); }
 
+static bool mv_delete_namespace(SemanticClient *c, const char *path)
+{
+    cJSON *j = NULL;
+    int status = 0;
+    bool ok = mv_request(c, "DELETE", path, NULL, &status, &j);
+    if (ok && status == 404) {
+        /* A proxy's generic 404 is not proof that the exact collection is
+         * missing. Require Qdrant's collection-specific missing response. */
+        char error[480];
+        snprintf(error, sizeof(error), "Not found: Collection `%s` doesn't exist!", path + strlen("/collections/"));
+        const cJSON *result = cJSON_GetObjectItemCaseSensitive(j, "status");
+        ok = mv_string(result, "error", error);
+    } else if (ok) {
+        ok = mv_ok(j) && cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(j, "result"));
+    }
+    cJSON_Delete(j);
+    return ok;
+}
+
 static bool mv_shape(const cJSON *j)
 {
     const cJSON *result = cJSON_GetObjectItemCaseSensitive(j, "result");
@@ -947,6 +994,33 @@ static bool mv_shape(const cJSON *j)
     /* Named vectors have no top-level size/distance and are not compatible. */
     return mv_ok(j) && cJSON_IsObject(vectors) && cJSON_IsNumber(size) && size->valuedouble == SEM_DIM &&
            mv_string(vectors, "distance", "Cosine");
+}
+
+bool memory_vectors_retire_namespace_on_db(SemanticClient *c, Db *db, const MemoryNamespaceLease *l, char *why, size_t n)
+{
+    if (why && n) why[0] = '\0';
+    char database[64] = "", path[400];
+    if (!c || !l || !mv_scope(&l->scope) || !mv_hex(l->embedding_fingerprint, sizeof(l->embedding_fingerprint)) ||
+        (l->namespace_version != 1 && l->namespace_version != 2))
+        return mv_fail(why, n, "Invalid retired memory namespace");
+    if (!semantic_database(c, database, sizeof(database))) return mv_fail(why, n, "Retired namespace store unavailable");
+    if (strcmp(database, l->scope.database)) return mv_fail(why, n, "Retired namespace database changed");
+    int len = snprintf(path, sizeof(path), "/collections/%s__%s__memory_v%d__%s__%llu", l->scope.database,
+                       l->scope.project_id, l->namespace_version, l->embedding_fingerprint,
+                       (unsigned long long)l->scope.generation);
+    if (len < 1 || (size_t)len >= sizeof(path)) return mv_fail(why, n, "Invalid retired namespace path");
+    /* store_db returns this thread's connection. DATABASE() is verified again
+     * inside the guard, so switching the manager cannot redirect authorization. */
+    if (!memory_gc_namespace_prepare(db, l)) return mv_fail(why, n, "Retired namespace blocked or lease expired");
+    /* The floor is committed. No SQL transaction or lock crosses HTTP. */
+    bool ok = mv_delete_namespace(c, path);
+    return ok || mv_fail(why, n, "Retired namespace deletion failed; retry is safe");
+}
+
+bool memory_vectors_retire_namespace(SemanticClient *c, const MemoryNamespaceLease *l, char *why, size_t n)
+{
+    if (!c) return mv_fail(why, n, "Invalid memory client");
+    return memory_vectors_retire_namespace_on_db(c, store_db(c->store), l, why, n);
 }
 
 bool memory_vectors_exists(SemanticClient *c, const MemoryScope *s, bool *exists, char *why, size_t n)
@@ -966,26 +1040,51 @@ bool memory_vectors_exists(SemanticClient *c, const MemoryScope *s, bool *exists
     return ok || mv_fail(why, n, "Memory collection unavailable or incompatible");
 }
 
-bool memory_vectors_create(SemanticClient *c, const MemoryScope *s, char *why, size_t n)
+bool memory_vectors_create_on_db(SemanticClient *c, Db *db, const MemoryScope *s, char *why, size_t n)
 {
-    bool exists;
-    if (!s || !s->enabled) return mv_fail(why, n, "Memory is not enabled");
-    if (!memory_vectors_exists(c, s, &exists, why, n)) return false;
-    if (exists) return true;
     char path[400];
-    if (!mv_path(c, s, "", path)) return mv_fail(why, n, "Invalid memory scope");
+    if (!s || !s->enabled || !mv_path(c, s, "", path)) return mv_fail(why, n, "Invalid or disabled memory scope");
+    bool allowed = false, retired = false;
+    if (!memory_gc_namespace_admit(db, s, &allowed, &retired) || !allowed)
+        return mv_fail(why, n, "Memory namespace is no longer eligible");
+    char fingerprint[65];
+    if (!memory_vectors_fingerprint(c, fingerprint) || !memory_gc_namespace_enqueue(db, s, fingerprint, 2))
+        return mv_fail(why, n, "Could not persist namespace retirement intent");
+    bool exists = false;
+    bool ok = memory_vectors_exists(c, s, &exists, why, n);
+    if (!ok) return false;
+    if (exists) {
+        if (!memory_gc_namespace_admit(db, s, &allowed, &retired)) return mv_fail(why, n, "Memory namespace postcheck failed");
+        if (retired) (void)mv_delete_namespace(c, path);
+        return allowed || mv_fail(why, n, "Memory namespace retired during admission");
+    }
     cJSON *body = cJSON_CreateObject(), *j = NULL;
     cJSON *vec = cJSON_AddObjectToObject(body, "vectors");
-    bool ok = vec && cJSON_AddNumberToObject(vec, "size", SEM_DIM) && cJSON_AddStringToObject(vec, "distance", "Cosine");
+    ok = vec && cJSON_AddNumberToObject(vec, "size", SEM_DIM) && cJSON_AddStringToObject(vec, "distance", "Cosine");
     int status = 0;
     ok = ok && mv_request(c, "PUT", path, body, &status, &j) && status != 404 && mv_ok(j) &&
          cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(j, "result"));
     cJSON_Delete(body);
     cJSON_Delete(j);
+    /* A creator admitted before floor adoption may complete after DELETE.
+     * Recheck even after an unacknowledged PUT (the server may have committed
+     * it), and clean only a SQL-proven retired target using the pinned path. */
+    if (!memory_gc_namespace_admit(db, s, &allowed, &retired)) return mv_fail(why, n, "Memory namespace postcheck failed");
+    if (retired) (void)mv_delete_namespace(c, path);
+    if (!allowed) return mv_fail(why, n, "Memory namespace retired during creation");
     /* A concurrent creator is safe only after validating its exact schema. */
     bool verified = false;
     if (!ok) return mv_fail(why, n, "Memory collection creation not acknowledged");
-    return memory_vectors_exists(c, s, &verified, why, n) && verified;
+    ok = memory_vectors_exists(c, s, &verified, why, n) && verified;
+    if (!memory_gc_namespace_admit(db, s, &allowed, &retired)) return mv_fail(why, n, "Memory namespace postcheck failed");
+    if (retired) (void)mv_delete_namespace(c, path);
+    return (ok && allowed) || mv_fail(why, n, "Memory namespace unavailable after creation");
+}
+
+bool memory_vectors_create(SemanticClient *c, const MemoryScope *s, char *why, size_t n)
+{
+    if (!c) return mv_fail(why, n, "Invalid memory client");
+    return memory_vectors_create_on_db(c, store_db(c->store), s, why, n);
 }
 
 static bool mv_add_u64(cJSON *p, const char *key, uint64_t value)

@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
 
 #include "core/json.h"
 #include "llm/http.h"
@@ -18,6 +19,9 @@
 #include "llm/memory_tokens.h"
 #include "app/store.h"
 #include "app/memory_documents.h"
+#include "llm/generative_gate.h"
+#include "llm/memory_budget.h"
+#include "llm/memory_brief.h"
 
 #define CHAT_SLOT 0          /* slot 1 is reserved for the observer */
 #define SLOT_CTX_TOKENS 32768
@@ -80,6 +84,11 @@ struct ChatSession {
     StoreProjectIdentity memory_identity;
     atomic_uint_fast64_t memory_attachment_epoch;
     uint64_t request_attachment_epoch;
+    GenerativeGate *generative_gate;
+    GenerativeTicket generative_ticket;
+    MemoryDocumentCache *document_cache;
+    bool memory_briefs;
+    MemoryBudget *prepare_budget; /* worker-owned, address-stable until preparation ends */
     ChatMessageDone on_done;
     void *on_done_ctx;
 };
@@ -385,6 +394,27 @@ uint64_t chat_memory_attachment_version(ChatSession *s)
     return s ? atomic_load(&s->memory_attachment_epoch) : 0;
 }
 
+bool chat_set_generative_gate(ChatSession *s, GenerativeGate *gate)
+{
+    if (!s || chat_busy(s)) return false;
+    s->generative_gate = gate;
+    return true;
+}
+
+bool chat_memory_set_document_cache(ChatSession *s, MemoryDocumentCache *cache)
+{
+    if (!s || chat_busy(s)) return false;
+    s->document_cache = cache;
+    return true;
+}
+
+bool chat_memory_set_briefs_enabled(ChatSession *s, bool enabled)
+{
+    if (!s || chat_busy(s)) return false;
+    s->memory_briefs = enabled;
+    return true;
+}
+
 char *chat_memory_sources(ChatSession *s)
 {
     if (!s) return NULL;
@@ -465,7 +495,10 @@ char *chat_build_request_ex(const ChatMessage *msgs, size_t n, const ChatContext
     long *tok = nd ? calloc(nd, sizeof(long)) : NULL;
     bool ok = !nd || (text && title && cut && tok);
     long total = 0;
+    bool truncated = false;
     for (size_t i = 0; ok && i < nd; i++) {
+        cut[i] = docs[i].truncated;
+        truncated = truncated || cut[i];
         text[i] = llm_neutralize(docs[i].text ? docs[i].text : "");
         title[i] = llm_neutralize(docs[i].title ? docs[i].title : "untitled");
         /* A title can't fake the framing: no quotes or line breaks in it. */
@@ -483,7 +516,6 @@ char *chat_build_request_ex(const ChatMessage *msgs, size_t n, const ChatContext
     /* The titles and per-document headers count against it too. */
     for (size_t i = 0; ok && i < nd; i++) doc_budget -= count_tokens(count, cctx, title[i]) + 16;
     if (doc_budget < 0) doc_budget = 0;
-    bool truncated = false;
     if (ok && nd && total > doc_budget) {
         size_t *order = malloc(nd * sizeof(size_t));
         ok = order != NULL;
@@ -499,7 +531,7 @@ char *chat_build_request_ex(const ChatMessage *msgs, size_t n, const ChatContext
             size_t i = order[oi];
             long fair = remaining / (long)(nd - oi);
             if (tok[i] > fair) {
-                cut[i] = fit_document(text[i], fair, count, cctx);
+                cut[i] = fit_document(text[i], fair, count, cctx) || cut[i];
                 truncated = truncated || cut[i];
                 remaining -= fair;
             } else {
@@ -837,7 +869,21 @@ static void finish(ChatSession *s, bool error, const char *errmsg)
     s->finished_pending = true;
     s->version++;
     pthread_mutex_unlock(&s->mu);
+    if (s->generative_ticket.gate) generative_gate_finish(&s->generative_ticket);
     atomic_store(&s->busy, false);
+}
+
+static bool foreground_admit(ChatSession *s)
+{
+    if (!s->generative_ticket.gate) return true;
+    double start = memory_budget_now_ms();
+    const struct timespec slice = { .tv_nsec = 2000000 };
+    while (!atomic_load(&s->cancel) && start >= 0 && memory_budget_now_ms() - start < 1500) {
+        if (generative_gate_try_foreground(&s->generative_ticket)) return true;
+        nanosleep(&slice, NULL);
+    }
+    snprintf(s->build_error, sizeof(s->build_error), "Local background generation did not yield in time; nothing was sent. Retry.");
+    return false;
 }
 
 /* Build the request on the worker thread (token counting talks to the
@@ -853,8 +899,12 @@ static long server_count(const char *text, void *ctx)
     if (!js) return -1;
     HttpResult r;
     long n = -1;
-    if (http_request(llm_server_socket(s->server), "POST", "/tokenize", llm_server_key(s->server), js, NULL, NULL,
-                     &s->cancel, 30000, &r) && r.status == 200 && r.body) {
+    bool counted = s->prepare_budget
+        ? http_request_until(llm_server_socket(s->server), "POST", "/tokenize", llm_server_key(s->server), js, NULL, NULL,
+            &s->prepare_budget->stop, 30000, s->prepare_budget->deadline_ms, &r)
+        : http_request(llm_server_socket(s->server), "POST", "/tokenize", llm_server_key(s->server), js, NULL, NULL,
+            &s->cancel, 30000, &r);
+    if (counted && r.status == 200 && r.body) {
         cJSON *j = json_parse(r.body);
         cJSON *t = j ? cJSON_GetObjectItem(j, "tokens") : NULL;
         if (cJSON_IsArray(t)) n = cJSON_GetArraySize(t);
@@ -863,12 +913,6 @@ static long server_count(const char *text, void *ctx)
     http_result_free(&r);
     free(js);
     return n;
-}
-
-static long reference_count(const char *text, void *ctx)
-{
-    ChatSession *s = ctx;
-    return s->server ? server_count(text, s) : (long)strlen(text); /* explicit test backend only */
 }
 
 static bool memory_identity_current(ChatSession *s)
@@ -881,6 +925,10 @@ static bool memory_identity_current(ChatSession *s)
 
 static bool build_in_worker(ChatSession *s)
 {
+    MemoryBudget budget;
+    bool budget_started = s->memory_enabled && !s->via_remote &&
+        memory_budget_begin(&budget, &s->cancel, MEMORY_PREPARE_BUDGET_MS);
+    s->prepare_budget = budget_started ? &budget : NULL;
     pthread_mutex_lock(&s->mu);
     size_t total = s->target; /* everything before the in-progress reply */
     ChatRequestHistory history = {0};
@@ -928,6 +976,8 @@ static bool build_in_worker(ChatSession *s)
     /* This branch precedes all store/vector work: switching to remote never
      * exports local retrieval material, including through the edit path. */
     if (req && s->memory_enabled && !s->via_remote && !s->edit_passage) {
+        SemanticClient *bounded_vectors = budget_started
+            ? semantic_client_bounded(s->memory_vectors, &budget.stop, budget.deadline_ms) : NULL;
         MemoryPlan plan = {0};
         MemoryDocumentSet documents = {0};
         MemoryDocumentName attachment_names[MEMORY_DOCUMENTS_MAX] = {0};
@@ -935,12 +985,16 @@ static bool build_in_worker(ChatSession *s)
         for (size_t i = 0; i < s->nctx_docs && nattachments < MEMORY_DOCUMENTS_MAX; i++)
             if (memory_document_name_copy(s->ctx_docs[i].title, s->ctx_docs[i].unsaved, &attachment_names[nattachments]))
                 nattachments++;
-        MemoryTokenizer tokenizer = { .server = s->server, .cancel = &s->cancel, .timeout_ms = 10000 };
+        MemoryTokenizer tokenizer = { .server = s->server, .cancel = &budget.stop, .timeout_ms = MEMORY_PREPARE_BUDGET_MS,
+                                      .deadline_ms = budget.deadline_ms };
         char fingerprint[65];
-        Db *db = NULL;
+        Db *db = budget_started ? store_db_until(s->memory_store, &budget.stop, budget.deadline_ms) : NULL;
         char project_id[64];
-        bool available = memory_tokenizer_fingerprint(&tokenizer, fingerprint) && memory_identity_current(s) &&
-            store_mode(s->memory_store, s->memory_project, project_id, sizeof(project_id), &db) == STORE_DB && db &&
+        bool available = bounded_vectors && db && memory_budget_bind_db(&budget, db) &&
+            db_run(db, "SET SESSION max_statement_time=0.1", NULL, 0, NULL) &&
+            memory_tokenizer_fingerprint(&tokenizer, fingerprint) && memory_identity_current(s) &&
+            store_mode_borrowed(s->memory_store, s->memory_project, &s->memory_identity, db,
+                &budget.stop, budget.deadline_ms, project_id, sizeof(project_id)) == STORE_DB &&
             !strcmp(project_id, s->memory_identity.project_id);
         int64_t before = INT64_MAX;
         for (size_t i = 0; i < history.count; i++)
@@ -948,26 +1002,34 @@ static bool build_in_worker(ChatSession *s)
         const char *query = history.count ? history.messages[history.count - 1].content : "";
         MemoryScope scope;
         if (available && memory_scope_get(db, project_id, s->memory_conversation, &scope) && scope.enabled)
-            available = memory_documents_capture(s->memory_store, s->memory_project, &s->memory_identity,
-                attachment_names, nattachments, false, &s->cancel, &documents);
+            available = s->document_cache
+                ? memory_documents_capture_cached_on_db(s->document_cache, db, s->memory_store, s->memory_project, &s->memory_identity,
+                    attachment_names, nattachments, false, &budget.stop, budget.deadline_ms, &documents)
+                : !nattachments; /* no uncached manuscript hashing in foreground preparation */
         available = available && s->request_attachment_epoch == chat_memory_attachment_version(s) &&
-            memory_plan_build_with_documents(db, s->memory_vectors, project_id, s->memory_conversation,
-                query, before, false, reference_count, s, fingerprint, &s->cancel, &plan, &documents);
-        if (available && plan.count) {
+            memory_plan_build_with_documents(db, bounded_vectors, project_id, s->memory_conversation,
+                query, before, false, memory_reference_tokens, &tokenizer, fingerprint, &budget.stop, &plan, &documents);
+        if (available && s->memory_briefs && plan.scope.enabled) {
+            char model[65];
+            available = memory_brief_model_fingerprint(&tokenizer, model) &&
+                memory_plan_add_briefs(db, &plan, before, model, memory_reference_tokens, &tokenizer);
+        }
+        if (available && (plan.count || plan.brief_count)) {
             char *with_memory = NULL;
             MemoryDocumentSet admission_documents = {0};
             long prompt_room = (long)slot_ctx - MAX_REPLY_TOKENS - 256;
             bool admitted = prompt_room > 0 && memory_plan_apply(&plan, req, false, (size_t)prompt_room,
                 memory_request_tokens, &tokenizer, &with_memory) && memory_identity_current(s) &&
                 s->request_attachment_epoch == chat_memory_attachment_version(s) &&
-                memory_documents_capture(s->memory_store, s->memory_project, &s->memory_identity,
-                    attachment_names, nattachments, false, &s->cancel, &admission_documents) &&
+                (s->document_cache ? memory_documents_capture_cached_on_db(s->document_cache, db, s->memory_store, s->memory_project, &s->memory_identity,
+                    attachment_names, nattachments, false, &budget.stop, budget.deadline_ms, &admission_documents) : !nattachments) &&
                 memory_documents_same(&documents, &admission_documents) &&
                 memory_plan_admit_with_documents(db, &plan, &admission_documents, false) &&
-                s->request_attachment_epoch == chat_memory_attachment_version(s) && !atomic_load(&s->cancel);
+                s->request_attachment_epoch == chat_memory_attachment_version(s) && !atomic_load(&s->cancel) &&
+                !atomic_load(&budget.stop) && !memory_budget_expired(&budget);
             if (admitted) {
-                char *sources = plan.count && plan.reference ? strdup(plan.reference) : NULL;
-                if (plan.count && !sources) admitted = false;
+                char *sources = (plan.count || plan.brief_count) && plan.reference ? strdup(plan.reference) : NULL;
+                if ((plan.count || plan.brief_count) && !sources) admitted = false;
                 else {
                     pthread_mutex_lock(&s->mu);
                     free(s->msgs[s->target].memory_sources);
@@ -975,15 +1037,22 @@ static bool build_in_worker(ChatSession *s)
                     pthread_mutex_unlock(&s->mu);
                 }
             }
-            free(req); req = admitted ? with_memory : NULL;
+            bool timed_out = memory_budget_expired(&budget) && !atomic_load(&s->cancel);
+            if (admitted) { free(req); req = with_memory; }
+            else if (!timed_out) { free(req); req = NULL; }
             if (!admitted) {
                 free(with_memory);
-                snprintf(s->build_error, sizeof(s->build_error), "Memory admission changed or exact context budgeting failed; nothing was sent. Retry or narrow the request.");
-            } else snprintf(memory_notice, sizeof(memory_notice), "Local memory: %zu older excerpts; partial recall. Sources are as-of this reply, not canon.", plan.count);
+                if (timed_out) snprintf(memory_notice, sizeof(memory_notice), "Local memory budget exhausted; recent context only, no older references sent.");
+                else snprintf(s->build_error, sizeof(s->build_error), "Memory admission changed or exact context budgeting failed; nothing was sent. Retry or narrow the request.");
+            } else snprintf(memory_notice, sizeof(memory_notice), "Local memory: %zu excerpts, %zu generated T1 briefs; partial recall. Sources are as-of this reply, not canon.", plan.count, plan.brief_count);
         } else snprintf(memory_notice, sizeof(memory_notice), "%s",
             available && plan.readiness == MEMORY_DISABLED ? "Local memory disabled for this conversation; recent context only"
             : "Local memory warming, partial or unavailable: no older excerpts admitted; recent context only");
         memory_plan_free(&plan);
+        semantic_client_destroy(bounded_vectors);
+        if (budget_started) memory_budget_end(&budget);
+        budget_started = false;
+        s->prepare_budget = NULL;
         store_thread_done(s->memory_store);
     }
     if (req && use_samp) {
@@ -1010,8 +1079,8 @@ static bool build_in_worker(ChatSession *s)
     if (req && truncated)
         snprintf(s->notice, sizeof(s->notice), "%s",
                  history_limited ? "Attached document text was cut off; older conversation history was also omitted from this request"
-                 : s->nctx_docs > 1 ? "Attached documents were too long for the model; the longest were cut off for this message"
-                                    : "The document was too long for the model and was cut off for this message");
+                 : s->nctx_docs > 1 ? "Attached document text was cut off for this bounded request"
+                                    : "The document text was cut off for this bounded request");
     else if (req && history_limited)
         snprintf(s->notice, sizeof(s->notice), "Only recent conversation history was prepared; older history was omitted from this request");
     if (req && memory_notice[0]) {
@@ -1019,13 +1088,15 @@ static bool build_in_worker(ChatSession *s)
         snprintf(s->notice + used, sizeof(s->notice) - used, "%s%s", used ? ". " : "", memory_notice);
     }
     pthread_mutex_unlock(&s->mu);
+    s->prepare_budget = NULL;
+    if (budget_started) memory_budget_end(&budget);
     return req != NULL;
 }
 
 static void *fake_worker(void *arg)
 {
     ChatSession *s = arg;
-    if (!build_in_worker(s)) {
+    if (!foreground_admit(s) || !build_in_worker(s)) {
         finish(s, true, s->build_error[0] ? s->build_error : "Out of memory");
         return NULL;
     }
@@ -1066,7 +1137,7 @@ static void *fake_worker(void *arg)
 static void *server_worker(void *arg)
 {
     ChatSession *s = arg;
-    if (!build_in_worker(s)) {
+    if (!foreground_admit(s) || !build_in_worker(s)) {
         finish(s, true, atomic_load(&s->cancel) ? "" : s->build_error[0] ? s->build_error : "Could not prepare the request");
         return NULL;
     }
@@ -1166,12 +1237,19 @@ static bool send_common(ChatSession *s, const char *text, const ChatContext *ctx
     join_worker(s);
     s->via_remote = s->remote_selected;
     s->request_attachment_epoch = chat_memory_attachment_version(s);
+    atomic_store(&s->cancel, false);
+    if (!s->via_remote && s->generative_gate &&
+        !generative_gate_foreground_begin(s->generative_gate, &s->generative_ticket, &s->cancel)) {
+        snprintf(err, errlen, "Local generation is closing; nothing was sent");
+        return false;
+    }
 
     pthread_mutex_lock(&s->mu);
     size_t original_count = s->count;
     bool ok = push_message(s, CHAT_USER, text);
     if (!ok) {
         pthread_mutex_unlock(&s->mu);
+        if (s->generative_ticket.gate) generative_gate_finish(&s->generative_ticket);
         snprintf(err, errlen, "Out of memory");
         return false;
     }
@@ -1198,6 +1276,7 @@ static bool send_common(ChatSession *s, const char *text, const ChatContext *ctx
             s->ctx_docs[i].text = strdup(ctx->docs[i].text ? ctx->docs[i].text : "");
             s->ctx_docs[i].unsaved = ctx->docs[i].unsaved || !ctx->docs[i].title || !ctx->docs[i].title[0] ||
                                     strnlen(ctx->docs[i].title, 256) >= 256;
+            s->ctx_docs[i].truncated = ctx->docs[i].truncated;
             s->nctx_docs++;
             ok = s->ctx_docs[i].title && s->ctx_docs[i].text;
             size_t len = strlen(ctx->docs[i].title ? ctx->docs[i].title : "");
@@ -1258,11 +1337,11 @@ static bool send_common(ChatSession *s, const char *text, const ChatContext *ctx
     pthread_mutex_unlock(&s->mu);
     if (!ok) {
         snprintf(err, errlen, "Out of memory");
+        if (s->generative_ticket.gate) generative_gate_finish(&s->generative_ticket);
         return false;
     }
     if (err && errlen) err[0] = '\0';
 
-    atomic_store(&s->cancel, false);
     atomic_store(&s->busy, true);
     if (pthread_create(&s->worker, NULL, s->server || s->via_remote ? server_worker : fake_worker, s) != 0) {
         atomic_store(&s->busy, false);

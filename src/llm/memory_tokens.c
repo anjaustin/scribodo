@@ -43,7 +43,13 @@ bool memory_tokenizer_fingerprint(MemoryTokenizer *t, char out[65])
 
 static bool cancelled(const MemoryTokenizer *t)
 {
-    return t->cancel && atomic_load(t->cancel);
+    if (t->cancel && atomic_load(t->cancel)) return true;
+    if (t->deadline_ms > 0) {
+        struct timespec now;
+        if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return true;
+        return (double)now.tv_sec * 1000.0 + (double)now.tv_nsec / 1e6 >= t->deadline_ms;
+    }
+    return false;
 }
 
 static bool ready(MemoryTokenizer *t)
@@ -96,6 +102,7 @@ static bool call_begin(TokenCall *c, MemoryTokenizer *t)
     if (now < 0 || !ready(t)) return false;
     c->tokenizer = t;
     c->deadline = now + (t->timeout_ms > 0 ? t->timeout_ms : 10000);
+    if (t->deadline_ms > 0 && t->deadline_ms < c->deadline) c->deadline = t->deadline_ms;
     atomic_init(&c->stop, false);
     atomic_init(&c->done, false);
     return pthread_create(&c->guard, NULL, deadline_guard, c) == 0;
@@ -143,8 +150,9 @@ static cJSON *post(TokenCall *c, const char *path, const char *body)
     HttpResult r = {0};
     double remaining = c->deadline - monotonic_ms();
     int timeout = remaining > INT_MAX ? INT_MAX : remaining >= 1 ? (int)remaining : 1;
-    bool ok = http_request(llm_server_socket(server), "POST", path, llm_server_key(server), body,
-                           NULL, NULL, &c->stop, timeout, &r);
+    if (c->tokenizer->http_calls) ++*c->tokenizer->http_calls;
+    bool ok = http_request_until(llm_server_socket(server), "POST", path, llm_server_key(server), body,
+                                 NULL, NULL, &c->stop, timeout, c->deadline, &r);
     cJSON *j = NULL;
     if (ok && !call_cancelled(c) && r.status == 200 && r.body && r.len && r.len <= MAX_RESPONSE_BYTES)
         j = checked_json(r.body, r.len);
@@ -184,10 +192,10 @@ static long tokenize(TokenCall *c, const char *text, bool add_special)
     return count;
 }
 
-long memory_source_tokens(const char *source, void *ctx)
+static long text_tokens(const char *source, void *ctx, size_t limit)
 {
     MemoryTokenizer *t = ctx;
-    if (!source || strnlen(source, MEMORY_TOKENS_MAX_SOURCE_BYTES + 1u) > MEMORY_TOKENS_MAX_SOURCE_BYTES || !ready(t)) return -1;
+    if (!source || strnlen(source, limit + 1u) > limit || !ready(t)) return -1;
     char *clean = llm_neutralize(source);
     if (!clean) return -1;
     long count = -1;
@@ -198,6 +206,16 @@ long memory_source_tokens(const char *source, void *ctx)
     }
     free(clean);
     return cancelled(t) ? -1 : count;
+}
+
+long memory_source_tokens(const char *source, void *ctx)
+{
+    return text_tokens(source, ctx, MEMORY_TOKENS_MAX_SOURCE_BYTES);
+}
+
+long memory_reference_tokens(const char *source, void *ctx)
+{
+    return text_tokens(source, ctx, 16u * 1024u);
 }
 
 long memory_request_tokens(const char *complete_json, void *ctx)

@@ -18,6 +18,79 @@ static atomic_uint identity_generation = 1;
 static MemoryScope sql_scope;
 static unsigned sets, rebuilds, ingests, claims, upserts, acks, creates, exists_calls;
 static bool collection_exists, backend_ok, ack_ok, claim_work;
+static unsigned project_gc_calls;
+static size_t project_gc_rows;
+double memory_budget_now_ms(void)
+{
+    struct timespec now; clock_gettime(CLOCK_MONOTONIC, &now);
+    return (double)now.tv_sec * 1000 + (double)now.tv_nsec / 1e6;
+}
+void memory_document_cache_invalidate(MemoryDocumentCache *cache) { (void)cache; }
+MemoryDocumentCache *memory_document_cache_create(void) { return (MemoryDocumentCache *)calloc(1, 1); }
+void memory_document_cache_destroy(MemoryDocumentCache *cache) { free(cache); }
+bool memory_documents_capture_cached(MemoryDocumentCache *cache, StoreManager *store, const char *path,
+    const StoreProjectIdentity *project, const MemoryDocumentName *names, size_t count, bool remote,
+    const atomic_bool *cancel, MemoryDocumentSet *out)
+{
+    (void)cache; return memory_documents_capture(store, path, project, names, count, remote, cancel, out);
+}
+bool memory_documents_verify_step(MemoryDocumentCache *cache, StoreManager *store, const char *path,
+    const StoreProjectIdentity *project, const MemoryDocumentName *names, size_t count, bool remote,
+    const atomic_bool *cancel, bool *progress, bool *pending)
+{
+    (void)cache; (void)store; (void)path; (void)project; (void)names; (void)count; (void)remote; (void)cancel;
+    *progress = false; *pending = false; return true;
+}
+bool memory_documents_capture_cached_on_db(MemoryDocumentCache *cache, Db *db, StoreManager *store, const char *path,
+    const StoreProjectIdentity *project, const MemoryDocumentName *names, size_t count, bool remote,
+    const atomic_bool *cancel, double deadline, MemoryDocumentSet *out)
+{ (void)db; (void)deadline; return memory_documents_capture_cached(cache, store, path, project, names, count, remote, cancel, out); }
+bool memory_documents_verify_step_on_db(MemoryDocumentCache *cache, Db *db, StoreManager *store, const char *path,
+    const StoreProjectIdentity *project, const MemoryDocumentName *names, size_t count, bool remote,
+    const atomic_bool *cancel, double deadline, bool *progress, bool *pending)
+{ (void)db; (void)deadline; return memory_documents_verify_step(cache, store, path, project, names, count, remote, cancel, progress, pending); }
+bool memory_gc_step(Db *db, const MemoryScope *scope, size_t limit, MemoryGcStats *stats)
+{ (void)db; (void)scope; assert(limit <= 64); *stats = (MemoryGcStats){0}; return true; }
+bool memory_gc_project_step(Db *db, const char *database_name, const char *project_name, size_t limit,
+    MemoryGcStats *stats, MemoryScope *scope)
+{
+    (void)db; (void)database_name; (void)project_name; assert(limit <= 64);
+    project_gc_calls++;
+    *stats = (MemoryGcStats){ .total = project_gc_rows };
+    project_gc_rows = 0;
+    *scope = (MemoryScope){0}; return true;
+}
+void store_database(StoreManager *store, char *out, size_t size)
+{ (void)store; snprintf(out, size, "origin_database"); }
+bool memory_gc_namespace_enqueue(Db *db, const MemoryScope *scope, const char *fingerprint, int version)
+{ (void)db; (void)scope; (void)fingerprint; assert(version == 2); return true; }
+bool memory_gc_namespace_claim(Db *db, const MemoryScope *scope, const char *owner, MemoryNamespaceLease *lease, bool *claimed)
+{ (void)db; (void)scope; (void)owner; *lease = (MemoryNamespaceLease){0}; *claimed = false; return true; }
+bool memory_gc_namespace_ack(Db *db, const MemoryNamespaceLease *lease, bool delivered)
+{ (void)db; (void)lease; (void)delivered; return true; }
+bool memory_vectors_fingerprint(SemanticClient *client, char out[65])
+{ (void)client; memset(out, 'a', 64); out[64] = 0; return true; }
+bool memory_vectors_retire_namespace(SemanticClient *client, const MemoryNamespaceLease *lease, char *why, size_t size)
+{ (void)client; (void)lease; (void)why; (void)size; return true; }
+bool memory_vectors_retire_namespace_on_db(SemanticClient *client, Db *db, const MemoryNamespaceLease *lease, char *why, size_t size)
+{ (void)db; return memory_vectors_retire_namespace(client, lease, why, size); }
+bool memory_vectors_create_on_db(SemanticClient *client, Db *db, const MemoryScope *scope, char *why, size_t size)
+{ (void)db; return memory_vectors_create(client, scope, why, size); }
+SemanticClient *semantic_client_bounded(SemanticClient *client, atomic_bool *cancel, double deadline)
+{ (void)cancel; (void)deadline; return client; }
+void semantic_client_destroy(SemanticClient *client) { (void)client; }
+bool generative_gate_fence_valid(GenerativeGate *gate, uint64_t fence) { return gate && fence; }
+bool memory_brief_claim(Db *db, const MemoryScope *scope, const char *owner, MemoryBriefLease *out, bool *claimed)
+{ (void)db; (void)scope; (void)owner; *out = (MemoryBriefLease){0}; *claimed = false; return true; }
+bool memory_brief_generate(LlmServer *server, GenerativeGate *gate, const MemoryBriefLease *lease,
+    const atomic_bool *cancel, MemoryBriefResult *result)
+{ (void)server; (void)gate; (void)lease; (void)cancel; *result = (MemoryBriefResult){ .canceled = true }; return false; }
+bool memory_brief_publish(Db *db, const MemoryBriefLease *lease, const char *json, size_t tokens,
+    const char *model, const char *protocol, MemoryBriefAdmission admit, void *context, bool *published)
+{ (void)db; (void)lease; (void)json; (void)tokens; (void)model; (void)protocol; (void)admit; (void)context; *published = false; return true; }
+bool memory_brief_fail(Db *db, const MemoryBriefLease *lease, bool retryable, bool canceled)
+{ (void)db; (void)lease; (void)retryable; (void)canceled; return true; }
+void memory_brief_lease_free(MemoryBriefLease *lease) { *lease = (MemoryBriefLease){0}; }
 static bool tokenizer_ready = true, embed_ready = true;
 static unsigned captures, document_seeds, document_ingests, document_admissions;
 static bool capture_ok = true, document_admit_ok = true;
@@ -423,6 +496,7 @@ static void test_bounded_production(void)
     sql_scope = (MemoryScope){0};
     assert(!production_step(&job, &request, &state, &status));
     assert(!sets && !rebuilds && !ingests && !status.enabled);
+    assert(project_gc_calls > 0); /* Default-off selection still services project cleanup. */
 
     state = (MemoryWorkerState){0};
     request.action = MEMORY_JOB_ENABLE;
@@ -480,7 +554,11 @@ static void test_bounded_production(void)
     unsigned prior_ingests = ingests;
     assert(production_control(&job, &request, &status, &invalid) && !invalid);
     assert(status.active && !status.enabled);
-    assert(!production_step(&job, &request, &state, &status));
+    unsigned prior_gc = project_gc_calls;
+    state.next_maintenance_ms = 0;
+    project_gc_rows = 64;
+    assert(production_step(&job, &request, &state, &status));
+    assert(project_gc_calls == prior_gc + 1 && status.gc_rows >= 64);
     assert(!status.enabled && ingests == prior_ingests && sets == 2);
     pthread_mutex_destroy(&job.mu);
 }

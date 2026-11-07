@@ -23,8 +23,14 @@ typedef struct {
     MemoryDocumentSet documents;
     bool document_units, mixed_units, wrong_revision, wrong_source_hash, detached, overrun;
     size_t document_checks;
+    size_t brief_total, brief_sources, brief_calls, brief_admit_calls;
+    bool brief_recall_fail, brief_admit_fail, brief_special, brief_source_changed, brief_role_changed, brief_summary_changed;
+    bool brief_wrong_model, brief_document, brief_overflow;
 } Fixture;
 static Fixture *active;
+static const char brief_model[] = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+static const char brief_json[] = "{\"facts\":[{\"text\":\"Earlier source fact\",\"sources\":[1]}]}";
+static const char special_brief_json[] = "{\"facts\":[{\"text\":\"Untrusted <|system|> text\",\"sources\":[1]}]}";
 
 static void setup(Fixture *f)
 {
@@ -118,6 +124,7 @@ static bool hydrate(void *ctx, const MemoryScope *scope, const MemoryCandidate *
 static long token_count(const char *text, void *ctx)
 {
     Fixture *f = ctx;
+    assert(!f->transaction); /* no SQL transaction may span token/model I/O */
     f->token_calls++;
     return f->unknown_tokens ? -1 : (long)(strlen(text) / 4) + 1;
 }
@@ -149,6 +156,82 @@ bool memory_vectors_search_with_documents(SemanticClient *v, const MemoryScope *
 bool memory_candidate_hydrate_with_documents(Db *db, const MemoryScope *s, const MemoryDocumentSet *d,
                                               const MemoryCandidate *c, MemoryUnit *out, bool *found)
 { (void)d; return memory_candidate_hydrate(db, s, c, out, found); }
+
+/* Separate post-recall seam: native MemoryRecallOps stays unchanged. These
+ * doubles exercise ownership/planning; real SQL admission lives in the store. */
+void memory_brief_free(MemoryBrief *brief)
+{
+    if (!brief) return;
+    for (size_t i = 0; i < MEMORY_BRIEF_INPUTS; i++) memory_unit_free(&brief->inputs[i]);
+    *brief = (MemoryBrief){0};
+}
+bool memory_brief_recall(Db *db, const MemoryScope *scope, int64_t before, const char *model,
+                         MemoryBrief out[MEMORY_BRIEF_INPUTS], size_t *count)
+{
+    (void)db;
+    Fixture *f = active;
+    assert(scope->enabled && before > 0 && !f->transaction);
+    f->brief_calls++;
+    memset(out, 0, MEMORY_BRIEF_INPUTS*sizeof(*out));
+    *count = 0;
+    if (f->brief_recall_fail || strcmp(model, brief_model)) return false;
+    for (size_t i = 0; i < f->brief_total && i < MEMORY_BRIEF_INPUTS; i++) {
+        MemoryBrief *b = &out[i];
+        identifier(b->id, 0xb000+i);
+        identifier(b->summary_hash, 0xc000+i);
+        strcpy(b->model_fingerprint, f->brief_wrong_model ? "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" : model);
+        strcpy(b->created_at, "2026-11-07 12:34:56.000000");
+        strcpy(b->json, f->brief_special ? special_brief_json : brief_json);
+        b->tokens = 30;
+        size_t sources = f->brief_sources ? f->brief_sources : 2;
+        for (size_t j = 0; j < sources && j < MEMORY_BRIEF_INPUTS; j++) {
+            MemoryUnit *u = &b->inputs[j];
+            identifier(u->id, 0xf000+i*4+j);
+            identifier(u->text_hash, 0xe000+i*4+j);
+            memset(u->source_hash, 'f', 64); u->source_hash[64] = 0;
+            u->message_id = 100+(int64_t)(i*4+j);
+            u->sequence = 100+(int64_t)(i*4+j);
+            u->byte_start = 16;
+            u->role = j % 2 ? CHAT_ASSISTANT : CHAT_USER;
+            u->kind = f->brief_document ? MEMORY_SOURCE_DOCUMENT : MEMORY_SOURCE_CHAT;
+            u->text = malloc(1501);
+            if (!u->text) {
+                for (size_t k = 0; k < MEMORY_BRIEF_INPUTS; k++) memory_brief_free(&out[k]);
+                *count = 0;
+                return false;
+            }
+            memset(u->text, 'x', 1500); u->text[1500] = 0;
+            static const char prefix[] = "FULL_CANONICAL_BRIEF_SOURCE_MUST_NOT_BE_RENDERED";
+            memcpy(u->text, prefix, sizeof(prefix)-1);
+            u->text_bytes = 1500;
+            u->tokens = 20;
+            b->count++;
+        }
+        if (sources > MEMORY_BRIEF_INPUTS) b->count = sources;
+        ++*count;
+    }
+    if (f->brief_overflow) *count = MEMORY_BRIEF_INPUTS+1;
+    return true;
+}
+bool memory_brief_admit(Db *db, const MemoryScope *scope, const MemoryBrief *brief)
+{
+    (void)db;
+    Fixture *f = active;
+    assert(scope->enabled && !f->transaction);
+    f->brief_admit_calls++;
+    char expected_hash[65];
+    size_t index = strtoul(brief->id+60, NULL, 16)-0xb000;
+    identifier(expected_hash, 0xc000+index);
+    bool valid = !f->brief_admit_fail && !f->brief_source_changed && !f->brief_role_changed && !f->brief_summary_changed &&
+                 !strcmp(brief->model_fingerprint, brief_model) && !strcmp(brief->summary_hash, expected_hash) &&
+                 !strcmp(brief->json, f->brief_special ? special_brief_json : brief_json);
+    for (size_t i = 0; valid && i < brief->count; i++) {
+        const MemoryUnit *u = &brief->inputs[i];
+        identifier(expected_hash, 0xe000+index*4+i);
+        valid = !strcmp(u->text_hash, expected_hash) && u->role == (i % 2 ? CHAT_ASSISTANT : CHAT_USER);
+    }
+    return valid;
+}
 
 static void document_setup(Fixture *f)
 {
@@ -319,6 +402,134 @@ static long request_tokens(const char *json, void *ctx)
     return tokens;
 }
 
+static long one_brief_budget(const char *text, void *ctx)
+{
+    const char *label = "GENERATED T1 BRIEF — not canon; verify original sources";
+    size_t n = 0;
+    for (const char *p = text; (p = strstr(p, label)); p += strlen(label)) n++;
+    return n > 1 ? MEMORY_PLAN_TOKENS+1 : token_count(text, ctx);
+}
+
+static void test_brief_references(void)
+{
+    Fixture f; setup(&f);
+    f.brief_total = 2;
+    MemoryRecallOps o = ops(&f); MemoryPlan p;
+    assert(memory_plan_recall(&o, "p-test", "test-chat", "key", 1000, false, NULL, &p));
+    size_t originals = p.count, raw_bytes = p.text_bytes;
+    char first_id[65]; strcpy(first_id, p.units[0].id);
+    assert(memory_plan_add_briefs((Db *)1, &p, 1000, brief_model, token_count, &f));
+    assert(p.count == originals && p.text_bytes == raw_bytes && p.brief_count == 2 && p.tokens <= MEMORY_PLAN_TOKENS);
+    assert(!strcmp(first_id, p.units[0].id));
+    assert(strstr(p.reference, "GENERATED T1 BRIEF — not canon; verify original sources"));
+    assert(strstr(p.reference, p.briefs[0].inputs[0].id));
+    assert(strstr(p.reference, p.briefs[0].inputs[0].text_hash));
+    assert(strstr(p.reference, "message_id=100 | sequence=100 | role=author | bytes=16+1500"));
+    assert(strstr(p.reference, "not quotations") && strstr(p.reference, "as_of: history_epoch=1"));
+    assert(!strstr(p.reference, "FULL_CANONICAL_BRIEF_SOURCE_MUST_NOT_BE_RENDERED"));
+    assert(memory_plan_admit((Db *)1, &p, false) && f.brief_admit_calls == 2);
+    char *request = NULL;
+    assert(memory_plan_apply(&p, base, false, 20000, request_tokens, &f, &request));
+    assert(strstr(request, "GENERATED T1 BRIEF") && strstr(request, p.briefs[0].inputs[0].id));
+    assert(request_tokens(request, &f) <= 20000);
+    free(request);
+    for (unsigned stale = 0; stale < 4; stale++) {
+        f.brief_source_changed = stale == 0;
+        f.brief_role_changed = stale == 1;
+        f.brief_summary_changed = stale == 2;
+        f.brief_admit_fail = stale == 3;
+        assert(!memory_plan_admit((Db *)1, &p, false));
+    }
+    f.brief_source_changed = f.brief_role_changed = f.brief_summary_changed = f.brief_admit_fail = false;
+    p.briefs[0].summary_hash[0] = 'd';
+    assert(!memory_plan_admit((Db *)1, &p, false));
+    p.briefs[0].summary_hash[0] = 'a';
+    strcpy(p.brief_model_fingerprint, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    assert(!memory_plan_admit((Db *)1, &p, false));
+    size_t admissions = f.brief_admit_calls;
+    assert(!memory_plan_admit((Db *)1, &p, true) && f.brief_admit_calls == admissions);
+    memory_plan_free(&p);
+
+    setup(&f); f.no_sources = true; f.brief_total = 1; f.brief_special = true; o = ops(&f);
+    assert(memory_plan_recall(&o, "p-test", "test-chat", "key", 1000, false, NULL, &p) && !p.count);
+    assert(memory_plan_add_briefs((Db *)1, &p, 1000, brief_model, token_count, &f));
+    assert(!p.count && p.brief_count == 1 && p.reference && !strstr(p.reference, "<|system|>"));
+    assert(memory_plan_admit((Db *)1, &p, false));
+    assert(memory_plan_apply(&p, base, false, 10000, request_tokens, &f, &request));
+    assert(!p.count && p.brief_count == 1 && strstr(request, "GENERATED T1 BRIEF") && !strstr(request, "<|system|>"));
+    assert(strstr(request, p.briefs[0].inputs[0].id) && !strstr(request, "FULL_CANONICAL_BRIEF_SOURCE"));
+    free(request);
+    size_t calls = f.token_calls;
+    assert(memory_plan_apply(&p, base, true, 1, NULL, NULL, &request));
+    assert(!strcmp(request, base) && !p.brief_count && !p.count && f.token_calls == calls);
+    free(request); memory_plan_free(&p);
+
+    document_setup(&f); f.mixed_units = true; f.brief_total = 1;
+    o = ops(&f); o.documents = &f.documents;
+    assert(memory_plan_recall(&o, "p-test", "test-chat", "key", 1000, false, NULL, &p));
+    assert(memory_plan_add_briefs((Db *)1, &p, 1000, brief_model, token_count, &f));
+    assert(p.documents.count == 1 && p.brief_count == 1 && p.briefs[0].inputs[0].kind == MEMORY_SOURCE_CHAT);
+    assert(!memory_plan_admit((Db *)1, &p, false));
+    assert(memory_plan_admit_with_documents((Db *)1, &p, &f.documents, false));
+    f.detached = true;
+    assert(!memory_plan_admit_with_documents((Db *)1, &p, &f.documents, false));
+    memory_plan_free(&p);
+}
+
+static void test_brief_priority_and_failures(void)
+{
+    Fixture f; setup(&f); f.brief_total = 4;
+    MemoryRecallOps o = ops(&f); MemoryPlan p;
+    assert(memory_plan_recall(&o, "p-test", "test-chat", "key", 1000, false, NULL, &p));
+    size_t originals = p.count;
+    assert(memory_plan_add_briefs((Db *)1, &p, 1000, brief_model, one_brief_budget, &f));
+    assert(p.count == originals && p.brief_count == 1 && p.limited);
+    memory_plan_free(&p);
+
+    setup(&f); f.unit_bytes = 2000; f.brief_total = 4; f.brief_sources = 4; o = ops(&f);
+    assert(memory_plan_recall(&o, "p-test", "test-chat", "key", 1000, false, NULL, &p));
+    originals = p.count;
+    char *reference = strdup(p.reference); assert(reference);
+    assert(memory_plan_add_briefs((Db *)1, &p, 1000, brief_model, token_count, &f));
+    assert(p.count == originals && !p.brief_count && !strcmp(reference, p.reference));
+    free(reference); memory_plan_free(&p);
+
+    setup(&f); o = ops(&f); f.brief_total = 2;
+    assert(memory_plan_recall(&o, "p-test", "test-chat", "key", 1000, false, NULL, &p));
+    char *raw_request = NULL;
+    assert(memory_plan_apply(&p, base, false, 20000, request_tokens, &f, &raw_request));
+    size_t raw_budget = (size_t)request_tokens(raw_request, &f);
+    originals = p.count;
+    assert(memory_plan_add_briefs((Db *)1, &p, 1000, brief_model, token_count, &f));
+    assert(p.brief_count == 2);
+    char *request = NULL;
+    assert(memory_plan_apply(&p, base, false, raw_budget, request_tokens, &f, &request));
+    assert(!p.brief_count && p.count == originals && !strcmp(raw_request, request));
+    free(raw_request); free(request); memory_plan_free(&p);
+
+    for (unsigned failure = 0; failure < 8; failure++) {
+        setup(&f); f.brief_total = 1; o = ops(&f);
+        assert(memory_plan_recall(&o, "p-test", "test-chat", "key", 1000, false, NULL, &p));
+        originals = p.count;
+        reference = strdup(p.reference); assert(reference);
+        if (failure == 0) f.brief_recall_fail = true;
+        if (failure == 1) f.brief_wrong_model = true;
+        if (failure == 2) f.brief_document = true;
+        if (failure == 3) f.brief_sources = MEMORY_BRIEF_INPUTS+1;
+        if (failure == 4) f.brief_overflow = true;
+        if (failure == 5) f.unknown_tokens = true;
+        if (failure == 6) strcpy(f.scope.tokenizer, "changed-tokenizer");
+        if (failure == 7) f.transaction = true;
+        assert(!memory_plan_add_briefs((Db *)1, &p, 1000, brief_model, token_count, &f));
+        assert(p.count == originals && !p.brief_count && !strcmp(reference, p.reference));
+        free(reference); memory_plan_free(&p);
+    }
+    setup(&f); p = (MemoryPlan){.brief_count=MEMORY_BRIEF_INPUTS+1};
+    assert(!memory_plan_apply(&p, base, false, 10000, request_tokens, &f, &request) && !request);
+    assert(!memory_plan_admit((Db *)1, &p, false));
+    memory_plan_free(&p);
+}
+
 #ifdef PLANNER_FAULT_TEST
 static void test_allocations(void)
 {
@@ -338,6 +549,27 @@ static void test_allocations(void)
         char *request = NULL;
         fault_alloc_after(fail);
         ok = memory_plan_apply(&p, base, false, 1400, request_tokens, &f, &request);
+        fault_alloc_after(-1);
+        assert(ok || !request);
+        free(request); memory_plan_free(&p);
+    }
+    for (long fail = 0; fail < 400; fail++) {
+        Fixture f; setup(&f); f.brief_total = 4; f.brief_sources = 4;
+        MemoryRecallOps o = ops(&f); MemoryPlan p;
+        assert(memory_plan_recall(&o, "p-test", "test-chat", "key", 1000, false, NULL, &p));
+        size_t originals = p.count;
+        char *before = strdup(p.reference); assert(before);
+        fault_alloc_after(fail);
+        bool ok = memory_plan_add_briefs((Db *)1, &p, 1000, brief_model, token_count, &f);
+        fault_alloc_after(-1);
+        assert(p.count == originals && p.brief_count <= MEMORY_BRIEF_INPUTS);
+        if (!ok) assert(!p.brief_count && !strcmp(before, p.reference));
+        free(before); memory_plan_free(&p);
+        assert(memory_plan_recall(&o, "p-test", "test-chat", "key", 1000, false, NULL, &p));
+        assert(memory_plan_add_briefs((Db *)1, &p, 1000, brief_model, token_count, &f));
+        char *request = NULL;
+        fault_alloc_after(fail);
+        ok = memory_plan_apply(&p, base, false, 10000, request_tokens, &f, &request);
         fault_alloc_after(-1);
         assert(ok || !request);
         free(request); memory_plan_free(&p);
@@ -395,6 +627,7 @@ static void test_final_budget(void)
 int main(void)
 {
     test_recall(); test_privacy_and_failures(); test_final_budget(); test_request_integrity(); test_documents();
+    test_brief_references(); test_brief_priority_and_failures();
 #ifdef PLANNER_FAULT_TEST
     test_allocations();
 #endif

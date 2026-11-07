@@ -63,6 +63,8 @@ struct Script {
     long memory_sequence;
     int wait_memory_documents;
     long memory_documents_count;
+    int wait_memory_briefs;
+    long memory_briefs_count;
     int wait_status;    /* frames left to wait for the status to contain wait_text */
     char wait_text[256];
     int wait_observer;  /* frames left to wait for the observer to go idle */
@@ -675,6 +677,18 @@ static bool run_line(Script *s, ScriptHost *h)
         s->pc--;
         return true;
     }
+    if (!strcmp(cmd, "wait_memory_briefs") && h->memory_briefs_ready && (t.n == 2 || t.n == 3)) {
+        char *end;
+        long count = strtol(t.tok[1], &end, 10);
+        if (!t.tok[1][0] || *end || count < 1 || count > 1000) { report(s, false, "invalid brief count"); return false; }
+        long frames = 7200;
+        if (t.n == 3) {
+            frames = strtol(t.tok[2], &end, 10);
+            if (!t.tok[2][0] || *end || frames < 1 || frames > 120000) { report(s, false, "invalid brief wait"); return false; }
+        }
+        s->memory_briefs_count = count; s->wait_memory_briefs = (int)frames; s->pc--;
+        return true;
+    }
     if (!strcmp(cmd, "wait_memory_documents") && h->memory_documents_settled && (t.n == 2 || t.n == 3)) {
         char *end;
         long count = strtol(t.tok[1], &end, 10);
@@ -860,6 +874,15 @@ bool script_frame(Script *s, ScriptHost *h)
                 s->pc++;
                 new_batch(s);
                 continue;
+            }
+            return true;
+        }
+        if (s->wait_memory_briefs > 0) {
+            bool done = h->memory_briefs_ready(h->ctx, s->memory_briefs_count);
+            if (done || --s->wait_memory_briefs == 0) {
+                s->wait_memory_briefs = 0;
+                report(s, done, done ? NULL : "source-linked T1 brief did not publish");
+                s->pc++; new_batch(s); continue;
             }
             return true;
         }

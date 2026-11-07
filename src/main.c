@@ -141,7 +141,10 @@ typedef struct {
     LlmServer *embed;             /* the embedding model (semantic retrieval) */
     SemanticClient *semantic;
     MemoryJob *memory_job;
+    MemoryDocumentCache *memory_document_cache;
+    GenerativeGate *generative_gate;
     bool memory_experiment, memory_sources_open;
+    bool memory_briefs_experiment;
     char memory_bound_project[PATH_MAX], memory_bound_chat[40], memory_label[280];
     uint64_t memory_bound_generation;
     MemoryDocumentName memory_names[MEMORY_DOCUMENTS_MAX];
@@ -1781,20 +1784,48 @@ static void attach_reset(App *app)
 /* Read an attached document as the editor shows it: the open one from the
  * buffer (unsaved text included), others from disk with BOM and CRLF
  * normalised. NULL if it can't be read. */
-static char *attached_text(App *app, const char *name)
+static char *attached_text(App *app, const char *name, size_t cap, bool *cut)
 {
+    *cut = false;
     if (!listed_doc(app, name)) return NULL;
-    if (editor_path(app->editor) && !strcmp(base_name(editor_path(app->editor)), name)) return editor_text_utf8(app->editor);
+    if (editor_path(app->editor) && !strcmp(base_name(editor_path(app->editor)), name)) {
+        size_t length = editor_length(app->editor);
+        size_t keep = cap && length > cap ? cap : length;
+        char *text = editor_range_utf8(app->editor, 0, keep);
+        if (!text) return NULL;
+        *cut = keep < length;
+        if (cap && strlen(text) > cap) {
+            size_t end = cap;
+            while (end && ((unsigned char)text[end] & 0xc0) == 0x80) end--;
+            text[end] = 0;
+            *cut = true;
+        }
+        return text;
+    }
     char full[PATH_MAX + 260];
     snprintf(full, sizeof(full), "%s/%s", app->project_dir, name);
     struct stat st;
     if (stat(full, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size > (16 << 20)) return NULL;
     FILE *f = fopen(full, "rb");
     if (!f) return NULL;
-    char *buf = malloc((size_t)st.st_size + 1);
-    size_t got = buf ? fread(buf, 1, (size_t)st.st_size, f) : 0;
+    size_t wanted = (size_t)st.st_size;
+    if (cap && wanted > cap) { wanted = cap; *cut = true; }
+    char *buf = malloc(wanted + 1);
+    size_t got = buf ? fread(buf, 1, wanted, f) : 0;
+    bool read_ok = !ferror(f) && got == wanted;
     fclose(f);
-    if (!buf) return NULL;
+    if (!buf || !read_ok) { free(buf); return NULL; }
+    if (*cut) {
+        /* Drop a potentially partial final UTF-8 sequence without reading the
+         * rest of a manuscript on the UI thread. */
+        size_t start = got;
+        while (start && ((unsigned char)buf[start - 1] & 0xc0) == 0x80) start--;
+        if (start) {
+            unsigned char lead = (unsigned char)buf[start - 1];
+            size_t need = lead < 0x80 ? 1 : lead < 0xe0 ? 2 : lead < 0xf0 ? 3 : 4;
+            if (got - (start - 1) < need) got = start - 1;
+        }
+    }
     size_t r = 0, w = 0;
     if (got >= 3 && (unsigned char)buf[0] == 0xEF && (unsigned char)buf[1] == 0xBB && (unsigned char)buf[2] == 0xBF) r = 3;
     for (; r < got; r++) {
@@ -2690,14 +2721,16 @@ static void send_chat(App *app, char *text)
     size_t ncd = 0;
     char missing[300] = "";
     for (size_t i = 0; i < app->nattached; i++) {
-        texts[ncd] = attached_text(app, app->attached[i]);
+        bool cut = false;
+        size_t cap = app->memory_experiment ? (64u * 1024u) / (app->nattached ? app->nattached : 1) : 0;
+        texts[ncd] = attached_text(app, app->attached[i], cap, &cut);
         if (!texts[ncd]) {
             snprintf(missing + strlen(missing), sizeof(missing) - strlen(missing), "%s%s", missing[0] ? ", " : "", app->attached[i]);
             continue;
         }
         cdocs[ncd] = (ChatDoc){ .title = app->attached[i], .text = texts[ncd],
             .unsaved = editor_path(app->editor) && !strcmp(base_name(editor_path(app->editor)), app->attached[i]) &&
-                       editor_is_dirty(app->editor) };
+                       editor_is_dirty(app->editor), .truncated = cut };
         ncd++;
     }
     /* An edit request sends (and records) only the edited document. */
@@ -3211,6 +3244,12 @@ static bool host_memory_documents_settled(void *ctx, long count)
         status.document_sources == (size_t)count && !status.scope.index_pending &&
         !strcmp(status.scope.conversation_id, app->chat_id);
 }
+static bool host_memory_briefs_ready(void *ctx, long count)
+{
+    App *app = ctx; MemoryJobStatus status;
+    return count > 0 && app->memory_job && memory_job_status(app->memory_job, &status) && status.active && status.enabled &&
+        !status.controls_pending && status.briefs_published >= (size_t)count && !strcmp(status.scope.conversation_id, app->chat_id);
+}
 static void host_store_restart(void *ctx)
 {
     App *app = ctx;
@@ -3365,6 +3404,7 @@ static void app_destroy(App *app)
     app->recent_store = NULL;
     script_free(app->script);
     app->script = NULL;
+    generative_gate_close(app->generative_gate);
     if (app->chat) chat_cancel(app->chat);
     memory_job_destroy(app->memory_job);
     app->memory_job = NULL;
@@ -3382,6 +3422,9 @@ static void app_destroy(App *app)
     if (app->names_job_initialized) name_detection_job_destroy(&app->names_job);
     observer_destroy(app->observer); /* cancels its request before the server stops */
     chat_controller_destroy(&app->chat_controller); /* joins memory reads before dependencies below */
+    memory_document_cache_destroy(app->memory_document_cache);
+    if (!generative_gate_destroy(app->generative_gate))
+        fprintf(stderr, "scribodo: generation admission still has live borrowers during shutdown\n");
     editor_destroy(app->memory_sources_editor);
     semantic_client_destroy(app->semantic);
     app->semantic = NULL;
@@ -3528,11 +3571,23 @@ int main(int argc, char **argv)
     app.semantic = semantic_client_create(app.store, app.embed);
     const char *memory_flag = getenv("SCRIBODO_MEMORY_EXPERIMENT");
     app.memory_experiment = memory_flag && !strcmp(memory_flag, "1");
+    const char *briefs_flag = getenv("SCRIBODO_MEMORY_BRIEFS");
+    app.memory_briefs_experiment = app.memory_experiment && briefs_flag && !strcmp(briefs_flag, "1");
     if (app.memory_experiment) {
+        app.memory_document_cache = memory_document_cache_create();
+        app.generative_gate = generative_gate_create();
         app.memory_job = memory_job_create(app.store, app.semantic, app.llm);
-        if (!app.memory_job) { app_destroy(&app); return 1; }
+        if (!app.memory_job || !app.memory_document_cache || !app.generative_gate ||
+            !memory_job_set_document_cache(app.memory_job, app.memory_document_cache) ||
+            !memory_job_set_generative_gate(app.memory_job, app.generative_gate) ||
+            !memory_job_set_briefs_enabled(app.memory_job, app.memory_briefs_experiment)) { app_destroy(&app); return 1; }
     }
     ChatSession *owned_chat = chat_create(app.llm);
+    if (owned_chat) {
+        chat_memory_set_document_cache(owned_chat, app.memory_document_cache);
+        chat_set_generative_gate(owned_chat, app.generative_gate);
+        chat_memory_set_briefs_enabled(owned_chat, app.memory_briefs_experiment);
+    }
     name_detection_job_set_server(&app.names_job, app.llm);
     /* TLS secrets are never written out for a remote model's traffic. */
     unsetenv("SSLKEYLOGFILE");
@@ -3558,6 +3613,7 @@ int main(int argc, char **argv)
     app.record = record_view_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI]);
     app.prompt = prompt_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI]);
     app.observer = observer_create(app.store, app.llm, app.semantic);
+    if (app.observer) observer_set_generative_gate(app.observer, app.generative_gate);
     app.findings = findings_view_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI]);
     app.findings_version = UINT64_MAX;
     /* UI scripts start with the observer off (deterministic files); a
@@ -3612,7 +3668,8 @@ int main(int argc, char **argv)
                         host_record_text, host_observer_enable, host_observer_idle, host_findings_text,
                         host_attached_text, host_explorer_text, host_observer_status, host_history_cache_bytes, host_store_offline,
                         host_history_busy, host_history_hold, host_history_worker_busy, host_store_restart,
-                        host_memory_settled, host_memory_enabled, host_memory_sources, host_memory_documents_settled };
+                        host_memory_settled, host_memory_enabled, host_memory_sources, host_memory_documents_settled,
+                        host_memory_briefs_ready };
     if (script_path) {
         char err[256];
         app.script = script_load(script_path, getenv("SCRIBODO_SCRIPT_DIR"), getenv("SCRIBODO_SHOT_DIR"), err, sizeof(err));

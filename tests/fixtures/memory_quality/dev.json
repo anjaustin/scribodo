@@ -1,0 +1,25 @@
+{
+  "split":"dev",
+  "sources":[
+    {"id":"d01","text":"The Pine Archive keeper Renée Håk keeps 352 green notebooks."},
+    {"id":"d02","text":"En Puerto Claro, Tomás Cañón usa la llave cobre-176."},
+    {"id":"d03","text":"Earlier draft: the Acorn gate is violet."},
+    {"id":"d04","text":"Correction replacing the earlier draft: the Acorn gate is ochre, not violet."},
+    {"id":"d05","text":"The Birch voyage departed on 6 July and returned on 11 July."},
+    {"id":"d06","text":"Quizá el faro de Arena tenga un zafiro; no está establecido."}
+  ],
+  "tasks":[
+    {"id":"d01","question":"How many green notebooks does Renée Håk keep?","sources":["d01"],"answers":["352","352 green notebooks"]},
+    {"id":"d02","question":"¿Qué llave usa Tomás Cañón?","sources":["d02"],"answers":["cobre-176"]},
+    {"id":"d03","question":"What is the corrected Acorn gate color?","sources":["d03","d04"],"answers":["ochre"]},
+    {"id":"d04","question":"When did the Birch voyage return?","sources":["d05"],"answers":["11 July","July 11"]},
+    {"id":"d05","question":"¿Qué gema está establecida en el faro de Arena?","sources":["d06"],"answers":[],"abstain":true},
+    {"id":"d06","question":"What is Renée Håk's birthday?","sources":[],"answers":[],"abstain":true},
+    {"id":"d07","question":"What color are Renée Håk's notebooks?","sources":["d01"],"answers":["green"]},
+    {"id":"d08","question":"¿En qué puerto usa su llave Tomás Cañón?","sources":["d02"],"answers":["Puerto Claro"]},
+    {"id":"d09","question":"When did the Birch voyage depart?","sources":["d05"],"answers":["6 July","July 6"]},
+    {"id":"d10","question":"What kind of items does the Pine Archive keeper keep?","sources":["d01"],"answers":["green notebooks","notebooks"]},
+    {"id":"d11","question":"¿Cuál es el apellido de Tomás?","sources":["d02"],"answers":["Cañón"]},
+    {"id":"d12","question":"What is the Birch captain's middle name?","sources":[],"answers":[],"abstain":true}
+  ]
+}

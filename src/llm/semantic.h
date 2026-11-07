@@ -18,6 +18,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdatomic.h>
 
 #include "llm/server.h"
 #include "app/store.h"
@@ -32,6 +33,9 @@ typedef struct SemanticClient SemanticClient;
 /* Owns Qdrant configuration. `store` is required; the embedding server may be
  * NULL for the fake backend. Both dependencies are borrowed. */
 SemanticClient *semantic_client_create(StoreManager *store, LlmServer *embed);
+/* Owned per-request clone; never mutates the shared client's transport policy.
+ * Borrowed cancel/store/embed outlive the clone. Absolute monotonic milliseconds. */
+SemanticClient *semantic_client_bounded(SemanticClient *client, atomic_bool *cancel, double deadline_ms);
 void semantic_client_destroy(SemanticClient *client);
 /* Whether retrieval is available right now (Qdrant reachable and, for the
  * real embedder, its server ready). */

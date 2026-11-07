@@ -69,6 +69,7 @@ struct Observer {
     StoreManager *store;
     LlmServer *server;
     SemanticClient *semantic;
+    GenerativeGate *generative_gate; /* borrowed; changed only with worker idle */
     pthread_t thread;
     bool thread_started;
     pthread_mutex_t mu;
@@ -129,16 +130,54 @@ static char *dupn(const char *s, size_t n)
 
 /* ---- model backend ------------------------------------------------------------------ */
 
+static bool backend_admit(Observer *o, GenerativeTicket *ticket)
+{
+    if (atomic_load(&o->cancel)) return false;
+    if (!o->generative_gate) return true;
+    /* Never route background generation to a remote endpoint. The observer
+     * model uses only this local server, and readiness is checked pre-claim. */
+    if (o->server && llm_server_state(o->server, NULL, 0) != LLM_READY) return false;
+    if (generative_gate_try_background(o->generative_gate, ticket, &o->cancel)) return true;
+    atomic_store(&o->cancel, true); /* retry this chunk, not an empty success */
+    return false;
+}
+
+static bool backend_release(Observer *o, GenerativeTicket *ticket)
+{
+    if (!o->generative_gate) return !atomic_load(&o->cancel);
+    bool valid = generative_gate_ticket_valid(ticket);
+    generative_gate_finish(ticket);
+    if (!valid) atomic_store(&o->cancel, true);
+    return valid;
+}
+
 static char *backend_extract(Observer *o, const char *chunk, bool is_chat)
 {
+    GenerativeTicket ticket = { 0 };
+    if (!backend_admit(o, &ticket)) return NULL;
     ObserverModel model = { o->server, &o->cancel };
-    return observer_model_extract(&model, chunk, is_chat);
+    char *out = observer_model_extract(&model, chunk, is_chat);
+    if (!backend_release(o, &ticket)) {
+        free(out);
+        return NULL;
+    }
+    return out;
 }
 
 static bool backend_judge(Observer *o, const char *canon, const char *statement, char *check, size_t checklen)
 {
+    GenerativeTicket ticket = { 0 };
+    if (!backend_admit(o, &ticket)) return false;
     ObserverModel model = { o->server, &o->cancel };
-    return observer_model_judge(&model, canon, statement, check, checklen);
+    bool conflict = observer_model_judge(&model, canon, statement, check, checklen);
+    return backend_release(o, &ticket) && conflict;
+}
+
+static bool generation_current(Observer *o, uint64_t fence)
+{
+    bool ok = !atomic_load(&o->cancel) && generative_gate_fence_valid(o->generative_gate, fence);
+    if (!ok) atomic_store(&o->cancel, true);
+    return ok;
 }
 
 typedef struct {
@@ -494,6 +533,7 @@ static void plain_check(const char *check, char *out, size_t outlen)
 static bool run_job(Observer *o, const char *project, uint64_t gen, ObserverJob *j, cJSON *st, bool *io_out)
 {
     bool io_failed = false;
+    uint64_t fence = generative_gate_fence(o->generative_gate);
     char *json = backend_extract(o, j->chunk, !j->is_doc);
     if (!json) return false;
     Cand cands[16];
@@ -645,7 +685,7 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, ObserverJob 
         }
     }
 
-    bool ok = !cancelled && !atomic_load(&o->cancel);
+    bool ok = !cancelled && generation_current(o, fence);
     /* Document sources point at an immutable snapshot of the text that was
      * read (usually the save's own revision, reused). Only taken when there
      * is something to point at. */
@@ -657,7 +697,7 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, ObserverJob 
         for (size_t i = 0; i < nc; i++) snprintf(cands[i].src.revision, sizeof(cands[i].src.revision), "%s", revision);
     }
     pthread_mutex_lock(&o->mu);
-    ok = ok && gen == o->gen; /* project unchanged */
+    ok = ok && gen == o->gen && generation_current(o, fence); /* project unchanged */
     pthread_mutex_unlock(&o->mu);
     if (ok) {
         findings_fd = findings_lock(project);
@@ -689,6 +729,7 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, ObserverJob 
             }
         }
         for (size_t i = 0; !io_failed && findings_fd >= 0 && i < nc; i++) {
+            if (!generation_current(o, fence)) { ok = false; break; }
             if (!cands[i].keep) continue;
             char id[40];
             records_new_id(REC_FINDING, id, sizeof(id));
@@ -696,6 +737,7 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, ObserverJob 
                 io_failed = true;
         }
         for (size_t c = 0; !io_failed && findings_fd >= 0 && c < nconf; c++) {
+            if (!generation_current(o, fence)) { ok = false; break; }
             if (conflicts[c].cand == SIZE_MAX) continue;
             Cand *cd = &cands[conflicts[c].cand];
             FindingInfo fi = { 0 };
@@ -710,7 +752,7 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, ObserverJob 
         findings_unlock(findings_fd);
         /* Index what was read (documents as draft text, chats as chat), and
          * drop the document's points for pieces it no longer has. */
-        if (use_sem) {
+        if (ok && generation_current(o, fence) && use_sem) {
             char did[40] = "";
             if (j->is_doc) store_document_id(o->store, sem_pid, j->name, true, did, sizeof(did));
             char rev[160] = "";
@@ -736,7 +778,7 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, ObserverJob 
         }
         /* Mark the text read, unless a finding couldn't be saved: then it is
          * read again later rather than silently missing (red-team 008). */
-        if (io_failed) {
+        if (io_failed || !ok || !generation_current(o, fence)) {
         } else if (j->is_doc) {
             cJSON *docs = cJSON_GetObjectItem(st, "docs");
             cJSON *arr = cJSON_GetObjectItem(docs, j->name);
@@ -757,8 +799,9 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, ObserverJob 
         } else {
             if (!observer_job_set_chat_progress(cJSON_GetObjectItem(st, "chats"), j->name, j->msg_to, j->off_to)) io_failed = true;
         }
-        if (!io_failed && !observer_job_state_save(o->store, project, st)) io_failed = true;
-        ok = !io_failed;
+        ok = ok && !io_failed && generation_current(o, fence);
+        if (ok && !observer_job_state_save(o->store, project, st)) io_failed = true;
+        ok = ok && !io_failed && generation_current(o, fence);
     }
     for (size_t i = 0; i < nc; i++) {
         free(cands[i].desc);
@@ -925,7 +968,11 @@ static void *worker(void *arg)
             o->retry_at = now_s() + RETRY_DELAY;
             snprintf(o->status, sizeof(o->status), "%s",
                      o->server && llm_server_state(o->server, NULL, 0) != LLM_READY ? "Waiting for the model\xE2\x80\xA6"
-                                                                                   : "Couldn't read that; will retry");
+                                                                                    : "Couldn't read that; will retry");
+        } else if (o->generative_gate && gen == o->gen) {
+            /* Admission is polled on this worker, never on the UI thread.
+             * Avoid a hot retry loop while foreground intent remains queued. */
+            o->retry_at = now_s() + 0.2;
         }
         pthread_mutex_unlock(&o->mu);
     }
@@ -971,6 +1018,16 @@ void observer_destroy(Observer *o)
     pthread_cond_destroy(&o->cv);
     free(o->renames);
     free(o);
+}
+
+bool observer_set_generative_gate(Observer *o, GenerativeGate *gate)
+{
+    if (!o) return false;
+    pthread_mutex_lock(&o->mu);
+    bool idle = !o->running && !o->stop;
+    if (idle) o->generative_gate = gate;
+    pthread_mutex_unlock(&o->mu);
+    return idle;
 }
 
 void observer_set_project(Observer *o, const char *project_dir)

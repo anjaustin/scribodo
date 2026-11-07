@@ -107,17 +107,26 @@ static bool scope_change(Db *db, const char *p, const char *c, bool enabled, boo
 {
     if (out) memset(out, 0, sizeof(*out));
     if (!db || !out || !valid_text(p, 40) || !valid_text(c, 39) || db_in_transaction(db) || !db_begin(db)) return false;
-    /* Match append's conversation -> scope lock order. */
+    /* Namespace retirement takes the same project lock before checking active
+     * writers and committing its floor. No scope can enable/create beneath a
+     * concurrently adopted floor. Append's conversation -> scope order remains
+     * unchanged within this project-level maintenance/control operation. */
     DbRows r;
-    bool ok = db_query(db, "SELECT id FROM conversations WHERE project_id=? AND id=? FOR UPDATE",
+    bool ok = db_query(db, "SELECT id FROM projects WHERE id=? FOR UPDATE", (DbArg[]){ DB_S(p) }, 1, &r);
+    if (ok) {
+        ok = r.nrows == 1;
+        db_rows_free(&r);
+    }
+    ok = ok && db_query(db, "SELECT id FROM conversations WHERE project_id=? AND id=? FOR UPDATE",
                        (DbArg[]){ DB_S(p), DB_S(c) }, 2, &r);
     if (ok) {
         ok = r.nrows == 1;
         db_rows_free(&r);
     }
     ok = ok && db_run(db,
-                      "INSERT INTO memory_scopes(id,project_id,conversation_id)"
-                      " SELECT UUID(),project_id,id FROM conversations WHERE project_id=? AND id=?"
+                      "INSERT INTO memory_scopes(id,project_id,conversation_id,generation)"
+                      " SELECT UUID(),c.project_id,c.id,COALESCE(f.generation_floor,0)+1 FROM conversations c"
+                      " LEFT JOIN memory_namespace_floor f ON f.project_id=c.project_id WHERE c.project_id=? AND c.id=?"
                       " ON DUPLICATE KEY UPDATE id=memory_scopes.id",
                       (DbArg[]){ DB_S(p), DB_S(c) }, 2, NULL);
     MemoryScope old;
@@ -126,10 +135,15 @@ static bool scope_change(Db *db, const char *p, const char *c, bool enabled, boo
      * acknowledge the command without blocking later consent controls. */
     if (ok && (rebuild ? old.enabled : old.enabled != enabled)) {
         ok = db_run(db, "UPDATE memory_scopes SET enabled=?,policy_epoch=policy_epoch+1,"
-                        " history_epoch=history_epoch+1,generation=generation+1,cursor_seq=-1,byte_offset=0,"
+                         " history_epoch=history_epoch+1,generation=GREATEST(generation+1,"
+                         " COALESCE((SELECT generation_floor FROM memory_namespace_floor WHERE project_id=?),0)+1),"
+                         " cursor_seq=-1,byte_offset=0,"
                         " lease_until=NULL,fence=fence+1,attempts=0,retry_after=NULL,tokenizer=NULL,"
                         " pending_seq=(SELECT COALESCE(MAX(seq),-1) FROM messages WHERE conversation_id=?) WHERE id=?",
-                    (DbArg[]){ DB_I(enabled), DB_S(c), DB_S(old.id) }, 3, NULL);
+                    (DbArg[]){ DB_I(enabled), DB_S(p), DB_S(c), DB_S(old.id) }, 4, NULL);
+        ok = ok && db_run(db, "INSERT INTO memory_gc_scopes(scope_id,project_id,conversation_id) VALUES(?,?,?)"
+                              " ON DUPLICATE KEY UPDATE scope_id=scope_id",
+                          (DbArg[]){ DB_S(old.id), DB_S(p), DB_S(c) }, 3, NULL);
     }
     ok = ok && memory_scope_get(db, p, c, out);
     if (ok) {

@@ -4,6 +4,7 @@
 #include <CommonCrypto/CommonDigest.h>
 #include <errno.h>
 #include <limits.h>
+#include <math.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -13,6 +14,7 @@
 #include <fcntl.h>
 #include <sys/file.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -170,10 +172,65 @@ void store_set_offline(StoreManager *manager, bool offline)
     pthread_mutex_unlock(&manager->mutex);
 }
 
-Db *store_db(StoreManager *manager)
+static bool store_budget_active(const atomic_bool *cancel, double deadline)
+{
+    if (cancel && atomic_load(cancel)) return false;
+    if (!isfinite(deadline) || deadline <= 0) return false;
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return false;
+    return (double)ts.tv_sec * 1000 + (double)ts.tv_nsec / 1e6 < deadline;
+}
+
+static bool store_connection_lock(StoreManager *manager, const atomic_bool *cancel, double deadline, bool bounded)
+{
+    if (!bounded) return pthread_mutex_lock(&manager->mutex) == 0;
+    while (store_budget_active(cancel, deadline)) {
+        int rc = pthread_mutex_trylock(&manager->mutex);
+        if (rc == 0) {
+            if (store_budget_active(cancel, deadline)) return true;
+            pthread_mutex_unlock(&manager->mutex);
+            return false;
+        }
+        if (rc != EBUSY) return false;
+        /* Keep lifecycle mutex contention cancellable too. */
+        struct timespec ts;
+        if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return false;
+        double remaining = deadline - ((double)ts.tv_sec * 1000 + (double)ts.tv_nsec / 1e6);
+        if (remaining <= 0) break;
+        double slice = remaining < 20 ? remaining : 20;
+        struct timespec pause = { .tv_sec = 0, .tv_nsec = (long)(slice * 1e6) };
+        nanosleep(&pause, NULL);
+    }
+    return false;
+}
+
+static void store_connection_close(Db *db, bool bounded)
+{
+    if (bounded) {
+        int fd = db_socket(db);
+        if (fd >= 0) shutdown(fd, SHUT_RDWR);
+    }
+    db_close(db);
+}
+
+bool store_database_until(StoreManager *manager, char *out, size_t outlen,
+                          const atomic_bool *cancel, double deadline_ms)
+{
+    if (out && outlen) out[0] = '\0';
+    if (!manager || !out || !outlen || !store_connection_lock(manager, cancel, deadline_ms, true)) return false;
+    char database[sizeof(manager->cfg.database)];
+    snprintf(database, sizeof(database), "%s", manager->cfg.database[0] ? manager->cfg.database : "scribodo");
+    pthread_mutex_unlock(&manager->mutex);
+    if (!store_budget_active(cancel, deadline_ms) || strlen(database) >= outlen) return false;
+    snprintf(out, outlen, "%s", database);
+    if (!store_budget_active(cancel, deadline_ms)) { out[0] = '\0'; return false; }
+    return true;
+}
+
+static Db *store_db_impl(StoreManager *manager, const atomic_bool *cancel, double deadline, bool bounded)
 {
     if (!manager) return NULL;
-    pthread_mutex_lock(&manager->mutex);
+    if (!store_connection_lock(manager, cancel, deadline, bounded)) return NULL;
     if (!atomic_load(&manager->online) || atomic_load(&manager->forced_offline)) {
         pthread_mutex_unlock(&manager->mutex);
         return NULL;
@@ -192,7 +249,7 @@ Db *store_db(StoreManager *manager)
      * mutex: a worker's network wait must not stall UI lifecycle calls. The
      * owner must join borrowed workers before destroying the manager. */
     if (context->generation != generation) {
-        if (context->db) db_close(context->db);
+        if (context->db) store_connection_close(context->db, bounded);
         context->db = NULL;
         context->generation = generation;
         context->verify.checked = 0;
@@ -202,29 +259,54 @@ Db *store_db(StoreManager *manager)
      * the paused state) instead of failing every call while looking
      * online (red-team 008). */
     if (context->db && db_broken(context->db)) {
-        db_close(context->db);
+        store_connection_close(context->db, bounded);
         context->db = NULL;
     }
+    bool opened_here = false;
     if (!context->db) {
         char err[256];
-        Db *opened = db_open(&config, err, sizeof(err));
-        pthread_mutex_lock(&manager->mutex);
+        Db *opened = bounded ? db_open_until(&config, cancel, deadline, err, sizeof(err)) : db_open(&config, err, sizeof(err));
+        if (!store_connection_lock(manager, cancel, deadline, bounded)) {
+            if (opened) store_connection_close(opened, bounded);
+            return NULL;
+        }
         /* Every configuration/lifecycle change advances the generation. A
          * stale success must not escape into TLS, and a stale failure must
          * not take a newer store offline (even after an offline/on roundtrip). */
         bool current = generation == atomic_load(&manager->generation) &&
                        atomic_load(&manager->online) && !atomic_load(&manager->forced_offline);
-        if (current) {
+        bool within_budget = !bounded || store_budget_active(cancel, deadline);
+        if (current && within_budget) {
             context->db = opened;
+            opened_here = opened != NULL;
             if (!opened) atomic_store(&manager->online, false);
         }
         pthread_mutex_unlock(&manager->mutex);
-        if (!current) {
-            if (opened) db_close(opened);
+        if (!current || !within_budget) {
+            if (opened) store_connection_close(opened, bounded);
             return NULL;
         }
     }
+    if (bounded && !store_budget_active(cancel, deadline)) {
+        /* Only dispose of a connection created by this call. A cached, valid
+         * connection remains the thread owner's responsibility on expiry. */
+        if (opened_here) {
+            store_connection_close(context->db, true);
+            context->db = NULL;
+        }
+        return NULL;
+    }
     return context->db;
+}
+
+Db *store_db(StoreManager *manager)
+{
+    return store_db_impl(manager, NULL, 0, false);
+}
+
+Db *store_db_until(StoreManager *manager, const atomic_bool *cancel, double deadline_ms)
+{
+    return store_db_impl(manager, cancel, deadline_ms, true);
 }
 
 bool store_probe(StoreManager *manager)
@@ -392,8 +474,35 @@ double store_write_time(StoreManager *manager)
 
 enum { VERDICT_OK = 0 };
 
-static int verify(StoreManager *manager, Db *d, const char *project_dir, const Marker *m)
+typedef struct {
+    StoreManager *manager;
+    const char *project_dir;
+    const StoreProjectIdentity *expected;
+    Db *borrowed;
+    const atomic_bool *cancel;
+    double deadline;
+} BorrowedScope;
+
+static bool borrowed_active(const BorrowedScope *scope)
 {
+    if (scope->cancel && atomic_load(scope->cancel)) return false;
+    if (scope->deadline != 0 && !store_budget_active(scope->cancel, scope->deadline)) return false;
+    StoreThreadContext *context = thread_context(scope->manager, false);
+    if (!context || context->db != scope->borrowed || context->generation != scope->expected->generation ||
+        atomic_load(&scope->manager->generation) != scope->expected->generation || !store_online(scope->manager)) return false;
+    /* Only dereference the borrowed pointer after proving TLS ownership. */
+    if (db_in_transaction(scope->borrowed) || db_broken(scope->borrowed)) return false;
+    StoreProjectIdentity actual;
+    return store_project_identity(scope->manager, scope->project_dir, &actual) &&
+           actual.generation == scope->expected->generation && actual.device == scope->expected->device &&
+           actual.inode == scope->expected->inode && !strcmp(actual.project_id, scope->expected->project_id) &&
+           (!scope->cancel || !atomic_load(scope->cancel)) &&
+           (scope->deadline == 0 || store_budget_active(scope->cancel, scope->deadline));
+}
+
+static int verify(StoreManager *manager, Db *d, const char *project_dir, const Marker *m, const BorrowedScope *scope)
+{
+    if (scope && !borrowed_active(scope)) return STORE_PROBLEM_MISSING;
     StoreThreadContext *context = thread_context(manager, true);
     if (!context) return VERDICT_OK;
     StoreVerification *verification = &context->verify;
@@ -433,7 +542,12 @@ static int verify(StoreManager *manager, Db *d, const char *project_dir, const M
     DbRows r;
     if (!db_query(d, "SELECT path FROM projects WHERE id = ?", (DbArg[1]){ DB_S(m->id) }, 1, &r)) {
         verification->checked = 0; /* not a verdict: try again next time */
-        return VERDICT_OK;
+        return scope ? STORE_PROBLEM_MISSING : VERDICT_OK;
+    }
+    if (scope && !borrowed_active(scope)) {
+        db_rows_free(&r);
+        verification->checked = 0;
+        return STORE_PROBLEM_MISSING;
     }
     const char *stored_path;
     bool found = r.nrows == 1 && db_rows_has_columns(&r, 1) && db_cell_text(&r, 0, 0, &stored_path) &&
@@ -458,17 +572,21 @@ static int verify(StoreManager *manager, Db *d, const char *project_dir, const M
     char real[PATH_MAX];
     if (!realpath(project_dir, real)) snprintf(real, sizeof(real), "%s", project_dir);
     if (strcmp(real, verification->original) != 0) {
+        if (scope && !borrowed_active(scope)) { verification->checked = 0; return STORE_PROBLEM_MISSING; }
         char hash[65];
         sha256_hex(real, hash);
         /* A row that claims the new path (a project registered there earlier)
          * keeps its data but gives up the path. */
         char moved[80];
         snprintf(moved, sizeof(moved), "moved-%s", m->id);
-        db_run(d, "UPDATE projects SET path_hash = CONCAT('superseded-', id) WHERE path_hash = ? AND id <> ?",
-               (DbArg[2]){ DB_S(hash), DB_S(m->id) }, 2, NULL);
-        db_run(d, "UPDATE projects SET path = ?, path_hash = ? WHERE id = ?", (DbArg[3]){ DB_S(real), DB_S(hash), DB_S(m->id) }, 3,
-               NULL);
+        bool ok = db_run(d, "UPDATE projects SET path_hash = CONCAT('superseded-', id) WHERE path_hash = ? AND id <> ?",
+                         (DbArg[2]){ DB_S(hash), DB_S(m->id) }, 2, NULL);
+        if (scope && (!ok || !borrowed_active(scope))) { verification->checked = 0; return STORE_PROBLEM_MISSING; }
+        ok = db_run(d, "UPDATE projects SET path = ?, path_hash = ? WHERE id = ?",
+                    (DbArg[3]){ DB_S(real), DB_S(hash), DB_S(m->id) }, 3, NULL);
+        if (scope && (!ok || !borrowed_active(scope))) { verification->checked = 0; return STORE_PROBLEM_MISSING; }
     }
+    if (scope && !borrowed_active(scope)) { verification->checked = 0; return STORE_PROBLEM_MISSING; }
     if (!m->ident || other_inode) write_marker(project_dir, m->id); /* upgrade a version 1 marker / adopt the new folder */
     return verification->verdict = VERDICT_OK;
 }
@@ -491,9 +609,34 @@ StoreMode store_mode(StoreManager *manager, const char *project_dir, char *proje
     }
     Db *d = store_db(manager);
     if (!d) return STORE_PAUSED;
-    if (verify(manager, d, project_dir, &m) != VERDICT_OK) return STORE_PAUSED; /* a copy, or its project is missing */
+    if (verify(manager, d, project_dir, &m, NULL) != VERDICT_OK) return STORE_PAUSED; /* a copy, or its project is missing */
     if (project_id) snprintf(project_id, idlen, "%s", m.id);
     if (db) *db = d;
+    return STORE_DB;
+}
+
+StoreMode store_mode_borrowed(StoreManager *manager, const char *project_dir,
+                              const StoreProjectIdentity *expected, Db *borrowed,
+                              const atomic_bool *cancel, double deadline_ms,
+                              char *project_id, size_t idlen)
+{
+    if (project_id && idlen) project_id[0] = '\0';
+    if (!manager || !project_dir || !project_dir[0] || !expected || !borrowed ||
+        !expected->generation || !expected->project_id[0] ||
+        !memchr(expected->project_id, '\0', sizeof(expected->project_id)) ||
+        (project_id && strlen(expected->project_id) >= idlen) || (!project_id && idlen)) return STORE_PAUSED;
+    BorrowedScope scope = { manager, project_dir, expected, borrowed, cancel, deadline_ms };
+    if (!borrowed_active(&scope)) return STORE_PAUSED;
+    Marker m;
+    if (!read_marker(project_dir, &m) || strcmp(m.id, expected->project_id) || !borrowed_active(&scope)) return STORE_PAUSED;
+    if (verify(manager, borrowed, project_dir, &m, &scope) != VERDICT_OK || !borrowed_active(&scope)) return STORE_PAUSED;
+    if (project_id) snprintf(project_id, idlen, "%s", expected->project_id);
+    /* Publication is optimistic: lifecycle changes are detected without taking
+     * a lock that could wait behind a network-bound store_start(). */
+    if (!borrowed_active(&scope)) {
+        if (project_id && idlen) project_id[0] = '\0';
+        return STORE_PAUSED;
+    }
     return STORE_DB;
 }
 
@@ -504,7 +647,7 @@ int store_problem(StoreManager *manager, const char *project_dir, char *original
     if (!project_dir || !read_marker(project_dir, &m)) return 0;
     Db *d = store_db(manager);
     if (!d) return 0;
-    int v = verify(manager, d, project_dir, &m);
+    int v = verify(manager, d, project_dir, &m, NULL);
     StoreThreadContext *context = thread_context(manager, false);
     if (original && len && context) snprintf(original, len, "%s", context->verify.original);
     return v;

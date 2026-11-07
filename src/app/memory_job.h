@@ -6,6 +6,7 @@
 #include "app/memory_documents.h"
 #include "llm/memory_vectors.h"
 #include "llm/memory_tokens.h"
+#include "llm/generative_gate.h"
 
 typedef struct MemoryJob MemoryJob;
 
@@ -22,12 +23,17 @@ typedef struct {
     size_t ingested_steps, indexed;
     size_t document_steps, document_sources;
     bool documents_pending;
+    size_t briefs_published, brief_failures, gc_rows, gc_namespaces;
     char why[256];
 } MemoryJobStatus;
 
 /* Borrowed dependencies must outlive destroy, which joins the sole worker.
  * Selection copies its inputs and captures only local project identity. */
 MemoryJob *memory_job_create(StoreManager *manager, SemanticClient *vectors, LlmServer *tokenizer);
+/* Initial configuration only, before the first selection. Borrowers outlive job. */
+bool memory_job_set_document_cache(MemoryJob *job, MemoryDocumentCache *cache);
+bool memory_job_set_generative_gate(MemoryJob *job, GenerativeGate *gate);
+bool memory_job_set_briefs_enabled(MemoryJob *job, bool enabled);
 /* Destroy joins in-flight I/O, but discards any uncommitted RAM controls. The
  * borrower must guard close with controls_pending, or obtain explicit discard
  * consent first. It does not wait indefinitely for offline SQL to recover. */

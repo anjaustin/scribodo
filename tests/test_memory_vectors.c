@@ -14,11 +14,19 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+/* Linked only with tests/memory_gc_stubs.c, never production SQL authority. */
+extern void memory_gc_test_reset(void);
+extern void memory_gc_test_authorize(const MemoryScope *, const char *fingerprint);
+extern void memory_gc_test_register(const MemoryNamespaceLease *);
+extern void memory_gc_test_advance_floor(uint64_t);
+extern unsigned memory_gc_test_ack_count(void);
+
 enum { NORMAL, BAD_SHAPE, BAD_METRIC, NAMED_VECTOR, ACK_ONLY, BAD_RESULT, WRONG_SCOPE,
        OLD_GENERATION, OLD_POLICY, NUMBER_EPOCH, BAD_SCORE, TOO_MANY, EMBED_DIM, EMBED_NAN, TRAILING_JSON,
        WRONG_DIM, INFINITE_SCORE, DUPLICATE_KEY, BAD_UNIT_ID, BAD_HASH, WRONG_EMBEDDING,
        NUL_LOCATOR, NUL_FIELD, DUPLICATE_CONFLICT, MIXED_INVALID, MISSING_KIND, WRONG_KIND, WRONG_REVISION,
-       DUPLICATE_IDENTICAL };
+        DUPLICATE_IDENTICAL, RETIRE_DURING_CREATE, REVOKE_DURING_EXISTS,
+        DELETE_FALSE, DELETE_GENERIC_404, DELETE_EXACT_404, DELETE_WRONG_404 };
 typedef struct {
     int fd, port;
     pthread_t thread;
@@ -29,7 +37,8 @@ typedef struct {
     cJSON *points[8];
     size_t count;
     char last_id[40], last_path[400], last_embed[2400];
-    int upserts, last_limit, bad_requests, requests, embeds, last_sources;
+    int upserts, last_limit, bad_requests, requests, embeds, last_sources, namespace_deletes;
+    uint64_t retire_generation;
     StoreManager *switch_during_embed;
     bool switched;
 } Stub;
@@ -101,13 +110,35 @@ static char *response(Stub *s, const char *method, const char *path, cJSON *body
     if (!strstr(path, "__memory_v2__")) s->bad_requests++;
     if (!strcmp(method, "GET")) {
         if (!s->exists) { *status = 404; return strdup("{}"); }
+        if (mode == REVOKE_DURING_EXISTS) memory_gc_test_reset();
         if (mode == BAD_SHAPE) return strdup("{\"status\":\"ok\",\"result\":{}}");
         if (mode == BAD_METRIC) return strdup("{\"status\":\"ok\",\"result\":{\"config\":{\"params\":{\"vectors\":{\"size\":1024,\"distance\":\"Dot\"}}}}}");
         if (mode == NAMED_VECTOR) return strdup("{\"status\":\"ok\",\"result\":{\"config\":{\"params\":{\"vectors\":{\"named\":{\"size\":1024,\"distance\":\"Cosine\"}}}}}}");
         if (mode == WRONG_DIM) return strdup("{\"status\":\"ok\",\"result\":{\"config\":{\"params\":{\"vectors\":{\"size\":768,\"distance\":\"Cosine\"}}}}}");
         return strdup("{\"status\":\"ok\",\"result\":{\"config\":{\"params\":{\"vectors\":{\"size\":1024,\"distance\":\"Cosine\"}}}}}");
     }
-    if (!strstr(path, "/points")) { s->exists = true; return strdup("{\"status\":\"ok\",\"result\":true}"); }
+    if (!strstr(path, "/points")) {
+        if (!strcmp(method, "DELETE")) {
+            ++s->namespace_deletes;
+            if (mode == DELETE_FALSE) return strdup("{\"status\":\"ok\",\"result\":false}");
+            if (mode == DELETE_GENERIC_404) { *status = 404; return strdup("{}"); }
+            if (mode == DELETE_EXACT_404 || mode == DELETE_WRONG_404) {
+                char encoded[600];
+                *status = 404;
+                snprintf(encoded, sizeof(encoded),
+                    "{\"status\":{\"error\":\"Not found: Collection `%s` doesn't exist!\"}}",
+                    mode == DELETE_EXACT_404 ? path + strlen("/collections/") : "other_collection");
+                return strdup(encoded);
+            }
+            s->exists = false;
+        } else if (!strcmp(method, "PUT")) {
+            s->exists = true;
+            if (mode == RETIRE_DURING_CREATE) memory_gc_test_advance_floor(s->retire_generation);
+        } else {
+            ++s->bad_requests;
+        }
+        return strdup("{\"status\":\"ok\",\"result\":true}");
+    }
     if (strstr(path, "/points/search")) {
         if (mode == BAD_RESULT) return strdup("{\"status\":\"ok\",\"result\":{}}");
         if (mode == TRAILING_JSON) return strdup("{\"status\":\"ok\",\"result\":[]} trailing");
@@ -258,6 +289,100 @@ static void sha(const char *text, char out[65])
     for (size_t i = 0; i < sizeof(digest); i++) snprintf(out + i * 2, 3, "%02x", digest[i]);
 }
 
+static int request_count(Stub *stub)
+{
+    pthread_mutex_lock(&stub->lock);
+    int requests = stub->requests;
+    pthread_mutex_unlock(&stub->lock);
+    return requests;
+}
+
+static void namespace_guards(Stub *stub, SemanticClient *client, const MemoryScope *scope, const char *fingerprint)
+{
+    char why[256];
+    memory_gc_test_reset();
+    int before = request_count(stub);
+    CHECK(!memory_vectors_create(client, scope, why, sizeof(why)) && why[0]);
+    CHECK(request_count(stub) == before); /* Default deny, even with NULL SQL. */
+
+    memory_gc_test_authorize(scope, fingerprint);
+    atomic_store(&stub->mode, REVOKE_DURING_EXISTS);
+    pthread_mutex_lock(&stub->lock);
+    stub->exists = true;
+    pthread_mutex_unlock(&stub->lock);
+    CHECK(!memory_vectors_create(client, scope, why, sizeof(why)) && why[0]);
+    CHECK(request_count(stub) == before + 1); /* Post-GET authority revocation. */
+
+    memory_gc_test_authorize(scope, fingerprint);
+    atomic_store(&stub->mode, RETIRE_DURING_CREATE);
+    pthread_mutex_lock(&stub->lock);
+    stub->exists = false;
+    stub->retire_generation = scope->generation;
+    int deletes = stub->namespace_deletes;
+    pthread_mutex_unlock(&stub->lock);
+    CHECK(!memory_vectors_create(client, scope, why, sizeof(why)) && why[0]);
+    pthread_mutex_lock(&stub->lock);
+    CHECK(!stub->exists && stub->namespace_deletes == deletes + 1);
+    CHECK(!strstr(stub->last_path, "/points"));
+    pthread_mutex_unlock(&stub->lock);
+    before = request_count(stub);
+    CHECK(!memory_vectors_create(client, scope, why, sizeof(why)));
+    CHECK(request_count(stub) == before); /* Retired floor never publishes ready. */
+
+    memory_gc_test_authorize(scope, fingerprint);
+    MemoryNamespaceLease retired = { .id = 1, .fence = 4, .namespace_version = 2, .scope = *scope };
+    strcpy(retired.owner, "namespace-worker");
+    strcpy(retired.embedding_fingerprint, fingerprint);
+    --retired.scope.generation;
+    memory_gc_test_register(&retired);
+    MemoryNamespaceLease forged = retired;
+    strcpy(forged.scope.project_id, "wrong-project");
+    CHECK(!memory_vectors_retire_namespace(client, &forged, why, sizeof(why)));
+    forged = retired;
+    strcpy(forged.scope.database, "other_database");
+    CHECK(!memory_vectors_retire_namespace(client, &forged, why, sizeof(why)));
+    forged = retired;
+    forged.embedding_fingerprint[0] = fingerprint[0] == 'a' ? 'b' : 'a';
+    CHECK(!memory_vectors_retire_namespace(client, &forged, why, sizeof(why)));
+    forged = retired;
+    forged.namespace_version = 1;
+    CHECK(!memory_vectors_retire_namespace(client, &forged, why, sizeof(why)));
+    forged = retired;
+    ++forged.fence;
+    CHECK(!memory_vectors_retire_namespace(client, &forged, why, sizeof(why)));
+    CHECK(request_count(stub) == before); /* Forgery fails before network I/O. */
+
+    MemoryNamespaceLease active = retired;
+    active.scope.generation = scope->generation;
+    memory_gc_test_register(&active);
+    CHECK(!memory_vectors_retire_namespace(client, &active, why, sizeof(why)));
+    CHECK(request_count(stub) == before); /* Even registered active targets fail. */
+    memory_gc_test_register(&retired);
+
+    const int rejected[] = { DELETE_FALSE, DELETE_GENERIC_404, DELETE_WRONG_404 };
+    for (size_t i = 0; i < sizeof(rejected) / sizeof(rejected[0]); i++) {
+        atomic_store(&stub->mode, rejected[i]);
+        bool delivered = memory_vectors_retire_namespace(client, &retired, why, sizeof(why));
+        if (delivered) (void)memory_gc_namespace_ack(NULL, &retired, true);
+        CHECK(!delivered && why[0]);
+        CHECK(memory_gc_test_ack_count() == 0);
+    }
+    atomic_store(&stub->mode, DELETE_EXACT_404);
+    CHECK(memory_vectors_retire_namespace(client, &retired, why, sizeof(why)));
+    CHECK(memory_gc_namespace_ack(NULL, &retired, true) && memory_gc_test_ack_count() == 1);
+    atomic_store(&stub->mode, NORMAL);
+    CHECK(memory_vectors_retire_namespace(client, &retired, why, sizeof(why)));
+    CHECK(memory_gc_namespace_ack(NULL, &retired, true) && memory_gc_test_ack_count() == 2);
+    pthread_mutex_lock(&stub->lock);
+    char expected[400];
+    snprintf(expected, sizeof(expected), "/collections/%s__%s__memory_v2__%s__%llu", scope->database,
+             scope->project_id, fingerprint, (unsigned long long)retired.scope.generation);
+    CHECK(!strcmp(stub->last_path, expected));
+    stub->exists = true;
+    pthread_mutex_unlock(&stub->lock);
+    memory_gc_test_authorize(scope, fingerprint);
+}
+
 #ifdef SCRIBODO_FAULT_ALLOC_H
 /* Also build this fixture with -include tests/fault_alloc.h and json_vendor.c,
  * just like test_semantic_faults. Failures are thread-local, so the HTTP stub
@@ -336,6 +461,7 @@ static void allocation_sweeps(Stub *stub, SemanticClient *client, const MemoryIn
 
 static void projection(void)
 {
+    memory_gc_test_reset();
     const char *base = getenv("TMPDIR");
     char root[512]; snprintf(root, sizeof(root), "%s/scribodo-vectors-XXXXXX", base ? base : "/tmp");
     CHECK(mkdtemp(root));
@@ -373,6 +499,8 @@ static void projection(void)
     pthread_mutex_lock(&stub.lock); CHECK(stub.requests == requests_before && stub.embeds == embeds_before); pthread_mutex_unlock(&stub.lock);
     CHECK(memory_vectors_exists(client, &lease.scope, &exists, why, sizeof(why)) && !exists);
     CHECK(!memory_vectors_upsert(client, &lease, why, sizeof(why)));
+    CHECK(memory_vectors_fingerprint(client, fakefp));
+    namespace_guards(&stub, client, &lease.scope, fakefp);
     CHECK(memory_vectors_create(client, &lease.scope, why, sizeof(why)));
     CHECK(memory_vectors_create(client, &lease.scope, why, sizeof(why)));
     CHECK(memory_vectors_upsert(client, &lease, why, sizeof(why)));
@@ -512,6 +640,7 @@ static void projection(void)
     atomic_store(&stub.stop, true); pthread_join(stub.thread, NULL); close(stub.fd);
     for (size_t i = 0; i < stub.count; i++) cJSON_Delete(stub.points[i]);
     pthread_mutex_destroy(&stub.lock); unlink(keypath); unlink(dbkeypath); rmdir(root);
+    memory_gc_test_reset();
 }
 
 int main(void)

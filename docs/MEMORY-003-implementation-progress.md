@@ -5,6 +5,10 @@
 **Baseline:** [MEMORY-002](MEMORY-002-mvp-design.md). Implementation authorized
 after the design pass. This is a partial foundation, not the complete memory MVP.
 
+Latest resource/T1 work and outstanding real-model gates:
+[MEMORY-009](MEMORY-009-resource-and-brief-experiment.md). Memory remains default-off;
+mechanical test success is not evidence that the whole MVP or quality gate passed.
+
 ## Implemented: bounded request history and source traversal
 
 - `src/llm/chat_history.c`: an owned request-history snapshot with hard limits of

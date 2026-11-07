@@ -103,6 +103,14 @@ bool http_request(const char *socket, const char *method, const char *path,
     return true;
 }
 
+bool http_request_until(const char *socket, const char *method, const char *path,
+                         const char *bearer, const char *body, HttpLineFn on_line, void *ctx,
+                         atomic_bool *cancel, int timeout_ms, double deadline_ms, HttpResult *r)
+{
+    assert(deadline_ms > 0);
+    return http_request(socket, method, path, bearer, body, on_line, ctx, cancel, timeout_ms, r);
+}
+
 static void reset(void)
 {
     calls = 0;

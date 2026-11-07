@@ -16,6 +16,7 @@ static Db database;
 static StoreProjectIdentity project;
 static SavedRevisionIdentity saved;
 static unsigned reads, routes, identities;
+static unsigned borrowed_routes;
 static bool offline, unsaved, transaction;
 
 bool db_in_transaction(Db *db) { (void)db; return transaction; }
@@ -28,6 +29,15 @@ StoreMode store_mode(StoreManager *store, const char *path, char *id, size_t idl
     (void)path; CHECK(store == &manager); routes++;
     snprintf(id, idlen, "%s", project.project_id); *db = &database;
     return offline ? STORE_PAUSED : STORE_DB;
+}
+StoreMode store_mode_borrowed(StoreManager *store, const char *path, const StoreProjectIdentity *expected,
+                               Db *db, const atomic_bool *cancel, double deadline_ms, char *id, size_t idlen)
+{
+    (void)path; (void)deadline_ms; borrowed_routes++;
+    CHECK(store == &manager && db == &database);
+    if (offline || (cancel && atomic_load(cancel)) || expected->generation != project.generation) return STORE_PAUSED;
+    snprintf(id, idlen, "%s", project.project_id);
+    return STORE_DB;
 }
 bool sdb_saved_revision_identity(Db *db, const char *owner, const char *name, SavedRevisionIdentity *out)
 {
@@ -87,6 +97,22 @@ static void capture(void)
     StoreProjectIdentity wrong = project; wrong.inode++;
     CHECK(!memory_documents_capture(&manager, dir, &wrong, names, 1, false, NULL, &copy) && !copy.count);
     CHECK(!memory_documents_capture(&manager, dir, &project, names, MEMORY_DOCUMENTS_MAX + 1, false, NULL, &copy));
+    MemoryDocumentCache *cache = memory_document_cache_create(); CHECK(cache != NULL);
+    CHECK(memory_documents_capture_cached(cache, &manager, dir, &project, names, 1, false, NULL, &copy) && !copy.count);
+    bool progress = false, pending = true;
+    CHECK(memory_documents_verify_step(cache, &manager, dir, &project, names, 1, false, NULL, &progress, &pending));
+    CHECK(progress && !pending);
+    CHECK(memory_documents_capture_cached(cache, &manager, dir, &project, names, 1, false, NULL, &copy));
+    CHECK(memory_documents_same(&set, &copy));
+    old_routes = routes;
+    CHECK(memory_documents_capture_cached_on_db(cache, &database, &manager, dir, &project, names, 1, false, NULL, 0, &copy));
+    CHECK(memory_documents_same(&set, &copy) && routes == old_routes && borrowed_routes > 0);
+    CHECK(memory_documents_verify_step_on_db(cache, &database, &manager, dir, &project, names, 1, false, NULL, 0, &progress, &pending));
+    CHECK(!pending && routes == old_routes);
+    strcpy(saved.source_hash, "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+    CHECK(memory_documents_capture_cached(cache, &manager, dir, &project, names, 1, false, NULL, &copy) && !copy.count);
+    strcpy(saved.source_hash, hash);
+    memory_document_cache_destroy(cache);
     CHECK(unlink(path) == 0);
     CHECK(memory_documents_capture(&manager, dir, &project, names, 1, false, NULL, &copy) && !copy.count);
     CHECK(rmdir(dir) == 0);

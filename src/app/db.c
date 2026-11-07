@@ -6,9 +6,13 @@
 #include <limits.h>
 #include <math.h>
 #include <mysql.h>
+#include <arpa/inet.h>
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <time.h>
 
 struct Db {
     MYSQL *m;
@@ -26,6 +30,13 @@ static void note_errno(Db *db, unsigned e)
 }
 
 bool db_broken(Db *db) { return db->broken; }
+
+int db_socket(Db *db)
+{
+    if (!db || !db->m) return -1;
+    my_socket fd=mysql_get_socket(db->m);
+    return fd < 0 || (uint64_t)fd > INT_MAX ? -1 : (int)fd;
+}
 
 /* ---- configuration ------------------------------------------------------- */
 
@@ -90,6 +101,140 @@ Db *db_open(const DbConfig *c, char *err, size_t errlen)
         return NULL;
     }
     return db;
+}
+
+static double monotonic_ms(void)
+{
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return INFINITY;
+    return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
+}
+
+static bool open_active(const atomic_bool *cancel, double deadline, char *err, size_t errlen)
+{
+    if (!isfinite(deadline) || deadline <= 0) {
+        snprintf(err, errlen, "invalid deadline");
+        return false;
+    }
+    if (cancel && atomic_load(cancel)) {
+        snprintf(err, errlen, "cancelled");
+        return false;
+    }
+    if (monotonic_ms() >= deadline) {
+        snprintf(err, errlen, "timed out opening project store");
+        return false;
+    }
+    return true;
+}
+
+/* A Connector/C timeout belongs to this suspension, not to each 20ms poll.
+ * Returning 0 is an abort; successful continuations always get a wait bit. */
+static int open_wait(Db *db, int wanted, const atomic_bool *cancel, double deadline, char *err, size_t errlen)
+{
+    double timeout = (wanted & MYSQL_WAIT_TIMEOUT) ? monotonic_ms() + mysql_get_timeout_value_ms(db->m) : INFINITY;
+    for (;;) {
+        if (!open_active(cancel, deadline, err, errlen)) return 0;
+        double now = monotonic_ms();
+        if (now >= timeout) return MYSQL_WAIT_TIMEOUT;
+        double remaining = fmin(deadline, timeout) - now;
+        if (remaining <= 0) continue;
+        int slice = remaining >= 20 ? 20 : (int)ceil(remaining);
+        short events = 0;
+        if (wanted & MYSQL_WAIT_READ) events |= POLLIN;
+        if (wanted & MYSQL_WAIT_WRITE) events |= POLLOUT;
+        if (wanted & MYSQL_WAIT_EXCEPT) events |= POLLPRI;
+        struct pollfd pfd = { .fd = db_socket(db), .events = events };
+        int rc = poll(&pfd, 1, slice);
+        if (!open_active(cancel, deadline, err, errlen)) return 0;
+        if (rc < 0) {
+            if (errno == EINTR) continue;
+            snprintf(err, errlen, "project store poll: %s", strerror(errno));
+            return 0;
+        }
+        if (rc > 0) {
+            if (pfd.revents & POLLNVAL) {
+                snprintf(err, errlen, "project store socket closed");
+                return 0;
+            }
+            int ready = 0;
+            if (pfd.revents & POLLIN) ready |= MYSQL_WAIT_READ;
+            if (pfd.revents & POLLOUT) ready |= MYSQL_WAIT_WRITE;
+            if (pfd.revents & POLLPRI) ready |= MYSQL_WAIT_EXCEPT;
+            /* Let Connector/C observe EOF / the actual connection error. */
+            if (pfd.revents & (POLLHUP | POLLERR)) ready |= wanted & (MYSQL_WAIT_READ | MYSQL_WAIT_WRITE | MYSQL_WAIT_EXCEPT);
+            if (ready) return ready;
+        }
+    }
+}
+
+Db *db_open_until(const DbConfig *c, const atomic_bool *cancel, double deadline_ms, char *err, size_t errlen)
+{
+    if (errlen) err[0] = '\0';
+    if (!open_active(cancel, deadline_ms, err, errlen)) return NULL;
+    /* Connector/C's resolver and arbitrary auth plugins are synchronous even
+     * in its async API. Numeric hosts avoid unbounded DNS on this local path. */
+    const char *host = !strcmp(c->host, "localhost") ? "127.0.0.1" : c->host;
+    struct in_addr ipv4;
+    struct in6_addr ipv6;
+    if (inet_pton(AF_INET, host, &ipv4) != 1 && inet_pton(AF_INET6, host, &ipv6) != 1) {
+        snprintf(err, errlen, "bounded project store connection requires a numeric host");
+        return NULL;
+    }
+    Db *db = calloc(1, sizeof(*db));
+    if (!db) { snprintf(err, errlen, "Out of memory"); return NULL; }
+    db->m = mysql_init(NULL);
+    if (!db->m) { free(db); snprintf(err, errlen, "Out of memory"); return NULL; }
+    unsigned t = c->timeout_s ? c->timeout_s : 5;
+    if (mysql_options(db->m, MYSQL_OPT_NONBLOCK, NULL) ||
+        mysql_options(db->m, MYSQL_OPT_CONNECT_TIMEOUT, &t) ||
+        mysql_options(db->m, MYSQL_OPT_READ_TIMEOUT, &t) ||
+        mysql_options(db->m, MYSQL_OPT_WRITE_TIMEOUT, &t) ||
+        mysql_options(db->m, MYSQL_SET_CHARSET_NAME, "utf8mb4")) goto client_error;
+    if (!open_active(cancel, deadline_ms, err, errlen)) goto abort_open;
+    MYSQL *connected = NULL;
+    int status = mysql_real_connect_start(&connected, db->m, host, c->user, c->password,
+                                          c->database, c->port, NULL, 0);
+    while (status) {
+        int ready = open_wait(db, status, cancel, deadline_ms, err, errlen);
+        if (!ready) goto abort_open;
+        status = mysql_real_connect_cont(&connected, db->m, ready);
+    }
+    if (!open_active(cancel, deadline_ms, err, errlen)) goto abort_open;
+    if (!connected) goto client_error;
+    my_bool auto_error = 0;
+    status = mysql_autocommit_start(&auto_error, db->m, 1);
+    while (status) {
+        int ready = open_wait(db, status, cancel, deadline_ms, err, errlen);
+        if (!ready) goto abort_open;
+        status = mysql_autocommit_cont(&auto_error, db->m, ready);
+    }
+    if (!open_active(cancel, deadline_ms, err, errlen)) goto abort_open;
+    if (auto_error) goto client_error;
+    int query_error = 0;
+    status = mysql_query_start(&query_error, db->m,
+        "SET SESSION sql_mode = 'STRICT_ALL_TABLES,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION',"
+        " innodb_lock_wait_timeout = 2");
+    while (status) {
+        int ready = open_wait(db, status, cancel, deadline_ms, err, errlen);
+        if (!ready) goto abort_open;
+        status = mysql_query_cont(&query_error, db->m, ready);
+    }
+    if (!open_active(cancel, deadline_ms, err, errlen)) goto abort_open;
+    if (query_error) goto client_error;
+    return db;
+
+client_error:
+    snprintf(err, errlen, "Project store connection/setup failed: %s", mysql_error(db->m));
+abort_open:
+    /* Never issue a potentially blocking QUIT to an abandoned connection.
+     * This also works when an async operation is currently suspended. */
+    {
+        int fd = db_socket(db);
+        if (fd >= 0) shutdown(fd, SHUT_RDWR);
+    }
+    mysql_close(db->m);
+    free(db);
+    return NULL;
 }
 
 void db_close(Db *db)
@@ -666,9 +811,43 @@ static const char *const k_migration_011[] = {
     NULL,
 };
 
+/* 012: explicit, durable namespace retirements; never discover targets from a
+ * vector server. Completed receipts remain for idempotent registration. */
+static const char *const k_migration_012[] = {
+    "CREATE TABLE IF NOT EXISTS memory_gc_scopes ("
+    " scope_id VARCHAR(40) PRIMARY KEY,project_id VARCHAR(40) NOT NULL,conversation_id VARCHAR(40) NOT NULL,"
+    " KEY gc_project(project_id,scope_id),"
+    " FOREIGN KEY(scope_id,project_id,conversation_id)"
+    " REFERENCES memory_scopes(id,project_id,conversation_id) ON DELETE CASCADE"
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+    /* Metadata-only, one-time adoption of preexisting scopes. Generation
+     * changes enqueue subsequent work in their own author/control transaction. */
+    "INSERT IGNORE INTO memory_gc_scopes(scope_id,project_id,conversation_id)"
+    " SELECT id,project_id,conversation_id FROM memory_scopes",
+    "CREATE TABLE IF NOT EXISTS memory_namespace_floor ("
+    " project_id VARCHAR(40) PRIMARY KEY,generation_floor BIGINT UNSIGNED NOT NULL DEFAULT 0,"
+    " FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,"
+    " CHECK(generation_floor<9223372036854775807)"
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+    "CREATE TABLE IF NOT EXISTS memory_retired_namespaces ("
+    " id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,database_name VARCHAR(63) NOT NULL,"
+    " project_id VARCHAR(40) NOT NULL,scope_id VARCHAR(40) NOT NULL,conversation_id VARCHAR(40) NOT NULL,"
+    " generation BIGINT UNSIGNED NOT NULL,namespace_version INT NOT NULL,embedding_fingerprint CHAR(64) NOT NULL,"
+    " state VARCHAR(12) NOT NULL DEFAULT 'pending',owner VARCHAR(63) NOT NULL DEFAULT '',"
+    " fence BIGINT UNSIGNED NOT NULL DEFAULT 0,attempts INT NOT NULL DEFAULT 0,"
+    " lease_until DATETIME(6) NULL,retry_after DATETIME(6) NULL,"
+    " UNIQUE KEY retirement(database_name,project_id,generation,namespace_version,embedding_fingerprint),"
+    " KEY admission(state,retry_after,id),CHECK(namespace_version IN (1,2) AND generation>0)"
+    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+    NULL,
+};
+
+#include "memory_brief_schema.h"
+
 static const char *const *const k_migrations[] = { k_migration_001, k_migration_002, k_migration_003, k_migration_004,
                                                    k_migration_005, k_migration_006, k_migration_007, k_migration_008,
-                                                   k_migration_009, k_migration_010, k_migration_011 };
+                                                   k_migration_009, k_migration_010, k_migration_011, k_migration_012,
+                                                   k_migration_013 };
 
 int db_schema_version(Db *db)
 {

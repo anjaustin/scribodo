@@ -1,5 +1,9 @@
 #define _POSIX_C_SOURCE 200809L
 #include "app/memory_job.h"
+#include "app/memory_gc.h"
+#include "app/memory_brief_store.h"
+#include "llm/memory_brief.h"
+#include "llm/memory_budget.h"
 
 #include <limits.h>
 #include <pthread.h>
@@ -24,6 +28,10 @@ typedef struct {
     unsigned failures;
     struct timespec retry;
     bool scope_known, documents_captured, documents_seeded;
+    bool verification_pending, verification_progress;
+    double next_verification_ms;
+    double next_maintenance_ms;
+    bool namespace_registered;
     MemoryScope scope, document_scope;
     MemoryDocumentSet documents;
     MemoryDocumentName names[MEMORY_DOCUMENTS_MAX];
@@ -35,6 +43,11 @@ struct MemoryJob {
     StoreManager *manager;
     SemanticClient *vectors;
     MemoryTokenizer tokenizer;
+    MemoryDocumentCache *document_cache;
+    bool owns_document_cache;
+    GenerativeGate *generative_gate;
+    bool briefs_enabled;
+    atomic_bool generation_cancel;
     MemoryJobRunner runner;
     void *context;
     pthread_t thread;
@@ -128,7 +141,23 @@ static bool prepare_documents(MemoryJob *job, const MemoryRequest *request, Db *
         state->document_version != request->document_version ||
         state->document_count != request->document_count ||
         !same_names(state->names, request->names, request->document_count);
-    if (changed) {
+    state->verification_progress = false;
+    bool refresh = changed;
+    if (job->document_cache) {
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        double ms = (double)now.tv_sec * 1000.0 + (double)now.tv_nsec / 1e6;
+        if (changed || state->verification_pending || ms >= state->next_verification_ms) {
+            bool pending = false;
+            if (!memory_documents_verify_step_on_db(job->document_cache, db, job->manager, request->project, &request->identity,
+                    request->names, request->document_count, false, NULL, 0, &state->verification_progress, &pending))
+                pending = true;
+            state->verification_pending = pending;
+            state->next_verification_ms = ms + 1000;
+            refresh = true;
+        }
+    }
+    if (refresh) {
         /* Discard first: a failed capture must never retain old authorization. */
         state->documents = (MemoryDocumentSet){0};
         state->documents_seeded = false;
@@ -139,13 +168,17 @@ static bool prepare_documents(MemoryJob *job, const MemoryRequest *request, Db *
         memcpy(state->names, request->names, sizeof(state->names));
         if (!admitted(job, request)) return false;
         MemoryDocumentSet captured = {0};
-        if (memory_documents_capture(job->manager, request->project, &request->identity,
-                                      request->names, request->document_count, false, NULL, &captured))
+        bool captured_ok = job->document_cache
+            ? memory_documents_capture_cached_on_db(job->document_cache, db, job->manager, request->project, &request->identity,
+                request->names, request->document_count, false, NULL, 0, &captured)
+            : memory_documents_capture(job->manager, request->project, &request->identity,
+                request->names, request->document_count, false, NULL, &captured);
+        if (captured_ok)
             state->documents = captured;
         state->documents_captured = true;
     }
     status->document_sources = state->documents.count;
-    status->documents_pending = state->documents.count != 0;
+    status->documents_pending = state->documents.count != 0 || state->verification_pending;
     if (!admitted(job, request)) return false;
     if (!state->documents_seeded) {
         if (!memory_documents_seed(db, &status->scope, &state->documents)) {
@@ -155,6 +188,82 @@ static bool prepare_documents(MemoryJob *job, const MemoryRequest *request, Db *
         state->documents_seeded = true;
     }
     return true;
+}
+
+typedef struct {
+    MemoryJob *job;
+    uint64_t serial, fence;
+} BriefAdmission;
+
+static bool brief_admitted(void *context)
+{
+    BriefAdmission *admission = context;
+    MemoryJob *job = admission->job;
+    pthread_mutex_lock(&job->mu);
+    bool current = !job->stopping && job->selected && !job->paused && !job->control_count &&
+                   job->request.serial == admission->serial && !atomic_load(&job->generation_cancel);
+    pthread_mutex_unlock(&job->mu);
+    return current && generative_gate_fence_valid(job->generative_gate, admission->fence);
+}
+
+static bool production_maintenance(MemoryJob *job, const MemoryRequest *request, Db *db,
+                                    MemoryWorkerState *state, MemoryJobStatus *status, bool busy)
+{
+    if (!admitted(job, request)) return false;
+    if (status->scope.enabled && !state->namespace_registered) {
+        char fingerprint[65];
+        state->namespace_registered = memory_vectors_fingerprint(job->vectors, fingerprint) &&
+            memory_gc_namespace_enqueue(db, &status->scope, fingerprint, 2);
+    }
+    double now = memory_budget_now_ms();
+    if (now < 0 || now < state->next_maintenance_ms) return false;
+    state->next_maintenance_ms = now + 1000;
+    MemoryGcStats gc = {0};
+    char database[64] = "";
+    if (status->scope.database[0]) snprintf(database, sizeof(database), "%s", status->scope.database);
+    else store_database(job->manager, database, sizeof(database));
+    MemoryScope maintenance_scope = {0};
+    bool progress = memory_gc_project_step(db, database, request->identity.project_id, 64, &gc, &maintenance_scope) && gc.total;
+    status->gc_rows += gc.total;
+    MemoryNamespaceLease retired = {0}; bool claimed = false;
+    if (maintenance_scope.id[0] && admitted(job, request) &&
+        memory_gc_namespace_claim(db, &maintenance_scope, "memory-worker", &retired, &claimed) && claimed) {
+        char why[256];
+        SemanticClient *bounded = semantic_client_bounded(job->vectors, NULL, memory_budget_now_ms() + 1500);
+        bool delivered = bounded && memory_vectors_retire_namespace_on_db(bounded, db, &retired, why, sizeof(why));
+        semantic_client_destroy(bounded);
+        if (memory_gc_namespace_ack(db, &retired, delivered) && delivered) { status->gc_namespaces++; progress = true; }
+    }
+    if (busy || progress || !job->briefs_enabled || !job->generative_gate || status->documents_pending ||
+        status->scope.index_pending || !admitted(job, request)) return progress;
+    pthread_mutex_lock(&job->mu);
+    bool current = !job->stopping && !job->paused && !job->control_count && job->request.serial == request->serial;
+    if (current) atomic_store(&job->generation_cancel, false);
+    pthread_mutex_unlock(&job->mu);
+    if (!current) return progress;
+    MemoryBriefLease lease = {0}; claimed = false;
+    if (!memory_brief_claim(db, &status->scope, "memory-worker", &lease, &claimed) || !claimed) return progress;
+    MemoryBriefResult result = {0};
+    bool generated = memory_brief_generate(job->tokenizer.server, job->generative_gate, &lease,
+                                          &job->generation_cancel, &result);
+    BriefAdmission admission = { job, request->serial, result.gate_fence };
+    bool published = false;
+    if (generated && identity_matches(job, request) && brief_admitted(&admission))
+        memory_brief_publish(db, &lease, result.json, result.tokens, result.model_fingerprint,
+                             MEMORY_BRIEF_PROTOCOL, brief_admitted, &admission, &published);
+    if (published) {
+        status->briefs_published++;
+        reason(status, "Partial coverage: source-linked experimental T1 brief published (not canon).");
+        progress = true;
+    } else {
+        bool canceled = result.canceled || !brief_admitted(&admission);
+        memory_brief_fail(db, &lease, true, canceled);
+        if (!canceled) status->brief_failures++;
+        reason(status, canceled ? "Partial coverage: T1 yielded; no brief/frontier advance."
+                                : "Partial coverage: T1 generation failed; bounded retry/manual rebuild.");
+    }
+    memory_brief_lease_free(&lease);
+    return progress;
 }
 
 static bool production_step(MemoryJob *job, const MemoryRequest *request,
@@ -171,12 +280,14 @@ static bool production_step(MemoryJob *job, const MemoryRequest *request,
         reason(status, "Memory paused: project/store identity changed; select again.");
         return false;
     }
-    if (!fresh_scope(job, request, db, status)) return false;
+    if (!fresh_scope(job, request, db, status))
+        return production_maintenance(job, request, db, state, status, true);
 
     if (state->scope_known && !same_generation(&state->scope, &status->scope)) {
         state->failures = 0;
         state->retry = (struct timespec){0};
         state->repair_pending = false;
+        state->namespace_registered = false;
     }
     state->scope_known = true;
     state->scope = status->scope;
@@ -210,7 +321,7 @@ static bool production_step(MemoryJob *job, const MemoryRequest *request,
                 }
                 if (!fresh_scope(job, request, db, status)) return false;
                 if (!same_projection(&state->repair, &status->scope)) return false;
-                if (memory_vectors_create(job->vectors, &status->scope, why, sizeof(why))) {
+                if (memory_vectors_create_on_db(job->vectors, db, &status->scope, why, sizeof(why))) {
                     state->repair_pending = false;
                     index_ready = true;
                 } else backend_failure(state, status, why);
@@ -256,14 +367,14 @@ static bool production_step(MemoryJob *job, const MemoryRequest *request,
         }
     }
     if (document_progress) status->document_steps++;
-    progress = progress || document_progress;
+    progress = progress || document_progress || state->verification_progress;
     if (state->documents.count) {
         if (!fresh_scope(job, request, db, status) || !same_projection(&pinned, &status->scope))
             return progress;
         bool complete = false;
         if (state->documents_seeded &&
             memory_documents_complete(db, &pinned, &state->documents, &complete))
-            status->documents_pending = !complete;
+            status->documents_pending = !complete || state->verification_pending;
         else status->documents_pending = true;
     }
     bool embedding_wait = index_ready && !semantic_embedding_ready(job->vectors);
@@ -298,7 +409,7 @@ static bool production_step(MemoryJob *job, const MemoryRequest *request,
     }
     if (!index_ready && !state->failures && !embedding_wait)
         reason(status, "Partial coverage: index unavailable; SQL ingestion only.");
-    return progress;
+    return production_maintenance(job, request, db, state, status, progress) || progress;
 }
 
 static bool production_control(MemoryJob *job, const MemoryRequest *request,
@@ -328,6 +439,8 @@ static bool production_control(MemoryJob *job, const MemoryRequest *request,
                               request->action == MEMORY_JOB_ENABLE, &status->scope);
     if (!ok) reason(status, "Consent control pending: SQL failed; retrying in one second.");
     else {
+        if (request->action == MEMORY_JOB_REBUILD && job->document_cache)
+            memory_document_cache_invalidate(job->document_cache);
         status->active = true;
         status->enabled = status->scope.enabled;
         reason(status, status->enabled ? "Memory enabled; coverage remains partial while processing is paused/warming." : "Memory disabled.");
@@ -473,6 +586,7 @@ static MemoryJob *create_job(StoreManager *manager, SemanticClient *vectors, Llm
 {
     if (!manager || (!vectors && !runner)) return NULL;
     MemoryJob *job = calloc(1, sizeof(*job));
+    if (job) atomic_init(&job->generation_cancel, false);
     if (!job) return NULL;
     job->manager = manager;
     job->vectors = vectors;
@@ -496,13 +610,50 @@ static MemoryJob *create_job(StoreManager *manager, SemanticClient *vectors, Llm
 
 MemoryJob *memory_job_create(StoreManager *manager, SemanticClient *vectors, LlmServer *tokenizer)
 {
-    return create_job(manager, vectors, tokenizer, NULL, NULL);
+    MemoryJob *job = create_job(manager, vectors, tokenizer, NULL, NULL);
+    if (!job) return NULL;
+    job->document_cache = memory_document_cache_create();
+    job->owns_document_cache = true;
+    if (!job->document_cache) { memory_job_destroy(job); return NULL; }
+    return job;
 }
 
 MemoryJob *memory_job_create_with_runner(StoreManager *manager, MemoryJobRunner runner, void *context)
 {
     if (!runner) return NULL;
     return create_job(manager, NULL, NULL, runner, context);
+}
+
+bool memory_job_set_document_cache(MemoryJob *job, MemoryDocumentCache *cache)
+{
+    if (!job || !cache) return false;
+    pthread_mutex_lock(&job->mu);
+    bool idle = !job->selected && !job->serial && !job->control_count;
+    MemoryDocumentCache *old = idle && job->owns_document_cache ? job->document_cache : NULL;
+    if (idle) { job->document_cache = cache; job->owns_document_cache = false; }
+    pthread_mutex_unlock(&job->mu);
+    memory_document_cache_destroy(old);
+    return idle;
+}
+
+bool memory_job_set_generative_gate(MemoryJob *job, GenerativeGate *gate)
+{
+    if (!job) return false;
+    pthread_mutex_lock(&job->mu);
+    bool idle = !job->selected && !job->serial && !job->control_count;
+    if (idle) job->generative_gate = gate;
+    pthread_mutex_unlock(&job->mu);
+    return idle;
+}
+
+bool memory_job_set_briefs_enabled(MemoryJob *job, bool enabled)
+{
+    if (!job) return false;
+    pthread_mutex_lock(&job->mu);
+    bool idle = !job->selected && !job->serial && !job->control_count;
+    if (idle) job->briefs_enabled = enabled;
+    pthread_mutex_unlock(&job->mu);
+    return idle;
 }
 
 bool memory_job_select(MemoryJob *job, const char *project, const char *conversation, MemoryJobAction action)
@@ -529,6 +680,7 @@ bool memory_job_select(MemoryJob *job, const char *project, const char *conversa
         return false;
     }
     request.serial = ++job->serial;
+    atomic_store(&job->generation_cancel, true);
     if (action != MEMORY_JOB_RESUME) {
         size_t tail = (job->control_head + job->control_count) % MEMORY_JOB_CONTROL_CAPACITY;
         job->controls[tail] = request;
@@ -581,6 +733,7 @@ bool memory_job_documents(MemoryJob *job, const char *project, const char *conve
     job->request.document_count = count;
     job->request.document_version = version;
     job->request.serial = ++job->serial;
+    atomic_store(&job->generation_cancel, true);
     job->status.document_sources = 0;
     job->status.documents_pending = count != 0;
     pthread_cond_signal(&job->wake);
@@ -593,6 +746,7 @@ void memory_job_clear(MemoryJob *job)
     if (!job) return;
     pthread_mutex_lock(&job->mu);
     job->selected = false;
+    atomic_store(&job->generation_cancel, true);
     job->request = (MemoryRequest){0};
     job->status = (MemoryJobStatus){0};
     pthread_cond_signal(&job->wake);
@@ -605,6 +759,7 @@ void memory_job_pause(MemoryJob *job, bool paused)
     pthread_mutex_lock(&job->mu);
     if (job->paused != paused) {
         job->paused = paused;
+        if (paused) atomic_store(&job->generation_cancel, true);
         pthread_cond_signal(&job->wake);
     }
     pthread_mutex_unlock(&job->mu);
@@ -627,11 +782,13 @@ void memory_job_destroy(MemoryJob *job)
     if (!job) return;
     pthread_mutex_lock(&job->mu);
     job->stopping = true;
+    atomic_store(&job->generation_cancel, true);
     job->selected = false;
     pthread_cond_signal(&job->wake);
     pthread_mutex_unlock(&job->mu);
     pthread_join(job->thread, NULL);
     pthread_cond_destroy(&job->wake);
     pthread_mutex_destroy(&job->mu);
+    if (job->owns_document_cache) memory_document_cache_destroy(job->document_cache);
     free(job);
 }
