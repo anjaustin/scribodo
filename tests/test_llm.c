@@ -710,6 +710,27 @@ static void test_worker_foreground_preemption(void)
     CHECK(generative_gate_destroy(gate));
 }
 
+static void test_episode_history_packing(void)
+{
+    const char *request="{\"messages\":[{\"role\":\"system\",\"content\":\"persona\"},"
+        "{\"role\":\"user\",\"content\":\"First option\"},{\"role\":\"user\",\"content\":\"Second option\"},"
+        "{\"role\":\"assistant\",\"content\":\"Perhaps cobalt\"},{\"role\":\"user\",\"content\":\"Maybe, not decided\"},"
+        "{\"role\":\"user\",\"content\":\"CURRENT words and explicit document\"}],\"max_tokens\":1024}";
+    char *packed=chat_pack_history_request(request); CHECK(packed);
+    cJSON *root=packed ? json_parse_complete(packed,strlen(packed)) : NULL;
+    cJSON *messages=cJSON_GetObjectItem(root,"messages");
+    CHECK(cJSON_GetArraySize(messages)==5);
+    const char *prior=cJSON_GetObjectItem(cJSON_GetArrayItem(messages,1),"content")->valuestring;
+    CHECK(strstr(prior,"First option") && strstr(prior,"Second option") && !strstr(prior,"Perhaps cobalt"));
+    CHECK(!strcmp(cJSON_GetObjectItem(cJSON_GetArrayItem(messages,2),"role")->valuestring,"assistant"));
+    CHECK(!strcmp(cJSON_GetObjectItem(cJSON_GetArrayItem(messages,3),"content")->valuestring,"Maybe, not decided"));
+    CHECK(!strcmp(cJSON_GetObjectItem(cJSON_GetArrayItem(messages,4),"content")->valuestring,"CURRENT words and explicit document"));
+    CHECK(cJSON_GetObjectItem(root,"max_tokens")->valueint==1024);
+    cJSON_Delete(root); free(packed);
+    CHECK(!chat_pack_history_request("{\"messages\":[]}"));
+    CHECK(!chat_pack_history_request("{\"messages\":[{\"role\":\"assistant\",\"content\":\"x\"}]}"));
+}
+
 static void test_worker_bounded_history(void)
 {
     ChatSession *s = chat_create(NULL);
@@ -2331,6 +2352,7 @@ int main(int argc, char **argv)
         { "request_builder", test_request_builder },
         { "bounded_request_history", test_bounded_request_history },
         { "worker_bounded_history", test_worker_bounded_history },
+        { "episode_history_packing", test_episode_history_packing },
         { "worker_foreground_preemption", test_worker_foreground_preemption },
         { "chat_windows", test_chat_windows },
         { "memory_remote_bypass", test_memory_remote_bypass },

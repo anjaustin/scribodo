@@ -104,6 +104,28 @@ static void request_history_faults(void)
     }
 }
 
+static void packed_history_faults(void)
+{
+    const char request[] = "{\"messages\":[{\"role\":\"system\",\"content\":\"persona\"},"
+        "{\"role\":\"user\",\"content\":\"First option\"},{\"role\":\"user\",\"content\":\"Not decided\"},"
+        "{\"role\":\"user\",\"content\":\"CURRENT request\"}],\"max_tokens\":1024}";
+    fault_alloc_after(-1);
+    char *expected = chat_pack_history_request(request);
+    long count = fault_alloc_count();
+    CHECK(expected && count > 10);
+    if (!expected) return;
+    for (long i = 0; i < count * 2; i++) {
+        allocation_case(i, count);
+        char *packed = chat_pack_history_request(request);
+        fault_alloc_after(-1);
+        /* cJSON printing may recover from a failed optional shrink. Any
+         * successful result must still be the complete, unchanged packet. */
+        CHECK(!packed || !strcmp(packed, expected));
+        free(packed);
+    }
+    free(expected);
+}
+
 static void chat_load_faults(void)
 {
     ChatMessage original = { .role = CHAT_USER, .content = "Keep this conversation" };
@@ -267,6 +289,7 @@ int main(void)
     CHECK(chat_store_append(store, project, "abcd", "Fault tests", &message));
     TestCase tests[] = { { "record_allocations", record_faults }, { "revision_allocations", revision_faults },
                         { "request_history_allocations", request_history_faults },
+                        { "packed_history_allocations", packed_history_faults },
                         { "chat_load_allocations", chat_load_faults },
                         { "chat_send_allocations", chat_send_faults },
                         { "window_shrink_allocations", window_shrink_faults },

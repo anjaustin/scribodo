@@ -3587,6 +3587,11 @@ int main(int argc, char **argv)
         chat_memory_set_document_cache(owned_chat, app.memory_document_cache);
         chat_set_generative_gate(owned_chat, app.generative_gate);
         chat_memory_set_briefs_enabled(owned_chat, app.memory_briefs_experiment);
+        const char *presentation = app.memory_experiment ? getenv("SCRIBODO_MEMORY_PRESENTATION") : NULL;
+        if (presentation && !strcmp(presentation, "compact"))
+            chat_memory_set_presentation(owned_chat, CHAT_MEMORY_COMPACT);
+        else if (presentation && !strcmp(presentation, "episode"))
+            chat_memory_set_presentation(owned_chat, CHAT_MEMORY_EPISODE);
     }
     name_detection_job_set_server(&app.names_job, app.llm);
     /* TLS secrets are never written out for a remote model's traffic. */

@@ -318,7 +318,10 @@ $(BUILD)/test_memory_gc: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_memory_gc.
 $(BUILD)/test_memory_briefs: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_memory_briefs.o
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
 
-dbtest: $(BUILD)/test_db $(BUILD)/test_memory_store $(BUILD)/test_memory_vectors $(BUILD)/test_memory_provenance $(BUILD)/test_saved_revision $(BUILD)/test_memory_documents $(BUILD)/test_memory_gc $(BUILD)/test_memory_briefs
+$(BUILD)/test_memory_chat: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_memory_chat.o
+	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
+
+dbtest: $(BUILD)/test_db $(BUILD)/test_memory_store $(BUILD)/test_memory_vectors $(BUILD)/test_memory_provenance $(BUILD)/test_saved_revision $(BUILD)/test_memory_documents $(BUILD)/test_memory_gc $(BUILD)/test_memory_briefs $(BUILD)/test_memory_chat
 	$(WATCHDOG) 120 dbtest ./$(BUILD)/test_db
 	$(WATCHDOG) 120 memory-store ./$(BUILD)/test_memory_store
 	$(WATCHDOG) 120 memory-vectors ./$(BUILD)/test_memory_vectors
@@ -327,6 +330,7 @@ dbtest: $(BUILD)/test_db $(BUILD)/test_memory_store $(BUILD)/test_memory_vectors
 	$(WATCHDOG) 180 memory-documents ./$(BUILD)/test_memory_documents
 	$(WATCHDOG) 180 memory-gc ./$(BUILD)/test_memory_gc
 	$(WATCHDOG) 180 memory-briefs ./$(BUILD)/test_memory_briefs
+	$(WATCHDOG) 180 memory-chat ./$(BUILD)/test_memory_chat
 
 # The app against the project store (needs tools/services.sh up): three runs
 # on one throwaway database and project folder: move and use, resume after

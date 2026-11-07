@@ -28,6 +28,8 @@ typedef struct {
     bool lexical_ok, semantic_ok, limited;
     MemoryReadiness readiness;
     char *reference; /* owned, neutralized reference data, never instructions/canon */
+    bool compact_sources; /* experimental presentation only; never changes eligibility/selection */
+    char *provenance; /* owned bounded full receipt when model-facing sources are compact */
 } MemoryPlan;
 
 /* Owned adapter seam also used to fault/interleave-test the finite protocol.

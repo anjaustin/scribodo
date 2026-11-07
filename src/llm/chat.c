@@ -88,6 +88,7 @@ struct ChatSession {
     GenerativeTicket generative_ticket;
     MemoryDocumentCache *document_cache;
     bool memory_briefs;
+    ChatMemoryPresentation memory_presentation;
     MemoryBudget *prepare_budget; /* worker-owned, address-stable until preparation ends */
     ChatMessageDone on_done;
     void *on_done_ctx;
@@ -413,6 +414,69 @@ bool chat_memory_set_briefs_enabled(ChatSession *s, bool enabled)
     if (!s || chat_busy(s)) return false;
     s->memory_briefs = enabled;
     return true;
+}
+
+bool chat_memory_set_presentation(ChatSession *s, ChatMemoryPresentation presentation)
+{
+    if (!s || chat_busy(s) || presentation < CHAT_MEMORY_LEGACY || presentation > CHAT_MEMORY_EPISODE) return false;
+    s->memory_presentation = presentation;
+    return true;
+}
+
+char *chat_pack_history_request(const char *request)
+{
+    if (!request || strnlen(request, MEMORY_BASE_REQUEST_BYTES+1) > MEMORY_BASE_REQUEST_BYTES) return NULL;
+    cJSON *root = json_parse_complete(request, strlen(request));
+    cJSON *old = cJSON_GetObjectItemCaseSensitive(root, "messages");
+    int n = cJSON_IsArray(old) ? cJSON_GetArraySize(old) : 0;
+    cJSON *last = n ? cJSON_GetArrayItem(old, n-1) : NULL;
+    cJSON *last_role = cJSON_GetObjectItemCaseSensitive(last, "role");
+    if (!cJSON_IsObject(root) || !cJSON_IsString(last_role) || strcmp(last_role->valuestring, "user")) {
+        cJSON_Delete(root); return NULL;
+    }
+    cJSON *packed = cJSON_CreateArray(); bool ok = packed != NULL;
+    for (int i = 0; ok && i < n; ) {
+        cJSON *message = cJSON_GetArrayItem(old, i);
+        cJSON *role = cJSON_GetObjectItemCaseSensitive(message, "role");
+        cJSON *content = cJSON_GetObjectItemCaseSensitive(message, "content");
+        if (!cJSON_IsString(role) || !cJSON_IsString(content)) { ok = false; break; }
+        int end = i+1;
+        if (!strcmp(role->valuestring, "user") && i < n-1) {
+            while (end < n-1) {
+                cJSON *next_role = cJSON_GetObjectItemCaseSensitive(cJSON_GetArrayItem(old, end), "role");
+                if (!cJSON_IsString(next_role) || strcmp(next_role->valuestring, "user")) break;
+                end++;
+            }
+        }
+        cJSON *copy = NULL;
+        if (end-i < 2) copy = cJSON_Duplicate(message, true);
+        else {
+            size_t cap = 128;
+            for (int j = i; ok && j < end; j++) {
+                cJSON *text = cJSON_GetObjectItemCaseSensitive(cJSON_GetArrayItem(old, j), "content");
+                if (!cJSON_IsString(text) || cap > MEMORY_BASE_REQUEST_BYTES-96 ||
+                    strlen(text->valuestring) > MEMORY_BASE_REQUEST_BYTES-cap-96) ok = false;
+                else cap += strlen(text->valuestring)+96;
+            }
+            char *joined = ok ? malloc(cap) : NULL;
+            if (!joined) { ok = false; break; }
+            size_t used = (size_t)snprintf(joined, cap, "Earlier author turns, quoted in chronological order. The current request follows separately.\n");
+            for (int j = i; j < end; j++) {
+                const char *text = cJSON_GetObjectItemCaseSensitive(cJSON_GetArrayItem(old, j), "content")->valuestring;
+                used += (size_t)snprintf(joined+used, cap-used, "\n[Earlier author turn %d]\n%s\n[/Earlier author turn]\n", j+1, text);
+            }
+            copy = cJSON_CreateObject();
+            ok = copy && cJSON_AddStringToObject(copy, "role", "user") && cJSON_AddStringToObject(copy, "content", joined);
+            free(joined);
+        }
+        if (!ok || !copy || !cJSON_AddItemToArray(packed, copy)) { cJSON_Delete(copy); ok = false; break; }
+        i = end;
+    }
+    if (ok) { ok = cJSON_ReplaceItemInObjectCaseSensitive(root, "messages", packed); if (ok) packed = NULL; }
+    char *out = ok ? cJSON_PrintUnformatted(root) : NULL;
+    cJSON_Delete(packed); cJSON_Delete(root);
+    if (out && strlen(out) > MEMORY_BASE_REQUEST_BYTES) { free(out); return NULL; }
+    return out;
 }
 
 char *chat_memory_sources(ChatSession *s)
@@ -979,6 +1043,7 @@ static bool build_in_worker(ChatSession *s)
         SemanticClient *bounded_vectors = budget_started
             ? semantic_client_bounded(s->memory_vectors, &budget.stop, budget.deadline_ms) : NULL;
         MemoryPlan plan = {0};
+        bool briefs_unavailable = false;
         MemoryDocumentSet documents = {0};
         MemoryDocumentName attachment_names[MEMORY_DOCUMENTS_MAX] = {0};
         size_t nattachments = 0;
@@ -1009,10 +1074,23 @@ static bool build_in_worker(ChatSession *s)
         available = available && s->request_attachment_epoch == chat_memory_attachment_version(s) &&
             memory_plan_build_with_documents(db, bounded_vectors, project_id, s->memory_conversation,
                 query, before, false, memory_reference_tokens, &tokenizer, fingerprint, &budget.stop, &plan, &documents);
+        if (available && plan.scope.enabled) {
+            plan.compact_sources = s->memory_presentation != CHAT_MEMORY_LEGACY;
+            if (s->memory_presentation == CHAT_MEMORY_EPISODE) {
+                char *packed = chat_pack_history_request(req);
+                long room = (long)slot_ctx - MAX_REPLY_TOKENS - 256;
+                long tokens = packed ? memory_request_tokens(packed, &tokenizer) : -1;
+                if (tokens >= 0 && tokens <= room) { free(req); req = packed; }
+                else free(packed); /* representation is optional; never clip author content */
+            }
+        }
         if (available && s->memory_briefs && plan.scope.enabled) {
             char model[65];
-            available = memory_brief_model_fingerprint(&tokenizer, model) &&
-                memory_plan_add_briefs(db, &plan, before, model, memory_reference_tokens, &tokenizer);
+            /* Brief addition is staged: a brief-only failure leaves the raw
+             * plan intact. Original scope/source admission below is still
+             * mandatory; optional derived data must not suppress valid recall. */
+            briefs_unavailable = !memory_brief_model_fingerprint(&tokenizer, model) ||
+                !memory_plan_add_briefs(db, &plan, before, model, memory_reference_tokens, &tokenizer);
         }
         if (available && (plan.count || plan.brief_count)) {
             char *with_memory = NULL;
@@ -1028,7 +1106,8 @@ static bool build_in_worker(ChatSession *s)
                 s->request_attachment_epoch == chat_memory_attachment_version(s) && !atomic_load(&s->cancel) &&
                 !atomic_load(&budget.stop) && !memory_budget_expired(&budget);
             if (admitted) {
-                char *sources = (plan.count || plan.brief_count) && plan.reference ? strdup(plan.reference) : NULL;
+                const char *receipt = plan.provenance ? plan.provenance : plan.reference;
+                char *sources = (plan.count || plan.brief_count) && receipt ? strdup(receipt) : NULL;
                 if ((plan.count || plan.brief_count) && !sources) admitted = false;
                 else {
                     pthread_mutex_lock(&s->mu);
@@ -1044,7 +1123,9 @@ static bool build_in_worker(ChatSession *s)
                 free(with_memory);
                 if (timed_out) snprintf(memory_notice, sizeof(memory_notice), "Local memory budget exhausted; recent context only, no older references sent.");
                 else snprintf(s->build_error, sizeof(s->build_error), "Memory admission changed or exact context budgeting failed; nothing was sent. Retry or narrow the request.");
-            } else snprintf(memory_notice, sizeof(memory_notice), "Local memory: %zu excerpts, %zu generated T1 briefs; partial recall. Sources are as-of this reply, not canon.", plan.count, plan.brief_count);
+            } else if (briefs_unavailable)
+                snprintf(memory_notice, sizeof(memory_notice), "Local memory: %zu validated original excerpts; T1 briefs unavailable. Partial recall; Sources are as-of this reply, not canon.", plan.count);
+            else snprintf(memory_notice, sizeof(memory_notice), "Local memory: %zu excerpts, %zu generated T1 briefs; partial recall. Sources are as-of this reply, not canon.", plan.count, plan.brief_count);
         } else snprintf(memory_notice, sizeof(memory_notice), "%s",
             available && plan.readiness == MEMORY_DISABLED ? "Local memory disabled for this conversation; recent context only"
             : "Local memory warming, partial or unavailable: no older excerpts admitted; recent context only");

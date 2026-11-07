@@ -23,8 +23,8 @@ def main():
         ("worker_cancel_admission", worker, "worker", ("job->pending = job->wanted = false;", "job->pending = false;")),
         ("store_control", store, "store", None),
         ("store_connect_lock", store, "store", (
-            "Db *opened = db_open(&config, err, sizeof(err));",
-            "pthread_mutex_lock(&manager->mutex); Db *opened = db_open(&config, err, sizeof(err)); pthread_mutex_unlock(&manager->mutex);")),
+            "Db *opened = bounded ? db_open_until(&config, cancel, deadline, err, sizeof(err)) : db_open(&config, err, sizeof(err));",
+            "pthread_mutex_lock(&manager->mutex); Db *opened = bounded ? db_open_until(&config, cancel, deadline, err, sizeof(err)) : db_open(&config, err, sizeof(err)); pthread_mutex_unlock(&manager->mutex);")),
         ("store_stale_generation", store, "store", (
             "generation == atomic_load(&manager->generation) &&", "")),
         ("store_marker_fallback", store, "store", (

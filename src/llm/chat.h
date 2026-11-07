@@ -102,6 +102,13 @@ uint64_t chat_memory_attachment_version(ChatSession *s);
 bool chat_set_generative_gate(ChatSession *s, struct GenerativeGate *gate);
 bool chat_memory_set_document_cache(ChatSession *s, struct MemoryDocumentCache *cache);
 bool chat_memory_set_briefs_enabled(ChatSession *s, bool enabled);
+typedef enum { CHAT_MEMORY_LEGACY, CHAT_MEMORY_COMPACT, CHAT_MEMORY_EPISODE } ChatMemoryPresentation;
+/* Idle-only experimental representation; never grants memory consent/scope. */
+bool chat_memory_set_presentation(ChatSession *s, ChatMemoryPresentation presentation);
+/* Owned deterministic representation of consecutive historical author turns.
+ * Preserves content/order and the separate current request; NULL leaves caller
+ * free to retain the original request. Caller must count the complete result. */
+char *chat_pack_history_request(const char *request);
 /* Owned bounded as-of sources for the last prepared local reply; NULL if none. */
 char *chat_memory_sources(ChatSession *s);
 

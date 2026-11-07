@@ -2,6 +2,7 @@
  * doubles below do not purport to test SQL eligibility or ANN recall quality. */
 #define _POSIX_C_SOURCE 200809L
 #include "llm/context_planner.h"
+#include "llm/llm_text.h"
 #include "llm/memory_vectors.h"
 #include "core/json.h"
 #include <assert.h>
@@ -97,7 +98,7 @@ static bool hydrate(void *ctx, const MemoryScope *scope, const MemoryCandidate *
     out->message_id = 1;
     out->sequence = f->tail ? 1000 : (int64_t)strtoul(candidate->unit_id + 60, NULL, 16);
     out->role = CHAT_ASSISTANT;
-    if (f->document_units || (f->mixed_units && f->hydrate_calls % 2)) {
+    if (f->document_units || (f->mixed_units && !(strtoul(candidate->unit_id + 60, NULL, 16) % 2))) {
         const MemoryDocumentRef *r = &f->documents.refs[0];
         out->kind = MEMORY_SOURCE_DOCUMENT;
         strcpy(out->document_id, r->document_id);
@@ -533,6 +534,7 @@ static void test_brief_priority_and_failures(void)
 #ifdef PLANNER_FAULT_TEST
 static void test_allocations(void)
 {
+    for (unsigned compact = 0; compact < 2; compact++)
     for (unsigned documents = 0; documents < 2; documents++)
     for (long fail = 0; fail < 200; fail++) {
         Fixture f;
@@ -546,6 +548,7 @@ static void test_allocations(void)
         if (!ok) assert(!p.count && !p.reference);
         memory_plan_free(&p);
         assert(memory_plan_recall(&o, "p-test", "test-chat", "key", 1000, false, NULL, &p));
+        p.compact_sources = compact != 0;
         char *request = NULL;
         fault_alloc_after(fail);
         ok = memory_plan_apply(&p, base, false, 1400, request_tokens, &f, &request);
@@ -624,10 +627,49 @@ static void test_final_budget(void)
     memory_plan_free(&p);
 }
 
+static void test_original_admission_freshness(void)
+{
+    for (unsigned failure = 0; failure < 4; failure++) {
+        Fixture f; setup(&f); MemoryRecallOps o = ops(&f); MemoryPlan p;
+        assert(memory_plan_recall(&o, "p-test", "test-chat", "key", 1000, false, NULL, &p));
+        assert(p.count && memory_plan_admit((Db *)1, &p, false));
+        if (failure == 0) f.hydrate_fail = true;
+        if (failure == 1) f.tail = true; /* position changed after recall */
+        if (failure == 2) p.units[0].role = CHAT_USER;
+        if (failure == 3) p.units[0].source_hash[0] = 'a';
+        assert(!memory_plan_admit((Db *)1, &p, false));
+        memory_plan_free(&p);
+    }
+}
+
+static void test_compact_receipt(void)
+{
+    Fixture f; setup(&f); MemoryRecallOps o=ops(&f); MemoryPlan p;
+    assert(memory_plan_recall(&o,"p-test","test-chat","key",1000,false,NULL,&p));
+    p.compact_sources=true;
+    char *request=NULL;
+    assert(memory_plan_apply(&p,base,false,10000,request_tokens,&f,&request));
+    assert(p.count && p.reference && p.provenance);
+    assert(strstr(p.reference,"[S1 | assistant chat excerpt") && !strstr(p.reference,p.units[0].id));
+    assert(strstr(p.provenance,"[S1] Original source binding") && strstr(p.provenance,p.units[0].id));
+    char *clean=llm_neutralize(p.units[0].text); assert(clean);
+    assert(strstr(p.reference,clean) && strstr(p.provenance,clean)); free(clean);
+    assert(strlen(p.reference)<=MEMORY_PLAN_BYTES && strlen(p.provenance)<=MEMORY_PLAN_BYTES);
+    assert(memory_plan_admit((Db *)1,&p,false));
+    free(request); request=NULL;
+    assert(memory_plan_apply(&p,base,false,1000,request_tokens,&f,&request));
+    assert(p.count<8 && p.count>0 && strstr(p.provenance,p.units[p.count-1].id));
+    assert(!strstr(p.provenance,"[S8]")); /* aliases follow final fitting */
+    free(request); request=NULL;
+    assert(memory_plan_apply(&p,base,true,1,NULL,NULL,&request));
+    assert(!p.provenance && !p.reference && !strcmp(request,base));
+    free(request); memory_plan_free(&p);
+}
+
 int main(void)
 {
     test_recall(); test_privacy_and_failures(); test_final_budget(); test_request_integrity(); test_documents();
-    test_brief_references(); test_brief_priority_and_failures();
+    test_brief_references(); test_brief_priority_and_failures(); test_compact_receipt(); test_original_admission_freshness();
 #ifdef PLANNER_FAULT_TEST
     test_allocations();
 #endif
