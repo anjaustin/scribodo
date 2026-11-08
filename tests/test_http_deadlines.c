@@ -19,7 +19,7 @@
 #include <time.h>
 #include <unistd.h>
 
-enum { DRIP, TRUNCATED, MALFORMED, UPLOAD, CANCEL_UPLOAD, CLOSE_NOW, SLOW_CALLBACK, CANCEL_RECEIVE };
+enum { DRIP, SLOW_DRIP, TRUNCATED, MALFORMED, UPLOAD, CANCEL_UPLOAD, CLOSE_NOW, SLOW_CALLBACK, CANCEL_RECEIVE };
 typedef struct {
     int listener, mode;
     char path[104];
@@ -86,9 +86,9 @@ static void *serve(void *arg)
                 while (!atomic_load(&f->stop)) pause_ms(1);
             }
             if (f->mode == TRUNCATED) (void)send(fd, "x", 1, 0);
-            if (f->mode == DRIP) {
+            if (f->mode == DRIP || f->mode == SLOW_DRIP) {
                 for (int i = 0; i < 20 && !atomic_load(&f->stop); i++) {
-                    pause_ms(10);
+                    pause_ms(f->mode == SLOW_DRIP ? 40 : 10);
                     if (send(fd, "x", 1, 0) != 1) break;
                     atomic_fetch_add(&f->sent, 1);
                 }
@@ -171,10 +171,13 @@ static void deadline_drip(void)
 
 static void legacy_drip(void)
 {
+    /* Each 40 ms gap is far inside the 300 ms per-receive timeout, while the
+     * 800 ms total transfer exceeds it: only a timeout that resets on data
+     * completes. The margin absorbs sanitizer and hosted-runner stalls. */
     Fixture f;
-    start(&f, DRIP);
+    start(&f, SLOW_DRIP);
     HttpResult r;
-    CHECK(http_request(f.path, "GET", "/", NULL, NULL, NULL, NULL, NULL, 100, &r));
+    CHECK(http_request(f.path, "GET", "/", NULL, NULL, NULL, NULL, NULL, 300, &r));
     CHECK(r.status == 200 && r.len == 20 && r.body != NULL);
     http_result_free(&r);
     stop(&f);
