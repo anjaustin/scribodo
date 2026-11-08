@@ -278,7 +278,13 @@ static void test_documents(void)
     document_setup(&f); f.mixed_units = true; o = ops(&f); o.documents = &f.documents;
     assert(memory_plan_recall(&o, "p-test", "test-chat", "key", 1000, false, NULL, &p));
     assert(p.count == 8 && p.candidates == 32 && strlen(p.reference) <= MEMORY_PLAN_BYTES && p.tokens <= MEMORY_PLAN_TOKENS);
-    assert(p.units[0].kind == MEMORY_SOURCE_DOCUMENT && p.units[1].kind == MEMORY_SOURCE_CHAT);
+    /* Both kinds are admitted; their order follows rank fusion, not kind. */
+    size_t documents = 0, chats = 0;
+    for (size_t i = 0; i < p.count; i++) {
+        documents += p.units[i].kind == MEMORY_SOURCE_DOCUMENT;
+        chats += p.units[i].kind == MEMORY_SOURCE_CHAT;
+    }
+    assert(documents && chats && documents + chats == p.count);
     memory_plan_free(&p);
     assert(memory_plan_build_with_documents((Db *)1, NULL, "p-test", "test-chat", "key", 1000, false,
                                            token_count, &f, "fixture-tokenizer", NULL, &p, &f.documents));
@@ -666,9 +672,36 @@ static void test_compact_receipt(void)
     free(request); memory_plan_free(&p);
 }
 
+
+/* Rank fusion: a channel's top result is admitted even when it appears in
+ * only that channel; agreement between channels on low-ranked candidates must
+ * not displace it. The fixture's lexical list is units 0..15 and its semantic
+ * list units 8..23, so units 8..15 are in both and unit 0 is lexical-only at
+ * lexical rank 1. With the pre-MEMORY-018 constant of 61 the eight shared
+ * units took every slot and unit 0 was excluded. */
+static void test_fusion_rank(void)
+{
+    Fixture f; setup(&f); MemoryRecallOps o = ops(&f); MemoryPlan p;
+    assert(memory_plan_recall(&o, "p-test", "test-chat", "key", 1000, false, NULL, &p));
+    assert(p.count == MEMORY_PLAN_UNITS);
+    char lexical_top[65], shared_top[65], shared_tail[65];
+    identifier(lexical_top, 0);   /* lexical rank 1, lexical only */
+    identifier(shared_top, 8);    /* lexical rank 9 and semantic rank 1 */
+    identifier(shared_tail, 15);  /* lexical rank 16 and semantic rank 8 */
+    bool has_lexical_top = false, has_shared_tail = false;
+    for (size_t i = 0; i < p.count; i++) {
+        has_lexical_top = has_lexical_top || !strcmp(p.units[i].id, lexical_top);
+        has_shared_tail = has_shared_tail || !strcmp(p.units[i].id, shared_tail);
+    }
+    assert(!strcmp(p.units[0].id, shared_top)); /* agreement near the top still ranks first */
+    assert(has_lexical_top);                      /* a channel's #1 is never displaced by low-rank agreement */
+    assert(!has_shared_tail);                     /* ranks 16 and 8 together do not beat a channel's #1 */
+    memory_plan_free(&p);
+}
+
 int main(void)
 {
-    test_recall(); test_privacy_and_failures(); test_final_budget(); test_request_integrity(); test_documents();
+    test_recall(); test_fusion_rank(); test_privacy_and_failures(); test_final_budget(); test_request_integrity(); test_documents();
     test_brief_references(); test_brief_priority_and_failures(); test_compact_receipt(); test_original_admission_freshness();
 #ifdef PLANNER_FAULT_TEST
     test_allocations();

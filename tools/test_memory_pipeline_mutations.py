@@ -27,6 +27,7 @@ def main():
         ("planner_document_authorization", "planner", ("bool authorized = false;", "bool authorized = true;")),
         ("planner_document_detach", "planner", ("!documents_same(&plan->documents, documents)", "false")),
         ("planner_original_readmission", "planner", ("if (unit->kind != MEMORY_SOURCE_CHAT) continue;", "if (true) continue;")),
+        ("planner_fusion_scale", "planner", ("1.0 / (RECALL_FUSION_K + (double)i)", "1.0 / (61.0 + (double)i)")),
         ("worker_control", "worker", None),
         ("worker_pause_controls", "worker", ("if (job->control_count) {", "if (job->control_count && !job->paused) {")),
         ("worker_idle_pacing", "worker", ("if (job->request.serial == serial && !time_due(navigation_due, now))", "if (false)")),

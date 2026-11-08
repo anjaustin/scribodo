@@ -189,6 +189,18 @@ static bool append_reference(char *text, size_t capacity, size_t *used, const ch
 
 typedef struct { MemoryCandidate locator; double rank; } Ranked;
 
+/* Reciprocal-rank fusion constant. The conventional 60 was chosen for lists
+ * of about a thousand; on this planner's 16-candidate lists it flattens rank
+ * (1/61 vs 1/76) until "found by both channels" outranks "ranked first by
+ * one": a unit at ranks 15 and 11 scored 0.027 against a required source at
+ * semantic rank 1 scoring 0.016, and short author turns lost their slot to
+ * long filler (MEMORY-017). Measured over both frozen reach fixtures, every
+ * constant at or above 15 reproduced those misses and every constant at or
+ * below 5 admitted all required sources (MEMORY-018). 1 is the value scaled
+ * to the list length and keeps a channel's top result ahead of agreement on
+ * low-ranked candidates while still rewarding agreement near the top. */
+#define RECALL_FUSION_K 1.0
+
 static void merge(Ranked out[MEMORY_CANDIDATES], size_t *n, const MemoryCandidate *in, size_t count,
                    const MemoryScope *scope)
 {
@@ -206,7 +218,7 @@ static void merge(Ranked out[MEMORY_CANDIDATES], size_t *n, const MemoryCandidat
             out[(*n)++] = (Ranked){ .locator = in[i] };
         }
         /* A poisoned duplicate must not override the earlier locator's hash. */
-        if (!strcmp(out[j].locator.text_hash, in[i].text_hash)) out[j].rank += 1.0 / (61.0 + (double)i);
+        if (!strcmp(out[j].locator.text_hash, in[i].text_hash)) out[j].rank += 1.0 / (RECALL_FUSION_K + (double)i);
     }
 }
 
