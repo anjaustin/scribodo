@@ -79,6 +79,11 @@ bounded resources and staged acceptance in
 [`MEMORY-002-mvp-design.md`](MEMORY-002-mvp-design.md); it is not a runtime change.
 The authorized implementation is tracked separately in
 [`MEMORY-003-implementation-progress.md`](MEMORY-003-implementation-progress.md).
+**Memory is P0 as of 2026-11-07.** The goal, lineage, decomposition and ordered
+slices are the contract in
+[`MEMORY-015-effective-memory-contract.md`](MEMORY-015-effective-memory-contract.md):
+a deterministic recall view first, then a realistic fixture and two-metric
+harness, then host-side selection work, then the MEMORY-003 leftovers.
 DB history browsing, source identities, bounded layouts and their remaining
 latency/scope limits are tracked in
 [`MEMORY-004-history-windows.md`](MEMORY-004-history-windows.md).

@@ -105,9 +105,11 @@ The local model must run with BF16 weights and BF16 compute. Quantized checkpoin
 The full acceptance criteria are in [`docs/SOW.md` §8](docs/SOW.md#8-acceptance-criteria). The MVP acceptance run on this Mac is in [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md).
 Architectural and maintenance follow-up is tracked in [`docs/TECHNICAL-DEBT.md`](docs/TECHNICAL-DEBT.md).
 The five remaining product-readiness gaps are tracked in [`docs/PRODUCT-GAPS.md`](docs/PRODUCT-GAPS.md).
-**Current P0:** whole-manuscript scale and sustained use, including the
-[long-lived memory investigation](docs/MEMORY-001-long-lived-context.md).
-The bounded-history foundation and unfinished MVP work are tracked in
+**Current P0:** memory. The goal is infinite *effective* memory for the local
+model, not a larger context window; the contract and ordered slices are in
+[`MEMORY-015`](docs/MEMORY-015-effective-memory-contract.md). The investigation
+began with [`MEMORY-001`](docs/MEMORY-001-long-lived-context.md), and the
+bounded-history foundation is tracked in
 [`MEMORY-003`](docs/MEMORY-003-implementation-progress.md).
 
 ## Out of scope for the MVP
