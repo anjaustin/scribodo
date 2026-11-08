@@ -322,6 +322,12 @@ Each of these was caught by the suites and has a regression check:
   A `--replace` must also drop the stale index.
 - **`make remotetest`:** the remote model against a stand-in provider. It checks what actually reached the provider: one request, with its key and document, nothing from before the switch, and nothing after switching back.
 
+## Where cited evidence lives
+
+Dated reports cite `build/` run directories and logs. Those are archived, not
+deleted, when the build folder is cleaned; [`EVIDENCE.md`](EVIDENCE.md) maps the
+cited paths to the dated tarballs.
+
 ## Test-harness environment variables
 
 These exist for the scripted suites and debugging. Operator-facing variables
