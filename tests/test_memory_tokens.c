@@ -255,7 +255,10 @@ int main(void)
     assert(memory_request_tokens(full_request, &real) == -1 && calls == 1);
     assert(atomic_load(&cancel));
     atomic_store(&cancel, false);
-    reset(); wait_for_cancel = true; real.timeout_ms = 5;
+    /* The private timeout must elapse inside the stub, not before dispatch:
+     * a 5 ms budget could expire under sanitizer/runner load before the
+     * request was issued (zero calls), which is a different valid outcome. */
+    reset(); wait_for_cancel = true; real.timeout_ms = 200;
     assert(memory_source_tokens("plain", &real) == -1 && calls == 1);
     assert(!atomic_load(&cancel)); /* private timeout must not cancel its owner */
     puts("memory_tokens: passed (headless request stubs; no real-model count claim)");
