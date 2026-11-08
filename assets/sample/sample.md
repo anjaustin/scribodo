@@ -2,7 +2,7 @@
 
 Chapter One — draft
 
-The fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other, and she thought, not for the first time, that she had made a mistake in coming back.
+This ia a test... The fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other, and she thought, not for the first time, that she had made a mistake in coming back.
 
 “You’re late,” said Dvořák, without turning around. He was hunched over the old Fresnel lens, polishing a brass fitting that did not need polishing. “The ferry was on time. I watched it.”
 
