@@ -143,7 +143,12 @@ sustained-use claim under GAP-003.
 
 **P1 and beyond.** Canon-aware chat (MEMORY-014 §5 P1) starts only after S1,
 with its own frozen registration, rubric and stop condition. It is a new
-contract, not a retune of a failed fixture.
+contract, not a retune of a failed fixture. *First run 2026-11-08 in
+[MEMORY-020](MEMORY-020-canon-aware-chat.md): canon removed the authority
+and open-state failures it targeted and introduced over-anchoring in four of
+27 alternating-layout cases; the stop condition was met, P1 does not advance
+in this form, and the fixture is not retuned. P0 stays authoritative and
+the model non-authoritative, per MEMORY-014 §9.*
 
 ## 7. Guardrails that apply to every slice
 

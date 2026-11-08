@@ -203,6 +203,54 @@ occurred. The generator also now emits two attached saved documents with
 planted `document_fact` items, and the driver ingests them through the
 production document path.
 
+## Attached documents: reach measured, and a unit boundary fixed (2026-11-08)
+
+The two attached saved documents carry one planted fact per chapter; the
+`document_fact` tasks ask for them. The scorer counts a document excerpt as
+reaching when it carries the answer (the planted sentence, or an answer
+phrase on word boundaries), and separately reports whether the whole planted
+sentence arrived in one admitted excerpt. Both prior runs, rescored from
+their frozen answer keys with `--rescore`:
+
+| Run | document tasks | reach@candidates | reach@admitted | lexical hit | semantic hit | whole sentence admitted |
+|---|---:|---:|---:|---:|---:|---:|
+| 30K | 3 | 1.00 | 1.00 | 1.00 | 0.67 | 1.00 |
+| 100K | 4 | 1.00 | 1.00 | 1.00 | 1.00 | 0.75 |
+
+The one failure of the whole-sentence measure at 100K was not selection. The
+document had been split into units at exactly 2,000 bytes, and the cut fell
+inside the planted sentence; the two halves both reached, each carrying part
+of the answer. The ingestion path in `memory_store.c` and
+`memory_document_store.c` trimmed the cap only to a UTF-8 sequence boundary.
+
+Both now cut through `text_cut` (`src/core/text_cut.c`): within the back half
+of the window the cut falls after the last line break, else after the last
+sentence end followed by whitespace, else after the last whitespace, and only
+text with no break at all is cut at the byte cap as before. Coverage is
+unchanged, since the next unit starts where the previous ends; the token
+cap's halving step uses the same cut. `test_core: text_cut` pins the
+preference order, the front-half exclusion, the UTF-8 alignment and the
+no-cut case; the store suites' existing checks (24,000 bytes of 4-byte
+characters covered exactly, every `byte_start` aligned to 4) still pass,
+because text without whitespace takes the old path.
+
+Re-measured after the change, same seed and sizes, new frozen runs
+(`scribodo_test_reach_5807_*` at 100K, `scribodo_test_reach_5959_*` at 30K),
+all harness gates passed:
+
+| Run | document tasks | reach@candidates | reach@admitted | lexical hit | semantic hit | whole sentence admitted |
+|---|---:|---:|---:|---:|---:|---:|
+| 30K | 3 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
+| 100K | 4 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
+
+Nothing else moved: overall reach@candidates and reach@admitted stayed at
+1.00 at both sizes, lexical hit 1.00, semantic hit 0.96 at 30K and 0.92 at
+100K as before the change, planning p95 under 55 ms. The cut itself is
+visible in the observed units: of the document units that appeared as
+candidates in the 100K run before the change, three of four ended mid-word
+and one at a sentence end; after it, all five observed at 100K and all five
+at 30K end at a sentence end.
+
 ## Limits, stated plainly
 
 - **The corpus is template prose.** It reproduces vocabulary overlap, not
@@ -210,8 +258,9 @@ production document path.
   among long paragraphs, which likely flatters semantic discovery. A real
   manuscript, used locally, would be stronger evidence; the harness accepts
   any archive in the same shape.
-- **Chat archive only.** Saved-revision excerpts are a later axis of this
-  harness.
+- **Two attached documents, one fact each.** Saved-revision reach is
+  measured on two short chapters; longer documents and facts that span a
+  paragraph are not yet in the fixture.
 - **Candidates are observed at the production limits** (16 per path). The
   harness does not yet report rank positions beyond the cut, so "not a
   candidate" and "ranked 17th" are indistinguishable.
