@@ -136,7 +136,7 @@ awareness; author-marked importance; project-wide canon scope under
 per-conversation consent. Gate: reach improves on S2 with no regression in the
 scope, privacy and cost axes.
 
-**S4 — MEMORY-003 leftovers.** Windowed chat loading in `open_chat`, stable
+**S4 — MEMORY-003 leftovers.** *First baseline 2026-11-08 in [MEMORY-019](MEMORY-019-manuscript-baseline.md).* Windowed chat loading in `open_chat`, stable
 source identity through eviction, and a latency and memory baseline on the S2
 fixture. These predate the retrieval work and are prerequisites for any
 sustained-use claim under GAP-003.

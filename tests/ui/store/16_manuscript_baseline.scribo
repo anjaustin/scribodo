@@ -53,5 +53,27 @@ type "A baseline question about the amber key."
 key ENTER
 wait_chat
 measure_frames stop
-expect chat_last_not "A baseline question"
+# The fake model echoes the prompt, so the reply contains the question.
+expect chat_last "A baseline question"
 expect chat_cache_max 67108864
+# Phase 6: enable memory for the whole 1,116-turn chat (fake tokenizer, real SQL and index).
+expect memory_enabled no
+measure_frames start
+right_click_element ChatItem0
+click_element MenuItem2
+wait_memory 1116 36000
+measure_frames stop
+expect memory_enabled yes
+# Phase 7: a Recall query over the whole archive plus canon.
+measure_frames start
+click_element RecallToggle
+click_element RecallInput
+type "amber key"
+key ENTER
+wait_recall 3600
+measure_frames stop
+expect recall "idle"
+expect recall "memory_on=1"
+expect recall "conversations=1"
+expect recall_not "canon|"
+click_element RecallToggle

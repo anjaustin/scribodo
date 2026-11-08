@@ -48,8 +48,8 @@ echo "manuscript_baseline: disposable_database=$name"
 created=1
 tools/services.sh testdb create "$name"
 start=$SECONDS
-SCRIBODO_STORE=db SCRIBODO_DB_NAME="$name" SCRIBODO_DB_PORT="$port" SCRIBODO_LLM=fake \
+SCRIBODO_STORE=db SCRIBODO_DB_NAME="$name" SCRIBODO_DB_PORT="$port" SCRIBODO_LLM=fake SCRIBODO_MEMORY_EXPERIMENT=1 \
     SCRIBODO_MODEL_SETTINGS="$temp/work/model-settings.json" SCRIBODO_PROFILE="$temp/work/profile.json" \
     SCRIBODO_SCRIPT=tests/ui/store/16_manuscript_baseline.scribo SCRIBODO_SCRIPT_DIR="$temp/work" \
-    SCRIBODO_SHOT_DIR="$temp" caffeinate -i tools/watchdog.sh 900 manuscript-baseline python3 tools/frame_soak_run.py "$app"
+    SCRIBODO_SHOT_DIR="$temp" caffeinate -i tools/watchdog.sh 1500 manuscript-baseline python3 tools/frame_soak_run.py "$app"
 echo "manuscript_baseline: process_wall_seconds=$((SECONDS - start)) words=$words per_category=$per"

@@ -207,6 +207,9 @@ historybench: $(MARIADB_LIB)
 	tools/history_bench.sh quick
 historysoak: $(MARIADB_LIB)
 	tools/history_bench.sh soak
+# Manuscript-scale UI baseline on the S2 fixture (MEMORY-019); needs a display and the services.
+manuscriptbaseline: $(APP)
+	tools/manuscript_baseline.sh
 
 $(BUILD)/test_chat_view: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/src/app/chat_controller.o $(BUILD)/src/ui/chat_view.o $(BUILD)/src/ui/editor.o $(BUILD)/src/ui/input.o $(BUILD)/tests/raylib_stubs.o $(BUILD)/tests/test_chat_view.o
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread -lm
