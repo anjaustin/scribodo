@@ -9,6 +9,8 @@ development Mac, not tracked files. Nothing cited is deleted; it is archived.
 |---|---|---|
 | `scribodo-evidence-2026-11-07.tar.gz` | Every `build/` directory and log cited by a doc as of 2026-11-07: the native continuity runs (`mn-*`, `mo-*`), the causal parity and bedrock probe runs (`mc-*`, `mb-*`), `memory-quality`, `memory-mutations`, `remediation-mutations`, `redteam2-fresh`, `hangs`, and the `memory-bedrock-*`, `memory-redteam-*`, `window-audit-*` and `async-history-retry-acceptance` logs | `~/Library/Application Support/Scribodo/evidence/` with `SHA256SUMS` and a `manifest-2026-11-07.txt` listing the top-level entries |
 
+| `scribodo-evidence-2026-11-08.tar.gz` | The S2 and S3 reach runs (`build/memory-reach/runs/*`, including seeds 1 to 4), the four native model-side runs (`build/mn-*`: the sleep-interrupted run, the complete 144-answer run, the two near-miss runs), the stall replay (`build/stall-replay`), the hang probe (`build/hang-probe`) and the lexical bench reports (`build/lexical-bench`) | same folder, `SHA256SUMS` and `manifest-2026-11-08.txt` |
+
 To consult a cited path, extract the archive into an empty folder and read the
 path relative to it. Stale `llama.sock` files inside a few run directories were
 not archivable and are not evidence.

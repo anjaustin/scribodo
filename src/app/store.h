@@ -36,7 +36,7 @@ bool store_online(const StoreManager *manager);
 /* The database in use ("scribodo", or a test database). */
 void store_database(StoreManager *manager, char *out, size_t outlen);
 /* Bounded configuration snapshot; clears out on failure (including truncation).
- * deadline_ms is a positive absolute CLOCK_MONOTONIC deadline. */
+ * deadline_ms is a positive absolute deadline on the deadline clock (core/deadline_clock.h). */
 bool store_database_until(StoreManager *manager, char *out, size_t outlen,
                           const atomic_bool *cancel, double deadline_ms);
 /* Force the manager offline. Marked projects pause; no file-history fallback. */
@@ -48,7 +48,7 @@ Db *store_db(StoreManager *manager);
 /* Deadline-bounded first connection for optional foreground work. Reuses this
  * thread's valid cached connection; cancellation/expiry does not take the
  * manager offline or dispose of an already cached connection. The deadline
- * is absolute CLOCK_MONOTONIC milliseconds. Subsequent SQL needs its own
+ * is absolute milliseconds on the deadline clock (core/deadline_clock.h). Subsequent SQL needs its own
  * socket cancellation guard; this API only bounds connection/session setup. */
 Db *store_db_until(StoreManager *manager, const atomic_bool *cancel, double deadline_ms);
 void store_thread_done(StoreManager *manager); /* close this thread's connection */

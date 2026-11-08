@@ -30,7 +30,7 @@ bool http_request(const char *socket_path, const char *method, const char *path,
                   const char *bearer, const char *body, HttpLineFn on_line, void *ctx,
                   atomic_bool *cancel, int timeout_ms, HttpResult *result);
 
-/* As above, additionally bounded by an absolute CLOCK_MONOTONIC deadline in
+/* As above, additionally bounded by an absolute deadline on the deadline clock (core/deadline_clock.h) in
  * milliseconds, including connect, upload, receive and decoding. Invalid or
  * expired deadlines fail before opening a socket. On failure no partial body
  * is returned (already delivered streaming callbacks cannot be retracted).

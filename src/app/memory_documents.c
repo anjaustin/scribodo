@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <math.h>
+#include "core/deadline_clock.h"
 
 bool memory_document_name_copy(const char *title, bool dirty, MemoryDocumentName *out)
 {
@@ -142,7 +143,7 @@ void memory_document_cache_invalidate(MemoryDocumentCache *cache)
 static uint64_t monotonic_ms(void)
 {
     struct timespec now;
-    if (clock_gettime(CLOCK_MONOTONIC, &now) || now.tv_sec < 0) return 0;
+    if (clock_gettime(SCRIBODO_DEADLINE_CLOCK, &now) || now.tv_sec < 0) return 0;
     return (uint64_t)now.tv_sec * 1000u + (uint64_t)now.tv_nsec / 1000000u;
 }
 
@@ -176,7 +177,7 @@ static bool lookup_stopped(const DocumentLookup *lookup)
     if (lookup->cancel && atomic_load(lookup->cancel)) return true;
     if (!lookup->deadline_ms) return false;
     struct timespec now;
-    return !isfinite(lookup->deadline_ms) || clock_gettime(CLOCK_MONOTONIC, &now) != 0 ||
+    return !isfinite(lookup->deadline_ms) || clock_gettime(SCRIBODO_DEADLINE_CLOCK, &now) != 0 ||
            (double)now.tv_sec * 1000.0 + (double)now.tv_nsec / 1000000.0 >= lookup->deadline_ms;
 }
 

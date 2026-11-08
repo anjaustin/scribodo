@@ -389,6 +389,12 @@ counting through sleep on macOS, Python's `time.monotonic()` does not, and
 bash `$SECONDS` is wall time; a run that straddles sleep reports different
 durations from each.
 
+A legacy project's move into the store runs on an owned worker since
+MEMORY-019 (`src/app/import_job.c`); UI scripts that open a freshly seeded
+legacy project must `wait_status "now kept in the project store"` before
+using it. `tools/import_probe.c` times that import and counts its SQL
+statements on a seeded project.
+
 `tools/chat_hang_probe.c` (build it with the overlay in its header comment)
 drives a real `ChatSession` against a stand-in server that accepts the
 completion and never answers, with or without stream headers, requests

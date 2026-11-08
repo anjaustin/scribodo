@@ -17,6 +17,7 @@
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
+#include "core/deadline_clock.h"
 
 static void sha256_hex(const char *s, char out[65]);
 static double now_s(void);
@@ -177,7 +178,7 @@ static bool store_budget_active(const atomic_bool *cancel, double deadline)
     if (cancel && atomic_load(cancel)) return false;
     if (!isfinite(deadline) || deadline <= 0) return false;
     struct timespec ts;
-    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return false;
+    if (clock_gettime(SCRIBODO_DEADLINE_CLOCK, &ts) != 0) return false;
     return (double)ts.tv_sec * 1000 + (double)ts.tv_nsec / 1e6 < deadline;
 }
 
@@ -194,7 +195,7 @@ static bool store_connection_lock(StoreManager *manager, const atomic_bool *canc
         if (rc != EBUSY) return false;
         /* Keep lifecycle mutex contention cancellable too. */
         struct timespec ts;
-        if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return false;
+        if (clock_gettime(SCRIBODO_DEADLINE_CLOCK, &ts) != 0) return false;
         double remaining = deadline - ((double)ts.tv_sec * 1000 + (double)ts.tv_nsec / 1e6);
         if (remaining <= 0) break;
         double slice = remaining < 20 ? remaining : 20;

@@ -20,6 +20,7 @@
 #include "app/store.h"
 #include "app/store_backends.h"
 #include "core/json.h"
+#include "core/deadline_clock.h"
 
 extern char **environ;
 
@@ -71,7 +72,7 @@ static void final_line(const char *buf, size_t n, char *out, size_t outlen)
 static time_t monotonic_seconds(void)
 {
     struct timespec ts;
-    return clock_gettime(CLOCK_MONOTONIC, &ts) == 0 ? ts.tv_sec : time(NULL);
+    return clock_gettime(SCRIBODO_DEADLINE_CLOCK, &ts) == 0 ? ts.tv_sec : time(NULL);
 }
 
 /* Run argv (no shell: paths are never interpreted). Drain stdout and stderr

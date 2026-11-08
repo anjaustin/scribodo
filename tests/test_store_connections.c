@@ -16,6 +16,7 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
+#include "core/deadline_clock.h"
 
 struct Db {
     pthread_t owner;
@@ -41,7 +42,7 @@ static _Thread_local unsigned query_count, run_count;
 static double deadline_now(void)
 {
     struct timespec t;
-    clock_gettime(CLOCK_MONOTONIC, &t);
+    clock_gettime(SCRIBODO_DEADLINE_CLOCK, &t);
     return (double)t.tv_sec * 1000 + (double)t.tv_nsec / 1e6;
 }
 

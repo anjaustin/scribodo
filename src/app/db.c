@@ -13,6 +13,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <time.h>
+#include "core/deadline_clock.h"
 
 struct Db {
     MYSQL *m;
@@ -106,7 +107,7 @@ Db *db_open(const DbConfig *c, char *err, size_t errlen)
 static double monotonic_ms(void)
 {
     struct timespec ts;
-    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return INFINITY;
+    if (clock_gettime(SCRIBODO_DEADLINE_CLOCK, &ts) != 0) return INFINITY;
     return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
 }
 

@@ -7,6 +7,11 @@
 
 #include "app/db.h"
 #include "core/recall_terms.h"
+
+/* innodb_ft_min_token_size: shorter query terms never reach the full-text
+ * index, so the recall view looks them up by exact substring instead
+ * (MEMORY-018). The canon side already matches by substring. */
+#define RECALL_FULLTEXT_MIN_TOKEN 3u
 #include "app/memory_store.h"
 #include "app/project_store.h"
 #include "app/store.h"
@@ -168,6 +173,17 @@ static bool chat_excerpts(Db *db, const MemoryScope *scope, const ConversationRo
     MemoryCandidate candidates[MEMORY_CANDIDATES];
     size_t n = 0;
     if (!memory_lexical_candidates(db, scope, query, RECALL_CANDIDATES_PER_SCOPE, candidates, &n)) return false;
+    for (unsigned t = 0; t < nterms && n < MEMORY_CANDIDATES; t++) {
+        if (strlen(terms[t].text) >= RECALL_FULLTEXT_MIN_TOKEN) continue;
+        MemoryCandidate extra[MEMORY_CANDIDATES];
+        size_t ne = 0;
+        if (!memory_substring_candidates(db, scope, terms[t].text, RECALL_CANDIDATES_PER_SCOPE, extra, &ne)) return false;
+        for (size_t e = 0; e < ne && n < MEMORY_CANDIDATES; e++) {
+            bool seen = false;
+            for (size_t k = 0; k < n && !seen; k++) seen = strcmp(candidates[k].unit_id, extra[e].unit_id) == 0;
+            if (!seen) candidates[n++] = extra[e];
+        }
+    }
     r->candidates += n;
     for (size_t i = 0; i < n; i++) {
         MemoryUnit unit = { 0 };
@@ -228,16 +244,19 @@ static bool document_seen(const RecallResult *r, size_t from, const char *revisi
 /* Saved-revision excerpts ingested under this scope. The same SQL admission
  * conditions as the planner's document path, plus byte-exact verification
  * against the revision text and whether that revision is still the saved one. */
-static bool document_excerpts(Db *db, const MemoryScope *scope, const char *query, const RecallTerm *terms,
-                              unsigned nterms, RecallResult *r, size_t *capacity, size_t excerpts_from)
+static bool document_excerpts(Db *db, const MemoryScope *scope, const char *query, const char *like_pattern,
+                              const RecallTerm *terms, unsigned nterms, RecallResult *r, size_t *capacity, size_t excerpts_from)
 {
     DbRows rows;
-    if (!db_query(db,
+    const char *score_sql = like_pattern ? "1.0/CHAR_LENGTH(u.text) AS score" :
+        "MATCH(u.text) AGAINST (? IN NATURAL LANGUAGE MODE) / POW(CHAR_LENGTH(u.text)," MEMORY_LEXICAL_LENGTH_NORM ") AS score";
+    const char *filter = like_pattern ? "u.text LIKE ? ESCAPE '\\\\'" : "MATCH(u.text) AGAINST (? IN NATURAL LANGUAGE MODE)>0";
+    char sql[2048];
+    snprintf(sql, sizeof(sql),
                   "SELECT u.id, u.text, u.byte_start, OCTET_LENGTH(u.text), d.id, d.name, r.id,"
                   " CAST(u.text AS BINARY)=SUBSTRING(CAST(r.content AS BINARY),u.byte_start+1,OCTET_LENGTH(u.text)),"
                   " CHAR_LENGTH(CONVERT(SUBSTRING(CAST(r.content AS BINARY),1,u.byte_start) USING utf8mb4)),"
-                  " COALESCE(d.saved_revision_id=r.id,0), MATCH(u.text) AGAINST (? IN NATURAL LANGUAGE MODE)"
-                  " / POW(CHAR_LENGTH(u.text)," MEMORY_LEXICAL_LENGTH_NORM ") AS score"
+                  " COALESCE(d.saved_revision_id=r.id,0), %s"
                   " FROM memory_units u JOIN memory_scopes s ON s.id=u.scope_id"
                   " JOIN documents d ON d.id=u.document_id AND d.project_id=u.project_id"
                   " JOIN revisions r ON r.id=u.revision_id AND r.document_id=d.id"
@@ -247,14 +266,16 @@ static bool document_excerpts(Db *db, const MemoryScope *scope, const char *quer
                   " AND u.generation=s.generation AND u.history_epoch=s.history_epoch"
                   " AND u.policy_epoch=s.policy_epoch AND u.tokenizer=s.tokenizer"
                   " AND u.source_hash=r.source_hash AND u.text_hash=SHA2(u.text,256)"
-                  " AND OCTET_LENGTH(u.text)<=2000 AND MATCH(u.text) AGAINST (? IN NATURAL LANGUAGE MODE)>0"
-                  " ORDER BY score DESC, u.id LIMIT ?",
-                  (DbArg[]){ DB_S(query), DB_S(scope->id), DB_S(scope->project_id), DB_S(scope->conversation_id),
-                             DB_I(scope->history_epoch), DB_I(scope->policy_epoch), DB_I(scope->generation),
-                             DB_S(scope->database), DB_S(scope->tokenizer), DB_S(query),
-                             DB_I(RECALL_CANDIDATES_PER_SCOPE) },
-                  11, &rows))
-        return false;
+                  " AND OCTET_LENGTH(u.text)<=2000 AND %s"
+                  " ORDER BY score DESC, u.id LIMIT ?", score_sql, filter);
+    const char *needle = like_pattern ? like_pattern : query;
+    DbArg like_args[] = { DB_S(scope->id), DB_S(scope->project_id), DB_S(scope->conversation_id),
+                          DB_I(scope->history_epoch), DB_I(scope->policy_epoch), DB_I(scope->generation),
+                          DB_S(scope->database), DB_S(scope->tokenizer), DB_S(needle), DB_I(RECALL_CANDIDATES_PER_SCOPE) };
+    DbArg match_args[] = { DB_S(needle), DB_S(scope->id), DB_S(scope->project_id), DB_S(scope->conversation_id),
+                           DB_I(scope->history_epoch), DB_I(scope->policy_epoch), DB_I(scope->generation),
+                           DB_S(scope->database), DB_S(scope->tokenizer), DB_S(needle), DB_I(RECALL_CANDIDATES_PER_SCOPE) };
+    if (!db_query(db, sql, like_pattern ? like_args : match_args, like_pattern ? 10 : 11, &rows)) return false;
     bool ok = rows.ncols == 11;
     r->candidates += ok ? rows.nrows : 0;
     for (size_t i = 0; ok && i < rows.nrows; i++) {
@@ -353,7 +374,20 @@ static bool recall_excerpts(StoreManager *store, const char *dir, const char *qu
         }
         r->memory_on++;
         ok = chat_excerpts(db, &scope, c, query, terms, nterms, r, capacity) &&
-             document_excerpts(db, &scope, query, terms, nterms, r, capacity, excerpts_from);
+             document_excerpts(db, &scope, query, NULL, terms, nterms, r, capacity, excerpts_from);
+        for (unsigned t = 0; ok && t < nterms; t++) {
+            if (strlen(terms[t].text) >= RECALL_FULLTEXT_MIN_TOKEN) continue;
+            char pattern[200];
+            size_t used = 0;
+            pattern[used++] = '%';
+            for (const char *p = terms[t].text; *p && used < sizeof(pattern) - 3; p++) {
+                if (*p == '%' || *p == '_' || *p == '\\') pattern[used++] = '\\';
+                pattern[used++] = *p;
+            }
+            pattern[used++] = '%';
+            pattern[used] = '\0';
+            ok = document_excerpts(db, &scope, query, pattern, terms, nterms, r, capacity, excerpts_from);
+        }
     }
     if (!ok) {
         drop_rows_from(r, excerpts_from);

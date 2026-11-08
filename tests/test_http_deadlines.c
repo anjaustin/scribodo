@@ -18,6 +18,7 @@
 #include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
+#include "core/deadline_clock.h"
 
 enum { DRIP, SLOW_DRIP, TRUNCATED, MALFORMED, UPLOAD, CANCEL_UPLOAD, CLOSE_NOW, SLOW_CALLBACK, CANCEL_RECEIVE };
 typedef struct {
@@ -32,7 +33,7 @@ typedef struct {
 static double ms(void)
 {
     struct timespec t;
-    clock_gettime(CLOCK_MONOTONIC, &t);
+    clock_gettime(SCRIBODO_DEADLINE_CLOCK, &t);
     return (double)t.tv_sec * 1000 + (double)t.tv_nsec / 1e6;
 }
 

@@ -321,6 +321,14 @@ static void lexical_length_normalization(void)
     CHECK(recall_run(store, folder, "amber key", &r));
     CHECK(find_row(&r, RECALL_CHAT_EXCERPT, "bronze keys"));
     recall_result_free(&r);
+    /* A two-character token never reaches the full-text index; the recall
+     * view finds the excerpt by exact substring instead (MEMORY-018). */
+    CHECK(recall_run(store, folder, "73", &r));
+    CHECK(r.terms == 1 && find_row(&r, RECALL_CHAT_EXCERPT, "73 bronze keys"));
+    recall_result_free(&r);
+    CHECK(recall_run(store, folder, "%", &r)); /* one byte: no term, nothing searched */
+    CHECK(r.terms == 0 && r.count == 0);
+    recall_result_free(&r);
 }
 
 int main(void)

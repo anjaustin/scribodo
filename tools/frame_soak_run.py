@@ -3,6 +3,7 @@
 
 import argparse
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -15,6 +16,56 @@ MAX_SAMPLES = 86400
 class StopRequested(Exception):
     def __init__(self, signum):
         self.signum = signum
+
+
+class ServiceStats:
+    """Peak and final RSS of the local service containers, from docker stats."""
+    CONTAINERS = ("scribodo-mariadb-1", "scribodo-qdrant-1")
+
+    def __init__(self):
+        self.peak = {}
+        self.final = {}
+        self.samples = 0
+        self.errors = 0
+
+    @staticmethod
+    def kib(text):
+        match = re.fullmatch(r"\s*([0-9.]+)\s*([A-Za-z]+)\s*", text)
+        if not match:
+            return None
+        number, unit = float(match.group(1)), match.group(2)
+        factor = {"B": 1 / 1024, "KiB": 1, "kB": 1000 / 1024, "MiB": 1024, "MB": 1000 * 1000 / 1024,
+                  "GiB": 1024 * 1024, "GB": 1000 * 1000 * 1000 / 1024}.get(unit)
+        return int(number * factor) if factor else None
+
+    def sample(self):
+        try:
+            result = subprocess.run(["docker", "stats", "--no-stream", "--format", "{{.Name}}\t{{.MemUsage}}",
+                                     *self.CONTAINERS], capture_output=True, text=True, timeout=5, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            self.errors += 1
+            return
+        if result.returncode:
+            self.errors += 1
+            return
+        for line in result.stdout.splitlines():
+            name, _, usage = line.partition("\t")
+            used = usage.split("/")[0].strip()
+            try:
+                kib = self.kib(used)
+            except (ValueError, IndexError):
+                kib = None
+            if kib is None:
+                self.errors += 1
+                continue
+            self.final[name] = kib
+            self.peak[name] = max(self.peak.get(name, 0), kib)
+        self.samples += 1
+
+    def report(self):
+        parts = " ".join(f"{name}:peak_kib={self.peak[name]}:final_kib={self.final[name]}" for name in sorted(self.peak))
+        print(f"FRAME_SOAK_SERVICES samples={self.samples} errors={self.errors} {parts} "
+              "(docker stats memory usage of the local service containers; sampled about every 5 s)", flush=True)
 
 
 class RssStats:
@@ -74,6 +125,8 @@ class RssStats:
 def run(app):
     child = None
     stats = RssStats()
+    services = ServiceStats()
+    next_service = time.monotonic()
     started = time.monotonic()
     stopping = False
     exit_code = 1
@@ -87,8 +140,9 @@ def run(app):
     previous = {sig: signal.signal(sig, stop) for sig in (signal.SIGINT, signal.SIGTERM)}
     try:
         # Inherit stdout/stderr: frame metrics and script failures stream directly.
-        child = subprocess.Popen([app], env={**os.environ, "SCRIBODO_LLM": "fake"})
-        print(f"frame_soak: owned_app_pid={child.pid} rss_interval_seconds=1 backend=fake-no-LLM", flush=True)
+        backend = "real" if os.environ.get("SCRIBODO_SOAK_LLM") == "real" else "fake"
+        child = subprocess.Popen([app], env={**os.environ, "SCRIBODO_LLM": backend})
+        print(f"frame_soak: owned_app_pid={child.pid} rss_interval_seconds=1 backend={'real-pinned-model' if backend == 'real' else 'fake-no-LLM'}", flush=True)
         next_sample = time.monotonic()
         while child.poll() is None:
             now = time.monotonic()
@@ -96,6 +150,9 @@ def run(app):
                 stats.sample(child)
                 # Do not burst samples to catch up after a slow ps invocation.
                 next_sample = time.monotonic() + 1.0
+            if now >= next_service:
+                services.sample()
+                next_service = time.monotonic() + 5.0
             try:
                 delay = next_sample - time.monotonic() if stats.attempts < MAX_SAMPLES else 0.1
                 child.wait(timeout=max(0.01, min(0.1, delay)))
@@ -121,6 +178,7 @@ def run(app):
                         child.kill()
                         child.wait()
                 stats.report(child.pid, time.monotonic() - started, exit_code)
+                services.report()
         finally:
             for sig, handler in previous.items():
                 signal.signal(sig, handler)

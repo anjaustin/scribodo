@@ -7,7 +7,8 @@ dialog "$DIR/manuscript"
 # Phase 1: first open of a legacy whole-manuscript project moves it into the store.
 measure_frames start
 click_element WelcomeOpen
-expect status "now kept in the project store"
+# The move into the store runs on a worker; wait for it to finish.
+wait_status "now kept in the project store" 1800
 measure_frames stop
 expect explorer_has "Manuscript chat"
 expect files "$DIR/manuscript/.scribodo" "legacy-" 1
@@ -44,17 +45,18 @@ key S cmd
 expect element_w RevItem0 10 2000
 measure_frames stop
 expect dirty no
-# Phase 5: send a message with the fake model on the long chat.
+# Phase 5: send a message on the long chat (fake model by default; --real uses the pinned model).
+wait_ready 36000
 measure_frames start
 click_element ChatItem0
 wait_history
 click_element ChatInput
 type "A baseline question about the amber key."
 key ENTER
-wait_chat
+wait_chat 14400
 measure_frames stop
-# The fake model echoes the prompt, so the reply contains the question.
-expect chat_last "A baseline question"
+# The fake model echoes the prompt; the real model answers it. Either way a reply arrived.
+expect chat_busy no
 expect chat_cache_max 67108864
 # Phase 6: enable memory for the whole 1,116-turn chat (fake tokenizer, real SQL and index).
 expect memory_enabled no

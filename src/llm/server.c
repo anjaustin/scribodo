@@ -19,6 +19,7 @@
 #include <unistd.h>
 
 #include "llm/http.h"
+#include "core/deadline_clock.h"
 
 extern char **environ;
 
@@ -52,7 +53,7 @@ struct LlmServer {
 static double now_s(void)
 {
     struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
+    clock_gettime(SCRIBODO_DEADLINE_CLOCK, &ts);
     return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
 }
 

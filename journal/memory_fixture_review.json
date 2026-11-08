@@ -1,0 +1,901 @@
+{
+ "protocol": "native-continuity-review-v1",
+ "run": "build/mn-zqjcwysh",
+ "events_sha256": "b86316f3a1f0a283f38eb2225192f4468b00779db02c70516a46c5b7d170fc53",
+ "rubric": "tests/fixtures/memory_native/review-rubric.json",
+ "reviewer": "assistant (complete visible responses); not independent human adjudication",
+ "scope": "legacy (production) and episode presentations; compact was not reviewed under the rubric (coarse screen only in MEMORY-017)",
+ "pass_rule": "pass only when every axis is clean; uncertain blocks advancement",
+ "cells": {
+  "legacy|alternating": {
+   "pass": 18,
+   "fail": 3,
+   "uncertain": 3,
+   "n": 24
+  },
+  "episode|alternating": {
+   "pass": 18,
+   "fail": 5,
+   "uncertain": 1,
+   "n": 24
+  },
+  "legacy|consecutive_user": {
+   "pass": 0,
+   "fail": 24,
+   "uncertain": 0,
+   "n": 24
+  },
+  "episode|consecutive_user": {
+   "pass": 23,
+   "fail": 1,
+   "uncertain": 0,
+   "n": 24
+  }
+ },
+ "answers": [
+  {
+   "task": "t01_control",
+   "layout": "alternating",
+   "presentation": "legacy",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Answer:** The Mira archive catalogue number is **QX-2074**.\n\n(From Source 1, as you indicated.)"
+  },
+  {
+   "task": "t01_control",
+   "layout": "alternating",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Answer:**\n\nThe Mira archive catalogue number is **QX-2074**.\n\n(From source excerpt S1, which identifies the exact excerpt supplied for this reply.)"
+  },
+  {
+   "task": "t01_control",
+   "layout": "consecutive_user",
+   "presentation": "legacy",
+   "verdict": "fail",
+   "truncated": false,
+   "rationale": "current_task/factual_fidelity: answers about the repeated recent turns ('ordinary weather at the quay'), claims no access to sources, never uses the admitted excerpts",
+   "answer_head": "I don’t have access to your manuscript or any prior notes beyond what you’ve just shared here. The phrase “ordinary weather at the quay” is a placeholder for an upcoming scene — it’s not in any existi"
+  },
+  {
+   "task": "t01_control",
+   "layout": "consecutive_user",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "The Mira archive catalogue number is **QX-2074** (from S1, author chat excerpt, sequence=0)."
+  },
+  {
+   "task": "t02_stated_fact",
+   "layout": "alternating",
+   "presentation": "legacy",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Answer:** Violet.\n\n*(Source 1 states: \"Tarn's coat is violet; that is established for this book.\")*"
+  },
+  {
+   "task": "t02_stated_fact",
+   "layout": "alternating",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Answer:** Violet.\n\n**Source:** S1 — \"Tarn's coat is violet; that is established for this book.\"\n\nLet me know if you'd like to expand, contrast, or move on."
+  },
+  {
+   "task": "t02_stated_fact",
+   "layout": "consecutive_user",
+   "presentation": "legacy",
+   "verdict": "fail",
+   "truncated": false,
+   "rationale": "current_task/factual_fidelity: answers about the repeated recent turns ('ordinary weather at the quay'), claims no access to sources, never uses the admitted excerpts",
+   "answer_head": "**No specific location is mentioned in your note.** \"Ordinary weather at the quay\" is a generic atmospheric description — it could be any harbor, pier, or waterfront. To give you precise scene-buildin"
+  },
+  {
+   "task": "t02_stated_fact",
+   "layout": "consecutive_user",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Answer:** Tarn's coat is **violet**.\n\n*Source:* S1 — author chat excerpt: “Tarn's coat is violet; that is established for this book.”"
+  },
+  {
+   "task": "t03_superseded_fact",
+   "layout": "alternating",
+   "presentation": "legacy",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Answer:** Lena's bell is **ochre**, per the correction in Source 2.\n\n---\n\n**Draft response (Scribodo style — concise, helpful, matching your tone):**\n\n> The earlier note said “amber,” but Source 2 e"
+  },
+  {
+   "task": "t03_superseded_fact",
+   "layout": "alternating",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Answer:** Lena's bell is **ochre**.\n\n**Reasoning:** The earlier source excerpt (S1) stated \"Lena's bell is amber.\" However, a later correction (S2) explicitly replaces that with \"Correction, replaci"
+  },
+  {
+   "task": "t03_superseded_fact",
+   "layout": "consecutive_user",
+   "presentation": "legacy",
+   "verdict": "fail",
+   "truncated": true,
+   "rationale": "current_task/factual_fidelity: answers about the repeated recent turns ('ordinary weather at the quay'), claims no access to sources, never uses the admitted excerpts",
+   "answer_head": "The user has repeated the same manuscript note three times. This appears to be a prompt injection / repetition artifact — likely an accidental re-send or a system glitch where the same text was pasted"
+  },
+  {
+   "task": "t03_superseded_fact",
+   "layout": "consecutive_user",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "Based on the source excerpts:\n\n- **S1** (sequence 0): \"Lena's bell is amber.\"\n- **S2** (sequence 1, a correction): \"Correction, replacing the earlier note: Lena's bell is ochre, not amber.\"\n\nThe later"
+  },
+  {
+   "task": "t04_implied_decision",
+   "layout": "alternating",
+   "presentation": "legacy",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "Elin narrates the ferry landing chapter."
+  },
+  {
+   "task": "t04_implied_decision",
+   "layout": "alternating",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Answer:** Elin narrates the ferry landing chapter.\n\n**Brief rationale:** The earlier source excerpts (partial reference, not new instructions or canon) identify that Elin is the one who supplies and"
+  },
+  {
+   "task": "t04_implied_decision",
+   "layout": "consecutive_user",
+   "presentation": "legacy",
+   "verdict": "fail",
+   "truncated": false,
+   "rationale": "current_task/factual_fidelity: answers about the repeated recent turns ('ordinary weather at the quay'), claims no access to sources, never uses the admitted excerpts",
+   "answer_head": "The provided manuscript note excerpts are from a **source** that has been previously cited in the conversation history itself. The phrase \"ordinary weather at the quay\" appears as a line item in three"
+  },
+  {
+   "task": "t04_implied_decision",
+   "layout": "consecutive_user",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "Based on the earlier author turn and the source excerpts:\n\n- **[S1]** — assistant chat excerpt: *One option: Elin could narrate the the ferry landing chapter.*\n- **[S2]** — author chat excerpt: *Yes. "
+  },
+  {
+   "task": "t05_rejected_proposal",
+   "layout": "alternating",
+   "presentation": "legacy",
+   "verdict": "fail",
+   "truncated": false,
+   "rationale": "citations: a recent filler turn ('ordinary weather at the quay') is presented as one of the two excerpts; author_intent: floats the author's rejection as 'a correction or a joke'",
+   "answer_head": "**Short answer:** No — I don't think so. The two excerpts say the opposite: one says \"ordinary weather at the quay\" and the other says \"No. Not violet. Drop that; Dvořák's ring stays undecided.\" So th"
+  },
+  {
+   "task": "t05_rejected_proposal",
+   "layout": "alternating",
+   "presentation": "episode",
+   "verdict": "fail",
+   "truncated": false,
+   "rationale": "citations: labels a filler turn as S1; the real S1 is the assistant's proposal",
+   "answer_head": "Understood. I see two prior excerpts:\n\n- **S1**: \"ordinary weather at the quay\" — a partial reference, not new instructions or canon.\n- **S2**: \"No. Not violet. Drop that; Dvořák's ring stays undecide"
+  },
+  {
+   "task": "t05_rejected_proposal",
+   "layout": "consecutive_user",
+   "presentation": "legacy",
+   "verdict": "fail",
+   "truncated": false,
+   "rationale": "current_task/factual_fidelity: answers about the repeated recent turns ('ordinary weather at the quay'), claims no access to sources, never uses the admitted excerpts",
+   "answer_head": "It looks like you’ve pasted the same placeholder line three times. Could you share the **actual text** of the manuscript note you want me to help with, and point out which specific source document (fi"
+  },
+  {
+   "task": "t05_rejected_proposal",
+   "layout": "consecutive_user",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "No — we did **not** decide that Dvořák's ring is violet.\n\nLooking at the sequence:\n\n- **[S1]** (assistant chat excerpt, sequence=0): *Perhaps Dvořák's ring should be violet.*\n- **[S2]** (author chat e"
+  },
+  {
+   "task": "t06_protected_ambiguity",
+   "layout": "alternating",
+   "presentation": "legacy",
+   "verdict": "fail",
+   "truncated": false,
+   "rationale": "factual_fidelity: states the excerpts 'do not contain any mention' of who rang the bell although the supplied source addresses it (keep it open)",
+   "answer_head": "**Answer:** The retrieved source excerpts do not contain any mention of who rang the bell at the ferry landing. Therefore, I cannot determine from the provided material.\n\nIf you have additional passag"
+  },
+  {
+   "task": "t06_protected_ambiguity",
+   "layout": "alternating",
+   "presentation": "episode",
+   "verdict": "fail",
+   "truncated": false,
+   "rationale": "factual_fidelity: says the excerpts 'do not state who rang the bell' and asks for the correct name; the source says keep it open",
+   "answer_head": "**Answer (draft, to be refined):**\n\nThe excerpts supplied do not state who rang the bell at the ferry landing. The earlier source excerpts are partial references and do not contain that detail. Theref"
+  },
+  {
+   "task": "t06_protected_ambiguity",
+   "layout": "consecutive_user",
+   "presentation": "legacy",
+   "verdict": "fail",
+   "truncated": false,
+   "rationale": "current_task/factual_fidelity: answers about the repeated recent turns ('ordinary weather at the quay'), claims no access to sources, never uses the admitted excerpts",
+   "answer_head": "Thank you for the brief note. To give it shape, I need one detail: **where is this quay?** and **what season?**** Without that, \"ordinary weather at the quay\" remains a mood or setting description rat"
+  },
+  {
+   "task": "t06_protected_ambiguity",
+   "layout": "consecutive_user",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "Based on the earlier manuscript note and excerpts, the author has left the question open: \"Keep it open whether Íñigo or Mira rang the bell at the ferry landing. Do not settle it in this draft.\"\n\nSo, "
+  },
+  {
+   "task": "t07_paraphrase",
+   "layout": "alternating",
+   "presentation": "legacy",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "Maël keeps the letter inside the cedar chest beneath the window at the lighthouse.\n\n> *Source: SOURCE 1 (author, unit=b0eebc347cfb4f9692f353c61fcc3896e3840b1784da793d2c5cb3f6cb16f81d)*"
+  },
+  {
+   "task": "t07_paraphrase",
+   "layout": "alternating",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Answer:**\n\nMaël keeps the letter inside the cedar chest beneath the window at the lighthouse.\n\n(Source: S1 excerpt, sequence 0.)"
+  },
+  {
+   "task": "t07_paraphrase",
+   "layout": "consecutive_user",
+   "presentation": "legacy",
+   "verdict": "fail",
+   "truncated": false,
+   "rationale": "current_task/factual_fidelity: answers about the repeated recent turns ('ordinary weather at the quay'), claims no access to sources, never uses the admitted excerpts",
+   "answer_head": "I don’t have access to your manuscript. The repeated excerpts about “ordinary weather at the quay” appear to be prompts from prior sessions rather than content of the recent document.\n\n**To proceed:**"
+  },
+  {
+   "task": "t07_paraphrase",
+   "layout": "consecutive_user",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "From S1: \"Maël keeps the letter inside the cedar chest beneath the window at the lighthouse.\"\n\n**Answer:** Maël stores the note in the cedar chest beneath the window at the lighthouse."
+  },
+  {
+   "task": "t08_multilingual",
+   "layout": "alternating",
+   "presentation": "legacy",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Answer:** Elin guarda **86** llaves de cobre.\n\n(From source: “En el observatorio, Elin guarda 86 llaves de cobre en un cajón cerrado.”)"
+  },
+  {
+   "task": "t08_multilingual",
+   "layout": "alternating",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "From S1: Elin guards **86** copper keys in a closed cabinet.\n\n**Answer:** 86."
+  },
+  {
+   "task": "t08_multilingual",
+   "layout": "consecutive_user",
+   "presentation": "legacy",
+   "verdict": "fail",
+   "truncated": false,
+   "rationale": "current_task/factual_fidelity: answers about the repeated recent turns ('ordinary weather at the quay'), claims no access to sources, never uses the admitted excerpts",
+   "answer_head": "The note you shared is a **source** — it appears in the system’s metadata. I can see it in the document history:\n\n> *Recent manuscript note: ordinary weather at the quay.*\n\nThis is a placeholder or ta"
+  },
+  {
+   "task": "t08_multilingual",
+   "layout": "consecutive_user",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "From S1: *En el observatorio, Elin guarda 86 llaves de cobre en un cajón cerrado.*\n\n**Elin guarda 86 llaves de cobre.**\n\n(Source S1)"
+  },
+  {
+   "task": "t10_control",
+   "layout": "alternating",
+   "presentation": "legacy",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Answer:** The Dvořák archive catalogue number is **QX-2041**.\n\n(From the attached source: `For the records: the Dvořák archive catalogue number is QX-2041.`)\n\nLet me know if you'd like to use this i"
+  },
+  {
+   "task": "t10_control",
+   "layout": "alternating",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Answer:**\n\nThe Dvořák archive catalogue number is **QX-2041**.\n\n(From source excerpt S1, partial reference.)"
+  },
+  {
+   "task": "t10_control",
+   "layout": "consecutive_user",
+   "presentation": "legacy",
+   "verdict": "fail",
+   "truncated": false,
+   "rationale": "current_task/factual_fidelity: answers about the repeated recent turns ('ordinary weather at the quay'), claims no access to sources, never uses the admitted excerpts",
+   "answer_head": "To help you effectively, I need more details about the source:\n\n1. **Specific date and year** for \"ordinary weather at the quay\"?  \n2. **Any catalogue number**, series name, or archive (e.g., Dvořák a"
+  },
+  {
+   "task": "t10_control",
+   "layout": "consecutive_user",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "The Dvořák archive catalogue number is **QX-2041** (source S1)."
+  },
+  {
+   "task": "t11_stated_fact",
+   "layout": "alternating",
+   "presentation": "legacy",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Answer:** Ivory.\n\n*(Source 1: \"Elin's bell is ivory; that is established for this book.\")*"
+  },
+  {
+   "task": "t11_stated_fact",
+   "layout": "alternating",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Answer:** Ivory.\n\n*Source:* S1 — \"Elin's bell is ivory; that is established for this book.\"\n\nLet me know if you'd like to expand on this or move to another scene."
+  },
+  {
+   "task": "t11_stated_fact",
+   "layout": "consecutive_user",
+   "presentation": "legacy",
+   "verdict": "fail",
+   "truncated": false,
+   "rationale": "current_task/factual_fidelity: answers about the repeated recent turns ('ordinary weather at the quay'), claims no access to sources, never uses the admitted excerpts",
+   "answer_head": "The note you've shared is a **repetition**. \"Ordinary weather at the quay\" appears three times in your message. This is likely an artifact of a copy-paste error, a duplicated prompt, or a system glitc"
+  },
+  {
+   "task": "t11_stated_fact",
+   "layout": "consecutive_user",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "Based on S1, Elin's bell is **ivory**.\n\n> \"Elin's bell is ivory; that is established for this book.\"\n\n**Answer:** Ivory."
+  },
+  {
+   "task": "t12_superseded_fact",
+   "layout": "alternating",
+   "presentation": "legacy",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Answer:** Ivory.\n\nThe second source explicitly corrects the first: \"Correction, replacing the earlier note: Oren's map is ivory, not cobalt.\" So the current, authoritative answer is **ivory**.\n\nIf y"
+  },
+  {
+   "task": "t12_superseded_fact",
+   "layout": "alternating",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "The most recent source (S2) supersedes S1. So:\n\n**Oren's map is ivory.**\n\nI'll flag this change in the manuscript if you'd like me to update the text."
+  },
+  {
+   "task": "t12_superseded_fact",
+   "layout": "consecutive_user",
+   "presentation": "legacy",
+   "verdict": "fail",
+   "truncated": true,
+   "rationale": "current_task/factual_fidelity: answers about the repeated recent turns ('ordinary weather at the quay'), claims no access to sources, never uses the admitted excerpts",
+   "answer_head": "The user has repeated the same manuscript note three times. This suggests either a copy-paste error in their notes or an incomplete/unfinished thought process. I will treat this as a fresh prompt and "
+  },
+  {
+   "task": "t12_superseded_fact",
+   "layout": "consecutive_user",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "Based on the source excerpts:\n\n- **[S1]** states: \"Oren's map is cobalt.\"\n- **[S2]** provides a correction: \"Correction, replacing the earlier note: Oren's map is ivory, not cobalt.\"\n\nThe later correc"
+  },
+  {
+   "task": "t13_implied_decision",
+   "layout": "alternating",
+   "presentation": "legacy",
+   "verdict": "uncertain",
+   "truncated": false,
+   "rationale": "current_task: correct answer followed by an unsolicited opening paragraph with invented scene detail",
+   "answer_head": "**Answer:** Renée narrates the lighthouse chapter.\n\n---\n\n**Suggested opening paragraph (you can adapt):**\n\n> The wind off the quay had not yet decided whether to be a sigh or a shout. It settled over "
+  },
+  {
+   "task": "t13_implied_decision",
+   "layout": "alternating",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Answer:** Renée narrates the lighthouse chapter.\n\n**Source:** S2 (author chat excerpt, sequence 1) confirms: \"Yes. Renée narrates the the lighthouse chapter. That is settled.\"\n\nLet me know if you'd "
+  },
+  {
+   "task": "t13_implied_decision",
+   "layout": "consecutive_user",
+   "presentation": "legacy",
+   "verdict": "fail",
+   "truncated": false,
+   "rationale": "current_task/factual_fidelity: answers about the repeated recent turns ('ordinary weather at the quay'), claims no access to sources, never uses the admitted excerpts",
+   "answer_head": "I see three identical strings, each repeated three times with minor punctuation differences. This is almost certainly a placeholder or corrupted input — likely an artifact from a system error or copy-"
+  },
+  {
+   "task": "t13_implied_decision",
+   "layout": "consecutive_user",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "Based on the earlier turns and the source excerpts:\n\n- **[S1]** (assistant chat excerpt, sequence=0): *One option: Renée could narrate the the lighthouse chapter.*\n- **[S2]** (author chat excerpt, seq"
+  },
+  {
+   "task": "t14_rejected_proposal",
+   "layout": "alternating",
+   "presentation": "legacy",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Short answer:** No — Renée's ledger is **not** amber. The attached excerpts say the opposite: one source suggests amber, but the second explicitly says *no*, and asks to drop it.\n\n**Fuller context f"
+  },
+  {
+   "task": "t14_rejected_proposal",
+   "layout": "alternating",
+   "presentation": "episode",
+   "verdict": "uncertain",
+   "truncated": false,
+   "rationale": "author_intent: calls the author's rejection 'partial references or earlier drafts, not new instructions'; conclusion correct",
+   "answer_head": "Understood. I have noted the earlier source excerpts and the author's current question about Renée's ledger.\n\n**Summary of what I see:**\n- The user gave a \"recent manuscript note: ordinary weather at "
+  },
+  {
+   "task": "t14_rejected_proposal",
+   "layout": "consecutive_user",
+   "presentation": "legacy",
+   "verdict": "fail",
+   "truncated": false,
+   "rationale": "current_task/factual_fidelity: answers about the repeated recent turns ('ordinary weather at the quay'), claims no access to sources, never uses the admitted excerpts",
+   "answer_head": "The user has provided three identical text blocks, each ending with \"Recent manuscript note: ordinary weather at the quay.\" This appears to be a repeated prompt or a copy-paste error. The content is i"
+  },
+  {
+   "task": "t14_rejected_proposal",
+   "layout": "consecutive_user",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "No — we did not decide that Renée's ledger is amber.\n\n- **[S1]** (assistant chat excerpt, sequence=0): *Perhaps Renée's ledger should be amber.* — a suggestion.\n- **[S2]** (author chat excerpt, sequen"
+  },
+  {
+   "task": "t15_protected_ambiguity",
+   "layout": "alternating",
+   "presentation": "legacy",
+   "verdict": "fail",
+   "truncated": false,
+   "rationale": "open_state: reframes the deliberate ambiguity as unknown and offers to 'choose one of the two names as a narrative decision'",
+   "answer_head": "**Draft response (open question, no resolution yet):**\n\n> The ordinary weather at the quay is described in the manuscript. A detail remains ambiguous: *who* rang the lantern at the lighthouse? The sou"
+  },
+  {
+   "task": "t15_protected_ambiguity",
+   "layout": "alternating",
+   "presentation": "episode",
+   "verdict": "fail",
+   "truncated": false,
+   "rationale": "open_state/factual_fidelity: asserts 'The lantern was rung by Elin, not Dvořák' then says it has not settled it",
+   "answer_head": "**Answer (draft, to be refined):**\n\nThe lantern was rung by **Elin**, not Dvořák. The earlier source excerpts (partial reference) do not name the ringer; they only mention that a lantern was lit at th"
+  },
+  {
+   "task": "t15_protected_ambiguity",
+   "layout": "consecutive_user",
+   "presentation": "legacy",
+   "verdict": "fail",
+   "truncated": false,
+   "rationale": "current_task/factual_fidelity: answers about the repeated recent turns ('ordinary weather at the quay'), claims no access to sources, never uses the admitted excerpts",
+   "answer_head": "**Interpretation:**  \nThe phrase \"ordinary weather at the quay\" is a **literal atmospheric setting**, not a plot point or poetic reference. It describes the *actual* weather conditions (normal, calm, "
+  },
+  {
+   "task": "t15_protected_ambiguity",
+   "layout": "consecutive_user",
+   "presentation": "episode",
+   "verdict": "fail",
+   "truncated": false,
+   "rationale": "citations: refers to 'S1 through S64' handles that do not exist; factual_fidelity: says no excerpt addresses it although one does",
+   "answer_head": "Based on the earlier manuscript note, the setting involves \"ordinary weather at the quay,\" and the current question asks who rang the lantern at the lighthouse. However, none of the supplied excerpts "
+  },
+  {
+   "task": "t16_paraphrase",
+   "layout": "alternating",
+   "presentation": "legacy",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Answer:** Tarn stores the mantle inside the cedar chest beneath the window at the observatory.\n\n**Source excerpt:** \"Tarn keeps the cloak inside the cedar chest beneath the window at the observatory"
+  },
+  {
+   "task": "t16_paraphrase",
+   "layout": "alternating",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Answer:**\n\nTarn keeps the mantle **inside the cedar chest beneath the window at the observatory**.\n\n(From source excerpt S1: “Tarn keeps the cloak inside the cedar chest beneath the window at the ob"
+  },
+  {
+   "task": "t16_paraphrase",
+   "layout": "consecutive_user",
+   "presentation": "legacy",
+   "verdict": "fail",
+   "truncated": false,
+   "rationale": "current_task/factual_fidelity: answers about the repeated recent turns ('ordinary weather at the quay'), claims no access to sources, never uses the admitted excerpts",
+   "answer_head": "I see a repeated placeholder line; I won’t treat it as meaningful content. Please give me the next instruction."
+  },
+  {
+   "task": "t16_paraphrase",
+   "layout": "consecutive_user",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "From S1: \"Tarn keeps the cloak inside the cedar chest beneath the window at the observatory.\"\n\nSo Tarn stores the **cloak** (the mantle) inside the **cedar chest** beneath the window at the **observat"
+  },
+  {
+   "task": "t17_multilingual",
+   "layout": "alternating",
+   "presentation": "legacy",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Source 1 excerpt:**  \n> En el embarcadero, Lena guarda 23 llaves de cobre en un cajón cerrado.\n\n**Question:** ¿Cuántas llaves de cobre guarda Lena?\n\n**Answer:** 23 llaves de cobre.\n\nLet me know if y"
+  },
+  {
+   "task": "t17_multilingual",
+   "layout": "alternating",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "From S1: *En el embarcadero, Lena guarda 23 llaves de cobre en un cajón cerrado.*\n\n**Answer:** Lena guarda **23 llaves de cobre**."
+  },
+  {
+   "task": "t17_multilingual",
+   "layout": "consecutive_user",
+   "presentation": "legacy",
+   "verdict": "fail",
+   "truncated": false,
+   "rationale": "current_task/factual_fidelity: answers about the repeated recent turns ('ordinary weather at the quay'), claims no access to sources, never uses the admitted excerpts",
+   "answer_head": "The note describes a typical, uneventful day at the waterfront—no storm, no drama. It sets a calm, almost boring stage for whatever comes next.\n\n**Option A:** Recent manuscript draft (not yet in my vi"
+  },
+  {
+   "task": "t17_multilingual",
+   "layout": "consecutive_user",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "From excerpt **[S1]**: “En el embaradero, Lena guarda 23 llaves de cobre en un cajón cerrado.”\n\nLena guarda **23 llaves de cobre**.\n\n(23)"
+  },
+  {
+   "task": "t19_control",
+   "layout": "alternating",
+   "presentation": "legacy",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Answer:** The Dvořák archive catalogue number is **QX-4825**.\n\n(From Source 1, author field.)"
+  },
+  {
+   "task": "t19_control",
+   "layout": "alternating",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Answer:**\n\nThe Dvořák archive catalogue number is **QX-4825**.\n\n(From source excerpt S1, partial reference.)"
+  },
+  {
+   "task": "t19_control",
+   "layout": "consecutive_user",
+   "presentation": "legacy",
+   "verdict": "fail",
+   "truncated": false,
+   "rationale": "current_task/factual_fidelity: answers about the repeated recent turns ('ordinary weather at the quay'), claims no access to sources, never uses the admitted excerpts",
+   "answer_head": "I cannot look up the record without a specific reference. The phrase \"ordinary weather at the quay\" describes the **setting** of a scene, not a bibliographic detail. To answer whether it appears in yo"
+  },
+  {
+   "task": "t19_control",
+   "layout": "consecutive_user",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "The Dvořák archive catalogue number is **QX-4825** (source S1)."
+  },
+  {
+   "task": "t20_stated_fact",
+   "layout": "alternating",
+   "presentation": "legacy",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Crimson.**\n\n*Source:* The author's retrieved document states: \"Zoë's map is crimson; that is established for this book.\""
+  },
+  {
+   "task": "t20_stated_fact",
+   "layout": "alternating",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Answer:**  \nCrimson.\n\n**Source:** S1 — \"Zoë's map is crimson; that is established for this book.\"\n\nLet me know if you'd like to expand, contrast, or draft a passage around this detail."
+  },
+  {
+   "task": "t20_stated_fact",
+   "layout": "consecutive_user",
+   "presentation": "legacy",
+   "verdict": "fail",
+   "truncated": false,
+   "rationale": "current_task/factual_fidelity: answers about the repeated recent turns ('ordinary weather at the quay'), claims no access to sources, never uses the admitted excerpts",
+   "answer_head": "**Short Answer:**  \nThis is a **setting description**, not a plot detail. It establishes the *atmosphere* of the scene: ordinary, unremarkable weather at the waterfront (the quay). The word \"quay\" imp"
+  },
+  {
+   "task": "t20_stated_fact",
+   "layout": "consecutive_user",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "Based on **S1** — *author chat excerpt, sequence=0*:\n\n> \"Zoë's map is crimson; that is established for this book.\"\n\n**Answer:** Zoë's map is **crimson**.\n\n(Note: The earlier turns you listed all repea"
+  },
+  {
+   "task": "t21_superseded_fact",
+   "layout": "alternating",
+   "presentation": "legacy",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Answer:** Cobalt.\n\nThe second source explicitly corrects the first: \"Correction, replacing the earlier note: Zoë's key is cobalt, not copper.\" So the current, authoritative answer is **cobalt**.\n\nIf"
+  },
+  {
+   "task": "t21_superseded_fact",
+   "layout": "alternating",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Answer:** Cobalt.\n\nThe later source excerpt (S2) explicitly corrects the earlier claim in S1: \"Zoë's key is cobalt, not copper.\" So the current answer is **cobalt**."
+  },
+  {
+   "task": "t21_superseded_fact",
+   "layout": "consecutive_user",
+   "presentation": "legacy",
+   "verdict": "fail",
+   "truncated": false,
+   "rationale": "current_task/factual_fidelity: answers about the repeated recent turns ('ordinary weather at the quay'), claims no access to sources, never uses the admitted excerpts",
+   "answer_head": "**Scribo**\n\nYou have sent me the exact same sentence four times, including the first instance that was generated by the system (not written by you). I am tracking every character count in your message"
+  },
+  {
+   "task": "t21_superseded_fact",
+   "layout": "consecutive_user",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "Based on the source excerpts:\n\n- **[S1]** states: \"Zoë's key is copper.\"\n- **[S2]** corrects that: \"Correction, replacing the earlier note: Zoë's key is cobalt, not copper.\"\n\nSo the current, corrected"
+  },
+  {
+   "task": "t22_implied_decision",
+   "layout": "alternating",
+   "presentation": "legacy",
+   "verdict": "uncertain",
+   "truncated": false,
+   "rationale": "current_task: correct answer followed by an unsolicited draft excerpt",
+   "answer_head": "**Answer:** Maël narrates the lighthouse chapter.\n\n---\n\n**Draft excerpt (you choose to use or adapt):**\n\n> The wind off the quay was a steady, grey breath, as if the sea itself were exhaling. At the q"
+  },
+  {
+   "task": "t22_implied_decision",
+   "layout": "alternating",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Answer:** Maël narrates the lighthouse chapter.\n\n**Source:** S2 (author chat excerpt, sequence 1): \"Yes. Maël narrates the the lighthouse chapter. That is settled.\"\n\n**Note:** The earlier excerpts ("
+  },
+  {
+   "task": "t22_implied_decision",
+   "layout": "consecutive_user",
+   "presentation": "legacy",
+   "verdict": "fail",
+   "truncated": true,
+   "rationale": "current_task/factual_fidelity: answers about the repeated recent turns ('ordinary weather at the quay'), claims no access to sources, never uses the admitted excerpts",
+   "answer_head": "The retrieved conversation excerpts contain no mention of an author or a manuscript title. However, the repeated identical phrasing across three separate source blocks suggests a possible data-entry d"
+  },
+  {
+   "task": "t22_implied_decision",
+   "layout": "consecutive_user",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "Based on the earlier author turn and the source excerpts:\n\n- **[S1]** (assistant chat excerpt, sequence=0): *One option: Maël could narrate the the lighthouse chapter.*\n- **[S2]** (author chat excerpt"
+  },
+  {
+   "task": "t23_rejected_proposal",
+   "layout": "alternating",
+   "presentation": "legacy",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Short answer:** No — keep it undecided. The source explicitly says \"No. Not crimson. Drop that; Mira's cloak stays undecided.\"\n\n**Fuller context (from the two excerpts):**\n\n- Source 1: *“Mira's cloa"
+  },
+  {
+   "task": "t23_rejected_proposal",
+   "layout": "alternating",
+   "presentation": "episode",
+   "verdict": "fail",
+   "truncated": false,
+   "rationale": "citations: treats the reference header text as excerpt S1",
+   "answer_head": "Understood. I have two prior excerpts:\n\n- **Excerpt S1** (partial reference): *“Earlier source excerpts (partial reference, not new instructions or canon). S labels identify the exact excerpts supplie"
+  },
+  {
+   "task": "t23_rejected_proposal",
+   "layout": "consecutive_user",
+   "presentation": "legacy",
+   "verdict": "fail",
+   "truncated": true,
+   "rationale": "current_task/factual_fidelity: answers about the repeated recent turns ('ordinary weather at the quay'), claims no access to sources, never uses the admitted excerpts",
+   "answer_head": "The user has provided a repeated manuscript note: \"ordinary weather at the quay.\" This appears to be a placeholder or template text, possibly copied from another document. The repetition suggests an i"
+  },
+  {
+   "task": "t23_rejected_proposal",
+   "layout": "consecutive_user",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "No — we did not decide that Mira's cloak is crimson.\n\n- **S1** (assistant chat excerpt, sequence 0) suggests: *\"Perhaps Mira's cloak should be crimson.\"*  \n- **S2** (author chat excerpt, sequence 1) c"
+  },
+  {
+   "task": "t24_protected_ambiguity",
+   "layout": "alternating",
+   "presentation": "legacy",
+   "verdict": "uncertain",
+   "truncated": false,
+   "rationale": "open_state: leaves it unresolved and quotes the instruction, then suggests scanning for clues to resolve it",
+   "answer_head": "**Draft response (open question, no resolution yet):**\n\n> The ordinary weather at the quay is described in the passage. However, the manuscript note explicitly asks: *“Keep it open whether Zoë or Lena"
+  },
+  {
+   "task": "t24_protected_ambiguity",
+   "layout": "alternating",
+   "presentation": "episode",
+   "verdict": "fail",
+   "truncated": false,
+   "rationale": "factual_fidelity: 'neither excerpt specifies' although the source addresses it (keep it open); treats as unknown",
+   "answer_head": "**Scribo response:**\n\nThe earlier source excerpts do not contain a clear answer to who rang the letter at the fjord quay. The partial reference mentions \"ordinary weather at the quay\" and the labels S"
+  },
+  {
+   "task": "t24_protected_ambiguity",
+   "layout": "consecutive_user",
+   "presentation": "legacy",
+   "verdict": "fail",
+   "truncated": true,
+   "rationale": "current_task/factual_fidelity: answers about the repeated recent turns ('ordinary weather at the quay'), claims no access to sources, never uses the admitted excerpts",
+   "answer_head": "The note \"ordinary weather at the quay\" is a brief, atmospheric setting line — not a plot point or a specific scene description. It appears to be a placeholder or a thematic cue rather than a concrete"
+  },
+  {
+   "task": "t24_protected_ambiguity",
+   "layout": "consecutive_user",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "Based on the earlier manuscript note and the open question flagged in **[S1]**, we have not yet determined whether Zoë or Lena rang the letter at the fjord quay. The draft should leave this unresolved"
+  },
+  {
+   "task": "t25_paraphrase",
+   "layout": "alternating",
+   "presentation": "legacy",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "Lena keeps the ring inside the cedar chest beneath the window at the salt market.\n\n> *Sourced from:* SOURCE 1 (author, unit=b0dd32e37da44680334de0e76b0c56114f72fc8202295ab48684d2222817f109)."
+  },
+  {
+   "task": "t25_paraphrase",
+   "layout": "alternating",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Answer:**\n\nLena keeps the ring inside the cedar chest beneath the window at the salt market.\n\n(Source: S1 excerpt, sequence 0.)"
+  },
+  {
+   "task": "t25_paraphrase",
+   "layout": "consecutive_user",
+   "presentation": "legacy",
+   "verdict": "fail",
+   "truncated": true,
+   "rationale": "current_task/factual_fidelity: answers about the repeated recent turns ('ordinary weather at the quay'), claims no access to sources, never uses the admitted excerpts",
+   "answer_head": "**Scribo note:** The manuscript is a single line: \"ordinary weather at the quay\" — no further detail. I cannot see any prior context about where the author keeps her drafts or notes. This appears to b"
+  },
+  {
+   "task": "t25_paraphrase",
+   "layout": "consecutive_user",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "Based on S1, Lena keeps the ring inside the **cedar chest beneath the window at the salt market**.\n\n**Excerpt:**  \n> \"Lena keeps the ring inside the cedar chest beneath the window at the salt market.\""
+  },
+  {
+   "task": "t26_multilingual",
+   "layout": "alternating",
+   "presentation": "legacy",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Source 1 excerpt:**  \n> En el observatorio, Zoë guarda 58 llaves de cobre en un cajón cerrado.\n\n**Question:** ¿Cuántas llaves de cobre guarda Zoë?\n\n**Answer:** Zoë guarda **58** llaves de cobre.\n\n--"
+  },
+  {
+   "task": "t26_multilingual",
+   "layout": "alternating",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "**Answer:** Zoë guards **58** copper keys in a closed drawer.\n\n(From source excerpt S1: “En el observatorio, Zoë guarda 58 llaves de cobre en un cajón cerrado.”)"
+  },
+  {
+   "task": "t26_multilingual",
+   "layout": "consecutive_user",
+   "presentation": "legacy",
+   "verdict": "fail",
+   "truncated": false,
+   "rationale": "current_task/factual_fidelity: answers about the repeated recent turns ('ordinary weather at the quay'), claims no access to sources, never uses the admitted excerpts",
+   "answer_head": "I’m unable to access your original manuscript — this appears to be a loop in our conversation or a copy‑paste artifact. **Please paste the exact paragraph again** so I can help you.\n\n---\n\n### What I n"
+  },
+  {
+   "task": "t26_multilingual",
+   "layout": "consecutive_user",
+   "presentation": "episode",
+   "verdict": "pass",
+   "truncated": false,
+   "rationale": "answer matches the frozen expected clause; sources bound; no invented authority",
+   "answer_head": "From S1: *En el observatorio, Zoë guarda 58 llaves de cobre en un cajón cerrado.*\n\n**Zoë guarda 58 llaves de cobre.**\n\n(58 copper keys)"
+  }
+ ]
+}

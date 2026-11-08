@@ -30,7 +30,7 @@ typedef struct Db Db;
 bool db_config_default(DbConfig *c, char *err, size_t errlen);
 
 Db *db_open(const DbConfig *c, char *err, size_t errlen);
-/* Connect and configure a session under one absolute CLOCK_MONOTONIC deadline
+/* Connect and configure a session under one absolute deadline on the deadline clock (core/deadline_clock.h)
  * in milliseconds. Invalid/expired deadlines do no network I/O. Uses numeric
  * IP hosts (or localhost, normalized to 127.0.0.1) to avoid blocking DNS.
  * Cancellation/expiry shuts down the socket before disposing of the handle. */

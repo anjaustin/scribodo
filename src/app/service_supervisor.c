@@ -11,13 +11,14 @@
 #include <unistd.h>
 
 #include "app/store.h"
+#include "core/deadline_clock.h"
 
 extern char **environ;
 
 static double monotonic_seconds(void)
 {
     struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
+    clock_gettime(SCRIBODO_DEADLINE_CLOCK, &ts);
     return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
 }
 

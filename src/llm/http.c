@@ -15,6 +15,7 @@
 #include <arpa/inet.h>
 #include <sys/un.h>
 #include <unistd.h>
+#include "core/deadline_clock.h"
 
 enum { ST_HEADERS, ST_CHUNK_SIZE, ST_CHUNK_DATA, ST_CHUNK_CRLF, ST_BODY, ST_TRAILERS, ST_DONE };
 
@@ -181,7 +182,7 @@ void http_result_free(HttpResult *r)
 static double now_ms(void)
 {
     struct timespec ts;
-    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return INFINITY;
+    if (clock_gettime(SCRIBODO_DEADLINE_CLOCK, &ts) != 0) return INFINITY;
     return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
 }
 

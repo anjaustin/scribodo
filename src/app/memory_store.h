@@ -87,6 +87,9 @@ bool memory_outbox_ack(Db *db, const MemoryIndexLease *lease, bool delivered);
 bool memory_scope_rebuild(Db *db, const char *project, const char *conversation, MemoryScope *out);
 bool memory_lexical_candidates(Db *db, const MemoryScope *scope, const char *query,
                                 size_t limit, MemoryCandidate out[MEMORY_CANDIDATES], size_t *count);
+/* Exact substring match for a short term the full-text index cannot carry (recall view). */
+bool memory_substring_candidates(Db *db, const MemoryScope *scope, const char *term,
+                                 size_t limit, MemoryCandidate out[MEMORY_CANDIDATES], size_t *count);
 /* Validates scope consent/epochs, source eligibility/version/hash and locator.
  * Wrong/stale locators return found=false, never Qdrant payload text. */
 bool memory_candidate_hydrate(Db *db, const MemoryScope *scope, const MemoryCandidate *candidate,

@@ -11,7 +11,7 @@ typedef struct {
     LlmServer *server;
     const atomic_bool *cancel;
     int timeout_ms; /* total operation deadline; <= 0 uses 10000 ms */
-    double deadline_ms; /* optional enclosing absolute CLOCK_MONOTONIC deadline */
+    double deadline_ms; /* optional enclosing absolute deadline on the deadline clock (core/deadline_clock.h) */
     size_t *http_calls; /* optional owner-thread diagnostic counter */
 } MemoryTokenizer;
 

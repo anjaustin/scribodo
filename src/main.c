@@ -47,6 +47,7 @@
 #include "app/service_supervisor.h"
 #include "app/entity_backfill_job.h"
 #include "app/recall_job.h"
+#include "app/import_job.h"
 #include "app/name_detection_job.h"
 #include "app/project_session.h"
 #include "app/explorer_snapshot.h"
@@ -216,6 +217,8 @@ typedef struct {
     /* Building a project's graph from its findings (once per project, in
      * the background: thousands of findings take seconds). */
     EntityBackfillJob graph_job;
+    ImportJob import_job;         /* moving a legacy project into the store, off the frame thread */
+    bool observer_project_deferred; /* the observer joins the project once its import has finished */
     char graph_tried[PATH_MAX]; /* one attempt per project per session */
     RecordView *record;
     Rectangle record_rect;
@@ -325,12 +328,14 @@ typedef struct {
     bool backup_initialized;
     bool services_initialized;
     bool graph_job_initialized;
+    bool import_job_initialized;
     bool names_job_initialized;
     void *clay_buf;
     Script *script;
 } App;
 
-static void store_adopt_project(App *app);
+static bool store_adopt_project(App *app);
+static void import_poll(App *app);
 
 static void set_status(App *app, const char *msg)
 {
@@ -661,9 +666,10 @@ static void set_project(App *app, const char *real)
         explorer_snapshot_destroy(&app->explorer);
         app->explorer = empty;
         /* Into the store first, so the observer never starts reading (and
-         * writing) the files an import is about to set aside. */
-        store_adopt_project(app);
-        if (app->observer) observer_set_project(app->observer, real);
+         * writing) the files an import is about to set aside. The import runs
+         * on a worker; the observer joins this project when it has finished. */
+        app->observer_project_deferred = store_adopt_project(app);
+        if (app->observer) observer_set_project(app->observer, app->observer_project_deferred ? "" : real);
         app->findings_version = UINT64_MAX; /* re-list */
         /* A different project has different chats: start fresh (after the
          * current reply finishes, so it is saved with its own project). */
@@ -688,21 +694,45 @@ static void store_begin(App *app)
     store_try_later(app); /* start the services / keep probing in the background */
 }
 
-/* A project opened while the store is up is moved into it once. */
-static void store_adopt_project(App *app)
+/* A project opened while the store is up is moved into it once. The move
+ * runs on an owned worker (MEMORY-019 measured 0.8 s of blocked frames for a
+ * 100K-word project when it ran here); the store makes every other thread see
+ * the project as paused meanwhile, and import_poll() applies the outcome.
+ * Returns true when a move for the current project was started now. */
+static bool store_adopt_project(App *app)
 {
-    if (!app->project_dir[0] || !store_online(app->store) || !store_needs_import(app->store, app->project_dir)) return;
-    char why[256] = "";
-    if (store_import(app->store, app->project_dir, why, sizeof(why))) {
-        app->store_just_moved = true;
-        set_status(app, "This project is now kept in the project store (its old files are in .scribodo/legacy-\xE2\x80\xA6)");
+    if (!app->project_dir[0] || !store_online(app->store) || !store_needs_import(app->store, app->project_dir)) return false;
+    if (!app->import_job_initialized || import_job_busy(&app->import_job)) return false; /* one at a time; retried when it ends */
+    if (!import_job_start(&app->import_job, app->project_dir)) {
+        set_status(app, "Could not start moving the project into the store");
+        return false;
+    }
+    set_status(app, "Moving this project into the project store\xE2\x80\xA6 (its old files will be kept in .scribodo/legacy-\xE2\x80\xA6)");
+    return true;
+}
+
+static void import_poll(App *app)
+{
+    char dir[PATH_MAX], why[400] = "";
+    bool ok = false;
+    if (!app->import_job_initialized || !import_job_poll(&app->import_job, dir, sizeof(dir), &ok, why, sizeof(why))) return;
+    bool current = strcmp(dir, app->project_dir) == 0;
+    if (current) {
+        if (ok) {
+            app->store_just_moved = true;
+            set_status(app, "This project is now kept in the project store (its old files are in .scribodo/legacy-\xE2\x80\xA6)");
+        } else set_status(app, why);
         app->lists_dirty = true;
         app->findings_version = UINT64_MAX;
+        if (app->observer_project_deferred && app->observer) observer_set_project(app->observer, app->project_dir);
+        app->observer_project_deferred = false;
         if (app->observer) observer_poke(app->observer);
-    } else {
-        char msg[400];
-        snprintf(msg, sizeof(msg), "%s", why);
-        set_status(app, msg);
+    } else if (store_needs_import(app->store, app->project_dir)) {
+        /* The author moved on while the old project was being moved: start the current one now. */
+        if (store_adopt_project(app) && app->observer) {
+            app->observer_project_deferred = true;
+            observer_set_project(app->observer, "");
+        }
     }
 }
 
@@ -3531,6 +3561,8 @@ static void app_destroy(App *app)
     records_free(app->canon, app->ncanon);
     free(app->revs);
     if (app->backup_initialized) (void)backup_job_destroy(&app->backup);
+    if (app->import_job_initialized) import_job_destroy(&app->import_job);
+    app->import_job_initialized = false;
     if (app->graph_job_initialized) entity_backfill_job_destroy(&app->graph_job);
     if (app->names_job_initialized) name_detection_job_destroy(&app->names_job);
     observer_destroy(app->observer); /* cancels its request before the server stops */
@@ -3582,6 +3614,7 @@ int main(int argc, char **argv)
         return 1;
     }
     app.graph_job_initialized = true;
+    app.import_job_initialized = import_job_init(&app.import_job, app.store);
     if (!name_detection_job_init(&app.names_job, NULL)) {
         app_destroy(&app);
         return 1;
@@ -3865,7 +3898,10 @@ int main(int argc, char **argv)
                 store_start(app.store, getenv("SCRIBODO_DB_NAME"), app.store_why, sizeof(app.store_why));
             }
             if (store_online(app.store)) {
-                store_adopt_project(&app);
+                if (store_adopt_project(&app) && app.observer) {
+                    app.observer_project_deferred = true;
+                    observer_set_project(app.observer, "");
+                }
                 app.lists_dirty = true;
                 app.findings_version = UINT64_MAX;
                 if (app.observer) observer_poke(app.observer);
@@ -3874,6 +3910,7 @@ int main(int argc, char **argv)
         backup_poll(&app);
         names_tick(&app);
         names_poll(&app);
+        import_poll(&app);
         /* A context size chosen while a reply was being written: now. */
         if (app.llm && app.ctx_pending && !chat_busy(app.chat) && !name_detection_job_busy(&app.names_job)) {
             app.ctx_pending = false;

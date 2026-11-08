@@ -33,6 +33,7 @@
 #include "core/json.h"
 #include "llm/http.h"
 #include "llm/llm_text.h"
+#include "core/deadline_clock.h"
 
 #define CHUNK_MAX 3000        /* bytes of new text per extraction request */
 #define PIECE_MAX 2000        /* longest piece of one paragraph or message */
@@ -97,7 +98,7 @@ struct Observer {
 static double now_s(void)
 {
     struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
+    clock_gettime(SCRIBODO_DEADLINE_CLOCK, &ts);
     return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
 }
 

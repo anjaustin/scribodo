@@ -1,3 +1,4 @@
+#define _DARWIN_C_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #include "memory_budget.h"
 #include <fcntl.h>
@@ -6,11 +7,12 @@
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
+#include "core/deadline_clock.h"
 
 double memory_budget_now_ms(void)
 {
     struct timespec now;
-    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return -1;
+    if (clock_gettime(SCRIBODO_DEADLINE_CLOCK, &now) != 0) return -1;
     return (double)now.tv_sec * 1000.0 + (double)now.tv_nsec / 1e6;
 }
 

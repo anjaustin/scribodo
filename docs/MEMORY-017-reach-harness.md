@@ -119,11 +119,13 @@ Two controlled measurements rule out the alternatives:
 
 Consequences: the three experiment runners and the acceptance workflow steps
 now run under `caffeinate -i`; the native runner also records wall time with
-a clock that counts sleep. Separately, because production timeouts and the
-500 ms memory budget use `CLOCK_MONOTONIC`, a laptop that sleeps mid-reply
-will time out or cancel that reply on wake. That is the behavior one wants
-for a connection that is probably dead, but it is a behavior, and it is now
-written down.
+a clock that counts sleep. Production deadlines, budgets and timeouts now
+measure on one clock that does not count sleep (`core/deadline_clock.h`,
+`CLOCK_UPTIME_RAW` on macOS): the local servers, database and UI are paused
+by the same sleep, so nothing they owe is late on wake, and a connection a
+remote host dropped during sleep still fails promptly through its socket.
+Every producer and consumer of an absolute deadline in the product and its
+tests uses that header; the deadline suites pass unchanged.
 
 **The complete run** (`build/mn-zqjcwysh`, under a sleep assertion): 144
 answers in 1,670 s with wall and monotonic clocks agreeing; 0 errors, 17
@@ -160,6 +162,33 @@ episode still failed 6 of 14. What it adds is a clean measurement that the
 production presentation loses every recall when the recent history is
 consecutive author turns, regardless of category, and that this is a
 presentation effect, since the admitted sources were identical.
+
+## Rubric review of the complete run
+
+Every legacy and episode answer of the complete run was reviewed against the
+frozen rubric (`tests/fixtures/memory_native/review-rubric.json`): pass only
+when every axis is clean, uncertain blocks advancement. The per-answer
+verdicts, rationales and the events file hash are in
+`journal/memory_fixture_review.json`. This is the assistant's review of the
+complete visible responses, as in MEMORY-011, not independent adjudication.
+The compact presentation was not reviewed.
+
+| Presentation, layout | Pass | Fail | Uncertain |
+|---|---:|---:|---:|
+| legacy (production), alternating | 18 | 3 | 3 |
+| legacy (production), consecutive author turns | 0 | 24 | 0 |
+| episode, alternating | 18 | 5 | 1 |
+| episode, consecutive author turns | 23 | 1 | 0 |
+
+What fails is the same in both presentations and it is the MEMORY-011
+pattern: protected ambiguity (the model reports the source as silent or
+reframes "keep it open" as "unknown, let us choose"), and citation handles
+(a filler turn or the reference header labelled as an excerpt, or invented
+S-handles). Direct recall of stated, superseded, multilingual and paraphrased
+facts, and accepted decisions, passes under both presentations whenever the
+production presentation is not defeated by consecutive author turns. These
+fixture tasks are easier than the DEV set MEMORY-011 judged, so pass rates
+are higher across the board; the categories of failure did not move.
 
 ## Limits, stated plainly
 

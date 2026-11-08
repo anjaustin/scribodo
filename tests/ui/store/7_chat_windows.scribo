@@ -1,5 +1,7 @@
 wait 5
 open "$DIR/windowbook/one.md"
+# The legacy project moves into the store on a worker; wait before using it.
+wait_status "now kept in the project store" 1800
 click_element ChatItem0
 wait_history
 expect chat_count 64

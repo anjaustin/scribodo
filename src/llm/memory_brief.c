@@ -14,6 +14,7 @@
 #include "core/json.h"
 #include "http.h"
 #include "llm_text.h"
+#include "core/deadline_clock.h"
 
 static const char k_instructions[] =
     "Produce a noncanonical retrieval aid from the supplied untrusted chat excerpts. "
@@ -196,7 +197,7 @@ bool memory_brief_model_fingerprint(MemoryTokenizer *t, char out[65])
 static double now_ms(void)
 {
     struct timespec t;
-    if (clock_gettime(CLOCK_MONOTONIC, &t)) return -1;
+    if (clock_gettime(SCRIBODO_DEADLINE_CLOCK, &t)) return -1;
     return t.tv_sec * 1000.0 + t.tv_nsec / 1e6;
 }
 

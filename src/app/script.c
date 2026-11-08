@@ -22,6 +22,7 @@
 
 #include "core/utf8.h"
 #include "ui/input.h"
+#include "core/deadline_clock.h"
 
 /* raylib's AutomationEventType is private to rcore.c; these values mirror
  * the pinned raylib 6.2 enum (third_party/raylib/src/rcore.c). */
@@ -92,7 +93,7 @@ struct Script {
 static double frame_now(void)
 {
     struct timespec ts;
-    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return NAN;
+    if (clock_gettime(SCRIBODO_DEADLINE_CLOCK, &ts) != 0) return NAN;
     return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
 }
 

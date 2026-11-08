@@ -1,3 +1,4 @@
+#define _DARWIN_C_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #include "app/memory_job.h"
 #include "app/memory_gc.h"
@@ -11,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include "core/deadline_clock.h"
 
 typedef struct {
     char project[PATH_MAX], conversation[40];
@@ -119,7 +121,7 @@ static bool fresh_scope(MemoryJob *job, const MemoryRequest *request, Db *db,
 static void backend_failure(MemoryWorkerState *state, MemoryJobStatus *status, const char *detail)
 {
     state->failures++;
-    clock_gettime(CLOCK_MONOTONIC, &state->retry);
+    clock_gettime(SCRIBODO_DEADLINE_CLOCK, &state->retry);
     state->retry.tv_sec += 1u << (state->failures - 1);
     snprintf(status->why, sizeof(status->why), "Partial coverage: index failure %u/3%s: %.160s",
              state->failures, state->failures >= 3 ? "; explicit rebuild to retry" : "; backing off",
@@ -145,7 +147,7 @@ static bool prepare_documents(MemoryJob *job, const MemoryRequest *request, Db *
     bool refresh = changed;
     if (job->document_cache) {
         struct timespec now;
-        clock_gettime(CLOCK_MONOTONIC, &now);
+        clock_gettime(SCRIBODO_DEADLINE_CLOCK, &now);
         double ms = (double)now.tv_sec * 1000.0 + (double)now.tv_nsec / 1e6;
         if (changed || state->verification_pending || ms >= state->next_verification_ms) {
             bool pending = false;
@@ -291,7 +293,7 @@ static bool production_work(MemoryJob *job, const MemoryRequest *request, Db *db
     bool progress = false;
     bool index_ready = false;
     struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
+    clock_gettime(SCRIBODO_DEADLINE_CLOCK, &now);
     bool retry_due = now.tv_sec > state->retry.tv_sec ||
         (now.tv_sec == state->retry.tv_sec && now.tv_nsec >= state->retry.tv_nsec);
     if (state->failures < 3 && retry_due) {

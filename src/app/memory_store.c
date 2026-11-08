@@ -443,6 +443,57 @@ bool memory_lexical_candidates(Db *db, const MemoryScope *s, const char *q, size
     return ok;
 }
 
+/* Exact substring candidates for a term the full-text index cannot carry:
+ * shorter than innodb_ft_min_token_size (3), such as "17" or "ox". Same
+ * eligibility as the lexical query; shorter units rank first; % and _ in the
+ * term are literal; the column collation makes the match case-insensitive.
+ * Bounded to one short term per call and the usual candidate limit. */
+bool memory_substring_candidates(Db *db, const MemoryScope *s, const char *term, size_t limit,
+                               MemoryCandidate out[MEMORY_CANDIDATES], size_t *n)
+{
+    if (n) *n = 0;
+    if (out && limit > 0 && limit <= MEMORY_CANDIDATES) memset(out, 0, limit * sizeof(*out));
+    if (!db || !n || !out || !valid_scope(s) || !valid_text(term, 64) || !limit || limit > MEMORY_CANDIDATES) return false;
+    char pattern[200];
+    size_t used = 0;
+    pattern[used++] = '%';
+    for (const char *p = term; *p && used < sizeof(pattern) - 3; p++) {
+        if (*p == '%' || *p == '_' || *p == '\\') pattern[used++] = '\\';
+        pattern[used++] = *p;
+    }
+    pattern[used++] = '%';
+    pattern[used] = '\0';
+    DbRows r;
+    bool ok = db_query(db, "SELECT u.id,u.text_hash,1.0/CHAR_LENGTH(u.text) AS score"
+                          " FROM memory_units u JOIN memory_scopes s ON s.id=u.scope_id"
+                          " WHERE s.id=? AND s.project_id=? AND s.conversation_id=? AND s.enabled=1"
+                          " AND s.history_epoch=? AND s.policy_epoch=? AND s.generation=?"
+                           " AND u.source_kind='chat' AND u.generation=s.generation AND u.tokenizer=s.tokenizer"
+                          " AND u.history_epoch=s.history_epoch AND u.policy_epoch=s.policy_epoch"
+                          " AND DATABASE()=? AND s.tokenizer=? AND u.text LIKE ? ESCAPE '\\\\'"
+                          " ORDER BY score DESC,u.id LIMIT ?",
+                       (DbArg[]){ DB_S(s->id), DB_S(s->project_id), DB_S(s->conversation_id),
+                                  DB_I(s->history_epoch), DB_I(s->policy_epoch), DB_I(s->generation),
+                                  DB_S(s->database), DB_S(s->tokenizer), DB_S(pattern), DB_I(limit) }, 10, &r);
+    if (!ok) return false;
+    ok = r.ncols == 3 && r.nrows <= limit;
+    for (size_t i = 0; ok && i < r.nrows; i++) {
+        MemoryCandidate *candidate = &out[i];
+        ok = copy_cell(&r, i, 0, candidate->unit_id, sizeof(candidate->unit_id)) && valid_hash(candidate->unit_id) &&
+             copy_cell(&r, i, 1, candidate->text_hash, sizeof(candidate->text_hash)) && valid_hash(candidate->text_hash) &&
+             db_cell_double(&r, i, 2, &candidate->score);
+        candidate->history_epoch = s->history_epoch;
+        candidate->generation = s->generation;
+        if (ok) ++*n;
+    }
+    db_rows_free(&r);
+    if (!ok) {
+        memset(out, 0, limit * sizeof(*out));
+        *n = 0;
+    }
+    return ok;
+}
+
 /* Index retention is not model authorization. Reconstruct only current SQL
  * identity for generic outbox delivery, never an attachment allowset. */
 static bool index_hydrate(Db *db, const MemoryScope *s, const MemoryCandidate *c, MemoryUnit *u, bool *found)

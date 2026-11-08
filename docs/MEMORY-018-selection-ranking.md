@@ -205,6 +205,41 @@ model-side measurement below is why that is recorded as a cost in window
 space rather than in correctness. `make test`, `make dbtest`, `make sanitize`
 and `make tsan` pass on the final state.
 
+## Variance across seeds, and the server settings that were not needed
+
+Four more 30K fixtures (seeds 1 to 4, three items per category) on the final
+state: reach@candidates 1.0, reach@admitted 1.0, lexical hit 1.0 in all
+four, semantic hit 1.0, 1.0, 1.0 and 0.96, planning p95 44 to 49 ms. With the
+two original fixtures that is six fixtures, 152 measured tasks, zero required
+sources missed. Variance across seeds is not a concern on template prose; a
+real manuscript remains the open test.
+
+Two server-side alternatives were measured on an ephemeral MariaDB 11.4.13
+container so the production stack was never touched. A two-character token
+minimum with stopwords disabled changed nothing once scores were length
+normalized (1.000 on every reachable category either way); it only lifted the
+unnormalized production query from 0.500 to 0.625. Prefix wildcards in
+boolean mode as a cheap stem ("key*" matches "keys") scored 0.958 against the
+normalized natural-language query's 1.000, losing on paraphrase. Neither is
+adopted. Short tokens such as "17" remain unindexed; that is now the only
+asymmetry left between canon matching and excerpt discovery in the recall
+view, and it is addressed at the application level rather than by changing
+server settings.
+
+## Short tokens in the recall view
+
+`innodb_ft_min_token_size` is 3, so a query term such as "17" or "ox" never
+reaches the full-text index, while canon matching finds it by substring. The
+recall view now looks short terms up by exact substring over the same
+eligible units (`memory_substring_candidates`, and a LIKE variant of the
+document excerpt query), merged into the candidate set before the usual
+byte-for-byte verification. The collation makes it case-insensitive and
+`%`/`_` are escaped. `test_recall` finds the fact "Elin keeps 73 bronze
+keys" from the query "73", and the `short_token_fallback` mutant, which
+disables the path, is killed. The planner's chat path does not use this
+fallback: a chat question is rarely a bare short token, and the reach
+fixtures never needed it.
+
 ## The near-miss cost, measured on the model side
 
 The ranking changes admit more of the planted near-miss assertions (short,

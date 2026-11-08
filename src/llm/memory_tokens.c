@@ -14,6 +14,7 @@
 #include "core/json.h"
 #include "http.h"
 #include "llm_text.h"
+#include "core/deadline_clock.h"
 
 #define MAX_RESPONSE_BYTES (32u * 1024u * 1024u)
 #define MAX_TOKEN_COUNT (MEMORY_TOKENS_MAX_REQUEST_BYTES + 1024u)
@@ -46,7 +47,7 @@ static bool cancelled(const MemoryTokenizer *t)
     if (t->cancel && atomic_load(t->cancel)) return true;
     if (t->deadline_ms > 0) {
         struct timespec now;
-        if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return true;
+        if (clock_gettime(SCRIBODO_DEADLINE_CLOCK, &now) != 0) return true;
         return (double)now.tv_sec * 1000.0 + (double)now.tv_nsec / 1e6 >= t->deadline_ms;
     }
     return false;
@@ -66,7 +67,7 @@ static bool ready(MemoryTokenizer *t)
 static double monotonic_ms(void)
 {
     struct timespec ts;
-    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return -1;
+    if (clock_gettime(SCRIBODO_DEADLINE_CLOCK, &ts) != 0) return -1;
     return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
 }
 

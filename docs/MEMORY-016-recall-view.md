@@ -84,10 +84,11 @@ Run on this Mac on 2026-11-07, pinned services, no model server involved:
   by substring, so any term of two or more bytes can match. Excerpt candidates
   come from MariaDB's InnoDB full-text search in natural-language mode at the
   server's defaults: tokens shorter than three characters and words on the
-  built-in stopword list do not select candidates. A query of "17" or "the"
-  will match canon but select no excerpts. The host then re-checks every
-  candidate by substring, so a shown excerpt always contains a term, but an
-  excerpt that only a short or stopword term would reach is not shown.
+  built-in stopword list do not select candidates. Since MEMORY-018 a term
+  shorter than three characters is looked up by exact substring instead, so
+  "17" now reaches excerpts; a stopword such as "the" still selects none. The
+  host re-checks every candidate by substring, so a shown excerpt always
+  contains a term.
 - **Case folding differs by half.** Canon matching folds ASCII case only ("Zoë" matches "zoë" but not "ZOË"). Excerpt candidates come from the full-text index, which since migration 014 is case- and accent-insensitive (MEMORY-018); before that it was case-sensitive.
 - **Substring, not word, matching.** "key" matches "keys" and "monkey".
 - **Memory excerpts need the project store** and a conversation whose memory

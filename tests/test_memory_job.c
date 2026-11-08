@@ -1,3 +1,4 @@
+#define _DARWIN_C_SOURCE
 /* Headless lifecycle and bounded-iteration tests. No SQL/model/service needed.
  * Compile: cc -std=c11 -Wall -Wextra -Werror -pthread -Isrc -Isrc/llm
  *          tests/test_memory_job.c -o /path/to/test_memory_job */
@@ -8,6 +9,7 @@
 #include <string.h>
 #include <time.h>
 #include "../src/app/memory_job.c"
+#include "core/deadline_clock.h"
 
 struct StoreManager { int unused; };
 struct Db { int unused; };
@@ -22,7 +24,7 @@ static unsigned project_gc_calls;
 static size_t project_gc_rows;
 double memory_budget_now_ms(void)
 {
-    struct timespec now; clock_gettime(CLOCK_MONOTONIC, &now);
+    struct timespec now; clock_gettime(SCRIBODO_DEADLINE_CLOCK, &now);
     return (double)now.tv_sec * 1000 + (double)now.tv_nsec / 1e6;
 }
 void memory_document_cache_invalidate(MemoryDocumentCache *cache) { (void)cache; }

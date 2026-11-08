@@ -3,14 +3,16 @@
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 usage() {
-    echo 'usage: tools/history_frame_soak.sh [--seconds N | --minutes N]'
+    echo 'usage: tools/history_frame_soak.sh [--manuscript] [--seconds N | --minutes N]'
+    echo '--manuscript soaks the 100K-word fixture project (tests/ui/store/17_manuscript_soak.scribo) instead of the window book.'
     echo 'Default: about 30s of frame waits at 60fps; --minutes 60 opts into a long run.'
     echo 'Requires tools/services.sh up and an app built with frame_metrics.c.'
     echo 'SCRIBODO_SOAK_APP selects an executable snapshot (default build/scribodo).'
     echo 'Reports actual interframe/sample duration and sampled app-only RSS.'
     echo 'Fake backend/no LLM; excludes service RSS; not an input-latency SLA.'
 }
-seconds=30
+seconds=30; manuscript=0
+if [[ ${1:-} == --manuscript ]]; then manuscript=1; shift; fi
 if [[ ${1:-} == --help && $# == 1 ]]; then usage; exit 0; fi
 if [[ $# == 2 && ( $1 == --seconds || $1 == --minutes ) && $2 =~ ^[1-9][0-9]{0,4}$ ]]; then
     seconds=$2
@@ -52,17 +54,24 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 mkdir "$temp/work"
-python3 tests/seed_chat_window.py "$temp/work/windowbook"
-python3 - "$seconds" "$temp/soak.scribo" <<'PY'
+if (( manuscript )); then
+    python3 tests/seed_manuscript.py "$temp/work/manuscript" --words 100000 --per-category 4
+    soak_source=tests/ui/store/17_manuscript_soak.scribo
+else
+    python3 tests/seed_chat_window.py "$temp/work/windowbook"
+    soak_source=tests/ui/store/11_frame_soak.scribo
+fi
+python3 - "$seconds" "$temp/soak.scribo" "$soak_source" <<'PY'
 from pathlib import Path
 import math, sys
 seconds = int(sys.argv[1])
-text = Path('tests/ui/store/11_frame_soak.scribo').read_text()
+text = Path(sys.argv[3]).read_text()
 prefix, rest = text.split('# SOAK_CYCLE_BEGIN\n')
 cycle, suffix = rest.split('# SOAK_CYCLE_END\n')
 # No script loops are needed. Keep roughly 10-second-or-shorter holds and
 # repeat the real editing/navigation/cancellation path throughout the run.
-repeats = max(1, math.ceil(seconds / 20))
+cycle_work = 15 if 'manuscript' in sys.argv[3] else 10
+repeats = max(1, math.ceil(seconds / (2 * cycle_work)))
 hold = max(1, seconds * 60 // (2 * repeats))
 Path(sys.argv[2]).write_text(prefix + cycle.replace('wait 600', f'wait {hold}') * repeats + suffix)
 print(f'frame_soak: requested_wait_seconds={seconds} cycles={repeats} hold_frames={hold}', flush=True)

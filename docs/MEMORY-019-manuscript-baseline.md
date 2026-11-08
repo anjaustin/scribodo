@@ -64,10 +64,39 @@ passed.
 - The fake tokenizer makes phase 6 a host-path measurement, not a real
   ingestion rate; MEMORY-017 has the real one.
 
+## Remediation of phase 1, measured
+
+`tools/import_probe.c` timed the import itself three times on the same
+project: 0.76 to 0.78 s, 2,270 statements for 1,126 inserts in one
+transaction, so about two round trips per message (the row insert and its
+durable memory intent). The stall was the import running on the frame thread.
+
+The import now runs on an owned worker (`src/app/import_job.c`). `store_import`
+already elects one importer with file locks and makes every other thread see
+the project as paused, so moving it off the frame thread changes nothing in
+its guarantees; the observer joins the project only when the import has
+finished, as before, and the outcome is applied by `import_poll` on the
+frame thread. The same baseline, same fixture, same machine:
+
+| Phase | Wall before | Worst frame before | Wall after | Worst frame after |
+|---|---:|---:|---:|---:|
+| 1, first open and import | 0.83 s | **791 ms** | 0.88 s | **18.2 ms** |
+| 6, memory enable and ingest | 56.3 s | 64 ms | 53.9 s | 18.8 ms |
+
+All other phases unchanged within the 60 Hz floor; 27 of 27 checks; app RSS
+176 MB. Service containers were sampled for the first time: MariaDB 514 MB
+and Qdrant 463 MB peak (their resident set as reported by `docker stats`,
+including buffer pool and index memory, not attributable to this project
+alone). The store UI scripts that open a freshly seeded legacy project now
+wait for the import to finish before using it, which is also what an author
+sees: the status line says the project is being moved, and the Explorer
+shows it paused for about a second.
+
+Batching the inserts would shorten the background 0.8 s but no longer buys
+the author anything on this workload; it is noted, not done.
+
 ## What is next in S4
 
-- Make the import asynchronous or progressive so phase 1's 0.8 s stall does
-  not block the frame, then re-measure with this script.
 - Run the same script with the real model (`SCRIBODO_LLM=real` is not yet
   wired into this runner) to put a real time-to-first-token on phase 5 at
   this scale.

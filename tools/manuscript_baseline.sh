@@ -6,13 +6,15 @@
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 usage() {
-    echo 'usage: tools/manuscript_baseline.sh [--words N] [--per-category K]'
+    echo 'usage: tools/manuscript_baseline.sh [--words N] [--per-category K] [--real]'
+    echo '--real uses the pinned local model (slower; needs make llama and make model); default is the fake model.'
     echo 'Default: the 100K-word fixture with 4 items per category.'
     echo 'Requires tools/services.sh up and a built app (build/scribodo).'
 }
-words=100000; per=4
+words=100000; per=4; llm=fake
 while (( $# )); do
     case "$1" in
+        --real) llm=real; shift ;;
         --words) words=$2; shift 2 ;;
         --per-category) per=$2; shift 2 ;;
         --help) usage; exit 0 ;;
@@ -48,8 +50,8 @@ echo "manuscript_baseline: disposable_database=$name"
 created=1
 tools/services.sh testdb create "$name"
 start=$SECONDS
-SCRIBODO_STORE=db SCRIBODO_DB_NAME="$name" SCRIBODO_DB_PORT="$port" SCRIBODO_LLM=fake SCRIBODO_MEMORY_EXPERIMENT=1 \
+SCRIBODO_STORE=db SCRIBODO_DB_NAME="$name" SCRIBODO_DB_PORT="$port" SCRIBODO_SOAK_LLM="$llm" SCRIBODO_MEMORY_EXPERIMENT=1 \
     SCRIBODO_MODEL_SETTINGS="$temp/work/model-settings.json" SCRIBODO_PROFILE="$temp/work/profile.json" \
     SCRIBODO_SCRIPT=tests/ui/store/16_manuscript_baseline.scribo SCRIBODO_SCRIPT_DIR="$temp/work" \
-    SCRIBODO_SHOT_DIR="$temp" caffeinate -i tools/watchdog.sh 1500 manuscript-baseline python3 tools/frame_soak_run.py "$app"
-echo "manuscript_baseline: process_wall_seconds=$((SECONDS - start)) words=$words per_category=$per"
+    SCRIBODO_SHOT_DIR="$temp" caffeinate -i tools/watchdog.sh 3000 manuscript-baseline python3 tools/frame_soak_run.py "$app"
+echo "manuscript_baseline: process_wall_seconds=$((SECONDS - start)) words=$words per_category=$per model=$llm"

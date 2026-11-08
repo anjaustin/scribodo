@@ -27,6 +27,7 @@ static int cache_test_openat(int fd, const char *name, int flags);
 static int cache_test_clock_gettime(clockid_t clock, struct timespec *out);
 #define clock_gettime cache_test_clock_gettime
 #include "../src/app/memory_documents.c"
+#include "core/deadline_clock.h"
 #undef clock_gettime
 
 struct StoreManager { int unused; };
@@ -51,7 +52,7 @@ static bool advance_clock;
 
 static int cache_test_clock_gettime(clockid_t clock, struct timespec *out)
 {
-    CHECK(clock == CLOCK_MONOTONIC);
+    CHECK(clock == SCRIBODO_DEADLINE_CLOCK);
     out->tv_sec = (time_t)(clock_ms / 1000u);
     out->tv_nsec = (long)(clock_ms % 1000u) * 1000000L;
     return 0;

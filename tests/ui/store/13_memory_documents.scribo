@@ -1,5 +1,7 @@
 wait 5
 open "$DIR/memorydocbook/one.md"
+# The legacy project moves into the store on a worker; wait before using it.
+wait_status "now kept in the project store" 1800
 # Successful save grants a separate receipt, not mere revision-history presence.
 key S cmd
 click_element ChatItem0

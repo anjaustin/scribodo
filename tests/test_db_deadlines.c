@@ -32,6 +32,7 @@ static MYSQL *fixture_mysql_init(MYSQL *m)
 
 #define mysql_init fixture_mysql_init
 #include "../src/app/db.c"
+#include "core/deadline_clock.h"
 #undef mysql_init
 
 enum { NO_GREETING, DRIP_GREETING, NO_AUTH, NO_AUTOCOMMIT, NO_SESSION, READY, SHARED_BUDGET, DROP_AUTH };
@@ -47,7 +48,7 @@ typedef struct {
 static double now_ms(void)
 {
     struct timespec t;
-    clock_gettime(CLOCK_MONOTONIC, &t);
+    clock_gettime(SCRIBODO_DEADLINE_CLOCK, &t);
     return (double)t.tv_sec * 1000 + (double)t.tv_nsec / 1e6;
 }
 

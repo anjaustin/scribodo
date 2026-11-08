@@ -45,7 +45,7 @@ bool memory_documents_capture_cached(MemoryDocumentCache *cache, StoreManager *s
                                       size_t count, bool remote, const atomic_bool *cancel, MemoryDocumentSet *out);
 /* Borrowed-connection variants never refresh/close db or call store_mode /
  * store_db. Caller owns db's lifetime and SQL cancellation guard throughout.
- * deadline_ms is absolute CLOCK_MONOTONIC milliseconds (0: no deadline).
+ * deadline_ms is absolute milliseconds on the deadline clock (core/deadline_clock.h) (0: no deadline).
  * Missing db fails locally; remote returns empty without inspecting db/cache.
  * Foreground timeout/cancellation retains proofs, which still require fresh
  * SQL and descriptor/name/stat checks before any subsequent admission. */

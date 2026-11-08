@@ -10,7 +10,8 @@ write "$DIR/book/.scribodo/notes.jsonl" "{\"id\":\"n-20261101-100000-abcd\",\"ve
 write "$DIR/book/.scribodo/chats/20261101-100000-abcd.jsonl" "{\"type\":\"meta\",\"version\":1,\"title\":\"Old chat\",\"created\":1793500000}\n{\"type\":\"message\",\"role\":\"user\",\"content\":\"an old question\",\"ts\":1793500000,\"docs\":[\"one.md\"]}\n{\"type\":\"message\",\"role\":\"assistant\",\"content\":\"an old answer\",\"ts\":1793500001}\n"
 dialog "$DIR/book"
 click_element WelcomeOpen
-expect status "now kept in the project store"
+# The move into the store runs on a worker; wait for it to finish.
+wait_status "now kept in the project store" 1800
 expect files "$DIR/book/.scribodo" "store.json" 1
 expect files "$DIR/book/.scribodo" "notes.jsonl" 0
 expect files "$DIR/book/.scribodo" "legacy-" 1

@@ -6,7 +6,8 @@ mkdir "$DIR/graph"
 write "$DIR/graph/ch1.md" "Zoë is Mara's sister.\n\nMara rowed out at dawn.\n"
 dialog "$DIR/graph"
 click_element WelcomeOpen
-expect status "now kept in the project store"
+# The move into the store runs on a worker; wait for it to finish.
+wait_status "now kept in the project store" 1800
 click_element DocItem0
 observer on
 click_element ObserverToggle

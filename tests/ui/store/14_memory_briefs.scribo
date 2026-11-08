@@ -1,5 +1,7 @@
 wait 5
 open "$DIR/briefbook/one.md"
+# The legacy project moves into the store on a worker; wait before using it.
+wait_status "now kept in the project store" 1800
 click_element ChatItem0
 wait_history
 right_click_element ChatItem0

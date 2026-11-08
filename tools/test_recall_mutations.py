@@ -39,6 +39,7 @@ def main():
         # Store-side guard the recall path depends on: lexical length normalization (MEMORY-018).
         ("lexical_length_norm", ('" / POW(CHAR_LENGTH(u.text)," MEMORY_LEXICAL_LENGTH_NORM ") AS score"', '" AS score"'), "src/app/memory_store.c"),
         ("lexical_case_fold", ("COLLATE utf8mb4_unicode_ci NOT NULL", "COLLATE utf8mb4_bin NOT NULL"), "src/app/db.c"),
+        ("short_token_fallback", ("#define RECALL_FULLTEXT_MIN_TOKEN 3u", "#define RECALL_FULLTEXT_MIN_TOKEN 0u")),
     ]
     for case in cases:
         name, replacement = case[0], case[1]

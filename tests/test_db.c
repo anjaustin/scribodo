@@ -25,6 +25,7 @@
 #include "../src/app/renames.h"
 #include "test_util.h"
 #include "test_db_internal.h"
+#include "core/deadline_clock.h"
 
 char g_name[64];
 char g_name2[64];
@@ -226,7 +227,7 @@ static void test_chat_source_pages(void)
 static double monotonic_seconds(void)
 {
     struct timespec t;
-    clock_gettime(CLOCK_MONOTONIC, &t);
+    clock_gettime(SCRIBODO_DEADLINE_CLOCK, &t);
     return (double)t.tv_sec + (double)t.tv_nsec / 1e9;
 }
 

@@ -43,6 +43,7 @@
 #include "core/json.h"
 #include "test_util.h"
 #include "test_state_fixture.h"
+#include "core/deadline_clock.h"
 
 static char g_dir[512];
 static StoreManager *g_store;
@@ -328,9 +329,9 @@ static void test_backup_pipes(void)
     CHECK(backup_job_init(&job, g_store));
     CHECK(backup_job_start(&job, tools, project));
     struct timespec destroy_before, destroy_after;
-    clock_gettime(CLOCK_MONOTONIC, &destroy_before);
+    clock_gettime(SCRIBODO_DEADLINE_CLOCK, &destroy_before);
     CHECK(backup_job_destroy(&job));
-    clock_gettime(CLOCK_MONOTONIC, &destroy_after);
+    clock_gettime(SCRIBODO_DEADLINE_CLOCK, &destroy_after);
     double destroy_elapsed = (double)(destroy_after.tv_sec - destroy_before.tv_sec) +
                              (double)(destroy_after.tv_nsec - destroy_before.tv_nsec) / 1e9;
     CHECK(destroy_elapsed >= 0.1 && destroy_elapsed < 5.0);
@@ -347,9 +348,9 @@ static void test_backup_pipes(void)
     }
     setenv("SCRIBODO_BACKUP_TIMEOUT_SECONDS", "1", 1);
     struct timespec before, after;
-    clock_gettime(CLOCK_MONOTONIC, &before);
+    clock_gettime(SCRIBODO_DEADLINE_CLOCK, &before);
     CHECK(!backup_project(g_store, tools, project, dest, sizeof(dest), why, sizeof(why)));
-    clock_gettime(CLOCK_MONOTONIC, &after);
+    clock_gettime(SCRIBODO_DEADLINE_CLOCK, &after);
     double elapsed = (double)(after.tv_sec - before.tv_sec) + (double)(after.tv_nsec - before.tv_nsec) / 1e9;
     CHECK(elapsed < 5.0 && strstr(why, "failed"));
     unsetenv("SCRIBODO_BACKUP_TIMEOUT_SECONDS");
@@ -385,9 +386,9 @@ static void test_service_supervisor(void)
     }
     CHECK(child_pid > 0);
     struct timespec before, after;
-    clock_gettime(CLOCK_MONOTONIC, &before);
+    clock_gettime(SCRIBODO_DEADLINE_CLOCK, &before);
     CHECK(service_supervisor_destroy(&supervisor));
-    clock_gettime(CLOCK_MONOTONIC, &after);
+    clock_gettime(SCRIBODO_DEADLINE_CLOCK, &after);
     double elapsed = (double)(after.tv_sec - before.tv_sec) + (double)(after.tv_nsec - before.tv_nsec) / 1e9;
     CHECK(elapsed < 3.0);
     errno = 0;
@@ -2011,7 +2012,7 @@ static ChatSession *stub_chat(LlmServer **srv, Stub *st)
 static double now_s(void)
 {
     struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
+    clock_gettime(SCRIBODO_DEADLINE_CLOCK, &ts);
     return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
 }
 

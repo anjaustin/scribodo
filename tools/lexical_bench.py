@@ -30,12 +30,22 @@ def sql_string(value):
 
 
 def run_sql(database, sql):
-    cmd = ["docker", "exec", "-i", "scribodo-mariadb-1", "sh", "-c",
-           f'MYSQL_PWD="$(cat /run/secrets/db_root_password)" mariadb -uroot --batch --raw --skip-column-names {database}']
+    container = os.environ.get("LEXBENCH_CONTAINER", "scribodo-mariadb-1")
+    password = os.environ.get("LEXBENCH_ROOT_PASSWORD")
+    auth = f'MYSQL_PWD="{password}"' if password else 'MYSQL_PWD="$(cat /run/secrets/db_root_password)"'
+    cmd = ["docker", "exec", "-i", container, "sh", "-c",
+           f'{auth} mariadb -uroot --batch --raw --skip-column-names {database}']
     result = subprocess.run(cmd, input=sql, capture_output=True, text=True)
     if result.returncode:
         raise RuntimeError(result.stderr.strip())
     return [line.split("\t") for line in result.stdout.splitlines() if line]
+
+
+def prefix_terms(question):
+    """Boolean-mode terms with a trailing wildcard: a cheap stem ("key*" matches keys)."""
+    text = unicodedata.normalize("NFKC", question)
+    words = re.split(r"[^\w]+", text)
+    return " ".join(w + "*" for w in words if len(w) >= 3)
 
 
 def boolean_terms(question):
@@ -49,6 +59,7 @@ def variants(question):
     b = sql_string(boolean_terms(question))
     nat = f"MATCH(text) AGAINST({q} IN NATURAL LANGUAGE MODE)"
     boo = f"MATCH(text) AGAINST({b} IN BOOLEAN MODE)"
+    pre = f"MATCH(text) AGAINST({sql_string(prefix_terms(question))} IN BOOLEAN MODE)"
     return {
         "natural (production)": (nat, nat),
         "natural / log(len)": (f"{nat} / LOG(2 + CHAR_LENGTH(text))", nat),
@@ -59,6 +70,7 @@ def variants(question):
         "natural / len": (f"{nat} / CHAR_LENGTH(text)", nat),
         "boolean OR": (boo, boo),
         "boolean OR / log(len)": (f"{boo} / LOG(2 + CHAR_LENGTH(text))", boo),
+        "boolean prefix* / len^0.75": (f"{pre} / POW(CHAR_LENGTH(text), 0.75)", pre),
     }
 
 
@@ -72,7 +84,11 @@ def main():
     args = parser.parse_args()
     fixture = memory_fixture.build(args.seed, args.words, args.per_category)
     database = f"scribodo_test_lexbench_{os.getpid()}"
-    subprocess.run([str(ROOT / "tools/services.sh"), "testdb", "create", database], check=True, capture_output=True)
+    external = "LEXBENCH_CONTAINER" in os.environ
+    if external:
+        run_sql("", f"CREATE DATABASE {database};")
+    else:
+        subprocess.run([str(ROOT / "tools/services.sh"), "testdb", "create", database], check=True, capture_output=True)
     try:
         run_sql(database, "CREATE TABLE units (seq INT PRIMARY KEY, role VARCHAR(16) NOT NULL, text VARCHAR(2000) NOT NULL,"
                           f" FULLTEXT KEY ft (text)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE={args.collation};")
@@ -84,7 +100,10 @@ def main():
         # lowercases tokens while incrementally inserted rows keep their case,
         # which made capitalized names unsearchable in an earlier run of this
         # bench (MEMORY-018). Production inserts incrementally; so does this.
-        report = {"fixture": {"seed": args.seed, "words": fixture["words"], "rows": len(rows)}, "variants": {}}
+        settings = run_sql(database, "SHOW VARIABLES LIKE 'innodb_ft_min_token_size'; SHOW VARIABLES LIKE 'innodb_ft_enable_stopword';")
+        report = {"fixture": {"seed": args.seed, "words": fixture["words"], "rows": len(rows)}, "variants": {},
+                  "server": {k: v for k, v in settings}}
+        print("server:", dict(settings))
         tasks = [t for t in fixture["tasks"] if t["required_sequences"]]
         names = list(variants("x").keys())
         for name in names:
@@ -119,7 +138,10 @@ def main():
         if args.json:
             args.json.write_text(json.dumps(report, indent=2))
     finally:
-        subprocess.run([str(ROOT / "tools/services.sh"), "testdb", "drop", database], check=False, capture_output=True)
+        if external:
+            run_sql("", f"DROP DATABASE IF EXISTS {database};")
+        else:
+            subprocess.run([str(ROOT / "tools/services.sh"), "testdb", "drop", database], check=False, capture_output=True)
     return 0
 
 
