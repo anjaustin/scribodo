@@ -14,6 +14,16 @@ mkdir -p build/hangs
 "$@" &
 pid=$!
 start=$SECONDS
+launched=$(date '+%Y-%m-%d %H:%M:%S')
+# Hold the machine awake while the command runs. The limit below is wall
+# time: an idle sleep inside it fires the watchdog at the next wake and
+# reports a sleeping process as a hang (measured 2026-11-08: test_llm
+# launched 11:35:32, the Mac slept at 11:35:39, the sample fired at 11:53:09
+# on wake with the main thread in a plain usleep). caffeinate exits with the
+# command, including when the watchdog kills it.
+if command -v caffeinate >/dev/null 2>&1; then
+    caffeinate -i -w "$pid" 2>/dev/null &
+fi
 while kill -0 "$pid" 2>/dev/null; do
     if (( SECONDS - start >= limit )); then
         stamp=$(date +%H%M%S)
@@ -27,6 +37,19 @@ while kill -0 "$pid" 2>/dev/null; do
                 rm -f "$out.$p"
             fi
         done
+        # Record the machine's sleep/wake events since launch beside the sample,
+        # so a reader can tell a hang from a nap without consulting pmset.
+        if command -v pmset >/dev/null 2>&1; then
+            naps=$(pmset -g log 2>/dev/null | grep -E 'Entering Sleep|Wake from|DarkWake' \
+                   | awk -v s="$launched" 'substr($0,1,19) >= s')
+            {
+                echo "== Power events since launch ($launched) =="
+                if [ -n "$naps" ]; then echo "$naps"; else echo "(none)"; fi
+            } >> "$out"
+            if [ -n "$naps" ]; then
+                echo "WATCHDOG: the machine slept or woke $(echo "$naps" | wc -l | tr -d ' ') time(s) during the run; see $out" >&2
+            fi
+        fi
         if [ -s "$out" ]; then
             echo "WATCHDOG: main thread, innermost frames:" >&2
             # Print the deepest frames of the busiest main-thread path.

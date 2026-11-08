@@ -22,6 +22,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import shutil
@@ -53,6 +54,9 @@ def percentile(values, q):
     return ordered[index]
 
 
+DOCUMENTS = {}  # name -> text of the fixture's attached documents, set by summarize()
+
+
 def score_document_task(task, event):
     """Reach for a fact planted inside an attached saved document: the admitted
     or candidate unit must carry the planted sentence and come from that document."""
@@ -60,10 +64,17 @@ def score_document_task(task, event):
     name = task["required_document"]
     admitted_rows = event.get("admitted_units", [])
     candidates = event.get("lexical_candidates", []) + event.get("semantic_candidates", [])
-    hit_admitted = any(r.get("document_name") == name and sentence in (r.get("text") or "") for r in admitted_rows)
-    hit_candidates = any(c.get("document_name") == name and sentence in (c.get("text") or "") for c in candidates)
-    lexical = any(c.get("document_name") == name and sentence in (c.get("text") or "") for c in event.get("lexical_candidates", []))
-    semantic = any(c.get("document_name") == name and sentence in (c.get("text") or "") for c in event.get("semantic_candidates", []))
+    answers = task.get("answers", [])
+    def carries(text):
+        text = text or ""
+        return sentence in text or any(re.search(r"(?<!\w)" + re.escape(a) + r"(?!\w)", text) for a in answers)
+    def whole(text):
+        return sentence in (text or "")
+    hit_admitted = any(r.get("document_name") == name and carries(r.get("text")) for r in admitted_rows)
+    hit_candidates = any(c.get("document_name") == name and carries(c.get("text")) for c in candidates)
+    whole_admitted = any(r.get("document_name") == name and whole(r.get("text")) for r in admitted_rows)
+    lexical = any(c.get("document_name") == name and carries(c.get("text")) for c in event.get("lexical_candidates", []))
+    semantic = any(c.get("document_name") == name and carries(c.get("text")) for c in event.get("semantic_candidates", []))
     return {"task": task["id"], "category": task["category"], "required": [name], "admitted": [r.get("document_name") or r.get("sequence") for r in admitted_rows],
             "admitted_count": len(admitted_rows), "candidate_count": len(candidates), "privacy_violations": 0,
             "planning_seconds": event.get("planning_seconds"), "over_budget": (event.get("planning_seconds") or 0) > BUDGET_SECONDS,
@@ -71,6 +82,7 @@ def score_document_task(task, event):
             "planned": event.get("planned") is True, "admitted_ok": event.get("admitted") is True,
             "distractors_admitted": 0, "distractors_planted": 0,
             "reach_candidates": 1.0 if hit_candidates else 0.0, "reach_admitted": 1.0 if hit_admitted else 0.0,
+            "whole_sentence_admitted": 1.0 if whole_admitted else 0.0,
             "lexical_hit": 1.0 if lexical else 0.0, "semantic_hit": 1.0 if semantic else 0.0}
 
 
@@ -88,6 +100,11 @@ def score_task(task, event, archive):
     for row in admitted_rows:
         sequence = row.get("sequence")
         text = row.get("text", "")
+        if row.get("document_name"):
+            doc = DOCUMENTS.get(row["document_name"], "")
+            if not text or text not in doc or CANARY in text:
+                privacy += 1
+            continue  # an attached-document excerpt is not a chat sequence
         if (not isinstance(sequence, int) or not 0 <= sequence < len(archive) or not text or
                 text not in archive[sequence]["text"] or CANARY in text):
             privacy += 1
@@ -118,6 +135,8 @@ def mean(values):
 
 def summarize(fixture, events, driver_rc, manifest_hash):
     archive = fixture["archive"]
+    DOCUMENTS.clear()
+    DOCUMENTS.update({d["name"]: d["text"] for d in fixture.get("documents", [])})
     tasks = {t["id"]: t for t in fixture["tasks"]}
     selections = [e for e in events if e.get("event") == "selection"]
     scored = [score_task(tasks[e["task"]], e, archive) for e in selections if e.get("task") in tasks]
@@ -133,6 +152,7 @@ def summarize(fixture, events, driver_rc, manifest_hash):
             "lexical_hit": mean(r["lexical_hit"] for r in rows),
             "semantic_hit": mean(r["semantic_hit"] for r in rows),
             "mean_admitted": mean(r["admitted_count"] for r in rows),
+            "whole_sentence_admitted": mean(r.get("whole_sentence_admitted") for r in rows if "whole_sentence_admitted" in r),
             "distractors_admitted": sum(r["distractors_admitted"] for r in rows),
             "distractors_planted": sum(r["distractors_planted"] for r in rows),
             "planning_p50": percentile([r["planning_seconds"] for r in rows if r["planning_seconds"] is not None], .5),
@@ -205,7 +225,18 @@ def main():
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--export-native", type=Path, help="also write native 'faithful use' episodes here")
     parser.add_argument("--binary", type=Path, default=ROOT / "build/memory-reach/memory_reach_eval")
+    parser.add_argument("--rescore", type=Path, help="recompute report.json for a finished run directory from its frozen answer key and events")
     args = parser.parse_args()
+    if args.rescore:
+        run = args.rescore
+        fixture = json.loads((run / "answer-key.json").read_text())
+        events = [json.loads(l) for l in (run / "events.jsonl").read_text().splitlines() if l.strip()]
+        report = summarize(fixture, events, 0, (run / "FROZEN.sha256").read_text().strip())
+        report["rescored"] = True
+        save(run / "report.rescored.json", report)
+        print(json.dumps({"result": report["result"], "gates": report["gates"], "overall": report["overall"],
+                          "document_fact": report["per_category"].get("document_fact")}, indent=2))
+        return 0
     if args.self_test:
         self_test()
         return 0

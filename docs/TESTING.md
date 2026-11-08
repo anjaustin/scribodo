@@ -165,7 +165,7 @@ of this owner-only trust policy first.
 
 Two layers make sure we never wait on a hung process:
 
-1. **`tools/watchdog.sh SECONDS NAME CMD…`** wraps every test target. If the command outlives its limit, the watchdog samples every thread of it and its children into `build/hangs/NAME-<time>.txt`, prints the main thread's innermost frames, kills it, and exits 124. A real example from the chat work:
+1. **`tools/watchdog.sh SECONDS NAME CMD…`** wraps every test target. It holds the machine awake for the command's lifetime (`caffeinate -i -w`). If the command outlives its limit, the watchdog samples every thread of it and its children into `build/hangs/NAME-<time>.txt`, appends the Mac's sleep and wake events since launch, prints the main thread's innermost frames, kills it, and exits 124. A real example from the chat work:
 
    ```
    WATCHDOG: 'app-deadlock' still running after 8s; sampling to build/hangs/app-deadlock-093626.txt
@@ -388,6 +388,18 @@ long and unattended should too. Note the clocks: `CLOCK_MONOTONIC` keeps
 counting through sleep on macOS, Python's `time.monotonic()` does not, and
 bash `$SECONDS` is wall time; a run that straddles sleep reports different
 durations from each.
+
+The same thing happened to the unit suite on 2026-11-08 and was first
+misread as a deadlock: `make test` and `make tsan` both reported `test_llm`
+killed by the watchdog after 300 s, with a stack sample showing the observer
+test in a plain `usleep`. `pmset -g log` placed the launch at 11:35:32 inside
+a 46-second dark wake, the next sleep at 11:35:39 and the sample at 11:53:09,
+the second the Mac woke again; the test had run for seven seconds. Run alone,
+`test_llm` passes in well under its limit. Since then `tools/watchdog.sh`
+holds a `caffeinate -i -w <pid>` assertion for every command it wraps, so a
+unit test can no longer sleep into its own limit, and every hang sample ends
+with the machine's sleep and wake events since the command was launched, so
+the next reader can tell a hang from a nap without consulting `pmset`.
 
 A legacy project's move into the store runs on an owned worker since
 MEMORY-019 (`src/app/import_job.c`); UI scripts that open a freshly seeded

@@ -1,6 +1,7 @@
 #define _DARWIN_C_SOURCE
 #include "memory_store.h"
 #include "memory_documents.h"
+#include "core/text_cut.h"
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -174,12 +175,6 @@ bool memory_message_intent(Db *db, const char *p, const char *c, int64_t seq)
                   (DbArg[]){ DB_I(seq), DB_S(p), DB_S(c) }, 3, NULL);
 }
 
-static size_t boundary(const char *s, size_t n)
-{
-    while (n && ((unsigned char)s[n] & 0xc0) == 0x80) --n;
-    return n;
-}
-
 static bool ingest_release(Db *db, const char *id, const char *owner, uint64_t fence, bool failed)
 {
     const char *sql = failed ?
@@ -268,11 +263,11 @@ bool memory_ingest_step(Db *db, const char *id, const char *owner, MemoryTokenCo
         ok = available <= 2003 && available == (total - off > 2003 ? 2003 : total - off);
         if (ok) {
             memcpy(text, window, available + 1);
-            n = available > 2000 ? boundary(text, 2000) : available;
+            n = available > 2000 ? text_cut(text, 2000) : available;
             text[n] = 0;
             tokens = count(text, ctx); /* never inside a transaction */
             while (tokens > 512 && n) {
-                n = boundary(text, n / 2);
+                n = text_cut(text, n / 2);
                 text[n] = 0;
                 tokens = count(text, ctx);
             }

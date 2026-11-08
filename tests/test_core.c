@@ -9,6 +9,7 @@
 #include "../src/core/utf8.h"
 #include "../src/core/wrap.h"
 #include "../src/core/recall_terms.h"
+#include "../src/core/text_cut.h"
 #include "../src/app/frame_view_model.h"
 #include "test_util.h"
 
@@ -485,10 +486,38 @@ static void test_recall_terms(void)
     CHECK(recall_match("ZOË stood", t, n) == 0); /* non-ASCII case is not folded */
 }
 
+static void test_text_cut(void)
+{
+    CHECK(text_cut(NULL, 10) == 0);
+    CHECK(text_cut("", 10) == 0);
+    CHECK(text_cut("abc", 0) == 0);
+    /* The whole text fits: no cut, even when a break would be available. */
+    CHECK(text_cut("one two", 7) == 7);
+    CHECK(text_cut("one two", 100) == 7);
+    /* A plain word break: the cut falls after the space so the rest starts on a word. */
+    CHECK(text_cut("alpha beta gamma", 12) == 11); /* "alpha beta " */
+    /* A sentence end outranks a later word break in the window. */
+    CHECK(text_cut("Fact one. Fact two three four", 18) == 10); /* "Fact one. " beats "Fact one. Fact " */
+    /* A line break outranks both. */
+    CHECK(text_cut("Para one.\nSecond line has words here", 19) == 10); /* "Para one.\n" beats "...Second " */
+    /* Breaks only in the front half are ignored: the cut is the plain boundary. */
+    CHECK(text_cut("ab cdefghijklmnopqrstuvwxyz", 20) == 20);
+    /* No whitespace at all: byte cut, aligned to a UTF-8 sequence. */
+    static const char whales[] = "\xF0\x9F\x90\x8B\xF0\x9F\x90\x8B\xF0\x9F\x90\x8B\xF0\x9F\x90\x8B";
+    CHECK(text_cut(whales, 10) == 8);
+    CHECK(text_cut(whales, 16) == 16);
+    CHECK(text_cut(whales, 15) == 12);
+    /* A multibyte character right before the chosen break stays whole. */
+    CHECK(text_cut("caf\xC3\xA9 aulait", 9) == 6); /* "café " is 6 bytes */
+    /* The cut never exceeds n. */
+    for (size_t n = 1; n < 40; n++) CHECK(text_cut("The quick brown fox. Jumps over\nthe lazy dog again", n) <= n);
+}
+
 int main(void)
 {
     TestCase tests[] = {
         { "recall_terms", test_recall_terms },
+        { "text_cut", test_text_cut },
         { "utf8_clip", test_utf8_clip },
         { "utf8_basic", test_utf8_basic },
         { "utf8_invalid", test_utf8_invalid },

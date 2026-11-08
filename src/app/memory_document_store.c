@@ -1,5 +1,6 @@
 #define _DARWIN_C_SOURCE
 #include "memory_documents.h"
+#include "core/text_cut.h"
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -106,12 +107,6 @@ bool memory_documents_seed(Db *db, const MemoryScope *s, const MemoryDocumentSet
     if (ok) return db_commit(db);
     db_rollback(db);
     return false;
-}
-
-static size_t boundary(const char *text, size_t n)
-{
-    while (n && ((unsigned char)text[n] & 0xc0) == 0x80) --n;
-    return n;
 }
 
 bool memory_documents_complete(Db *db, const MemoryScope *s, const MemoryDocumentSet *set, bool *complete)
@@ -238,7 +233,7 @@ bool memory_document_ingest_step(Db *db, const MemoryScope *s, const MemoryDocum
                 ok = available == expected;
                 if (ok) {
                     memcpy(text, window, available + 1);
-                    n = available > 2000 ? boundary(text, 2000) : available;
+                    n = available > 2000 ? text_cut(text, 2000) : available;
                     text[n] = 0;
                 }
             }
@@ -248,7 +243,7 @@ bool memory_document_ingest_step(Db *db, const MemoryScope *s, const MemoryDocum
             tokens = count(text, context);
             if (db_in_transaction(db)) return false;
             while (tokens > 512 && n) {
-                n = boundary(text, n / 2);
+                n = text_cut(text, n / 2);
                 text[n] = 0;
                 tokens = count(text, context);
                 if (db_in_transaction(db)) return false;
