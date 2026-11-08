@@ -4,8 +4,8 @@ This is the durable cross-session register for architectural and maintenance
 work. It records debt rather than individual defects. Update the status,
 evidence and session log when a remediation lands.
 
-**Last reviewed:** 2026-11-06
-**Baseline:** `a9652c7` (`Route project stores and own service startup`)
+**Last reviewed:** 2026-11-07
+**Baseline:** `4060369` (`Update sample chapter opening`)
 **Status:** pre-alpha; macOS on Apple Silicon is the MVP target
 
 ## Current product priority
@@ -250,8 +250,10 @@ Runner metadata, credentials and work directories are owner-only on disk.
 - [ ] Keep real-model/offline verification manual until model asset provisioning
       and sandbox policy are made reproducible on the runner.
 
-Repository administration now enforces pull requests, linear history and the
-hosted build/sanitizer/TSan checks plus trusted acceptance on `main`.
+Repository administration enforces linear history and blocks force-pushes and
+branch deletion on `main`. Pull requests and required status checks are **not**
+enforced: direct pushes are permitted, and CI reports after the fact. See
+"CI reports after direct pushes" above for the accepted risk and mitigation.
 
 ### Acceptance criteria
 

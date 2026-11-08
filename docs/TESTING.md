@@ -321,3 +321,21 @@ Each of these was caught by the suites and has a regression check:
 
   A `--replace` must also drop the stale index.
 - **`make remotetest`:** the remote model against a stand-in provider. It checks what actually reached the provider: one request, with its key and document, nothing from before the switch, and nothing after switching back.
+
+## Test-harness environment variables
+
+These exist for the scripted suites and debugging. Operator-facing variables
+are listed in the README.
+
+| Variable | Effect |
+|---|---|
+| `SCRIBODO_SCRIPT` | Path to a `.scribo` UI script. The app runs it in a hidden window, uses the fake model unless `SCRIBODO_LLM=real`, and uses files unless `SCRIBODO_STORE=db`. |
+| `SCRIBODO_SCRIPT_DIR` | Working folder for a scripted run: its `profile.json`, `model-settings.json` and `.scribodo-state` live here instead of Application Support. |
+| `SCRIBODO_SHOT_DIR` | Where a script's screenshots are written. |
+| `SCRIBODO_LLM` | `fake` forces the deterministic stand-in model; `real` forces the real `llama-server` inside a script. |
+| `SCRIBODO_SEED` | Sampling seed sent to the local model for reproducible real-model runs. Ignored for remote providers. |
+| `SCRIBODO_DB_NAME` | Throwaway database name for `dbtest`, `uitest-db` and the acceptance runner. |
+| `SCRIBODO_BACKUP_TIMEOUT_SECONDS` | Shortens the one-hour backup run timeout. It can only shorten it. |
+| `SCRIBODO_SCREENSHOT` | `out.png` renders a few frames, saves the framebuffer and exits. |
+| `SCRIBODO_INPUT_TRACE` | Logs decoded input characters to stderr. |
+| `SCRIBODO_SEM_DEBUG` | Logs failed Qdrant key reads to stderr. |

@@ -55,11 +55,11 @@ Scribodo lets an author brainstorm in chat, develop prose in documents, and revi
 | Document editor | Custom native text surface | UTF-8 input, selection, scrolling, undo/redo, and reviewable AI diffs. |
 | Structured store | **MariaDB** (local) | Source of truth for project records, chats, revisions, findings, notes, canon, entities and links, and job state. |
 | Semantic index | **Qdrant** (local) | Derived and rebuildable. Every point references MariaDB and source IDs. |
-| Embeddings | Dedicated local embedding model (TBD) | Model, dimensions, and metric are pinned. Vectors from different models are never mixed. |
+| Embeddings | **Qwen3-Embedding-0.6B** (local, f16 GGUF) | Model, dimensions, and metric are pinned by hash. Vectors from different models are never mixed. |
 | Generative model | **[LiquidAI/LFM3-1.7B](https://huggingface.co/LiquidAI/LFM3-1.7B)** | Official post-trained checkpoint, **BF16 only**. |
 | Inference | Replaceable local adapter | Runtime is validated on each target platform. |
 | Observer | Independent worker and job queue | Shares the runtime through a separate queue and never starves interactive chat. |
-| Remote models | Optional adapter(s) | Off until configured. Credentials live in the OS keychain, and a data-exit indicator is shown. |
+| Remote models | Optional adapter(s) | Off until configured. The API key is read from a private file named in `remote.json`, and a data-exit indicator is shown. |
 
 **Target:** macOS on Apple Silicon. The MVP is built and validated on an Apple M4 (16 GB). Linux and Windows are out of scope for the MVP.
 
@@ -142,10 +142,13 @@ On first launch the app checks the model file against its pinned hash (once), th
 **Experimental local conversation memory:** launch with
 `SCRIBODO_MEMORY_EXPERIMENT=1`, open a stored chat, and right-click it to explicitly
 enable/disable/rebuild memory. This retrieves older chat and currently attached
-saved local revision excerpts, never
-silently exports them to a remote provider, and shows read-only as-of **Sources**.
-It is default-off; unsaved buffers are foreground-only and generated briefs are
-not implemented. See [saved-document retrieval and remaining gates](docs/MEMORY-008-saved-document-retrieval.md).
+saved local revision excerpts, never silently exports them to a remote provider,
+and shows read-only as-of **Sources**. Generated T1 briefs are a second opt-in
+behind `SCRIBODO_MEMORY_BRIEFS=1`: locally generated, source-linked and never
+canon. Everything here is default-off, and unsaved buffers are foreground-only.
+The current slice is [MEMORY-009](docs/MEMORY-009-resource-and-brief-experiment.md);
+the direction after the continuity experiments is
+[MEMORY-014](docs/MEMORY-014-canon-first-continuity.md).
 
 **Projects and documents:** a project is a folder of `.md` and `.txt` files.
 - On launch, Scribodo reopens the project and document you last had open. The first time, it shows a welcome screen: **Open folder…**, **New project…**, **Open the sample**, and your recent projects.
@@ -216,6 +219,31 @@ See [`docs/REDTEAM-001-editor-spike.md`](docs/REDTEAM-001-editor-spike.md) for t
 
 By default the build targets the host CPU (`-mcpu=native`, which includes NEON on Apple Silicon). For a portable binary, run `make ARCH_FLAGS=`.
 
+### Environment variables
+
+Every setting has a working default. These override where Scribodo finds its
+services, models and configuration files; the test-harness variables are listed
+in [`docs/TESTING.md`](docs/TESTING.md).
+
+| Variable | Default | Effect |
+|---|---|---|
+| `SCRIBODO_STORE` | on | `off` runs without the MariaDB project store, using the `.scribodo/` file backend only. |
+| `SCRIBODO_DB_PORT` | `33061` | MariaDB port on 127.0.0.1. |
+| `SCRIBODO_QDRANT_PORT` | `6333` | Qdrant port on 127.0.0.1. |
+| `SCRIBODO_SECRETS` | `~/Library/Application Support/Scribodo/services` | Folder holding the `db_password` and `qdrant_api_key` files that `tools/services.sh` generates. |
+| `SCRIBODO_LLAMA_SERVER` | `llama/bin/llama-server` beside the app binary | The pinned `llama-server` executable. |
+| `SCRIBODO_MODEL` | a Hugging Face cache copy, else `~/Library/Application Support/Scribodo/models/LFM3-1.7B-BF16.gguf` | Generative model file. The pinned BF16 hash is still enforced. |
+| `SCRIBODO_EMBED_MODEL` | `~/Library/Application Support/Scribodo/models/Qwen3-Embedding-0.6B-f16.gguf` | Embedding model file. The pinned hash is still enforced. |
+| `SCRIBODO_MEM_AVAILABLE_MB` | measured from the OS | Overrides available memory when sizing the model context window. |
+| `SCRIBODO_REMOTE_CONFIG` | `~/Library/Application Support/Scribodo/remote.json` | Optional remote provider configuration. |
+| `SCRIBODO_MODEL_SETTINGS` | `~/Library/Application Support/Scribodo/model-settings.json` | Sampling and context settings saved from the toolbar. |
+| `SCRIBODO_PROFILE` | `~/Library/Application Support/Scribodo/profile.json` | Author profile. |
+| `SCRIBODO_BACKUPS` | `~/Library/Application Support/Scribodo/backups` | Where **Back up now** writes. |
+| `SCRIBODO_PROSE_FONT` | system fonts | A font file tried first for prose text. |
+| `SCRIBODO_MEMORY_EXPERIMENT` | unset | `1` enables the opt-in local memory experiment described above. |
+| `SCRIBODO_MEMORY_BRIEFS` | unset | `1` additionally enables generated T1 briefs. Requires the experiment flag. |
+| `SCRIBODO_MEMORY_PRESENTATION` | `legacy` | `compact` or `episode` selects an experimental source layout for memory requests. Diagnostic only; requires the experiment flag and never changes what is eligible. |
+
 ### Dependencies
 
 | Library | Version | License | Used for |
@@ -224,3 +252,7 @@ By default the build targets the host CPU (`-mcpu=native`, which includes NEON o
 | [raygui](https://github.com/raysan5/raygui) | 5.0 | zlib | Immediate-mode controls |
 | [Clay](https://github.com/nicbarker/clay) | 0.14 | zlib | Layout |
 | [stb_textedit](https://github.com/nothings/stb) | 1.14 | Public domain / MIT | Cursor, selection, and navigation logic |
+
+## License
+
+[MIT](LICENSE). Vendored dependencies keep their own licenses, listed above.
