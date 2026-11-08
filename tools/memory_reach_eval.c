@@ -8,6 +8,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "app/chat_store.h"
 #include "app/memory_documents.h"
+#include "app/store_backends.h"
 #include "app/memory_store.h"
 #include "core/json.h"
 #include "llm/context_planner.h"
@@ -29,6 +30,7 @@ static LlmServer *model, *embed;
 static SemanticClient *vectors;
 static MemoryTokenizer tokenizer;
 static MemoryScope archive, private_scope;
+static MemoryDocumentSet attached; /* the conversation's attached saved documents */
 static char project[64], conversation[40], tokenizer_id[65];
 static FILE *events;
 static double tokenize_seconds, embedding_seconds;
@@ -170,7 +172,7 @@ static bool rec_lexical(void *ctx, const MemoryScope *s, const char *q, size_t l
 {
     (void)ctx;
     double t = now();
-    bool ok = memory_lexical_candidates_with_documents(db, s, NULL, q, limit, out, n);
+    bool ok = memory_lexical_candidates_with_documents(db, s, attached.count ? &attached : NULL, q, limit, out, n);
     trace.lexical_seconds = now() - t;
     trace.lexical_ok = ok;
     trace.nl = ok && *n <= MEMORY_CANDIDATES ? *n : 0;
@@ -181,7 +183,7 @@ static bool rec_semantic(void *ctx, const MemoryScope *s, const char *q, size_t 
 {
     (void)ctx;
     double t = now();
-    bool ok = memory_vectors_search_with_documents(vectors, s, NULL, q, limit, out, n, trace.why, sizeof(trace.why));
+    bool ok = memory_vectors_search_with_documents(vectors, s, attached.count ? &attached : NULL, q, limit, out, n, trace.why, sizeof(trace.why));
     trace.semantic_seconds = now() - t;
     trace.semantic_ok = ok;
     trace.ns = ok && *n <= MEMORY_CANDIDATES ? *n : 0;
@@ -189,7 +191,9 @@ static bool rec_semantic(void *ctx, const MemoryScope *s, const char *q, size_t 
     return ok;
 }
 static bool rec_hydrate(void *ctx, const MemoryScope *s, const MemoryCandidate *c, MemoryUnit *out, bool *found)
-{ (void)ctx; return memory_candidate_hydrate_with_documents(db, s, NULL, c, out, found); }
+{ (void)ctx; return memory_candidate_hydrate_with_documents(db, s, attached.count ? &attached : NULL, c, out, found); }
+static bool rec_documents_current(void *ctx, const MemoryScope *s, const MemoryDocumentSet *set)
+{ (void)ctx; return !set || !set->count || memory_documents_admit(db, s, set); }
 
 static cJSON *candidates_json(const MemoryCandidate *list, size_t n)
 {
@@ -200,11 +204,17 @@ static cJSON *candidates_json(const MemoryCandidate *list, size_t n)
         cJSON_AddNumberToObject(c, "score", list[i].score);
         DbRows rows = {0};
         /* Diagnostic identity lookup for the scorer: which turn a candidate names. */
-        if (db_query(db, "SELECT sequence, source_kind FROM memory_units WHERE id=? AND scope_id=?",
+        if (db_query(db, "SELECT u.sequence, u.source_kind, d.name, u.text FROM memory_units u"
+                         " LEFT JOIN documents d ON d.id=u.document_id WHERE u.id=? AND u.scope_id=?",
                      (DbArg[]){ DB_S(list[i].unit_id), DB_S(archive.id) }, 2, &rows) && rows.nrows == 1) {
             int64_t sequence = -1;
             if (db_cell_i64(&rows, 0, 0, &sequence)) cJSON_AddNumberToObject(c, "sequence", (double)sequence);
             else cJSON_AddNullToObject(c, "sequence");
+            const char *kind = db_cell(&rows, 0, 1), *name = NULL, *text = NULL;
+            if (kind && !strcmp(kind, "document") && db_cell_text(&rows, 0, 2, &name) && db_cell_text(&rows, 0, 3, &text)) {
+                cJSON_AddStringToObject(c, "document_name", name);
+                cJSON_AddStringToObject(c, "text", text);
+            }
         } else cJSON_AddNullToObject(c, "sequence");
         db_rows_free(&rows);
         cJSON_AddItemToArray(array, c);
@@ -217,11 +227,12 @@ static bool run_task(const cJSON *task, int64_t boundary)
     memset(&trace, 0, sizeof(trace));
     double started = now(), token_seconds = tokenize_seconds;
     size_t token_calls = tokenize_calls;
-    MemoryRecallOps ops = { NULL, rec_scope, rec_lexical, rec_semantic, rec_hydrate, reference_count, tokenizer_id, NULL, NULL };
+    MemoryRecallOps ops = { NULL, rec_scope, rec_lexical, rec_semantic, rec_hydrate, reference_count, tokenizer_id,
+                            attached.count ? &attached : NULL, rec_documents_current };
     MemoryPlan plan = {0};
     bool planned = memory_plan_recall(&ops, project, conversation, str(task, "question"), boundary, false, NULL, &plan);
     double planned_at = now();
-    bool admitted = planned && memory_plan_admit(db, &plan, false);
+    bool admitted = planned && memory_plan_admit_with_documents(db, &plan, attached.count ? &attached : NULL, false);
     double finished = now();
     cJSON *j = cJSON_CreateObject();
     cJSON_AddStringToObject(j, "event", "selection");
@@ -255,6 +266,10 @@ static bool run_task(const cJSON *task, int64_t boundary)
         cJSON_AddNumberToObject(r, "text_bytes", u->text_bytes);
         cJSON_AddNumberToObject(r, "tokens", u->tokens);
         cJSON_AddStringToObject(r, "role", u->role == CHAT_USER ? "user" : "assistant");
+        if (u->kind == MEMORY_SOURCE_DOCUMENT) {
+            cJSON_AddStringToObject(r, "document_name", u->document_name);
+            cJSON_AddStringToObject(r, "revision_id", u->revision_id);
+        }
         cJSON_AddStringToObject(r, "text", u->text ? u->text : "");
         cJSON_AddItemToArray(units, r);
     }
@@ -293,6 +308,47 @@ static bool workload(const char *database, const char *root, const cJSON *input)
     NEED(vectors = semantic_client_create(store, embed));
     NEED(semantic_ready(vectors));
     NEED(ingest(&archive));
+    /* Attached saved documents: rows, saved revisions, then scope-local
+     * ingestion through the production document path. */
+    const cJSON *document;
+    memset(&attached, 0, sizeof(attached));
+    cJSON_ArrayForEach(document, cJSON_GetObjectItem(input, "documents")) {
+        NEED(attached.count < MEMORY_DOCUMENTS_MAX);
+        const char *name = str(document, "name"), *text = str(document, "text");
+        char document_id[40], revision_id[40];
+        NEED(store_document_id_db(db, project, name, true, document_id, sizeof(document_id)));
+        store_new_id('r', revision_id, sizeof(revision_id));
+        NEED(db_run(db, "INSERT INTO revisions (id, document_id, hash, content, origin, created_at) VALUES (?,?,?,?,'save',UNIX_TIMESTAMP(NOW(6)))",
+                    (DbArg[]){ DB_S(revision_id), DB_S(document_id), DB_S("reach"), DB_S(text) }, 4, NULL));
+        NEED(db_run(db, "UPDATE documents SET saved_revision_id=?, current_revision_id=? WHERE id=?",
+                    (DbArg[]){ DB_S(revision_id), DB_S(revision_id), DB_S(document_id) }, 3, NULL));
+        DbRows r = {0};
+        NEED(db_query(db, "SELECT DATABASE(), r.source_hash, OCTET_LENGTH(r.content) FROM revisions r WHERE r.id=?",
+                      (DbArg[]){ DB_S(revision_id) }, 1, &r) && r.nrows == 1);
+        MemoryDocumentRef *ref = &attached.refs[attached.count++];
+        snprintf(ref->database, sizeof(ref->database), "%s", db_cell(&r, 0, 0));
+        snprintf(ref->project_id, sizeof(ref->project_id), "%s", project);
+        snprintf(ref->document_id, sizeof(ref->document_id), "%s", document_id);
+        snprintf(ref->revision_id, sizeof(ref->revision_id), "%s", revision_id);
+        snprintf(ref->source_hash, sizeof(ref->source_hash), "%s", db_cell(&r, 0, 1));
+        snprintf(ref->name, sizeof(ref->name), "%s", name);
+        NEED(db_cell_u64(&r, 0, 2, &ref->bytes));
+        db_rows_free(&r);
+    }
+    if (attached.count) {
+        NEED(memory_scope_get(db, project, conversation, &archive));
+        NEED(memory_documents_seed(db, &archive, &attached));
+        for (;;) {
+            bool progress = false;
+            char why2[512] = "";
+            NEED(memory_document_ingest_step(db, &archive, &attached, "reach-documents", source_count, NULL,
+                                             tokenizer_id, &progress, why2, sizeof(why2)));
+            if (!progress) break;
+        }
+        bool complete = false;
+        NEED(memory_documents_complete(db, &archive, &attached, &complete) && complete);
+        NEED(ingest(&archive)); /* drains the document units through the index outbox */
+    }
     char private_conversation[40]; chat_store_new_id(private_conversation, sizeof(private_conversation));
     ChatMessage secret = {.role=CHAT_USER, .content=(char *)str(input, "private_canary")};
     int64_t private_seq = -1;
@@ -313,6 +369,7 @@ static bool workload(const char *database, const char *root, const cJSON *input)
     cJSON_AddNumberToObject(meta, "tokenization_seconds", tokenize_seconds);
     cJSON_AddNumberToObject(meta, "embedding_index_calls", index_calls);
     cJSON_AddNumberToObject(meta, "embedding_index_seconds", embedding_seconds);
+    cJSON_AddNumberToObject(meta, "attached_documents", (double)attached.count);
     DbRows units = {0};
     if (db_query(db, "SELECT COUNT(*) FROM memory_units WHERE scope_id=? AND generation=?",
                  (DbArg[]){ DB_S(archive.id), DB_I(archive.generation) }, 2, &units) && units.nrows == 1) {

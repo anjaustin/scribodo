@@ -190,6 +190,19 @@ production presentation is not defeated by consecutive author turns. These
 fixture tasks are easier than the DEV set MEMORY-011 judged, so pass rates
 are higher across the board; the categories of failure did not move.
 
+## Generator note (2026-11-08, later)
+
+The fixture generator broke position ties between planted turns by Python
+object identity, which can differ between two builds with the same seed; the
+harness self-test caught it once document facts were added. Ties now break
+by planting order. Every run above is scored against the exact archive
+frozen in its own run directory (`input.json` and `answer-key.json`, hashed
+in the manifest), so no recorded number depends on the generator's current
+output; new runs of the same seed may differ from old ones only where a tie
+occurred. The generator also now emits two attached saved documents with
+planted `document_fact` items, and the driver ingests them through the
+production document path.
+
 ## Limits, stated plainly
 
 - **The corpus is template prose.** It reproduces vocabulary overlap, not

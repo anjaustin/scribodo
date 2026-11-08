@@ -53,7 +53,30 @@ def percentile(values, q):
     return ordered[index]
 
 
+def score_document_task(task, event):
+    """Reach for a fact planted inside an attached saved document: the admitted
+    or candidate unit must carry the planted sentence and come from that document."""
+    sentence = task["required_document_text"]
+    name = task["required_document"]
+    admitted_rows = event.get("admitted_units", [])
+    candidates = event.get("lexical_candidates", []) + event.get("semantic_candidates", [])
+    hit_admitted = any(r.get("document_name") == name and sentence in (r.get("text") or "") for r in admitted_rows)
+    hit_candidates = any(c.get("document_name") == name and sentence in (c.get("text") or "") for c in candidates)
+    lexical = any(c.get("document_name") == name and sentence in (c.get("text") or "") for c in event.get("lexical_candidates", []))
+    semantic = any(c.get("document_name") == name and sentence in (c.get("text") or "") for c in event.get("semantic_candidates", []))
+    return {"task": task["id"], "category": task["category"], "required": [name], "admitted": [r.get("document_name") or r.get("sequence") for r in admitted_rows],
+            "admitted_count": len(admitted_rows), "candidate_count": len(candidates), "privacy_violations": 0,
+            "planning_seconds": event.get("planning_seconds"), "over_budget": (event.get("planning_seconds") or 0) > BUDGET_SECONDS,
+            "lexical_ok": event.get("lexical_ok") is True, "semantic_ok": event.get("semantic_ok") is True,
+            "planned": event.get("planned") is True, "admitted_ok": event.get("admitted") is True,
+            "distractors_admitted": 0, "distractors_planted": 0,
+            "reach_candidates": 1.0 if hit_candidates else 0.0, "reach_admitted": 1.0 if hit_admitted else 0.0,
+            "lexical_hit": 1.0 if lexical else 0.0, "semantic_hit": 1.0 if semantic else 0.0}
+
+
 def score_task(task, event, archive):
+    if task.get("required_document"):
+        return score_document_task(task, event)
     required = set(task["required_sequences"])
     distractors = set(task["distractor_sequences"])
     lexical = {c["sequence"] for c in event.get("lexical_candidates", []) if isinstance(c.get("sequence"), int)}
@@ -143,7 +166,7 @@ def summarize(fixture, events, driver_rc, manifest_hash):
                         "planning_p95": percentile([r["planning_seconds"] for r in scored if r["planning_seconds"] is not None], .95)},
             "per_category": per_category, "per_task": scored, "archive": archive_event,
             "coverage": {"generation": "none; faithful use is measured separately by tools/memory_native_eval.py",
-                         "documents": "chat archive only in this protocol; saved-revision reach is a later axis",
+                         "documents": "two attached saved documents are ingested under the conversation scope; the document_fact category measures their reach",
                          "selection": "production memory_plan_recall with the production lexical, semantic and hydration callbacks observed, not replaced",
                          "budget": "planning time compared with the production 500 ms memory budget; the planner here is not cancelled at the budget"}}
 
@@ -155,14 +178,18 @@ def self_test():
         for task in fixture["tasks"]:
             by[task["category"]] = by.get(task["category"], 0) + 1
             assert all(s < fixture["boundary"] for s in task["required_sequences"]), task
-            if task["category"] not in ("absence",):
+            if task["category"] == "document_fact":
+                doc = next(d for d in fixture["documents"] if d["name"] == task["required_document"])
+                assert task["required_document_text"] in doc["text"], task
+            elif task["category"] not in ("absence",):
                 assert task["required_sequences"], task
             if task["category"] == "stated_fact":
                 assert len(task["distractor_sequences"]) == 2, task
             if task["category"] == "superseded_fact":
                 assert len(task["required_sequences"]) == 2 and task["required_sequences"][0] < task["required_sequences"][1]
         assert by == {c: 2 for c in ("control", "stated_fact", "superseded_fact", "implied_decision", "rejected_proposal",
-                                      "protected_ambiguity", "paraphrase", "multilingual", "absence")}, by
+                                      "protected_ambiguity", "paraphrase", "multilingual", "absence", "document_fact")}, by
+        assert len(fixture["documents"]) == 2 and all(len(d["text"].encode()) < 16 * 1024 * 1024 for d in fixture["documents"])
         again = memory_fixture.build(seed, 12000, 2)
         assert json.dumps(again, sort_keys=True) == json.dumps(fixture, sort_keys=True), "fixture not deterministic"
         assert fixture["words"] >= 12000
@@ -192,6 +219,7 @@ def main():
     os.chmod(run, 0o700)
     (run / "owned-database").write_text(name)
     driver_input = {"protocol": "memory-reach-v1", "archive": fixture["archive"], "boundary": fixture["boundary"],
+                    "documents": fixture.get("documents", []),
                     "tasks": [{"id": t["id"], "question": t["question"]} for t in fixture["tasks"]],
                     "private_canary": CANARY}
     save(run / "input.json", driver_input)

@@ -15,6 +15,7 @@ items are labelled by category so reach can be reported per category:
   paraphrase          a fact whose question uses words the source does not
   multilingual        a Spanish fact asked in Spanish
   absence             a question nothing in the archive answers
+  document_fact       a fact stated once inside an attached saved document
 
 The archive, not any answer key, is what ingestion sees. No row is marked
 privileged or canonical. Everything is reproducible from (seed, words,
@@ -210,12 +211,14 @@ class Builder:
                 positions.append(base + k * (item["gap"] + 1))
             item["_positions"] = positions
             for pos, turn in zip(positions, item["turns"]):
-                inserts.append((pos, id(item), turn))
+                inserts.append((pos, len(inserts), id(item), turn))
+        # Ties on position break by planting order, never by object identity:
+        # two builds with one seed must produce one archive.
         inserts.sort(key=lambda x: (x[0], x[1]))
         archive_turns = []
         pending = {}
         cursor = 0
-        for pos, owner, turn in inserts:
+        for pos, _, owner, turn in inserts:
             while cursor < pos and cursor < len(body):
                 archive_turns.append(body[cursor]); cursor += 1
             pending.setdefault(owner, []).append(len(archive_turns))
@@ -244,6 +247,32 @@ class Builder:
                           "required_sequences": required, "also_relevant_sequences": also,
                           "distractor_sequences": distract,
                           "history": [{"role": role, "content": text} for role, text in item["turns"]]})
+        # Attached saved documents: two chapters of filler prose, each with
+        # planted document facts. The planner sees them as saved-revision units.
+        documents = []
+        document_tasks = []
+        r = self.rng
+        for d in range(2):
+            paragraphs = [self.paragraph() for _ in range(max(4, self.per_category * 2))]
+            planted = []
+            for k in range(self.per_category if d == 0 else 0):
+                place, attr, obj = r.choice(PLACES), r.choice(ATTRIBUTES), r.choice(OBJECTS)
+                n = r.randint(12, 98)
+                sentence = f"The {place} ledger lists {n} {attr} {obj}s in its final column."
+                slot = r.randrange(len(paragraphs))
+                paragraphs[slot] = paragraphs[slot] + " " + sentence
+                planted.append({"sentence": sentence, "question": f"How many {attr} {obj}s does the {place} ledger list?",
+                                "expected": str(n), "answers": [str(n)]})
+            text = f"# Chapter {d + 1}\n\n" + "\n\n".join(paragraphs) + "\n"
+            name = f"ch{d + 1:02}.md"
+            documents.append({"name": name, "text": text})
+            for item in planted:
+                document_tasks.append({"id": f"t{len(tasks) + len(document_tasks) + 1:02}", "category": "document_fact",
+                                       "question": item["question"], "expected": item["expected"], "answers": item["answers"],
+                                       "abstain": False, "required_sequences": [], "also_relevant_sequences": [],
+                                       "distractor_sequences": [], "required_document": name,
+                                       "required_document_text": item["sentence"], "history": []})
+        tasks.extend(document_tasks)
         recent_text = normalized(" ".join(row["text"] for row in archive[boundary:]))
         for task in tasks:
             for alias in task["answers"]:
@@ -252,7 +281,7 @@ class Builder:
                 assert not re.search(pattern, recent_text), (task["id"], "recent leak")
         actual_words = sum(len(row["text"].split()) for row in archive)
         assert all(len(row["text"].encode()) <= 2000 for row in archive)
-        return {"protocol": "memory-reach-v1", "archive": archive, "boundary": boundary, "tasks": tasks,
+        return {"protocol": "memory-reach-v1", "archive": archive, "boundary": boundary, "tasks": tasks, "documents": documents,
                 "words": actual_words, "recent": RECENT,
                 "bible": {"characters": CHARACTERS, "places": PLACES, "objects": OBJECTS, "attributes": ATTRIBUTES}}
 
