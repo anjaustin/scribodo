@@ -125,22 +125,41 @@ will time out or cancel that reply on wake. That is the behavior one wants
 for a connection that is probably dead, but it is a behavior, and it is now
 written down.
 
-What the 14 completed answers show, under the coarse alias and openness
-screen (`tools/memory_use_score.py`, not the frozen rubric):
+**The complete run** (`build/mn-zqjcwysh`, under a sleep assertion): 144
+answers in 1,670 s with wall and monotonic clocks agreeing; 0 errors, 17
+truncated at the 1,024-token allowance; every cohort admitted the same
+source IDs across presentations; every current author request intact. The
+mechanical gate reports failure only because of the truncations.
 
-| Presentation | Pass | Fail | Mechanical |
-|---|---:|---:|---:|
-| legacy (production) | 3 | 1 | 1 |
-| compact | 2 | 2 | 1 |
-| episode | 4 | 0 | 0 |
+Coarse alias and openness screen (`tools/memory_use_score.py`; **not** the
+frozen rubric, which requires complete-response review):
 
-Fourteen answers across two layouts are too few to compare with the
-MEMORY-011 screen, and the automatic check is coarse: the one legacy
-"fail" was a control answer whose catalogue number did not appear on a
-token boundary. The passing answers were correct and cited their source;
-the superseded-fact answer named the correction explicitly. None of this
-changes the MEMORY-011 conclusion. A complete model-side run on the fixture
-episodes, with the stall diagnosed, is the first follow-up under this record.
+| Presentation | Layout | Pass | Fail | Truncated |
+|---|---|---:|---:|---:|
+| legacy (production) | alternating | 24 | 0 | 0 |
+| legacy (production) | consecutive author turns | 0 | 18 | 6 |
+| compact | both | 23 | 14 | 11 |
+| episode | both | 48 | 0 | 0 |
+
+The legacy split is total and uniform across all eight categories: 3 of 3
+pass in the alternating layout, 0 of 3 in the consecutive layout, for every
+category including the control. Reading the failing answers confirms what
+the scorer counted: with 64 repeated author turns after the sources, the
+production presentation makes the model answer about the repetition itself
+("The user has repeated the same manuscript note three times", "ordinary
+weather at the quay is a placeholder") and ignore the admitted excerpts.
+The episode presentation of the same sources and question answers correctly
+and cites S1/S2 in all 48 cases, including the superseded fact ("The later
+entry supersedes the earlier one ... ochre") and the implied decision.
+
+This is the MEMORY-011 finding reproduced on the realistic fixture with
+larger N, which is the S2 gate for the model-side harness. It does **not**
+reopen MEMORY-011's no-go: that screen judged speaker attribution,
+protected ambiguity, citation fidelity and task form under the rubric, where
+episode still failed 6 of 14. What it adds is a clean measurement that the
+production presentation loses every recall when the recent history is
+consecutive author turns, regardless of category, and that this is a
+presentation effect, since the admitted sources were identical.
 
 ## Limits, stated plainly
 
