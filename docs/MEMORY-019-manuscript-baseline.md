@@ -95,12 +95,38 @@ shows it paused for about a second.
 Batching the inserts would shorten the background 0.8 s but no longer buys
 the author anything on this workload; it is noted, not done.
 
+## Real model, and a 34-minute soak
+
+**Real model** (`tools/manuscript_baseline.sh --real`, pinned LFM3 BF16 and
+Qwen3 embedder started by the app's own supervisor, 28 of 28 checks):
+
+| Phase | Wall | p99 frame | Worst frame |
+|---|---:|---:|---:|
+| 1 import (background) | 0.95 s | 17 ms | 17 ms |
+| 2 open chat | 0.09 s | 17 ms | 17 ms |
+| 3 page five times | 0.51 s | 17 ms | 17 ms |
+| 4 chapter edit and save | 0.18 s | 32 ms | 32 ms |
+| 5 send on the 1,116-turn chat, real reply | **84.1 s** | 24 ms | 43 ms |
+| 6 enable memory: ingest and index 1,116 turns with the real tokenizer | **111.4 s** | 18 ms | 25 ms |
+| 7 recall query | 0.25 s | 18 ms | 18 ms |
+
+Phase 5 is the first measured end-to-end reply at manuscript scale on this
+Mac: 84 s from Enter to a complete reply against the 64-message window, with
+the UI at the frame floor throughout. Phase 6 matches the reach harness's 99 s
+for the same archive. App RSS peaked at 117 MB (lower than with the fake
+model, whose replies are held differently); MariaDB 575 MB and Qdrant 484 MB.
+
+**Soak** (`tools/history_frame_soak.sh --manuscript --minutes 60`): the
+runner's cycle sizing under-counted the manuscript cycle's own work, so the
+run lasted 2,042 s, 34 minutes, not 60; the sizing is corrected below and the
+number reported is the one measured. 120 cycles of paging, chapter edit and
+save, and a fake-model send; 605 checks passed; 116,341 frames at p50
+17.75 ms, p95 18.25 ms, p99 18.5 ms, worst 68 ms. App RSS 173 MB peak and
+148 MB final: no growth over the run. MariaDB 583 MB peak, 575 MB final;
+Qdrant 471 MB peak, 464 MB final. Not hours yet, and still the fake model
+for the sends; the first sustained measurement at this scale shows no drift.
+
 ## What is next in S4
 
-- Run the same script with the real model (`SCRIBODO_LLM=real` is not yet
-  wired into this runner) to put a real time-to-first-token on phase 5 at
-  this scale.
-- A longer soak on this project: `tools/history_frame_soak.sh` already
-  exists for hours-long frame sampling; pointing it at the manuscript seed
-  is the next measurement.
-- Sample service RSS alongside the app.
+- An hours-long soak (the 34-minute run above is the first point), and a
+  soak with the real model's sends.

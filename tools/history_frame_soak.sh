@@ -70,9 +70,12 @@ prefix, rest = text.split('# SOAK_CYCLE_BEGIN\n')
 cycle, suffix = rest.split('# SOAK_CYCLE_END\n')
 # No script loops are needed. Keep roughly 10-second-or-shorter holds and
 # repeat the real editing/navigation/cancellation path throughout the run.
-cycle_work = 15 if 'manuscript' in sys.argv[3] else 10
-repeats = max(1, math.ceil(seconds / (2 * cycle_work)))
-hold = max(1, seconds * 60 // (2 * repeats))
+# Measured cycle work: about 2 s for the manuscript cycle (MEMORY-019 soak:
+# 2,042 s / 120 cycles with 15 s holds), about 1 s for the window book.
+cycle_work = 2 if 'manuscript' in sys.argv[3] else 1
+hold_seconds = 15
+repeats = max(1, math.ceil(seconds / (hold_seconds + cycle_work)))
+hold = max(1, (seconds // repeats - cycle_work) * 60)
 Path(sys.argv[2]).write_text(prefix + cycle.replace('wait 600', f'wait {hold}') * repeats + suffix)
 print(f'frame_soak: requested_wait_seconds={seconds} cycles={repeats} hold_frames={hold}', flush=True)
 PY
