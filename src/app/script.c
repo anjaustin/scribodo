@@ -59,6 +59,7 @@ struct Script {
     int wait;
     int wait_chat;      /* frames left to wait for the chat to go idle */
     int wait_history;
+    int wait_recall;
     int wait_memory;
     long memory_sequence;
     int wait_memory_documents;
@@ -414,6 +415,12 @@ static void run_expect(Script *s, ScriptHost *h, Tokens *t)
         ok = !strcmp(what, "memory_sources") ? found : !found;
         show(detail, sizeof(detail), "memory_sources", sources ? sources : "");
         free(sources);
+    } else if ((!strcmp(what, "recall") || !strcmp(what, "recall_not")) && t->n == 3 && h->recall_text) {
+        char *text = h->recall_text(h->ctx);
+        bool found = text && strstr(text, t->tok[2]);
+        ok = !strcmp(what, "recall") ? found : !found;
+        show(detail, sizeof(detail), "recall", text ? text : "");
+        free(text);
     } else if (!strcmp(what, "history_busy") && t->n == 3 && h->history_busy) {
         ok = h->history_busy(h->ctx) == yes(t->tok[2]);
     } else if (!strcmp(what, "chat_unsaved") && t->n == 3 && h->chat) {
@@ -671,6 +678,12 @@ static bool run_line(Script *s, ScriptHost *h)
         s->wait_chat = t.n >= 2 ? atoi(t.tok[1]) : 1200;
         return true;
     }
+    if (!strcmp(cmd, "wait_recall") && h->recall_busy) {
+        s->wait_recall = t.n >= 2 ? atoi(t.tok[1]) : 1200;
+        if (s->wait_recall <= 0) { report(s, false, "recall wait needs a positive frame limit"); return false; }
+        s->pc--;
+        return true;
+    }
     if (!strcmp(cmd, "wait_history") && h->history_busy) {
         s->wait_history = t.n >= 2 ? atoi(t.tok[1]) : 1200;
         if (s->wait_history <= 0) { report(s, false, "history wait needs a positive frame limit"); return false; }
@@ -901,6 +914,17 @@ bool script_frame(Script *s, ScriptHost *h)
                 s->wait_memory = 0;
                 report(s, done, done ? NULL : "memory ingestion/outbox did not settle");
                 s->pc++; new_batch(s); continue;
+            }
+            return true;
+        }
+        if (s->wait_recall > 0) {
+            bool done = !h->recall_busy(h->ctx);
+            if (done || --s->wait_recall == 0) {
+                s->wait_recall = 0;
+                report(s, done, done ? NULL : "recall did not finish");
+                s->pc++;
+                new_batch(s);
+                continue;
             }
             return true;
         }

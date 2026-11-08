@@ -47,6 +47,28 @@ Run native/recovery acceptance serially, for example
 another Scribodo process during `backuptest`: restore deliberately refuses to
 modify a database while any Scribodo process is running.
 
+### Recall regressions (MEMORY-015 S1)
+
+- `test_recall` (in `make dbtest`) drives `recall_run` against real SQL in a
+  throwaway database: displayed canon text is byte-equal to the current
+  committed version; retracted canon, unmatched canon and another project's
+  canon are excluded; coverage counts (committed, retracted, conversations with
+  memory on, off and indexing, candidates, rejected) are exact; a changed
+  original message or saved revision removes its excerpt; revoking consent
+  removes a conversation's excerpts while project-wide canon stays; file-backed
+  projects report that excerpts need the store; empty and oversized queries
+  fail closed; row caps are enforced; and the background job hands over one
+  result per run. The `recall_terms` case in `test_core` covers splitting,
+  lowering, deduplication, bounds and substring matching.
+- `python3 tools/test_recall_mutations.py` weakens each host-only guard in
+  `recall.c` (status filter, canon term match, ranking, canon cap, no-terms
+  guard, query bound), relinks `test_recall` and expects it to fail. Guards that
+  SQL also enforces are deliberately not listed. Needs the services up.
+- `tests/ui/store/15_recall.scribo` (in `make uitest-db`) commits canon from a
+  selection, searches before and after enabling a chat's memory, checks the
+  coverage counts and row order, opens a canon row's panel, selects an excerpt's
+  source message, and checks that a no-match query reports bounded coverage.
+
 ### Persistence safety regressions
 
 - `test_llm: concurrent_file_readers` loads separate chats and revision indexes

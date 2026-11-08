@@ -8,6 +8,7 @@
 #include "../src/core/undo.h"
 #include "../src/core/utf8.h"
 #include "../src/core/wrap.h"
+#include "../src/core/recall_terms.h"
 #include "../src/app/frame_view_model.h"
 #include "test_util.h"
 
@@ -452,9 +453,42 @@ static void test_frame_view_model(void)
     frame_view_model_destroy(&frame);
 }
 
+
+/* Recall terms: deterministic splitting, lowering, dedupe, bounds; substring
+ * matching is ASCII-case-insensitive and leaves non-ASCII bytes as written. */
+static void test_recall_terms(void)
+{
+    RecallTerm t[RECALL_TERMS_MAX];
+    CHECK(recall_terms(NULL, t) == 0);
+    CHECK(recall_terms("", t) == 0);
+    CHECK(recall_terms("a ! , .", t) == 0);
+    unsigned n = recall_terms("  Which COLOR key opens the Asterholt observatory? key", t);
+    CHECK(n == 7);
+    CHECK(n >= 7 && !strcmp(t[0].text, "which") && !strcmp(t[1].text, "color") && !strcmp(t[2].text, "key") &&
+          !strcmp(t[3].text, "opens") && !strcmp(t[4].text, "the") && !strcmp(t[5].text, "asterholt") &&
+          !strcmp(t[6].text, "observatory"));
+    n = recall_terms("Zoë's Ångström-Berg", t);
+    CHECK(n == 3 && !strcmp(t[0].text, "zoë") && !strcmp(t[1].text, "Ångström") && !strcmp(t[2].text, "berg"));
+    char many[400] = "";
+    for (int i = 0; i < 30; i++) { char w[16]; snprintf(w, sizeof(w), "w%02d ", i); strcat(many, w); }
+    CHECK(recall_terms(many, t) == RECALL_TERMS_MAX && !strcmp(t[15].text, "w15"));
+    char huge[200]; memset(huge, 'x', sizeof(huge) - 1); huge[sizeof(huge) - 1] = '\0';
+    CHECK(recall_terms(huge, t) == 0);
+    n = recall_terms("amber key", t);
+    CHECK(recall_match("The Asterholt observatory KEY is Amber.", t, n) == 2);
+    CHECK(recall_match("Elin keeps 73 bronze keys.", t, n) == 1);
+    CHECK(recall_match("Nothing here.", t, n) == 0);
+    CHECK(recall_match("", t, n) == 0);
+    CHECK(recall_match(NULL, t, n) == 0);
+    n = recall_terms("Zoë", t);
+    CHECK(recall_match("zoë stood", t, n) == 1);
+    CHECK(recall_match("ZOË stood", t, n) == 0); /* non-ASCII case is not folded */
+}
+
 int main(void)
 {
     TestCase tests[] = {
+        { "recall_terms", test_recall_terms },
         { "utf8_clip", test_utf8_clip },
         { "utf8_basic", test_utf8_basic },
         { "utf8_invalid", test_utf8_invalid },

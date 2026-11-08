@@ -113,7 +113,7 @@ What the product does not promise:
 
 Each slice is default-off until its gate passes. Each gets a dated record.
 
-**S1 — Deterministic recall view.** MEMORY-014 §5 P0. A host-rendered surface
+**S1 — Deterministic recall view.** *Implemented 2026-11-07; record in [MEMORY-016](MEMORY-016-recall-view.md).* MEMORY-014 §5 P0. A host-rendered surface
 that takes a query and renders matching committed canon (exact current text,
 version, status) and matching original excerpts (exact text, source, revision
 or message, range), plus a coverage line: what scope and how many entries were

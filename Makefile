@@ -58,17 +58,19 @@ $(RAYLIB_LIB): $(RAYLIB_OBJS)
 # --- Scribodo ----------------------------------------------------------------
 CORE_SRCS := src/core/utf8.c src/core/text_buffer.c src/core/undo.c src/core/wrap.c src/core/doc_io.c src/core/diff.c src/core/file_text.c src/app/frame_view_model.c
 CORE_SRCS += src/app/frame_metrics.c
+CORE_SRCS += src/core/recall_terms.c
 STORE_SRCS := src/app/db.c src/app/store.c src/app/project_store.c src/app/observer_store.c src/app/store_revisions.c src/app/store_records.c src/app/store_chats.c src/app/store_chat_history.c src/app/store_import.c src/app/store_entities.c src/app/backup.c src/app/backup_job.c src/app/service_supervisor.c src/app/entity_backfill_job.c src/app/name_detection_job.c src/app/project_session.c src/app/explorer_snapshot.c src/app/profile.c src/app/model_settings.c
 STORE_SRCS += src/app/chat_history_job.c
 STORE_SRCS += src/app/memory_store.c src/app/memory_job.c
 STORE_SRCS += src/app/memory_saved_file.c
 STORE_SRCS += src/app/memory_documents.c src/app/memory_document_store.c
 STORE_SRCS += src/app/memory_gc.c src/app/memory_brief_store.c
+STORE_SRCS += src/app/recall.c src/app/recall_job.c
 LLM_SRCS  := src/core/json.c src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/llm/chat_history.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/app/recent.c src/app/renames.c src/llm/observer.c src/llm/observer_text.c src/llm/observer_fake.c src/llm/observer_model.c src/llm/observer_job.c src/llm/semantic.c src/llm/remote.c src/llm/names.c src/llm/memfit.c $(STORE_SRCS)
 LLM_SRCS += src/llm/context_planner.c src/llm/memory_tokens.c
 LLM_SRCS += src/llm/memory_budget.c src/llm/generative_gate.c src/llm/memory_brief.c
 LLM_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(LLM_SRCS)) $(BUILD)/third_party/cJSON/cJSON.o
-APP_SRCS  := src/main.c src/app/script.c src/app/chat_controller.c src/app/reviewed_edit_controller.c src/ui/font.c src/ui/clay_render.c src/ui/editor.c src/ui/input.c \
+APP_SRCS  := src/main.c src/app/script.c src/app/chat_controller.c src/app/reviewed_edit_controller.c src/ui/font.c src/ui/clay_render.c src/ui/editor.c src/ui/input.c src/ui/recall_view.c \
              src/ui/chat_view.c src/ui/review_view.c src/ui/record_view.c src/ui/findings_view.c src/ui/prompt_view.c src/ui/menu_view.c src/ui/vendor_impl.c
 CORE_OBJS := $(patsubst %.c,$(BUILD)/%.o,$(CORE_SRCS))
 APP_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(APP_SRCS))
@@ -321,7 +323,10 @@ $(BUILD)/test_memory_briefs: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_memory
 $(BUILD)/test_memory_chat: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_memory_chat.o
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
 
-dbtest: $(BUILD)/test_db $(BUILD)/test_memory_store $(BUILD)/test_memory_vectors $(BUILD)/test_memory_provenance $(BUILD)/test_saved_revision $(BUILD)/test_memory_documents $(BUILD)/test_memory_gc $(BUILD)/test_memory_briefs $(BUILD)/test_memory_chat
+$(BUILD)/test_recall: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_recall.o
+	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
+
+dbtest: $(BUILD)/test_db $(BUILD)/test_memory_store $(BUILD)/test_memory_vectors $(BUILD)/test_memory_provenance $(BUILD)/test_saved_revision $(BUILD)/test_memory_documents $(BUILD)/test_memory_gc $(BUILD)/test_memory_briefs $(BUILD)/test_memory_chat $(BUILD)/test_recall
 	$(WATCHDOG) 120 dbtest ./$(BUILD)/test_db
 	$(WATCHDOG) 120 memory-store ./$(BUILD)/test_memory_store
 	$(WATCHDOG) 120 memory-vectors ./$(BUILD)/test_memory_vectors
@@ -331,6 +336,7 @@ dbtest: $(BUILD)/test_db $(BUILD)/test_memory_store $(BUILD)/test_memory_vectors
 	$(WATCHDOG) 180 memory-gc ./$(BUILD)/test_memory_gc
 	$(WATCHDOG) 180 memory-briefs ./$(BUILD)/test_memory_briefs
 	$(WATCHDOG) 180 memory-chat ./$(BUILD)/test_memory_chat
+	$(WATCHDOG) 180 recall ./$(BUILD)/test_recall
 
 # The app against the project store (needs tools/services.sh up): three runs
 # on one throwaway database and project folder: move and use, resume after
@@ -361,6 +367,10 @@ uitest-db: $(APP)
 	  SCRIBODO_STORE=db SCRIBODO_DB_NAME=$$db SCRIBODO_MEMORY_EXPERIMENT=1 SCRIBODO_MEMORY_BRIEFS=1 \
 	    SCRIBODO_SCRIPT=tests/ui/store/14_memory_briefs.scribo SCRIBODO_SCRIPT_DIR=$$work SCRIBODO_SHOT_DIR=$$PWD/build/ui/store \
 	    $(WATCHDOG) 300 ui-store-memory-briefs ./$(APP) 2>>build/ui/store/stderr.log || fail=1; \
+	  python3 tests/seed_memory_chat.py $$work/recallbook || fail=1; \
+	  SCRIBODO_STORE=db SCRIBODO_DB_NAME=$$db SCRIBODO_MEMORY_EXPERIMENT=1 SCRIBODO_SCRIPT=tests/ui/store/15_recall.scribo \
+	    SCRIBODO_SCRIPT_DIR=$$work SCRIBODO_SHOT_DIR=$$PWD/build/ui/store \
+	    $(WATCHDOG) 300 ui-store-recall ./$(APP) 2>>build/ui/store/stderr.log || fail=1; \
 	  SCRIBODO_STORE=db SCRIBODO_DB_NAME=$$db SCRIBODO_BACKUPS=$$work/backups SCRIBODO_SCRIPT=tests/ui/store/6_backup.scribo SCRIBODO_SCRIPT_DIR=$$work \
 	    SCRIBODO_SHOT_DIR=$$PWD/build/ui/store $(WATCHDOG) 240 ui-store ./$(APP) 2>>build/ui/store/stderr.log || fail=1; echo; \
 	  SCRIBODO_STORE=db SCRIBODO_DB_NAME=$$db SCRIBODO_SCRIPT=tests/ui/store/5_entities.scribo SCRIBODO_SCRIPT_DIR=$$work \

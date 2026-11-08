@@ -1,0 +1,75 @@
+# Recall panel (MEMORY-015 S1): deterministic canon and verified original
+# excerpts, project-wide canon, per-conversation memory consent, honest
+# coverage, and clicking a row opens the record or selects the source.
+wait 5
+open "$DIR/recallbook/one.md"
+wait 30
+# Commit one canon entry from the document selection ("observatory").
+click_index 20 2
+expect selection 18 29
+key C cmd shift
+expect record "Canon draft"
+click_element RecordEditor
+key A cmd
+type "The observatory key is amber."
+click_element RecordCommit
+expect record "Canon · v1 · committed"
+click_element RecordClose
+expect element_w RecordPanel 0 0
+# Before any memory consent, recall sees canon but no excerpts.
+click_element RecallToggle
+expect element_w RecallInput 50 2000
+click_element RecallInput
+type "amber key"
+key ENTER
+wait_recall 1800
+expect recall "idle"
+expect recall "canon_committed=1"
+expect recall "canon|"
+expect recall "The observatory key is amber."
+expect recall "memory_on=0"
+expect recall "memory_off=1"
+expect recall_not "chat|"
+# Enable memory for the stored chat, then the original excerpt appears too.
+click_element RecallToggle
+click_element ChatItem0
+wait_history
+expect memory_enabled no
+right_click_element ChatItem0
+click_element MenuItem2
+wait_memory 129 7200
+expect memory_enabled yes
+click_element RecallToggle
+click_element RecallInput
+key A cmd
+type "amber key"
+key ENTER
+wait_recall 1800
+expect recall "memory_on=1"
+expect recall "chat|Memory fixture|seq=0|author|start=0|"
+expect recall "The Asterholt observatory key is amber."
+expect recall "canon|"
+expect recall_not "weather"
+# A one-term match ("key") ranks below the two-term match, and is labelled as the assistant's.
+expect recall "seq=1|assistant|start=0|matched=1|The key color is an author-established detail"
+# Canon rows come first; clicking one opens the entry's panel.
+click_element Recall0
+expect record "Canon · v1 · committed"
+expect record "The observatory key is amber."
+click_element RecordClose
+# Clicking the excerpt selects its exact source message in the chat.
+click_element Recall1
+wait_history
+expect chat_first_seq 0
+# A query that matches nothing says so with bounded coverage, not silence.
+click_element RecallInput
+key A cmd
+type "zzqx"
+key ENTER
+wait_recall 1800
+expect recall "rows=0"
+expect recall "canon_committed=1"
+expect recall_not "canon|"
+# Hiding the panel removes its input.
+click_element RecallToggle
+expect element_w RecallInput 0 0

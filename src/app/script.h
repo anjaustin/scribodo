@@ -62,6 +62,8 @@
  *   wait_memory SEQ|off [FRAMES] wait for durable ingestion/outbox or disable
  *   expect memory_enabled yes|no
  *   expect memory_sources "..." expect memory_sources_not "..." (as-of snapshot)
+ *   wait_recall [MAX_FRAMES]     wait until the recall panel's search has finished
+ *   expect recall "..."          expect recall_not "..." (the recall result text)
  */
 #ifndef SCRIBODO_SCRIPT_H
 #define SCRIBODO_SCRIPT_H
@@ -111,6 +113,8 @@ typedef struct {
     char *(*memory_sources)(void *ctx); /* owned as-of source snapshot */
     bool (*memory_documents_settled)(void *ctx, long count);
     bool (*memory_briefs_ready)(void *ctx, long count);
+    char *(*recall_text)(void *ctx); /* owned: "busy|idle" then the deterministic recall result */
+    bool (*recall_busy)(void *ctx);
 } ScriptHost;
 
 typedef struct Script Script;

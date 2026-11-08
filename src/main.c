@@ -46,6 +46,7 @@
 #include "app/memory_documents.h"
 #include "app/service_supervisor.h"
 #include "app/entity_backfill_job.h"
+#include "app/recall_job.h"
 #include "app/name_detection_job.h"
 #include "app/project_session.h"
 #include "app/explorer_snapshot.h"
@@ -67,6 +68,7 @@
 #include "ui/clay_render.h"
 #include "ui/editor.h"
 #include "ui/findings_view.h"
+#include "ui/recall_view.h"
 #include "ui/font.h"
 #include "ui/input.h"
 #include "platform/dialogs.h"
@@ -80,7 +82,7 @@
 void glfwSetWindowShouldClose(void *window, int value);
 
 enum { FONT_UI = 0, FONT_PROSE = 1, FONT_CHAT = 2, FONT_COUNT };
-enum { FOCUS_NONE, FOCUS_DOC, FOCUS_CHAT, FOCUS_RECORD };
+enum { FOCUS_NONE, FOCUS_DOC, FOCUS_CHAT, FOCUS_RECORD, FOCUS_RECALL };
 enum { DRAG_NONE, DRAG_EXPLORER, DRAG_OBSERVER, DRAG_CHAT };
 enum { PT_NEW_DOC = 1, PT_RENAME_DOC, PT_RENAME_CHAT, PT_ATTACH_NAME, PT_NAME_AUTHOR, PT_NAME_ASSISTANT };  /* what the name prompt is for */
 enum { MT_DOC = 1, MT_CHAT, MT_ATTACH, MT_MODEL };  /* what a context menu is for */
@@ -228,6 +230,14 @@ typedef struct {
     Rectangle findings_rect;
     char observer_label[220];
     char observer_button[40];
+
+    /* Recall (MEMORY-015 S1): deterministic canon and original excerpts, no model. */
+    bool recall_open;
+    RecallView *recall;
+    RecallJob recall_job;
+    bool recall_job_initialized, recall_stale;
+    Rectangle recall_rect;
+    char recall_project[PATH_MAX];
 
     /* Projects and documents (SOW §4.1) */
     PromptView *prompt;
@@ -2941,6 +2951,7 @@ static Clay_RenderCommandArray build_layout(App *app)
                    .cornerRadius = CLAY_CORNER_RADIUS(4) }) {
                 label(app, app->model_label, FONT_UI, app->model_color);
             }
+            slot(CLAY_ID("RecallToggle"), 72, 24);
             slot(CLAY_ID("ObserverToggle"), 96, 24);
         }
 
@@ -3109,7 +3120,19 @@ static Clay_RenderCommandArray build_layout(App *app)
                 }
             }
 
-            if (app->observer_open) {
+            if (app->recall_open) {
+                splitter(CLAY_ID("SplitRight"), app->dragging == DRAG_OBSERVER);
+                CLAY({ .id = CLAY_ID("Recall"),
+                       .layout = { .sizing = { CLAY_SIZING_FIXED(app->observer_w), CLAY_SIZING_GROW(0) },
+                                   .padding = CLAY_PADDING_ALL(12), .childGap = 8,
+                                   .layoutDirection = CLAY_TOP_TO_BOTTOM },
+                       .backgroundColor = COL_PANEL, .clip = { .vertical = true } }) {
+                    section_header(app, "RECALL");
+                    label(app, "Your committed canon and verified original text", FONT_UI, COL_DIM);
+                    CLAY({ .id = CLAY_ID("RecallBody"),
+                           .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } } }) {}
+                }
+            } else if (app->observer_open) {
                 splitter(CLAY_ID("SplitRight"), app->dragging == DRAG_OBSERVER);
                 CLAY({ .id = CLAY_ID("Observer"),
                        .layout = { .sizing = { CLAY_SIZING_FIXED(app->observer_w), CLAY_SIZING_GROW(0) },
@@ -3152,6 +3175,94 @@ static Rectangle element_rect_str(Clay_String s, uint32_t index, bool indexed)
     return d.found ? clay_to_rect(d.boundingBox) : (Rectangle){ 0 };
 }
 #define ELEMENT_RECT(lit) element_rect_str(CLAY_STRING(lit), 0, false)
+
+/* ---- Recall panel (MEMORY-015 S1) ------------------------------------- */
+
+static void toggle_recall(App *app)
+{
+    app->recall_open = !app->recall_open;
+    if (app->recall_open) {
+        app->observer_open = false;
+        app->focus = FOCUS_RECALL;
+    } else if (app->focus == FOCUS_RECALL) app->focus = FOCUS_DOC;
+}
+
+/* A clicked row opens the canon entry's panel, or selects the excerpt's
+ * exact source passage through the same path findings and canon use. */
+static void open_recall_row(App *app, size_t index)
+{
+    const RecallResult *r = recall_view_result(app->recall);
+    if (!r || index >= r->count) return;
+    const RecallRow *row = &r->rows[index];
+    if (row->kind == RECALL_CANON) {
+        for (size_t i = 0; i < app->ncanon; i++)
+            if (!strcmp(app->canon[i].id, row->record_id)) {
+                show_record(app, REC_CANON, &app->canon[i], NULL, NULL, 0);
+                return;
+            }
+        set_status(app, "That canon entry is no longer listed in this project");
+        return;
+    }
+    SourceRef s = { 0 };
+    s.start = row->codepoint_start;
+    s.len = row->codepoints;
+    s.quote = row->text;
+    if (row->kind == RECALL_CHAT_EXCERPT) {
+        s.kind = SRC_CHAT;
+        snprintf(s.chat, sizeof(s.chat), "%s", row->conversation_id);
+        s.message = (long)row->sequence;
+    } else {
+        s.kind = SRC_DOC;
+        snprintf(s.doc, sizeof(s.doc), "%s", row->document_name);
+        snprintf(s.revision, sizeof(s.revision), "%s", row->revision_id);
+    }
+    open_source(app, &s);
+}
+
+/* Each frame: drop results for a project that is no longer open, start a
+ * submitted query off the frame thread, and publish a finished result. */
+static void recall_frame(App *app)
+{
+    if (strcmp(app->recall_project, app->project_dir) != 0) {
+        snprintf(app->recall_project, sizeof(app->recall_project), "%s", app->project_dir);
+        recall_view_clear(app->recall);
+        app->recall_stale = recall_job_busy(&app->recall_job);
+    }
+    char *query = recall_view_take_query(app->recall);
+    if (query) {
+        if (!app->project_dir[0]) set_status(app, "Open a project to search its record");
+        else if (recall_job_busy(&app->recall_job)) set_status(app, "Recall is still searching; try again in a moment");
+        else if (recall_job_start(&app->recall_job, app->project_dir, query)) {
+            recall_view_set_busy(app->recall, true);
+            app->recall_stale = false;
+        } else set_status(app, "Recall could not start");
+        free(query);
+    }
+    RecallResult result;
+    bool ok = false;
+    if (recall_job_poll(&app->recall_job, &result, &ok)) {
+        if (app->recall_stale) {
+            recall_result_free(&result);
+            app->recall_stale = false;
+            recall_view_set_busy(app->recall, false);
+        } else {
+            recall_view_set_result(app->recall, &result, ok);
+            if (!ok) set_status(app, "Recall failed; the panel says why");
+        }
+    }
+}
+
+static char *host_recall_text(void *ctx)
+{
+    App *app = ctx;
+    return recall_view_text(app->recall);
+}
+
+static bool host_recall_busy(void *ctx)
+{
+    App *app = ctx;
+    return recall_job_busy(&app->recall_job) || recall_view_busy(app->recall);
+}
 
 /* "Chat0" -> element "Chat" index 0; "ChatInput" -> "ChatInput". */
 static Rectangle host_element(void *ctx, const char *name)
@@ -3196,6 +3307,8 @@ static Rectangle host_element(void *ctx, const char *name)
     if (!strncmp(name, "Finding", 7) && strcmp(name, "Findings") != 0)
         return app->observer_open ? findings_view_element(app->findings, name) : (Rectangle){ 0 };
     if (!strcmp(name, "RejectEdit")) return review_active(app->review) ? review_reject_rect(app->review_rect) : (Rectangle){ 0 };
+    if (!strncmp(name, "Recall", 6) && strcmp(name, "RecallToggle") && strcmp(name, "RecallBody") && strcmp(name, "Recall"))
+        return app->recall_open ? recall_view_element(app->recall, name) : (Rectangle){ 0 };
     size_t n = strlen(name), k = n;
     while (k > 0 && name[k - 1] >= '0' && name[k - 1] <= '9') k--;
     Clay_String s = { .isStaticallyAllocated = false, .length = (int32_t)k, .chars = name };
@@ -3428,10 +3541,13 @@ static void app_destroy(App *app)
     editor_destroy(app->memory_sources_editor);
     semantic_client_destroy(app->semantic);
     app->semantic = NULL;
+    if (app->recall_job_initialized) recall_job_destroy(&app->recall_job);
+    app->recall_job_initialized = false;
     if (app->services_initialized) (void)service_supervisor_destroy(&app->services);
     store_manager_destroy(app->store);
     app->store = NULL;
     findings_view_destroy(app->findings);
+    recall_view_destroy(app->recall);
     records_free(app->flist, app->nflist);
     entity_list_free(app->ents, app->nents);
     entity_detail_free(&app->ent);
@@ -3620,12 +3736,14 @@ int main(int argc, char **argv)
     app.observer = observer_create(app.store, app.llm, app.semantic);
     if (app.observer) observer_set_generative_gate(app.observer, app.generative_gate);
     app.findings = findings_view_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI]);
+    app.recall = recall_view_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI]);
+    app.recall_job_initialized = recall_job_init(&app.recall_job, app.store);
     app.findings_version = UINT64_MAX;
     /* UI scripts start with the observer off (deterministic files); a
      * script turns it on with "observer on". */
     if (app.observer && script_path) observer_set_enabled(app.observer, false);
     if (!app.chat || !app.editor || !app.chat_view || !app.review || !app.record || !app.observer || !app.semantic ||
-        !app.findings || !app.prompt) {
+        !app.findings || !app.prompt || !app.recall || !app.recall_job_initialized) {
         fprintf(stderr, "scribodo: out of memory\n");
         app_destroy(&app);
         return 1;
@@ -3674,7 +3792,7 @@ int main(int argc, char **argv)
                         host_attached_text, host_explorer_text, host_observer_status, host_history_cache_bytes, host_store_offline,
                         host_history_busy, host_history_hold, host_history_worker_busy, host_store_restart,
                         host_memory_settled, host_memory_enabled, host_memory_sources, host_memory_documents_settled,
-                        host_memory_briefs_ready };
+                        host_memory_briefs_ready, host_recall_text, host_recall_busy };
     if (script_path) {
         char err[256];
         app.script = script_load(script_path, getenv("SCRIBODO_SCRIPT_DIR"), getenv("SCRIBODO_SHOT_DIR"), err, sizeof(err));
@@ -3847,7 +3965,8 @@ int main(int argc, char **argv)
             if (trace) fprintf(stderr, "trace: click (%.0f, %.0f) focus=%d\n", mouse.x, mouse.y, app.focus);
             if (Clay_PointerOver(CLAY_ID("SplitLeft"))) app.dragging = DRAG_EXPLORER;
             else if (Clay_PointerOver(CLAY_ID("SplitChat"))) app.dragging = DRAG_CHAT;
-            else if (app.observer_open && Clay_PointerOver(CLAY_ID("SplitRight"))) app.dragging = DRAG_OBSERVER;
+            else if ((app.observer_open || app.recall_open) && Clay_PointerOver(CLAY_ID("SplitRight"))) app.dragging = DRAG_OBSERVER;
+            else if (app.recall_open && CheckCollisionPointRec(mouse, recall_view_input_rect(app.recall))) app.focus = FOCUS_RECALL;
             else if (record_view_active(app.record) && CheckCollisionPointRec(mouse, record_view_editor_rect(app.record)))
                 app.focus = FOCUS_RECORD;
             else if (record_view_active(app.record) && CheckCollisionPointRec(mouse, app.record_rect)) {
@@ -3985,7 +4104,7 @@ int main(int argc, char **argv)
         }
         if (!mouse_down) app.dragging = DRAG_NONE;
         float sw = (float)GetScreenWidth();
-        float right = sw - (app.observer_open ? app.observer_w + SPLITTER_W : 0);
+        float right = sw - (app.observer_open || app.recall_open ? app.observer_w + SPLITTER_W : 0);
         if (app.dragging == DRAG_EXPLORER) app.explorer_w = mouse.x - SPLITTER_W / 2.0f;
         if (app.dragging == DRAG_OBSERVER) app.observer_w = sw - mouse.x - SPLITTER_W / 2.0f;
         if (app.dragging == DRAG_CHAT) app.chat_w = right - mouse.x - SPLITTER_W / 2.0f;
@@ -3996,13 +4115,13 @@ int main(int argc, char **argv)
         /* Keep the document at least 320 px wide: shrink chat, then the
          * observer, then the explorer, and finally close the observer. */
         for (int pass = 0; pass < 4; pass++) {
-            float side = app.explorer_w + app.chat_w + (app.observer_open ? app.observer_w + SPLITTER_W : 0) + 2 * SPLITTER_W;
+            float side = app.explorer_w + app.chat_w + (app.observer_open || app.recall_open ? app.observer_w + SPLITTER_W : 0) + 2 * SPLITTER_W;
             float deficit = 320.0f - (sw - side);
             if (deficit <= 0) break;
             if (pass == 0) app.chat_w = fmaxf(280.0f, app.chat_w - deficit);
-            else if (pass == 1 && app.observer_open) app.observer_w = fmaxf(180.0f, app.observer_w - deficit);
+            else if (pass == 1 && (app.observer_open || app.recall_open)) app.observer_w = fmaxf(180.0f, app.observer_w - deficit);
             else if (pass == 2) app.explorer_w = fmaxf(140.0f, app.explorer_w - deficit);
-            else if (pass == 3) app.observer_open = false;
+            else if (pass == 3) app.observer_open = app.recall_open = false;
         }
 
         bool primary = !modal && (IsKeyDown(KEY_LEFT_SUPER) || IsKeyDown(KEY_RIGHT_SUPER));
@@ -4017,6 +4136,7 @@ int main(int argc, char **argv)
         if (primary && shift && shortcut_pressed('n') && app.focus == FOCUS_DOC) note_from_selection(&app);
         if (primary && shift && shortcut_pressed('c') && app.focus == FOCUS_DOC) canon_from_selection(&app);
         if (!modal && app.focus == FOCUS_RECORD && IsKeyPressed(KEY_ESCAPE)) app.focus = FOCUS_DOC;
+        if (!modal && app.focus == FOCUS_RECALL && IsKeyPressed(KEY_ESCAPE)) app.focus = FOCUS_DOC;
         if (primary && shortcut_pressed('l')) app.focus = FOCUS_CHAT;
         if (primary && shortcut_pressed('k')) begin_edit(&app);
         /* Cmd+Enter accepts only outside the chat box, where it also sends the
@@ -4065,6 +4185,7 @@ int main(int argc, char **argv)
         }
         app.chat_list_rect = ELEMENT_RECT("ChatMessages");
         app.findings_rect = app.observer_open ? ELEMENT_RECT("Findings") : (Rectangle){ 0 };
+        app.recall_rect = app.recall_open ? ELEMENT_RECT("RecallBody") : (Rectangle){ 0 };
         app.chat_input_rect = ELEMENT_RECT("ChatInput");
         Rectangle save_rect = ELEMENT_RECT("SaveButton");
         Rectangle open_rect = ELEMENT_RECT("OpenButton");
@@ -4093,7 +4214,9 @@ int main(int argc, char **argv)
         if (review_active(app.review) && !modal) review_update(app.review, app.review_rect);
         if (record_view_active(app.record)) record_view_update(app.record, app.record_rect, idle && app.focus == FOCUS_RECORD);
         if (app.observer_open && !modal) findings_view_update(app.findings, app.findings_rect);
+        if (app.recall_open && !modal) recall_view_update(app.recall, app.recall_rect, idle && app.focus == FOCUS_RECALL);
         input_discard_chars(); /* after both views: nothing typed now may appear later */
+        recall_frame(&app);
         long apply = chat_view_take_apply(app.chat_view);
         if (apply >= 0) {
             /* "Apply to document": propose a reply as a replacement for the
@@ -4170,6 +4293,10 @@ int main(int argc, char **argv)
             FindingAction fa = findings_view_draw(app.findings, app.findings_rect, fid, sizeof(fid));
             if (fa != FA_NONE) finding_action(&app, fa, fid);
         }
+        if (app.recall_open && app.recall_rect.width > 0) {
+            RecallAction ra = recall_view_draw(app.recall, app.recall_rect, app.focus == FOCUS_RECALL);
+            if (ra.kind == RECALL_ACTION_OPEN) open_recall_row(&app, ra.row);
+        }
 
         bool can_save = (editor_is_dirty(app.editor) || editor_overwrite_armed(app.editor)) &&
                         !editor_is_read_only(app.editor);
@@ -4177,8 +4304,11 @@ int main(int argc, char **argv)
         if (GuiButton(save_rect, "Save")) save(&app);
         GuiEnable();
         /* raygui draws with the primary face only (no fallback), so ASCII. */
-        if (GuiButton(obs_rect, app.observer_open ? "Hide observer" : app.observer_button[0] ? app.observer_button : "Observer"))
+        if (GuiButton(obs_rect, app.observer_open ? "Hide observer" : app.observer_button[0] ? app.observer_button : "Observer")) {
             app.observer_open = !app.observer_open;
+            if (app.observer_open && app.recall_open) toggle_recall(&app);
+        }
+        if (GuiButton(ELEMENT_RECT("RecallToggle"), app.recall_open ? "Hide recall" : "Recall")) toggle_recall(&app);
         /* Whether the observer reads the open chat (the author's choice). */
         if (open_chat_stored(&app)) {
             Rectangle orr = ELEMENT_RECT("ObserverReads");
