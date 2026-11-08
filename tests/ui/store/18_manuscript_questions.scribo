@@ -37,7 +37,7 @@ expect memory_enabled no
 measure_frames start
 right_click_element ChatItem0
 click_element MenuItem2
-wait_memory 403 36000
+wait_memory 402 36000
 wait_memory_documents 8 36000
 measure_frames stop
 expect memory_enabled yes

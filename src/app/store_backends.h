@@ -45,6 +45,8 @@ typedef struct {
  * eligibility before using this identity. The saved FK restricts deletion of a
  * referenced revision; explicitly clear receipts before deleting their owners. */
 bool sdb_saved_revision_identity(Db *db, const char *project_id, const char *doc_name, SavedRevisionIdentity *out);
+/* The 16-hex content hash stored in revisions.hash (FNV-1a over the text). */
+void sdb_content_hash16(const char *s, char out[17]);
 
 /* records (notes, canon, findings) */
 bool sdb_record_append(Db *db, const char *project_id, RecordKind kind, const char *id, const char *status,

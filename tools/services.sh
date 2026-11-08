@@ -32,7 +32,7 @@ case "${1:-status}" in
         compose up -d --wait --wait-timeout 180
         compose ps --format 'table {{.Service}}\t{{.Status}}\t{{.Ports}}'
         ;;
-    testdb) # testdb create|drop NAME: a throwaway database for tests
+    testdb) # testdb create|drop|sql NAME: a throwaway database for tests (sql: run stdin against it, read-only diagnosis)
         name="${3:?name}"
         # Strictly a test name: no quotes, backticks or separators can reach SQL.
         if ! [[ "$name" =~ ^scribodo_test_[a-z0-9_]+$ ]]; then
@@ -41,6 +41,10 @@ case "${1:-status}" in
         # The root password is read inside the container from its secret
         # file and passed by environment, never on a command line (ps).
         rootsql() { compose exec -T mariadb sh -c 'MYSQL_PWD="$(cat /run/secrets/db_root_password)" mariadb -uroot' ; }
+        if [ "${2:-}" = sql ]; then
+            compose exec -T mariadb sh -c 'MYSQL_PWD="$(cat /run/secrets/db_root_password)" mariadb -uroot --batch "$0"' "$name"
+            exit $?
+        fi
         if [ "${2:-}" = create ]; then
             printf 'CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4;\nGRANT ALL ON `%s`.* TO '"'"'scribodo'"'"'@'"'"'%%'"'"';\n' "$name" "$name" | rootsql
         else

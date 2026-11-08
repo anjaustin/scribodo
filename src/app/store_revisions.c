@@ -10,7 +10,7 @@
 #include <string.h>
 #include <sys/time.h>
 
-static void hash16(const char *s, char out[17])
+void sdb_content_hash16(const char *s, char out[17])
 {
     uint64_t h = 1469598103934665603ull;
     for (const unsigned char *p = (const unsigned char *)s; *p; p++) h = (h ^ *p) * 1099511628211ull;
@@ -62,7 +62,7 @@ bool sdb_revision_record(Db *db, const char *project_id, const char *doc_path, c
     char doc[40];
     if (!store_document_id_db(db, project_id, base_name(doc_path), true, doc, sizeof(doc))) return false;
     char hash[17];
-    hash16(text, hash);
+    sdb_content_hash16(text, hash);
     if (!db_begin(db)) return false;
     /* Lock the document's row so two writers (UI, observer) serialise. */
     DbRows lock;
@@ -232,7 +232,7 @@ char *sdb_revision_load(Db *db, const char *project_id, const char *doc_path, co
         valid = db_cell_text(&r, 0, 0, &content) && db_cell_nullable(&r, 0, 1, &stored_hash);
     if (valid && r.nrows == 1) {
         char h[17];
-        hash16(content, h);
+        sdb_content_hash16(content, h);
         if (!stored_hash || !strcmp(h, stored_hash)) text = strdup(content);
     }
     db_rows_free(&r);

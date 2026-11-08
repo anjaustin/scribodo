@@ -657,6 +657,13 @@ static void test_import(void)
     FILE *f = fopen(doc, "wb");
     fputs("Zoë kept the letter.\n", f);
     fclose(f);
+    /* A second file with no snapshot history at all: the import must still
+     * give it a saved revision (its on-disk text), or memory can never cover it. */
+    char loose[600];
+    snprintf(loose, sizeof(loose), "%s/notes.txt", proj);
+    f = fopen(loose, "wb");
+    fputs("Loose notes.\n", f);
+    fclose(f);
     /* Not in the store yet: everything below goes to files. */
     CHECK(store_mode(g_store, proj, NULL, 0, NULL) == STORE_FILES);
     ProjectStoreInspection inspection = project_store_inspect(g_store, proj);
@@ -731,6 +738,24 @@ static void test_import(void)
           (PROJECT_STORE_CAP_STRUCTURED_WRITE | PROJECT_STORE_CAP_ENTITIES |
            PROJECT_STORE_CAP_SEMANTIC | PROJECT_STORE_CAP_LINKED_DOCUMENTS));
     CHECK(store_import(g_store, proj, why, sizeof(why))); /* again: nothing to do */
+    /* Every document file has a saved revision holding its on-disk text: the
+     * snapshot that matches (no duplicate), or a new "import" revision. */
+    {
+        char pid_saved[64] = "";
+        CHECK(store_mode(g_store, proj, pid_saved, sizeof(pid_saved), NULL) == STORE_DB);
+        Db *sdb = store_db(g_store);
+        SavedRevisionIdentity saved = {0};
+        CHECK(sdb && sdb_saved_revision_identity(sdb, pid_saved, "Chapter One.md", &saved) &&
+              saved.bytes == strlen("Zoë kept the letter.\n"));
+        CHECK(sdb && sdb_saved_revision_identity(sdb, pid_saved, "notes.txt", &saved) && saved.bytes == strlen("Loose notes.\n"));
+        Revision *loose_revs = NULL;
+        size_t nl = revisions_list(g_store, proj, loose, &loose_revs);
+        CHECK(nl == 1 && !strcmp(loose_revs[0].origin, "import"));
+        char *loose_text = nl ? revisions_load(g_store, proj, loose, &loose_revs[0]) : NULL;
+        CHECK(loose_text && !strcmp(loose_text, "Loose notes.\n"));
+        free(loose_text);
+        free(loose_revs);
+    }
     /* The same APIs now read the store. */
     Revision *revs = NULL;
     size_t nr = revisions_list(g_store, proj, doc2, &revs);
@@ -1170,6 +1195,10 @@ static void test_import_safety(void)
     /* The project's rows disappear (store reset): paused as missing, then
      * restored from the set-aside files. */
     Db *db = store_db(g_store);
+    /* The saved-revision key RESTRICTs deletion by design (migration 010), and
+     * since the import records each file's saved revision every imported
+     * project has one; a reset that removes rows must clear the pointers first. */
+    CHECK(db_run(db, "UPDATE documents SET saved_revision_id = NULL WHERE project_id = ?", (DbArg[1]){ DB_S(pa) }, 1, NULL));
     CHECK(db_run(db, "DELETE FROM projects WHERE id = ?", (DbArg[1]){ DB_S(pa) }, 1, NULL));
     store_forget_verification(g_store);
     CHECK(store_mode(g_store, a, NULL, 0, NULL) == STORE_PAUSED && store_problem(g_store, a, NULL, 0) == STORE_PROBLEM_MISSING);
@@ -1645,8 +1674,14 @@ static void test_legacy_import_read_failures(void)
         CHECK(rollback.nrows == 1 && !strcmp(db_cell(&rollback, 0, 0), "0"));
         db_rows_free(&rollback);
         CHECK(store_import(g_store, project, why, sizeof(why)));
+        /* Two snapshots, plus the file as saved on disk ("Saved manuscript"),
+         * which neither snapshot held: the import records it as the saved revision. */
         Revision *revs = NULL;
-        CHECK(revisions_list(g_store, project, doc, &revs) == 2);
+        size_t imported = revisions_list(g_store, project, doc, &revs);
+        CHECK(imported == 3 && !strcmp(revs[0].origin, "import"));
+        char *saved_text = imported == 3 ? revisions_load(g_store, project, doc, &revs[0]) : NULL;
+        CHECK(saved_text && !strcmp(saved_text, "Saved manuscript"));
+        free(saved_text);
         free(revs);
         CHECK(note_count(project) == 1);
         char cmd[PATH_MAX + 20];

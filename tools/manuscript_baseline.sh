@@ -9,16 +9,18 @@ usage() {
     echo 'usage: tools/manuscript_baseline.sh [--words N] [--per-category K] [--real] [--manuscript DIR]'
     echo '--manuscript DIR uses the chapter .md files of a real manuscript (tools/manuscript_import.py) as the documents.'
     echo '--script FILE drives a different UI script (default tests/ui/store/16_manuscript_baseline.scribo).'
+    echo '--keep leaves the disposable database and the work directory in place for diagnosis (prints both).'
     echo '--real uses the pinned local model (slower; needs make llama and make model); default is the fake model.'
     echo 'Default: the 100K-word fixture with 4 items per category.'
     echo 'Requires tools/services.sh up and a built app (build/scribodo).'
 }
-words=100000; per=4; llm=fake; script=tests/ui/store/16_manuscript_baseline.scribo
+words=100000; per=4; llm=fake; script=tests/ui/store/16_manuscript_baseline.scribo; keep=0
 while (( $# )); do
     case "$1" in
         --real) llm=real; shift ;;
         --manuscript) manuscript=$2; shift 2 ;;
         --script) script=$2; shift 2 ;;
+        --keep) keep=1; shift ;;
         --words) words=$2; shift 2 ;;
         --per-category) per=$2; shift 2 ;;
         --help) usage; exit 0 ;;
@@ -36,6 +38,10 @@ created=0
 cleanup() {
     rc=$?
     trap - EXIT
+    if (( keep )); then
+        echo "manuscript_baseline: kept database=$name work=$temp (drop with: tools/services.sh testdb drop $name)"
+        exit "$rc"
+    fi
     if (( created )); then
         tools/services.sh testdb drop "$name" || { echo "Cleanup failed; retry: tools/services.sh testdb drop $name" >&2; [[ $rc != 0 ]] || rc=1; }
     fi

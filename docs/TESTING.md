@@ -407,6 +407,18 @@ legacy project must `wait_status "now kept in the project store"` before
 using it. `tools/import_probe.c` times that import and counts its SQL
 statements on a seeded project.
 
+A real manuscript goes through the same harnesses (MEMORY-021):
+`tools/manuscript_import.py SOURCE.txt DEST --parts 8` turns a Project
+Gutenberg text into chapter files and eight attachable parts;
+`tools/memory_reach_eval.sh --manuscript DEST/parts --manuscript-tasks KEYS.json`
+measures selection reach against hand-written answer keys
+(`tests/fixtures/memory_reach/pride-and-prejudice-tasks.json`);
+`tools/manuscript_baseline.sh --manuscript DEST/parts --script
+tests/ui/store/18_manuscript_questions.scribo [--real]` asks the app
+questions about it. `--keep` leaves the disposable database and work
+directory for diagnosis, and `tools/services.sh testdb sql NAME` runs SQL
+from stdin against a test database.
+
 `tools/chat_hang_probe.c` (build it with the overlay in its header comment)
 drives a real `ChatSession` against a stand-in server that accepts the
 completion and never answers, with or without stream headers, requests

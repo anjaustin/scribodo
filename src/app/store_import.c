@@ -18,6 +18,7 @@
 #include "records_internal.h"
 #include "project_store_internal.h"
 #include "observer_store_internal.h"
+#include "core/file_text.h"
 
 #include <CommonCrypto/CommonDigest.h>
 #include <dirent.h>
@@ -213,6 +214,64 @@ static bool import_revisions(Db *db, const char *project_dir, const char *pid, R
                             2, NULL);
         }
         free(list);
+    }
+    if (closedir(d) != 0) ok = false;
+    return ok;
+}
+
+/* The document files as they are on disk are the author's saved state. Each
+ * gets a saved revision in the store: the newest imported snapshot when its
+ * content is the file's, otherwise a new "import" revision dated by the
+ * file's modification time. Without this, memory could not cover an
+ * imported manuscript until every file was opened and saved again
+ * (MEMORY-021: eight imported parts, none capturable). */
+static bool import_saved_files(Db *db, const char *project_dir, const char *pid)
+{
+    DIR *d = opendir(project_dir);
+    if (!d) return false;
+    bool ok = true;
+    struct dirent *ent;
+    while (ok) {
+        errno = 0;
+        ent = readdir(d);
+        if (!ent) { ok = errno == 0; break; }
+        size_t n = strlen(ent->d_name);
+        if (ent->d_name[0] == '.') continue;
+        if (!((n > 3 && !strcasecmp(ent->d_name + n - 3, ".md")) || (n > 4 && !strcasecmp(ent->d_name + n - 4, ".txt")) ||
+              (n > 9 && !strcasecmp(ent->d_name + n - 9, ".markdown")))) continue;
+        char path[PATH_MAX + 300];
+        snprintf(path, sizeof(path), "%s/%s", project_dir, ent->d_name);
+        char *text = NULL;
+        FileTextStatus st = file_text_read(path, &text);
+        if (st == FILE_TEXT_MISSING) continue; /* removed between the listing and now */
+        if (st != FILE_TEXT_OK || !text) { free(text); ok = false; break; }
+        struct stat sb;
+        double saved_at = stat(path, &sb) == 0 ? (double)sb.st_mtime : 0;
+        char did[40];
+        ok = store_document_id_db(db, pid, ent->d_name, true, did, sizeof(did));
+        DbRows r = {0};
+        const char *existing = NULL;
+        if (ok) {
+            ok = db_query(db, "SELECT id FROM revisions WHERE document_id = ? AND source_hash = SHA2(?,256) ORDER BY seq DESC LIMIT 1",
+                          (DbArg[2]){ DB_S(did), DB_S(text) }, 2, &r) && r.nrows <= 1;
+            if (ok && r.nrows == 1 && !db_cell_text(&r, 0, 0, &existing)) ok = false;
+        }
+        char id[40];
+        if (ok && existing) {
+            snprintf(id, sizeof(id), "%s", existing);
+        } else if (ok) {
+            derived_id(pid, ent->d_name, "saved-file", id, sizeof(id));
+            char hash[17];
+            sdb_content_hash16(text, hash);
+            DbArg a[7] = { DB_S(id), DB_S(did), DB_S(hash), DB_S(text), DB_S("import"), DB_S(""), DB_D(saved_at) };
+            ok = db_run(db, "INSERT IGNORE INTO revisions (id, document_id, hash, content, origin, note, created_at) VALUES (?,?,?,?,?,?,?)",
+                        a, 7, NULL);
+        }
+        db_rows_free(&r);
+        if (ok)
+            ok = db_run(db, "UPDATE documents SET saved_revision_id = ?, current_revision_id = ? WHERE id = ?",
+                        (DbArg[3]){ DB_S(id), DB_S(id), DB_S(did) }, 3, NULL);
+        free(text);
     }
     if (closedir(d) != 0) ok = false;
     return ok;
@@ -509,6 +568,7 @@ static bool import_once(Db *db, const char *project_dir, const char *data_dir, c
     size_t nmap = 0;
     IdMaps chats = { 0 }, recs = { 0 };
     ok = ok && import_revisions(db, data_dir, pid, &map, &nmap);
+    ok = ok && import_saved_files(db, project_dir, pid);
     ok = ok && import_chats(db, data_dir, pid, &chats);
     /* notes and canon before findings: findings name them as related */
     ok = ok && import_records(db, data_dir, pid, REC_NOTE, map, nmap, &recs, &chats);
