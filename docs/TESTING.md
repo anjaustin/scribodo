@@ -365,6 +365,25 @@ Each of these was caught by the suites and has a regression check:
   A `--replace` must also drop the stale index.
 - **`make remotetest`:** the remote model against a stand-in provider. It checks what actually reached the provider: one request, with its key and document, nothing from before the switch, and nothing after switching back.
 
+## The trusted runner is this Mac, and it sleeps
+
+`pmset -g` on the development Mac sets system sleep to one minute on AC once
+the display is off and no process holds a sleep assertion. On 2026-11-07 a
+native model run and a trusted acceptance job both lost 942 seconds to idle
+sleep that way (MEMORY-017). The acceptance workflow steps and the three
+experiment runners (`memory_native_eval.py`, `memory_reach_eval.py`,
+`memory_quality_eval.py`) therefore run under `caffeinate -i`. Anything else
+long and unattended should too. Note the clocks: `CLOCK_MONOTONIC` keeps
+counting through sleep on macOS, Python's `time.monotonic()` does not, and
+bash `$SECONDS` is wall time; a run that straddles sleep reports different
+durations from each.
+
+`tools/chat_hang_probe.c` (build it with the overlay in its header comment)
+drives a real `ChatSession` against a stand-in server that accepts the
+completion and never answers, with or without stream headers, requests
+cancellation and samples the process. Both modes end within 30 ms of
+cancellation with the reply marked "Stopped".
+
 ## Where cited evidence lives
 
 Dated reports cite `build/` run directories and logs. Those are archived, not

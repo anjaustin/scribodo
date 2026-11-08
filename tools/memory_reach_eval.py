@@ -237,7 +237,7 @@ def main():
     try:
         subprocess.run([str(services), "testdb", "create", name], cwd=ROOT, env=env, check=True)
         with (run / "driver.stdout.log").open("w") as out, (run / "driver.stderr.log").open("w") as err:
-            driver_rc = subprocess.run([str(owned), name, str(run), str(run / "input.json"), str(run / "events.jsonl")],
+            driver_rc = subprocess.run(["/usr/bin/caffeinate", "-i", str(owned), name, str(run), str(run / "input.json"), str(run / "events.jsonl")],
                                        cwd=ROOT, env=env, stdout=out, stderr=err).returncode
     except (OSError, subprocess.CalledProcessError, KeyboardInterrupt) as error:
         (run / "orchestration-error.txt").write_text(str(error) + "\n")

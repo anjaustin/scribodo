@@ -42,10 +42,10 @@ def main():
     print(f'Frozen native DEV run: {run}',flush=True)
     subprocess.run(['tools/services.sh','testdb','create',database],cwd=ROOT,check=True)
     environment=os.environ.copy(); environment.setdefault('SCRIBODO_LLAMA_SERVER',str(ROOT/'build/llama/bin/llama-server'))
-    process=None; returncode=-1; began=time.monotonic()
+    process=None; returncode=-1; began=time.monotonic(); began_wall=time.time()
     try:
         with (run/'driver.log').open('w') as log:
-            process=subprocess.Popen([str(binary),str(run/'dev.json'),str(run),database,str(run/'events.jsonl')],
+            process=subprocess.Popen(['/usr/bin/caffeinate','-i',str(binary),str(run/'dev.json'),str(run),database,str(run/'events.jsonl')],
                                      cwd=ROOT,env=environment,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
             returncode=process.wait(timeout=3600)
     finally:
@@ -75,6 +75,7 @@ def main():
     report={'result':'SEMANTIC_REVIEW_REQUIRED' if all(mechanics.values()) else 'MECHANICAL_GATE_FAILED',
             'quality_pass':False,'mechanics':mechanics,'answers':len(answers),
             'not_heldout_evidence':True,'runtime_seconds':time.monotonic()-began,
+            'wall_seconds_including_sleep':time.time()-began_wall,
             'semantic_review':'Review complete native outputs against preregistered task clauses; never infer pass from source presence.'}
     (run/'report.json').write_text(json.dumps(report,indent=2))
     print(json.dumps(report,indent=2),flush=True)

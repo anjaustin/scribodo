@@ -90,13 +90,40 @@ native harness (`build/mn-mu8px3fo`): pinned model, production sampling at
 temperature zero, 8,192-token context, 1,024-token replies, three
 presentations and two layouts, 144 answers expected.
 
-**The run did not complete.** After 14 answers in 126 seconds, the compact
-presentation of the superseded-fact episode stalled inside `llama-server`:
-the driver's 120-second limit fired, cancellation was requested, and the
-server did not release the slot for a further 13 minutes (941 seconds of
-wall time for that answer, logged as "Stopped"). The driver then aborted the
-workload by design. This is the physical-cancellation gap MEMORY-009 named,
-observed on a real request, and it is a runtime finding in its own right.
+**The run did not complete, and the reason was measured, not the one first
+recorded.** After 14 answers in 126 seconds of awake time, the compact
+presentation of the superseded-fact episode recorded a wall time of
+941,070 ms and the driver aborted by design. The first draft of this record
+called that a server stall with a slow cancellation. It was neither:
+
+| Evidence | Measurement |
+|---|---|
+| Power manager log (`pmset -g log`) | `18:28:37 Entering Sleep state due to 'Idle Sleep' ... 942 secs`; `18:44:19 Wake from Deep Idle ... keyboard/UserActivity` |
+| Run window | manifest written 18:26:33; events last written 18:44:19 |
+| The request | sent 2:03 into the run, at 18:28:36, one second before sleep; the server logged the cancel at 17:44 into the run, at 18:44:20, one second after wake |
+| Clocks | the driver's `memory_budget_now_ms` uses `CLOCK_MONOTONIC`, which on macOS keeps counting through sleep (941 s); the Python runner's `time.monotonic()` uses `mach_absolute_time`, which does not (126 s) |
+| Why nothing held the machine awake | `pmset -g`: system sleep is 1 minute on AC; the display turned off at 18:25:38; the last `caffeinate` assertion died at 18:28:31; no run of ours held one |
+| The same sleep took down CI | the trusted acceptance job on this Mac started its database step at 18:28:28 and its 120-second watchdog, which uses wall-clock `$SECONDS`, fired at 18:44:22, on wake |
+
+Two controlled measurements rule out the alternatives:
+
+- **Replay.** The fourteen frozen requests were replayed in order, twice, against
+  a fresh `llama-server` with the production flags. All 28 returned HTTP 200.
+  The "stalled" request took 3.93 s and 3.92 s. The longest was 38.2 s for a
+  386 KB stream. The server does not hang on this input.
+- **Hang probe** (`tools/chat_hang_probe.c`). A real `ChatSession` against a
+  stand-in server that accepts the completion and never answers, in two
+  modes (no bytes at all; stream headers then silence). In both, cancellation
+  requested at 3.000 s left the session idle at 3.030 s with the reply marked
+  "Stopped". The worker's cancellation path is sound.
+
+Consequences: the three experiment runners and the acceptance workflow steps
+now run under `caffeinate -i`; the native runner also records wall time with
+a clock that counts sleep. Separately, because production timeouts and the
+500 ms memory budget use `CLOCK_MONOTONIC`, a laptop that sleeps mid-reply
+will time out or cancel that reply on wake. That is the behavior one wants
+for a connection that is probably dead, but it is a behavior, and it is now
+written down.
 
 What the 14 completed answers show, under the coarse alias and openness
 screen (`tools/memory_use_score.py`, not the frozen rubric):

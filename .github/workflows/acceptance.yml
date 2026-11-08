@@ -46,17 +46,17 @@ jobs:
         run: tools/services.sh up
 
       - name: Build and run database integration
-        run: make all test dbtest
+        run: caffeinate -i make all test dbtest
 
       - name: Run scripted UI acceptance
-        run: make uitest
+        run: caffeinate -i make uitest
 
       - name: Run store UI acceptance
-        run: make uitest-db
+        run: caffeinate -i make uitest-db
 
       - name: Run scheduled recovery acceptance
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-        run: make backuptest remotetest
+        run: caffeinate -i make backuptest remotetest
 
       - name: Remove disposable services and volumes
         if: always()
