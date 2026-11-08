@@ -1,0 +1,119 @@
+{
+ "manuscript": "Pride and Prejudice (Project Gutenberg #1342), imported by tools/manuscript_import.py into 8 parts",
+ "note": "hand-written document_fact tasks over real prose; each required text was checked against the part files; answers are the words a correct reply must carry",
+ "tasks": [
+  {
+   "question": "What does Mrs. Bennet tell her husband about Netherfield Park in the opening scene?",
+   "answers": [
+    "let at last"
+   ],
+   "required_document": "part01.md",
+   "required_document_text": "“have you heard that Netherfield Park is let at last?”"
+  },
+  {
+   "question": "What is Mr. Bingley's income said to be when he first arrives in the neighbourhood?",
+   "answers": [
+    "four or five thousand"
+   ],
+   "required_document": "part01.md",
+   "required_document_text": "A single man of large fortune; four or five thousand a year."
+  },
+  {
+   "question": "What yearly income is reported for Mr. Darcy within minutes of his entering the Meryton assembly?",
+   "answers": [
+    "ten thousand"
+   ],
+   "required_document": "part01.md",
+   "required_document_text": "of his having ten thousand a year."
+  },
+  {
+   "question": "What is Longbourn?",
+   "answers": [
+    "the village where they lived"
+   ],
+   "required_document": "part01.md",
+   "required_document_text": "They returned, therefore, in good spirits to Longbourn, the village where they lived, and of which they were the principal inhabitants."
+  },
+  {
+   "question": "How many daughters does Mrs. Bennet have?",
+   "answers": [
+    "five daughters"
+   ],
+   "required_document": "part02.md",
+   "required_document_text": "he had the pleasure of being eagerly questioned by his wife and five daughters at once."
+  },
+  {
+   "question": "What did Lady Catherine de Bourgh very lately give Mr. Collins?",
+   "answers": [
+    "a living"
+   ],
+   "required_document": "part02.md",
+   "required_document_text": "“Lady Catherine de Bourgh,” she replied, “has very lately given him a living."
+  },
+  {
+   "question": "What is the name of Lady Catherine's residence, across the lane from Mr. Collins's garden?",
+   "answers": [
+    "Rosings"
+   ],
+   "required_document": "part02.md",
+   "required_document_text": "“The garden in which stands my humble abode is separated only by a lane from Rosings Park, her Ladyship’s residence.”"
+  },
+  {
+   "question": "In which county does Mr. Darcy's large property lie, as Elizabeth understands it?",
+   "answers": [
+    "Derbyshire"
+   ],
+   "required_document": "part02.md",
+   "required_document_text": "“he is a man of very large property in Derbyshire, I understand.”"
+  },
+  {
+   "question": "About how old is Colonel Fitzwilliam when he arrives at Rosings?",
+   "answers": [
+    "about thirty"
+   ],
+   "required_document": "part04.md",
+   "required_document_text": "Colonel Fitzwilliam, who led the way, was about thirty, not handsome, but in person and address most truly the gentleman."
+  },
+  {
+   "question": "Where is the regiment to be encamped for the summer, according to Lydia?",
+   "answers": [
+    "Brighton"
+   ],
+   "required_document": "part05.md",
+   "required_document_text": "“They are going to be encamped near Brighton; and I do so want papa to take us all there for the summer!"
+  },
+  {
+   "question": "Where did Georgiana go last summer, and how many men-servants went with her?",
+   "answers": [
+    "Ramsgate",
+    "two men-servants"
+   ],
+   "required_document": "part05.md",
+   "required_document_text": "When my niece Georgiana went to Ramsgate last summer, I made a point of her having two men-servants go with her."
+  },
+  {
+   "question": "Whom is Wickham now in no danger of marrying, so that Elizabeth calls her safe?",
+   "answers": [
+    "Mary King"
+   ],
+   "required_document": "part05.md",
+   "required_document_text": "“And Mary King is safe!” added Elizabeth; “safe from a connection imprudent as to fortune.”"
+  },
+  {
+   "question": "Which little town, the scene of Mrs. Gardiner's former residence, do the travellers go to in Derbyshire?",
+   "answers": [
+    "Lambton"
+   ],
+   "required_document": "part05.md",
+   "required_document_text": "To the little town of Lambton, the scene of Mrs. Gardiner"
+  },
+  {
+   "question": "Which family lived within a short walk of Longbourn and was particularly intimate with the Bennets?",
+   "answers": [
+    "Lucas"
+   ],
+   "required_document": "part01.md",
+   "required_document_text": "Within a short walk of Longbourn lived a family with whom the Bennets were particularly intimate."
+  }
+ ]
+}

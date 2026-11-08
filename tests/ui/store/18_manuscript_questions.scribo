@@ -1,0 +1,98 @@
+# Real-manuscript questions (MEMORY-019 follow-up): a legacy project whose
+# documents are the eight parts of a real novel (tools/manuscript_import.py)
+# and whose chat is the fixture archive. All eight parts are attached to the
+# chat, memory is enabled, and the author asks questions whose answers are in
+# the parts. memory_sources checks reach inside the app (the answer-bearing
+# excerpt was supplied to the model); chat_last checks the reply carried it
+# (only meaningful with --real; the fake model echoes the prompt).
+# Run: tools/manuscript_baseline.sh --manuscript build/manuscripts/<name>/parts \
+#        --words 30000 --per-category 3 --script tests/ui/store/18_manuscript_questions.scribo [--real]
+wait 5
+dialog "$DIR/manuscript"
+click_element WelcomeOpen
+wait_status "now kept in the project store" 1800
+expect explorer_has "Manuscript chat"
+click_element ChatItem0
+wait_history
+# Attach every part (the menu lists the project's documents in explorer order).
+click_element AttachAdd
+click_element MenuItem0
+click_element AttachAdd
+click_element MenuItem1
+click_element AttachAdd
+click_element MenuItem2
+click_element AttachAdd
+click_element MenuItem3
+click_element AttachAdd
+click_element MenuItem4
+click_element AttachAdd
+click_element MenuItem5
+click_element AttachAdd
+click_element MenuItem6
+click_element AttachAdd
+click_element MenuItem7
+expect attached "part01.md,part02.md,part03.md,part04.md,part05.md,part06.md,part07.md,part08.md"
+# Memory over the chat and the eight attached parts.
+expect memory_enabled no
+measure_frames start
+right_click_element ChatItem0
+click_element MenuItem2
+wait_memory 403 36000
+wait_memory_documents 8 36000
+measure_frames stop
+expect memory_enabled yes
+# Q1 (part01): the opening scene.
+wait_ready 36000
+click_element ChatInput
+type "In my opening scene, what does Mrs. Bennet tell her husband about Netherfield Park?"
+key ENTER
+wait_chat 14400
+expect chat_busy no
+expect memory_sources "let at last"
+expect chat_last "let at last"
+# Q2 (part01): Bingley's income.
+click_element ChatInput
+type "What is Mr. Bingley's income said to be when he first arrives in the neighbourhood?"
+key ENTER
+wait_chat 14400
+expect chat_busy no
+expect memory_sources "four or five thousand"
+expect chat_last "four or five thousand"
+# Q3 (part02): Lady Catherine's gift to Mr. Collins.
+click_element ChatInput
+type "What did Lady Catherine de Bourgh very lately give Mr. Collins?"
+key ENTER
+wait_chat 14400
+expect chat_busy no
+expect memory_sources "a living"
+expect chat_last "living"
+# Q4 (part04): Colonel Fitzwilliam's age.
+click_element ChatInput
+type "About how old is Colonel Fitzwilliam when he arrives at Rosings?"
+key ENTER
+wait_chat 14400
+expect chat_busy no
+expect memory_sources "about thirty"
+expect chat_last "thirty"
+# Q5 (part05): Georgiana at Ramsgate.
+click_element ChatInput
+type "Where did Georgiana go last summer, and how many men-servants went with her?"
+key ENTER
+wait_chat 14400
+expect chat_busy no
+expect memory_sources "Ramsgate"
+expect chat_last "Ramsgate"
+# Q6 (part05): the regiment's summer camp.
+click_element ChatInput
+type "Where is the regiment to be encamped for the summer, according to Lydia?"
+key ENTER
+wait_chat 14400
+expect chat_busy no
+expect memory_sources "Brighton"
+expect chat_last "Brighton"
+# Q7 (absence): nothing in the novel or the chat says this.
+click_element ChatInput
+type "What is Mr. Darcy's middle name?"
+key ENTER
+wait_chat 14400
+expect chat_busy no

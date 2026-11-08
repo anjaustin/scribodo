@@ -226,6 +226,8 @@ def main():
     parser.add_argument("--export-native", type=Path, help="also write native 'faithful use' episodes here")
     parser.add_argument("--binary", type=Path, default=ROOT / "build/memory-reach/memory_reach_eval")
     parser.add_argument("--rescore", type=Path, help="recompute report.json for a finished run directory from its frozen answer key and events")
+    parser.add_argument("--manuscript", type=Path, help="directory of .md files attached as the conversation's saved documents in place of the fixture's two chapters (at most 8)")
+    parser.add_argument("--manuscript-tasks", type=Path, help="JSON list of hand-written document_fact tasks over --manuscript: question, answers, required_document, required_document_text")
     args = parser.parse_args()
     if args.rescore:
         run = args.rescore
@@ -244,6 +246,32 @@ def main():
         parser.error("words must be 10000..300000; per-category 1..12")
     os.environ.setdefault("SCRIBODO_LLAMA_SERVER", str(ROOT / "build/llama/bin/llama-server"))
     fixture = memory_fixture.build(args.seed, args.words, args.per_category)
+    manuscript = None
+    if args.manuscript:
+        # A real manuscript replaces the fixture's generated chapters and their
+        # planted document tasks; the chat archive and its tasks are unchanged.
+        files = sorted(p for p in args.manuscript.iterdir() if p.suffix == ".md")
+        if not 1 <= len(files) <= 8:
+            parser.error("--manuscript needs 1 to 8 .md files (MEMORY_DOCUMENTS_MAX)")
+        fixture["documents"] = [{"name": p.name, "text": p.read_text(encoding="utf-8")} for p in files]
+        fixture["tasks"] = [t for t in fixture["tasks"] if t["category"] != "document_fact"]
+        hand = json.loads(args.manuscript_tasks.read_text()) if args.manuscript_tasks else []
+        hand = hand["tasks"] if isinstance(hand, dict) else hand
+        for h in hand:
+            doc = next((d for d in fixture["documents"] if d["name"] == h["required_document"]), None)
+            if doc is None or h["required_document_text"] not in doc["text"]:
+                parser.error(f"manuscript task text not found in {h['required_document']}: {h['required_document_text'][:60]}")
+            fixture["tasks"].append({"id": f"t{len(fixture['tasks']) + 1:02}", "category": "document_fact", "question": h["question"],
+                                     "expected": h.get("expected", h["answers"][0]), "answers": h["answers"], "abstain": False,
+                                     "required_sequences": [], "also_relevant_sequences": [], "distractor_sequences": [],
+                                     "required_document": h["required_document"], "required_document_text": h["required_document_text"],
+                                     "history": []})
+        manuscript = {"directory": str(args.manuscript), "files": [p.name for p in files],
+                      "bytes": sum(len(d["text"].encode("utf-8")) for d in fixture["documents"]),
+                      "words": sum(len(d["text"].split()) for d in fixture["documents"]), "hand_written_tasks": len(hand),
+                      "manifest": json.loads((args.manuscript / "MANUSCRIPT.json").read_text()) if (args.manuscript / "MANUSCRIPT.json").is_file()
+                                  else json.loads((args.manuscript.parent / "MANUSCRIPT.json").read_text()) if (args.manuscript.parent / "MANUSCRIPT.json").is_file() else None,
+                      "tasks_sha256": sha(args.manuscript_tasks) if args.manuscript_tasks else None}
     name = f"scribodo_test_reach_{os.getpid()}_{secrets.token_hex(8)}"
     run = ROOT / "build/memory-reach/runs" / name
     run.mkdir(parents=True, mode=0o700)
@@ -271,7 +299,7 @@ def main():
     manifest = {"protocol": "memory-reach-v1", "frozen_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "seed": args.seed, "requested_words": args.words, "actual_words": fixture["words"],
                 "turns": len(fixture["archive"]), "boundary": fixture["boundary"], "task_count": len(fixture["tasks"]),
-                "per_category": args.per_category, "database": name,
+                "per_category": args.per_category, "database": name, "manuscript": manuscript,
                 "input_sha256": sha(run / "input.json"), "answer_key_sha256": sha(run / "answer-key.json"),
                 "source_sha256": {str(p.relative_to(ROOT)): sha(p) for p in sources},
                 "binary_sha256": sha(owned) if owned.is_file() else None,

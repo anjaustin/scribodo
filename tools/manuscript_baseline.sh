@@ -6,15 +6,19 @@
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 usage() {
-    echo 'usage: tools/manuscript_baseline.sh [--words N] [--per-category K] [--real]'
+    echo 'usage: tools/manuscript_baseline.sh [--words N] [--per-category K] [--real] [--manuscript DIR]'
+    echo '--manuscript DIR uses the chapter .md files of a real manuscript (tools/manuscript_import.py) as the documents.'
+    echo '--script FILE drives a different UI script (default tests/ui/store/16_manuscript_baseline.scribo).'
     echo '--real uses the pinned local model (slower; needs make llama and make model); default is the fake model.'
     echo 'Default: the 100K-word fixture with 4 items per category.'
     echo 'Requires tools/services.sh up and a built app (build/scribodo).'
 }
-words=100000; per=4; llm=fake
+words=100000; per=4; llm=fake; script=tests/ui/store/16_manuscript_baseline.scribo
 while (( $# )); do
     case "$1" in
         --real) llm=real; shift ;;
+        --manuscript) manuscript=$2; shift 2 ;;
+        --script) script=$2; shift 2 ;;
         --words) words=$2; shift 2 ;;
         --per-category) per=$2; shift 2 ;;
         --help) usage; exit 0 ;;
@@ -45,13 +49,13 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 mkdir "$temp/work"
-python3 tests/seed_manuscript.py "$temp/work/manuscript" --words "$words" --per-category "$per"
+python3 tests/seed_manuscript.py "$temp/work/manuscript" --words "$words" --per-category "$per" ${manuscript:+--manuscript "$manuscript"}
 echo "manuscript_baseline: disposable_database=$name"
 created=1
 tools/services.sh testdb create "$name"
 start=$SECONDS
 SCRIBODO_STORE=db SCRIBODO_DB_NAME="$name" SCRIBODO_DB_PORT="$port" SCRIBODO_SOAK_LLM="$llm" SCRIBODO_MEMORY_EXPERIMENT=1 \
     SCRIBODO_MODEL_SETTINGS="$temp/work/model-settings.json" SCRIBODO_PROFILE="$temp/work/profile.json" \
-    SCRIBODO_SCRIPT=tests/ui/store/16_manuscript_baseline.scribo SCRIBODO_SCRIPT_DIR="$temp/work" \
+    SCRIBODO_SCRIPT="$script" SCRIBODO_SCRIPT_DIR="$temp/work" \
     SCRIBODO_SHOT_DIR="$temp" caffeinate -i tools/watchdog.sh 3000 manuscript-baseline python3 tools/frame_soak_run.py "$app"
-echo "manuscript_baseline: process_wall_seconds=$((SECONDS - start)) words=$words per_category=$per model=$llm"
+echo "manuscript_baseline: process_wall_seconds=$((SECONDS - start)) words=$words per_category=$per model=$llm script=$script manuscript=${manuscript:-fixture}"
