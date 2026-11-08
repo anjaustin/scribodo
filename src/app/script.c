@@ -742,6 +742,7 @@ static bool run_line(Script *s, ScriptHost *h)
             report(s, false, "no such element");
             return false;
         }
+        new_batch(s); /* a lookup may have scrolled the element into view; let the layout apply it first */
         queue_click_button(s, (int)(r.x + r.width / 2), (int)(r.y + r.height / 2), 1, false, MOUSE_BUTTON_RIGHT);
         return true;
     }
@@ -775,6 +776,7 @@ static bool run_line(Script *s, ScriptHost *h)
             report(s, false, "no such finding");
             return false;
         }
+        new_batch(s);
         queue_click_button(s, (int)(r.x + r.width / 2), (int)(r.y + 12), 1, false, MOUSE_BUTTON_LEFT);
         return true;
     }
@@ -789,6 +791,7 @@ static bool run_line(Script *s, ScriptHost *h)
             return false;
         }
         int count = t.n >= 3 ? atoi(t.tok[2]) : 1;
+        new_batch(s); /* a lookup may have scrolled the element into view; let the layout apply it first */
         queue_click(s, (int)(r.x + r.width / 2), (int)(r.y + r.height / 2), count > 0 ? count : 1, false);
         return true;
     }

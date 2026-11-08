@@ -3342,7 +3342,29 @@ static Rectangle host_element(void *ctx, const char *name)
     size_t n = strlen(name), k = n;
     while (k > 0 && name[k - 1] >= '0' && name[k - 1] <= '9') k--;
     Clay_String s = { .isStaticallyAllocated = false, .length = (int32_t)k, .chars = name };
-    return element_rect_str(s, k < n ? (uint32_t)atoi(name + k) : 0, k < n);
+    Rectangle r = element_rect_str(s, k < n ? (uint32_t)atoi(name + k) : 0, k < n);
+    /* An explorer item laid out below or above the panel's visible area (a
+     * project with sixty chapters puts the chat list off screen) is scrolled
+     * into view, as a user would with the wheel, and its rectangle is
+     * reported where it will be once the next layout applies the offset. The
+     * click itself lands on a later frame, so the two agree (MEMORY-021). */
+    Rectangle explorer = ELEMENT_RECT("Explorer");
+    if (r.width > 0 && explorer.width > 0 && r.x >= explorer.x && r.x < explorer.x + explorer.width &&
+        (r.y < explorer.y || r.y + r.height > explorer.y + explorer.height)) {
+        Clay_ScrollContainerData sc = Clay_GetScrollContainerData(CLAY_ID("Explorer"));
+        if (sc.found && sc.scrollPosition) {
+            float want = r.y < explorer.y ? explorer.y + 12.0f - r.y : (explorer.y + explorer.height - 12.0f) - (r.y + r.height);
+            float lowest = -(sc.contentDimensions.height - sc.scrollContainerDimensions.height);
+            if (lowest > 0) lowest = 0;
+            float target = sc.scrollPosition->y + want;
+            if (target < lowest) target = lowest;
+            if (target > 0) target = 0;
+            float applied = target - sc.scrollPosition->y;
+            sc.scrollPosition->y = target;
+            r.y += applied;
+        }
+    }
+    return r;
 }
 
 static const char *host_status(void *ctx)

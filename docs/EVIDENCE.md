@@ -13,6 +13,8 @@ development Mac, not tracked files. Nothing cited is deleted; it is archived.
 
 | `scribodo-evidence-2026-11-08b.tar.gz` | The canon-aware chat run (`build/mn-ld40aqkd`, MEMORY-020) and its episode fixture, the two document-reach runs rescored in MEMORY-017 and the two runs after the unit-cut change (`build/memory-reach/runs/scribodo_test_reach_{98605,98703,5807,5959}_*`), and `build/hangs` including the sleep-interrupted `test_llm` samples | same folder, `SHA256SUMS` and `manifest-2026-11-08b.txt` |
 
+| `scribodo-evidence-2026-11-08c.tar.gz` | The real-manuscript work (MEMORY-021): `build/manuscripts/pride-and-prejudice` with the Gutenberg source and checksum, the imported chapters and parts, and under `runs/` every application run log, database sample, probe script and screenshot; the reach run over the novel (`build/memory-reach/runs/scribodo_test_reach_15740_*`) | same folder, `SHA256SUMS` and `manifest-2026-11-08c.txt` |
+
 To consult a cited path, extract the archive into an empty folder and read the
 path relative to it. Stale `llama.sock` files inside a few run directories were
 not archivable and are not evidence.

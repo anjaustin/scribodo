@@ -254,8 +254,38 @@ saved revision, and the index halting on one malformed unit. None of them
 was reachable from the template fixture, whose documents were created
 inside the store with native ids.
 
+## The standard baseline on 61 real chapters
+
+`tools/manuscript_baseline.sh --manuscript build/manuscripts/pride-and-prejudice`
+runs the MEMORY-019 script unchanged against the 61 chapter files (121,787
+words, 694 KB) plus the 100K fixture chat, fake model. The first attempt
+failed at phase 2 for a harness reason: with 61 documents the chat list is
+laid out below the explorer's visible area, and the script clicked the
+off-screen rectangle. Screenshots showed the click landing on `ch28.md`,
+the item at that screen position before the list moved. Element lookups now
+scroll an off-screen explorer item into view, as a user would with the
+wheel, and element clicks wait one frame so the layout applies the offset
+before the pointer test. The full UI suite passes unchanged (398 checks).
+
+| Phase | Wall | Frames | Worst frame |
+|---|---:|---:|---:|
+| 1 First open: import of 61 chapters and 1,116 messages (owned worker) | 1.07 s | 63 | 18.2 ms |
+| 2 Open the 1,116-turn chat | 0.11 s | 6 | 18.2 ms |
+| 3 Page older five times and back | 0.65 s | 36 | 18.3 ms |
+| 4 Open a chapter, edit, save, revision recorded | 0.20 s | 10 | 33.0 ms |
+| 5 Send a message (fake model) | 1.00 s | 54 | 42.0 ms |
+| 6 Enable memory: ingest and index 1,116 turns | 54.9 s | 3,127 | 19.5 ms |
+| 7 Recall over the archive | 0.28 s | 16 | 18.2 ms |
+
+All 28 checks passed; app RSS peaked at 175 MB; process wall 59 s. Against
+the MEMORY-019 baseline on generated chapters the figures are the same
+within a frame, and the import stall that was 791 ms there is gone here
+because the import now runs on its worker.
+
 ## Evidence
 
-`build/manuscripts/pride-and-prejudice/` (import, source and checksum),
-`build/memory-reach/runs/scribodo_test_reach_15740_531691605f868f57`, and
-the application runs cited above, to be archived per EVIDENCE.md.
+`build/manuscripts/pride-and-prejudice/` (import, source and checksum, and
+under `runs/` every application run's log, the database samples, the probe
+scripts and the screenshots), and
+`build/memory-reach/runs/scribodo_test_reach_15740_531691605f868f57`;
+archived as `scribodo-evidence-2026-11-08c.tar.gz` per EVIDENCE.md.
