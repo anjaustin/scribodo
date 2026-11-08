@@ -844,10 +844,22 @@ static const char *const k_migration_012[] = {
 
 #include "memory_brief_schema.h"
 
+/* 014: case-insensitive lexical discovery. Under utf8mb4_bin, InnoDB's
+ * full-text index on memory_units.text is case-sensitive and inconsistent:
+ * incrementally inserted rows keep their case ("Tarn" matches, "tarn" does
+ * not) while a rebuilt index lowercases tokens ("tarn" matches, "Tarn" does
+ * not). Measured on MariaDB 11.4.13 in MEMORY-018. A case-insensitive
+ * collation matches every case on every build path. Hashes and binary
+ * comparisons of the text are unaffected; only MATCH and = change. */
+static const char *const k_migration_014[] = {
+    "ALTER TABLE memory_units MODIFY text VARCHAR(2000) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL",
+    NULL,
+};
+
 static const char *const *const k_migrations[] = { k_migration_001, k_migration_002, k_migration_003, k_migration_004,
                                                    k_migration_005, k_migration_006, k_migration_007, k_migration_008,
                                                    k_migration_009, k_migration_010, k_migration_011, k_migration_012,
-                                                   k_migration_013 };
+                                                   k_migration_013, k_migration_014 };
 
 int db_schema_version(Db *db)
 {

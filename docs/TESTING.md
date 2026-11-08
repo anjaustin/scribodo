@@ -83,6 +83,17 @@ modify a database while any Scribodo process is running.
   is a measurement; the harness gates only its own validity (control category
   at 1.0, both discovery paths available, ingestion complete, zero privacy
   violations, namespaces cleaned). `--self-test` checks the fixture alone.
+- `tools/lexical_bench.py [--words N] [--per-category K] [--collation C]`
+  isolates the lexical channel: it loads a fixture's archive into a scratch
+  table with the production full-text index, runs every task's question under
+  the production score and length-normalized alternatives, and reports hit
+  rate and rank per category. It never rebuilds the index (see MEMORY-018 on
+  why) and drops its database afterwards.
+- `tools/manuscript_baseline.sh [--words N]` seeds a manuscript-scale legacy
+  project from the fixture (`tests/seed_manuscript.py`: the chat archive plus
+  eight chapter documents), opens it in the real app with the fake model, and
+  reports one `FRAME_METRICS` line per phase (store import, chat open, paging,
+  document edit and save, send) plus sampled RSS (`tests/ui/store/16_manuscript_baseline.scribo`).
 - `python3 tools/memory_native_eval.py FILE` now accepts the exported episodes
   so the model's use of admitted sources is measured on the same fixture;
   `tools/memory_use_score.py EVENTS ANSWER_KEY` gives a coarse alias/openness

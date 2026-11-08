@@ -384,7 +384,8 @@ bool memory_lexical_candidates_with_documents(Db *db, const MemoryScope *s, cons
     for (size_t i = 0; set && i < set->count; i++) {
         const MemoryDocumentRef *ref = &set->refs[i];
         DbRows rows;
-        bool ok = db_query(db, "SELECT u.id,u.text_hash,MATCH(u.text) AGAINST (? IN NATURAL LANGUAGE MODE) AS score"
+        bool ok = db_query(db, "SELECT u.id,u.text_hash,MATCH(u.text) AGAINST (? IN NATURAL LANGUAGE MODE)"
+                               " / POW(CHAR_LENGTH(u.text)," MEMORY_LEXICAL_LENGTH_NORM ") AS score"
                                " FROM memory_units u JOIN memory_scopes s ON s.id=u.scope_id"
                                " JOIN documents d ON d.id=u.document_id AND d.project_id=u.project_id"
                                " JOIN revisions r ON r.document_id=d.id AND r.id=u.revision_id"

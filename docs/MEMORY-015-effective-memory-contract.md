@@ -130,7 +130,7 @@ holds the answer, under production budgets) and, separately, faithful use (the
 existing native eval against the pinned model). Gate: the harness reproduces
 the known MEMORY-011 failures and passes its own negative controls.
 
-**S3 — Selection improvements.** *First change 2026-11-08: the fusion constant, in [MEMORY-018](MEMORY-018-selection-ranking.md).* Host-side only, each measured against S2:
+**S3 — Selection improvements.** *2026-11-08: the fusion constant, lexical length normalization and case-insensitive lexical matching, all measured in [MEMORY-018](MEMORY-018-selection-ranking.md).* Host-side only, each measured against S2:
 canon-aware ranking as a separate reference class; revision and recency
 awareness; author-marked importance; project-wide canon scope under
 per-conversation consent. Gate: reach improves on S2 with no regression in the

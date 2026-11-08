@@ -15,7 +15,7 @@ import subprocess
 
 
 FRAGMENT = """
-RECALL_MUTANT_OBJS := $(filter-out $(BUILD)/src/app/recall.o,$(CORE_OBJS) $(LLM_OBJS)) $(BUILD)/tests/test_recall.o
+RECALL_MUTANT_OBJS := $(filter-out $(BUILD)/$(ORIGINAL_OBJ),$(CORE_OBJS) $(LLM_OBJS)) $(BUILD)/tests/test_recall.o
 .PHONY: recall-mutant
 recall-mutant: $(RECALL_MUTANT_OBJS)
 \t$(CC) $(CFLAGS) $(INCLUDES) -Isrc/app $(MUTANT) $(RECALL_MUTANT_OBJS) -o $(OUT) $(MARIADB_LIBS) -lpthread
@@ -26,7 +26,6 @@ def main():
     root = Path(__file__).resolve().parents[1]
     output = root / "build/recall-mutations"
     output.mkdir(parents=True, exist_ok=True)
-    source = (root / "src/app/recall.c").read_text()
     cases = [
         ("control", None),
         ("status_filter", ('if (strcmp(v->status, "committed") != 0) {', "if (false) {")),
@@ -37,9 +36,14 @@ def main():
         ("canon_cap", ("if (canon_count > RECALL_CANON_ROWS_MAX) {", "if (false) {")),
         ("no_terms", ("    if (!out->terms) {\n        out->canon_ok = true;", "    if (false) {\n        out->canon_ok = true;")),
         ("query_bound", ("if (strnlen(query, RECALL_QUERY_BYTES + 1) > RECALL_QUERY_BYTES) {", "if (false) {")),
+        # Store-side guard the recall path depends on: lexical length normalization (MEMORY-018).
+        ("lexical_length_norm", ('" / POW(CHAR_LENGTH(u.text)," MEMORY_LEXICAL_LENGTH_NORM ") AS score"', '" AS score"'), "src/app/memory_store.c"),
+        ("lexical_case_fold", ("COLLATE utf8mb4_unicode_ci NOT NULL", "COLLATE utf8mb4_bin NOT NULL"), "src/app/db.c"),
     ]
-    for name, replacement in cases:
-        text = source
+    for case in cases:
+        name, replacement = case[0], case[1]
+        source_path = case[2] if len(case) > 2 else "src/app/recall.c"
+        text = (root / source_path).read_text()
         if replacement:
             if replacement[0] not in text:
                 raise RuntimeError(f"Mutation no longer matches: {name}")
@@ -48,8 +52,9 @@ def main():
         mutant.write_text(text)
         binary = output / name
         with (output / f"{name}.log").open("w") as log:
+            original_obj = source_path.replace(".c", ".o")
             subprocess.run(["make", "--no-print-directory", "-f", "Makefile", "-f", "-", "recall-mutant",
-                            f"MUTANT={mutant}", f"OUT={binary}"], cwd=root, input=FRAGMENT, text=True,
+                            f"MUTANT={mutant}", f"OUT={binary}", f"ORIGINAL_OBJ={original_obj}"], cwd=root, input=FRAGMENT, text=True,
                            stdout=log, stderr=subprocess.STDOUT, check=True, timeout=600)
             result = subprocess.run([str(binary)], cwd=root, stdout=log, stderr=subprocess.STDOUT, timeout=600)
         if replacement is None:

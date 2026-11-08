@@ -412,7 +412,8 @@ bool memory_lexical_candidates(Db *db, const MemoryScope *s, const char *q, size
     if (out && limit > 0 && limit <= MEMORY_CANDIDATES) memset(out, 0, limit * sizeof(*out));
     if (!db || !n || !out || !valid_scope(s) || !valid_text(q, 2000) || !limit || limit > MEMORY_CANDIDATES) return false;
     DbRows r;
-    bool ok = db_query(db, "SELECT u.id,u.text_hash,MATCH(u.text) AGAINST (? IN NATURAL LANGUAGE MODE) AS score"
+    bool ok = db_query(db, "SELECT u.id,u.text_hash,MATCH(u.text) AGAINST (? IN NATURAL LANGUAGE MODE)"
+                          " / POW(CHAR_LENGTH(u.text)," MEMORY_LEXICAL_LENGTH_NORM ") AS score"
                           " FROM memory_units u JOIN memory_scopes s ON s.id=u.scope_id"
                           " WHERE s.id=? AND s.project_id=? AND s.conversation_id=? AND s.enabled=1"
                           " AND s.history_epoch=? AND s.policy_epoch=? AND s.generation=?"

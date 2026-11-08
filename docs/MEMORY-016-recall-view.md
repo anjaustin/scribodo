@@ -88,7 +88,7 @@ Run on this Mac on 2026-11-07, pinned services, no model server involved:
   will match canon but select no excerpts. The host then re-checks every
   candidate by substring, so a shown excerpt always contains a term, but an
   excerpt that only a short or stopword term would reach is not shown.
-- **Case folding is ASCII only.** "Zoë" matches "zoë" but not "ZOË".
+- **Case folding differs by half.** Canon matching folds ASCII case only ("Zoë" matches "zoë" but not "ZOË"). Excerpt candidates come from the full-text index, which since migration 014 is case- and accent-insensitive (MEMORY-018); before that it was case-sensitive.
 - **Substring, not word, matching.** "key" matches "keys" and "monkey".
 - **Memory excerpts need the project store** and a conversation whose memory
   the author enabled. File-backed and paused projects show canon only and say so.

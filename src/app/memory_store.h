@@ -11,6 +11,16 @@
 #define MEMORY_UNIT_TOKENS 512u
 #define MEMORY_CANDIDATES 32u
 #define MEMORY_PLAN_UNITS 8u
+/* Lexical candidate score: InnoDB's natural-language MATCH score divided by
+ * CHAR_LENGTH(text) to this power. The raw score sums term frequency without
+ * length normalization, so a long paragraph that mentions the query's common
+ * words several times outranks the short author turn that states the fact
+ * once; on the frozen reach fixtures the production query reached none of
+ * the stated, superseded or rejected sources (MEMORY-018). Measured over
+ * exponents 0 (raw), log, 0.5, 0.6, 0.75, 0.9 and 1.0 on both fixtures,
+ * 0.75 reaches every lexically reachable source with the best worst-case
+ * rank (4 and 7 of 16). It is a string because it lives inside SQL. */
+#define MEMORY_LEXICAL_LENGTH_NORM "0.75"
 
 typedef struct {
     char id[40], project_id[64], conversation_id[40];

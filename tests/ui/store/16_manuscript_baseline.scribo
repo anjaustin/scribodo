@@ -1,0 +1,57 @@
+# Manuscript-scale baseline (MEMORY-015 S4). Seed with tests/seed_manuscript.py;
+# run through tools/manuscript_baseline.sh, which samples RSS. Each phase is
+# bracketed by measure_frames so its FRAME_METRICS line reports the phase's
+# wall time (sample_seconds) and its worst interframe stall (max).
+wait 5
+dialog "$DIR/manuscript"
+# Phase 1: first open of a legacy whole-manuscript project moves it into the store.
+measure_frames start
+click_element WelcomeOpen
+expect status "now kept in the project store"
+measure_frames stop
+expect explorer_has "Manuscript chat"
+expect files "$DIR/manuscript/.scribodo" "legacy-" 1
+# Phase 2: open the long chat; the window is bounded regardless of archive size.
+measure_frames start
+click_element ChatItem0
+wait_history
+measure_frames stop
+expect chat_count 64
+expect chat_cache_max 67108864
+# Phase 3: page back through history five times and return to the latest.
+measure_frames start
+click_element ChatOlder
+wait_history
+click_element ChatOlder
+wait_history
+click_element ChatOlder
+wait_history
+click_element ChatOlder
+wait_history
+click_element ChatOlder
+wait_history
+click_element ChatLatest
+wait_history
+measure_frames stop
+expect chat_count 64
+expect chat_cache_max 67108864
+# Phase 4: open a chapter, edit, save, and see the revision recorded.
+measure_frames start
+click_element DocItem0
+key DOWN cmd
+type " Baseline edit."
+key S cmd
+expect element_w RevItem0 10 2000
+measure_frames stop
+expect dirty no
+# Phase 5: send a message with the fake model on the long chat.
+measure_frames start
+click_element ChatItem0
+wait_history
+click_element ChatInput
+type "A baseline question about the amber key."
+key ENTER
+wait_chat
+measure_frames stop
+expect chat_last_not "A baseline question"
+expect chat_cache_max 67108864

@@ -267,6 +267,62 @@ static void background_job(void)
     recall_job_destroy(&job); /* joins and frees an unpolled result */
 }
 
+
+/* Lexical candidates: InnoDB's raw MATCH score grows with how often a long
+ * paragraph repeats the query's words. The production query normalizes by
+ * length so the short turn that states the fact once ranks first. */
+static void lexical_length_normalization(void)
+{
+    /* A realistic paragraph: about 110 words, the query's words a few times
+     * each (as the fixture's filler does), not a pathological repetition. The
+     * raw MATCH score still prefers it (3 mentions of "amber" to 1); the
+     * length-normalized score does not. Repetition is not unbounded: at this
+     * exponent a 1,000-character paragraph must repeat a query word about
+     * eleven times to outrank a one-sentence statement of it (MEMORY-018). */
+    const char *paragraph =
+        "Elin lifted the amber lantern by the door while fog came in off the water and the ferry bell rang twice. "
+        "Oren had left the ledger open on the table at the quay, its pages damp, and nobody could say who had written "
+        "the last line. By the time the tide slackened, Elin and Mira had stopped speaking of the keys. The amber light "
+        "faded behind the stalls; Tarn counted the keys again out of habit. Nothing at the lighthouse explained the "
+        "amber stain on the compass Dvořák had polished, and the evening settled over the harbour without an answer.";
+    ChatMessage filler = { .role = CHAT_USER, .content = (char *)paragraph };
+    CHECK(sdb_chat_append(db, project, on, "Memory on", &filler));
+    ingest_chat(on);
+    MemoryScope scope;
+    CHECK(memory_scope_get(db, project, on, &scope) && scope.enabled);
+    MemoryCandidate candidates[MEMORY_CANDIDATES];
+    size_t n = 0;
+    CHECK(memory_lexical_candidates(db, &scope, "amber key", 16, candidates, &n) && n >= 2);
+    long fact_rank = -1, paragraph_rank = -1;
+    for (size_t i = 0; i < n; i++) {
+        MemoryUnit unit = { 0 };
+        bool found = false;
+        CHECK(memory_candidate_hydrate(db, &scope, &candidates[i], &unit, &found) && found);
+        if (unit.text && !strcmp(unit.text, fact)) fact_rank = (long)i;
+        if (unit.text && strstr(unit.text, "counted the keys again")) paragraph_rank = (long)i;
+        memory_unit_free(&unit);
+    }
+    CHECK(fact_rank >= 0 && paragraph_rank >= 0);
+    CHECK(fact_rank < paragraph_rank); /* the one-sentence fact outranks the repeating paragraph */
+    /* Case-insensitive discovery (migration 014): the index matches the fact
+     * for an upper-case query and for a lower-case name. */
+    CHECK(memory_lexical_candidates(db, &scope, "AMBER KEY", 16, candidates, &n) && n >= 1);
+    bool upper_found = false;
+    for (size_t i = 0; i < n && !upper_found; i++) {
+        MemoryUnit unit = { 0 };
+        bool found = false;
+        CHECK(memory_candidate_hydrate(db, &scope, &candidates[i], &unit, &found) && found);
+        upper_found = unit.text && !strcmp(unit.text, fact);
+        memory_unit_free(&unit);
+    }
+    CHECK(upper_found);
+    CHECK(memory_lexical_candidates(db, &scope, "elin", 16, candidates, &n) && n >= 1);
+    RecallResult r;
+    CHECK(recall_run(store, folder, "amber key", &r));
+    CHECK(find_row(&r, RECALL_CHAT_EXCERPT, "bronze keys"));
+    recall_result_free(&r);
+}
+
 int main(void)
 {
     char name[64], command[256], why[512];
@@ -295,7 +351,8 @@ int main(void)
                                    { "consent and scope", consent_and_scope },
                                    { "file project and empty queries", file_project_and_empty_queries },
                                    { "bounds", bounds },
-                                   { "background job", background_job } };
+                                   { "background job", background_job },
+                                   { "lexical length normalization", lexical_length_normalization } };
         run_tests(tests, sizeof(tests) / sizeof(tests[0]));
     }
     store_manager_destroy(store);
