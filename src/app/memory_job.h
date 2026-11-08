@@ -21,6 +21,7 @@ typedef struct {
     bool active, enabled, controls_pending;
     MemoryScope scope;
     size_t ingested_steps, indexed;
+    size_t rejected; /* units the index refused as malformed; recorded against the unit, not the backend */
     size_t document_steps, document_sources;
     bool documents_pending;
     size_t briefs_published, brief_failures, gc_rows, gc_namespaces;

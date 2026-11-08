@@ -1142,12 +1142,16 @@ static bool mv_completed(const cJSON *j)
     return mv_ok(j) && mv_string(cJSON_GetObjectItemCaseSensitive(j, "result"), "status", "completed");
 }
 
-bool memory_vectors_upsert(SemanticClient *c, const MemoryIndexLease *lease, char *why, size_t n)
+/* The unit itself, independent of any backend: shape, size, encoding, source
+ * ids and the text hash. A unit that fails here will fail every time, so the
+ * worker records it against the unit and moves on rather than counting it as
+ * a backend failure (MEMORY-021: one malformed revision id halted the index). */
+bool memory_vectors_unit_valid(const MemoryIndexLease *lease, char *why, size_t n)
 {
     if (why && n) why[0] = '\0';
-    char path[400], fp[65], hash[65];
+    char hash[65];
     size_t bytes;
-    if (!lease || !lease->scope.enabled || !mv_path(c, &lease->scope, "/points?wait=true", path) ||
+    if (!lease || !lease->scope.enabled ||
         !mv_hex(lease->unit.id, sizeof(lease->unit.id)) || !mv_hex(lease->unit.text_hash, sizeof(lease->unit.text_hash)) ||
         !mv_text(lease->unit.text, &bytes) || bytes != lease->unit.text_bytes ||
         (lease->unit.kind != MEMORY_SOURCE_CHAT && lease->unit.kind != MEMORY_SOURCE_DOCUMENT) ||
@@ -1157,6 +1161,15 @@ bool memory_vectors_upsert(SemanticClient *c, const MemoryIndexLease *lease, cha
         return mv_fail(why, n, "Invalid, oversized, or noncanonical memory unit");
     mv_sha(lease->unit.text, bytes, hash);
     if (strcmp(hash, lease->unit.text_hash)) return mv_fail(why, n, "Memory text hash mismatch");
+    return true;
+}
+
+bool memory_vectors_upsert(SemanticClient *c, const MemoryIndexLease *lease, char *why, size_t n)
+{
+    if (why && n) why[0] = '\0';
+    char path[400], fp[65];
+    if (!memory_vectors_unit_valid(lease, why, n)) return false;
+    if (!mv_path(c, &lease->scope, "/points?wait=true", path)) return mv_fail(why, n, "Invalid, oversized, or noncanonical memory unit");
     bool exists;
     if (!memory_vectors_exists(c, &lease->scope, &exists, why, n)) return false;
     if (!exists) return mv_fail(why, n, "Memory collection lost; rebuild SQL generation before creating");

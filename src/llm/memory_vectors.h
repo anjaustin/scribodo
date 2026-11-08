@@ -18,6 +18,9 @@ bool memory_vectors_fingerprint(SemanticClient *client, char out[65]);
 bool memory_vectors_exists(SemanticClient *client, const MemoryScope *scope, bool *exists, char *why, size_t whylen);
 bool memory_vectors_create(SemanticClient *client, const MemoryScope *scope, char *why, size_t whylen);
 bool memory_vectors_create_on_db(SemanticClient *client, Db *db, const MemoryScope *scope, char *why, size_t whylen);
+/* The unit alone (shape, size, encoding, source ids, text hash); no backend
+ * call. False means the unit can never be indexed as it stands. */
+bool memory_vectors_unit_valid(const MemoryIndexLease *lease, char *why, size_t whylen);
 bool memory_vectors_upsert(SemanticClient *client, const MemoryIndexLease *lease, char *why, size_t whylen);
 /* limit must be 1..MEMORY_CANDIDATES. All-or-nothing: any malformed/wrong-scope locator fails with count=0.
  * Conflicting hashes for one unit reject the whole response; identical repeats

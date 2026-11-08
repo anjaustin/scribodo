@@ -126,6 +126,9 @@ static void backend_failure(MemoryWorkerState *state, MemoryJobStatus *status, c
     snprintf(status->why, sizeof(status->why), "Partial coverage: index failure %u/3%s: %.160s",
              state->failures, state->failures >= 3 ? "; explicit rebuild to retry" : "; backing off",
              detail[0] ? detail : "backend unavailable");
+    /* The reason otherwise lives only in the status line; a run log needs it
+     * too (MEMORY-021: three early failures silently stopped indexing). */
+    fprintf(stderr, "scribodo: memory %s\n", status->why);
 }
 
 static bool same_names(const MemoryDocumentName *a, const MemoryDocumentName *b, size_t count)
@@ -384,7 +387,11 @@ static bool production_work(MemoryJob *job, const MemoryRequest *request, Db *db
             bool delivered = false;
             bool attempted = fresh_scope(job, request, db, status) &&
                 same_projection(&lease.scope, &status->scope);
-            if (attempted)
+            /* A unit that cannot be indexed as it stands is the unit's
+             * failure, recorded against it (attempts, then 'failed'), never
+             * the backend's: the rest of the outbox keeps draining. */
+            bool unit_ok = !attempted || memory_vectors_unit_valid(&lease, why, sizeof(why));
+            if (attempted && unit_ok)
                 delivered = memory_vectors_upsert(job->vectors, &lease, why, sizeof(why));
             bool acknowledged = memory_outbox_ack(db, &lease, delivered);
             if (delivered && acknowledged) {
@@ -393,7 +400,13 @@ static bool production_work(MemoryJob *job, const MemoryRequest *request, Db *db
                 reason(status, "Partial coverage: indexing in progress.");
             } else if (!attempted)
                 reason(status, "Partial coverage: scope changed or paused; index lease deferred.");
-            else if (!delivered) backend_failure(state, status, why);
+            else if (!unit_ok) {
+                status->rejected++;
+                progress = true;
+                snprintf(status->why, sizeof(status->why), "Partial coverage: unit %.16s rejected by the index: %.140s",
+                         lease.unit.id, why[0] ? why : "invalid unit");
+                fprintf(stderr, "scribodo: memory %s\n", status->why);
+            } else if (!delivered) backend_failure(state, status, why);
             else reason(status, "Partial coverage: stale/expired index acknowledgment; not counted.");
         } else reason(status, lease.maintenance ? "Partial coverage: retiring stale derived index jobs."
                                                : "Partial coverage / idle: no claimable work (not proof of completeness).");

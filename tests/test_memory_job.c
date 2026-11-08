@@ -19,7 +19,8 @@ static atomic_uint cleanups;
 static atomic_uint identity_generation = 1;
 static MemoryScope sql_scope;
 static unsigned sets, rebuilds, ingests, claims, upserts, acks, creates, exists_calls;
-static bool collection_exists, backend_ok, ack_ok, claim_work;
+static bool collection_exists, backend_ok, ack_ok, claim_work, unit_ok = true;
+static unsigned unit_checks;
 static unsigned project_gc_calls;
 static size_t project_gc_rows;
 double memory_budget_now_ms(void)
@@ -265,6 +266,14 @@ bool memory_outbox_claim(Db *db, const char *scope, const char *owner, MemoryInd
     *claimed = claim_work;
     out->scope = sql_scope;
     return true;
+}
+
+bool memory_vectors_unit_valid(const MemoryIndexLease *lease, char *why, size_t len)
+{
+    assert(lease);
+    unit_checks++;
+    if (!unit_ok && why && len) snprintf(why, len, "Invalid, oversized, or noncanonical memory unit");
+    return unit_ok;
 }
 
 bool memory_vectors_upsert(SemanticClient *client, const MemoryIndexLease *lease, char *why, size_t len)
@@ -533,6 +542,17 @@ static void test_bounded_production(void)
     assert(sets == 1 && rebuilds == 1 && creates == 1 && ingests == 2);
     assert(status.indexed == 1);
 
+    /* A malformed unit is the unit's failure: acknowledged as not delivered
+     * (the outbox backs it off and fails it after three attempts), counted
+     * as rejected, never as a backend failure, and the drain goes on. */
+    unit_ok = false;
+    unsigned upserts_before = upserts, acks_before = acks;
+    for (unsigned i = 0; i < 5; i++) assert(production_step(&job, &request, &state, &status));
+    assert(state.failures == 0 && status.rejected == 5 && upserts == upserts_before && acks == acks_before + 5);
+    assert(strstr(status.why, "rejected by the index"));
+    unit_ok = true;
+    unsigned ingests_after_rejections = ingests;
+
     backend_ok = false;
     for (unsigned i = 0; i < 3; i++) {
         state.retry = (struct timespec){0};
@@ -541,7 +561,7 @@ static void test_bounded_production(void)
     }
     unsigned before = exists_calls;
     assert(production_step(&job, &request, &state, &status));
-    assert(exists_calls == before && ingests == 6);
+    assert(exists_calls == before && ingests == ingests_after_rejections + 4);
     assert(strstr(status.why, "explicit rebuild"));
 
     /* A pending create must not trigger another generation bump on retry. */

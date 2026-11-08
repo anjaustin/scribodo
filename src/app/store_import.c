@@ -260,7 +260,18 @@ static bool import_saved_files(Db *db, const char *project_dir, const char *pid)
         if (ok && existing) {
             snprintf(id, sizeof(id), "%s", existing);
         } else if (ok) {
-            derived_id(pid, ent->d_name, "saved-file", id, sizeof(id));
+            /* The store's own id shape (r-YYYYMMDD-HHMMSS-16 hex), which the
+             * index validates, with the file's time as the stamp and a suffix
+             * derived from the project and file so a repeated import is a no-op. */
+            time_t stamp_t = saved_at > 0 ? (time_t)saved_at : time(NULL);
+            struct tm tmv;
+            localtime_r(&stamp_t, &tmv);
+            char stamp[32], key[700];
+            strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tmv);
+            snprintf(key, sizeof(key), "%s/%s/saved-file", pid, ent->d_name);
+            unsigned char dg[CC_SHA256_DIGEST_LENGTH];
+            CC_SHA256(key, (CC_LONG)strlen(key), dg);
+            snprintf(id, sizeof(id), "r-%s-%02x%02x%02x%02x%02x%02x%02x%02x", stamp, dg[0], dg[1], dg[2], dg[3], dg[4], dg[5], dg[6], dg[7]);
             char hash[17];
             sdb_content_hash16(text, hash);
             DbArg a[7] = { DB_S(id), DB_S(did), DB_S(hash), DB_S(text), DB_S("import"), DB_S(""), DB_D(saved_at) };
