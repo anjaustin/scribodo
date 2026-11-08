@@ -202,7 +202,7 @@ $(BUILD)/test_store_connections: src/app/store.c tests/test_store_connections.c 
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(INCLUDES) src/app/store.c tests/test_store_connections.c -o $@ -lpthread
 
-.PHONY: historybench historysoak
+.PHONY: historybench historysoak manuscriptbaseline
 historybench: $(MARIADB_LIB)
 	tools/history_bench.sh quick
 historysoak: $(MARIADB_LIB)
