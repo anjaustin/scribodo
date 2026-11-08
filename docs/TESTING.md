@@ -69,6 +69,27 @@ modify a database while any Scribodo process is running.
   coverage counts and row order, opens a canon row's panel, selects an excerpt's
   source message, and checks that a no-match query reports bounded coverage.
 
+### Reach measurement (MEMORY-015 S2)
+
+- `tools/memory_reach_eval.sh [--words N] [--per-category K] [--export-native FILE]`
+  builds a deterministic manuscript-scale chat archive (`tools/memory_fixture.py`:
+  shared characters, places, objects and colours everywhere, with planted items
+  in nine labelled categories), ingests and indexes it through the production
+  path with the real tokenizer and embedder, then runs the production planner
+  and admission for every task with no generation. It reports, per category,
+  how often the required source turns were among the candidates and among the
+  admitted excerpts, which discovery path reached them, how many planted
+  near-misses were admitted, and planning time against the 500 ms budget. Reach
+  is a measurement; the harness gates only its own validity (control category
+  at 1.0, both discovery paths available, ingestion complete, zero privacy
+  violations, namespaces cleaned). `--self-test` checks the fixture alone.
+- `python3 tools/memory_native_eval.py FILE` now accepts the exported episodes
+  so the model's use of admitted sources is measured on the same fixture;
+  `tools/memory_use_score.py EVENTS ANSWER_KEY` gives a coarse alias/openness
+  screen per category, presentation and layout. The frozen review rubric
+  remains the standard for any quality claim. Runs are retained under
+  `build/memory-reach/runs/` and `build/mn-*`.
+
 ### Persistence safety regressions
 
 - `test_llm: concurrent_file_readers` loads separate chats and revision indexes

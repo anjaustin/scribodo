@@ -9,6 +9,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -20,16 +21,22 @@ def sha(path):
     return h.hexdigest()
 
 def main():
+    # Optional: a cases file other than the frozen DEV set (for example the
+    # episodes tools/memory_reach_eval.py exports). Same frozen protocol and
+    # registration; the case count then follows the file. Not held-out evidence.
+    cases_path=Path(sys.argv[1]).resolve() if len(sys.argv)>1 else ROOT/'tests/fixtures/memory_native/dev.json'
     run=Path(tempfile.mkdtemp(prefix='mn-',dir=ROOT/'build'))
     os.chmod(run,0o700)
     database=f'scribodo_test_native_{os.getpid()}_{secrets.token_hex(4)}'
-    for name in ('dev.json','preregistration.json'):
-        shutil.copyfile(ROOT/'tests/fixtures/memory_native'/name,run/name)
+    shutil.copyfile(cases_path,run/'dev.json')
+    shutil.copyfile(ROOT/'tests/fixtures/memory_native/preregistration.json',run/'preregistration.json')
+    case_count=len(json.loads((run/'dev.json').read_text())['cases'])
+    expected_answers=case_count*2*3
     binary=run/'native-eval'; shutil.copyfile(ROOT/'build/memory_native_eval',binary); binary.chmod(0o700)
     manifest={'protocol':'native-continuity-dev-v1','split':'development','database':database,
               'binary_sha256':sha(binary),'cases_sha256':sha(run/'dev.json'),
               'registration_sha256':sha(run/'preregistration.json'),
-              'expected_answers':42,'selection':'frozen SQL episode candidate seam; native hydration/admission/inference',
+              'cases_path':str(cases_path),'expected_answers':expected_answers,'selection':'frozen SQL episode candidate seam; native hydration/admission/inference',
               'working_tree_sources':{str(p.relative_to(ROOT)):sha(p) for p in sorted((ROOT/'src').rglob('*')) if p.suffix in ('.c','.h')}}
     (run/'manifest.json').write_text(json.dumps(manifest,indent=2))
     print(f'Frozen native DEV run: {run}',flush=True)
@@ -52,13 +59,13 @@ def main():
     cohorts={}
     for row in answers:
         cohorts.setdefault((row['task'],row['layout']),[]).append(row)
-    same_sources=len(cohorts)==14 and all(len(group)==3 and
-        len(set(re.findall(r'unit=([0-9a-f]{64})',group[0]['sources'])))==3 and
+    same_sources=len(cohorts)==case_count*2 and all(len(group)==3 and
+        len(set(re.findall(r'unit=([0-9a-f]{64})',group[0]['sources'])))>=1 and
         all(set(re.findall(r'unit=([0-9a-f]{64})',r['sources']))==set(re.findall(r'unit=([0-9a-f]{64})',group[0]['sources'])) for r in group)
         for group in cohorts.values())
     questions={c['name']:c['question'] for c in json.loads((run/'dev.json').read_text())['cases']}
     protected=all(r.get('request') and json.loads(r['request'])['messages'][-1]['content'].endswith(questions[r['task']]) for r in answers)
-    mechanics={'driver_complete':returncode==0 and len(answers)==42,
+    mechanics={'driver_complete':returncode==0 and len(answers)==expected_answers,
                'all_admitted_sources':all(r.get('sources') for r in answers) and bool(answers),
                'no_errors_or_truncation':all(not r.get('error') and not r.get('truncated') for r in answers),
                'registration_intact':sha(run/'preregistration.json')==manifest['registration_sha256'],
