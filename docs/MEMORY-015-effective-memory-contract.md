@@ -122,7 +122,7 @@ canon record reads, committed-canon ranking and the existing admission path.
 Gate: MEMORY-014 §8.1, every axis. False-authority incidents on this surface:
 zero by construction.
 
-**S2 — Realistic fixture and the two-metric harness.** A reproducible
+**S2 — Realistic fixture and the two-metric harness.** *Implemented 2026-11-08; record and first measurements in [MEMORY-017](MEMORY-017-reach-harness.md).* A reproducible
 manuscript-scale project with a long stored chat, planted stated facts, implied
 decisions, revisions that supersede facts, retracted canon and protected
 ambiguities. The harness measures reach (does the planner admit the unit that
