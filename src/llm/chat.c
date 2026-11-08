@@ -17,6 +17,7 @@
 #include "llm/llm_text.h"
 #include "llm/context_planner.h"
 #include "llm/memory_tokens.h"
+#include "llm/canon_reference.h"
 #include "app/store.h"
 #include "app/memory_documents.h"
 #include "llm/generative_gate.h"
@@ -89,6 +90,7 @@ struct ChatSession {
     MemoryDocumentCache *document_cache;
     bool memory_briefs;
     ChatMemoryPresentation memory_presentation;
+    bool canon_reference; /* MEMORY-014 P1 experiment */
     MemoryBudget *prepare_budget; /* worker-owned, address-stable until preparation ends */
     ChatMessageDone on_done;
     void *on_done_ctx;
@@ -420,6 +422,13 @@ bool chat_memory_set_presentation(ChatSession *s, ChatMemoryPresentation present
 {
     if (!s || chat_busy(s) || presentation < CHAT_MEMORY_LEGACY || presentation > CHAT_MEMORY_EPISODE) return false;
     s->memory_presentation = presentation;
+    return true;
+}
+
+bool chat_set_canon_reference(ChatSession *s, bool enabled)
+{
+    if (!s || chat_busy(s)) return false;
+    s->canon_reference = enabled;
     return true;
 }
 
@@ -1129,6 +1138,25 @@ static bool build_in_worker(ChatSession *s)
         } else snprintf(memory_notice, sizeof(memory_notice), "%s",
             available && plan.readiness == MEMORY_DISABLED ? "Local memory disabled for this conversation; recent context only"
             : "Local memory warming, partial or unavailable: no older excerpts admitted; recent context only");
+        /* Canon-aware chat (experiment): the author's matching committed canon
+         * as its own reference class, placed before the evidence. The whole
+         * request is recounted; if it does not fit, the block is dropped and
+         * the author's request is never clipped. */
+        if (req && s->canon_reference && !atomic_load(&s->cancel)) {
+            size_t canon_count = 0;
+            char *block = canon_reference_build(s->memory_store, s->memory_project, query, CANON_REFERENCE_ENTRIES,
+                                                CANON_REFERENCE_BYTES, &canon_count);
+            char *with_canon = block ? canon_reference_apply(block, req) : NULL;
+            long room = (long)slot_ctx - MAX_REPLY_TOKENS - 256;
+            long tokens = with_canon ? memory_request_tokens(with_canon, &tokenizer) : -1;
+            if (with_canon && tokens >= 0 && tokens <= room) {
+                free(req);
+                req = with_canon;
+                size_t used = strnlen(memory_notice, sizeof(memory_notice));
+                snprintf(memory_notice + used, sizeof(memory_notice) - used, " Canon: %zu committed entries supplied as exact reference.", canon_count);
+            } else free(with_canon);
+            free(block);
+        }
         memory_plan_free(&plan);
         semantic_client_destroy(bounded_vectors);
         if (budget_started) memory_budget_end(&budget);

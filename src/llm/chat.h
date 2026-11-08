@@ -102,6 +102,10 @@ uint64_t chat_memory_attachment_version(ChatSession *s);
 bool chat_set_generative_gate(ChatSession *s, struct GenerativeGate *gate);
 bool chat_memory_set_document_cache(ChatSession *s, struct MemoryDocumentCache *cache);
 bool chat_memory_set_briefs_enabled(ChatSession *s, bool enabled);
+/* Experimental canon-aware chat (MEMORY-014 P1): supply the author's matching
+ * committed canon as an exact, separate reference class. Idle-only; never
+ * grants memory consent or scope; never clips the author's request. */
+bool chat_set_canon_reference(ChatSession *s, bool enabled);
 typedef enum { CHAT_MEMORY_LEGACY, CHAT_MEMORY_COMPACT, CHAT_MEMORY_EPISODE } ChatMemoryPresentation;
 /* Idle-only experimental representation; never grants memory consent/scope. */
 bool chat_memory_set_presentation(ChatSession *s, ChatMemoryPresentation presentation);

@@ -1,0 +1,29 @@
+{
+  "protocol": "native-canon-dev-v1",
+  "split": "development; not held-out evidence",
+  "frozen_before_first_model_run": true,
+  "purpose": "MEMORY-014 P1: does an exact, labelled block of the author's committed canon, supplied as a separate reference class, remove the authority and protected-ambiguity failures the production presentation shows, without over-anchoring or invented authority when canon is silent?",
+  "arms": [
+    "canon_off",
+    "canon_on"
+  ],
+  "presentation": "legacy (production) only; episode packing is not part of this experiment",
+  "layouts": [
+    "alternating",
+    "consecutive_user"
+  ],
+  "canon_block": "host-built from committed entries whose current wording shares a term with the question; best match first then newest; at most 8 entries and 4096 bytes; neutralized; placed before retrieved evidence in the last user message; dropped whole if the request would not fit; the author's request is never clipped",
+  "per_case_canon": "each case commits its own canon entries before its answers and retracts them afterwards, so the project's committed set is exactly that case's; absence cases commit nothing",
+  "same_everything_else": "same model, sampling, 8192 context, 1024 reply, 500 ms memory budget, same admitted original excerpts in both arms",
+  "measures": [
+    "rubric axes of tests/fixtures/memory_native/review-rubric.json",
+    "over_anchoring: the answer discusses the canon block itself instead of the question",
+    "invented_authority_when_silent: an absence case asserts a decision"
+  ],
+  "hypothesis": "canon_on removes the protected_ambiguity and rejected_proposal failures in the alternating layout and does not rescue the consecutive layout (that failure is presentation, not authority)",
+  "stop": "If canon_on does not eliminate the authority and protected-ambiguity failures where canon states the decision, or introduces over-anchoring or invented authority on absence cases, P1 does not advance and this fixture is not retuned. A pass is development evidence only, not held-out acceptance, not default-on.",
+  "review": {
+    "automatic_scoring": false,
+    "human_or_assistant_review_required": true
+  }
+}

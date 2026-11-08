@@ -302,6 +302,36 @@ def export_native(fixture, path):
     return len(cases)
 
 
+def canon_for(task):
+    """The author's committed canon that states what the episode established, by category."""
+    h = [t["content"] for t in task["history"]]
+    c = task["category"]
+    if c == "rejected_proposal":
+        return [h[-1].split("Drop that; ")[-1].rstrip(".") + "; " + h[0].split(" should be ")[-1].rstrip(".") + " was rejected by the author."]
+    if c == "protected_ambiguity":
+        return ["Deliberately unresolved in this draft: whether " + h[0].split("Keep it open whether ")[-1].split(". Do not")[0] + "."]
+    if c == "superseded_fact":
+        return [h[-1].split("earlier note: ")[-1].split(", not ")[0] + "."]
+    if c == "implied_decision":
+        return [h[-1].split("Yes. ")[-1].split(". That is settled")[0] + "."]
+    if c in ("stated_fact", "control", "paraphrase", "multilingual"):
+        return [h[0].split("; that is established")[0].rstrip(".") + "."]
+    return []  # absence and document facts: canon silent
+
+
+def export_canon(fixture, path):
+    """Episodes for the canon-aware DEV experiment: history, question, expected and the
+    canon the author committed about it (empty where canon is silent on purpose)."""
+    cases = []
+    for task in fixture["tasks"]:
+        if task["category"] == "document_fact":
+            continue
+        cases.append({"name": task["id"] + "_" + task["category"], "history": task["history"], "canon": canon_for(task),
+                      "question": task["question"], "expected": task["expected"]})
+    Path(path).write_text(json.dumps({"protocol": "native-canon-dev-v1", "cases": cases}, ensure_ascii=False, indent=2) + "\n")
+    return len(cases)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--seed", type=int, default=20261107)
@@ -309,12 +339,15 @@ def main():
     parser.add_argument("--per-category", type=int, default=3)
     parser.add_argument("--out", type=Path)
     parser.add_argument("--export-native", type=Path)
+    parser.add_argument("--export-canon", type=Path)
     args = parser.parse_args()
     fixture = build(args.seed, args.words, args.per_category)
     if args.out:
         args.out.write_text(json.dumps(fixture, ensure_ascii=False) + "\n")
     if args.export_native:
         print(f"native cases: {export_native(fixture, args.export_native)}")
+    if args.export_canon:
+        print(f"canon cases: {export_canon(fixture, args.export_canon)}")
     by = {}
     for task in fixture["tasks"]:
         by[task["category"]] = by.get(task["category"], 0) + 1

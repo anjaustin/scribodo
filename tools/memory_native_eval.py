@@ -30,8 +30,10 @@ def main():
     database=f'scribodo_test_native_{os.getpid()}_{secrets.token_hex(4)}'
     shutil.copyfile(cases_path,run/'dev.json')
     shutil.copyfile(ROOT/'tests/fixtures/memory_native/preregistration.json',run/'preregistration.json')
-    case_count=len(json.loads((run/'dev.json').read_text())['cases'])
-    expected_answers=case_count*2*3
+    cases_doc=json.loads((run/'dev.json').read_text())
+    case_count=len(cases_doc['cases'])
+    arms_per_cohort=2 if cases_doc.get('protocol') in ('native-operation-dev-v1','native-canon-dev-v1') else 3
+    expected_answers=case_count*2*arms_per_cohort
     binary=run/'native-eval'; shutil.copyfile(ROOT/'build/memory_native_eval',binary); binary.chmod(0o700)
     manifest={'protocol':'native-continuity-dev-v1','split':'development','database':database,
               'binary_sha256':sha(binary),'cases_sha256':sha(run/'dev.json'),
@@ -59,7 +61,7 @@ def main():
     cohorts={}
     for row in answers:
         cohorts.setdefault((row['task'],row['layout']),[]).append(row)
-    same_sources=len(cohorts)==case_count*2 and all(len(group)==3 and
+    same_sources=len(cohorts)==case_count*2 and all(len(group)==arms_per_cohort and
         len(set(re.findall(r'unit=([0-9a-f]{64})',group[0]['sources'])))>=1 and
         all(set(re.findall(r'unit=([0-9a-f]{64})',r['sources']))==set(re.findall(r'unit=([0-9a-f]{64})',group[0]['sources'])) for r in group)
         for group in cohorts.values())

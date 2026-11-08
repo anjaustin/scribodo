@@ -6,6 +6,7 @@
 #include "../src/llm/chat.c"
 #undef memory_plan_build_with_documents
 #include "app/store_backends.h"
+#include "app/records.h"
 #include <sys/stat.h>
 
 typedef struct { Db *db; MemoryTokenCount count; void *counter; } NativeRecall;
@@ -70,7 +71,8 @@ static bool native_workload(const cJSON *input, const char *root, const char *da
 {
     const char *protocol=native_string(input,"protocol");
     bool operations=!strcmp(protocol,"native-operation-dev-v1");
-    NATIVE_NEED(!protocol[0] || operations);
+    bool canon=!strcmp(protocol,"native-canon-dev-v1");
+    NATIVE_NEED(!protocol[0] || operations || canon);
     const char *production_persona=k_persona;
     LlmServerConfig config; llm_server_default_config(&config,NULL);
     snprintf(config.run_dir,sizeof(config.run_dir),"%s",root);
@@ -93,7 +95,7 @@ static bool native_workload(const cJSON *input, const char *root, const char *da
     ok=ok && memory_tokenizer_fingerprint(&tokenizer,fingerprint);
     cJSON *metadata=cJSON_CreateObject();
     cJSON_AddStringToObject(metadata,"event","runtime");
-    cJSON_AddStringToObject(metadata,"protocol",operations ? protocol : "native-continuity-dev-v1");
+    cJSON_AddStringToObject(metadata,"protocol",operations || canon ? protocol : "native-continuity-dev-v1");
     cJSON_AddStringToObject(metadata,"model_sha256",config.sha256);
     cJSON_AddNumberToObject(metadata,"slot_context",llm_server_slot_ctx(server));
     cJSON_AddStringToObject(metadata,"selection","frozen eligible SQL episode units; no Qdrant selection claim");
@@ -104,6 +106,19 @@ static bool native_workload(const cJSON *input, const char *root, const char *da
         const cJSON *personas=cJSON_GetObjectItemCaseSensitive(input,"personas");
         const char *specialized=native_string(personas,operation);
         if (operations && ((strcmp(operation,"recall") && strcmp(operation,"draft")) || !specialized[0])) { ok=false; break; }
+        /* Canon protocol: exactly this case's canon is committed for its answers. */
+        char canon_ids[8][40]; size_t canon_count=0;
+        if (canon) {
+            const cJSON *entry;
+            cJSON_ArrayForEach(entry,cJSON_GetObjectItemCaseSensitive(scenario,"canon")) {
+                if (!cJSON_IsString(entry) || canon_count>=8) { ok=false; break; }
+                int ver=0;
+                records_new_id(REC_CANON,canon_ids[canon_count],sizeof(canon_ids[canon_count]));
+                ok=ok && records_append(manager,folder,REC_CANON,canon_ids[canon_count],"committed",entry->valuestring,NULL,0,&ver);
+                canon_count++;
+                usleep(1100000); /* distinct ids and timestamps */
+            }
+        }
         for (unsigned layout=0; ok && layout<2; layout++) {
             char conversation[40]; snprintf(conversation,sizeof(conversation),"native-%u",++serial);
             const cJSON *history=cJSON_GetObjectItemCaseSensitive(scenario,"history");
@@ -126,7 +141,7 @@ static bool native_workload(const cJSON *input, const char *root, const char *da
                 ok=memory_ingest_step(db,scope.id,"native-gate",memory_source_tokens,&tokenizer,fingerprint,&progress,why,sizeof(why));
                 if (!progress) break;
             }
-            for (unsigned mode=0; ok && mode<(operations ? 2u : 3u); mode++) {
+            for (unsigned mode=0; ok && mode<(operations || canon ? 2u : 3u); mode++) {
                 /* Fixture-only explicit operation. Never an automatic router or
                  * production API: all previous workers finish before changing
                  * this diagnostic translation unit's persona pointer. */
@@ -138,7 +153,8 @@ static bool native_workload(const cJSON *input, const char *root, const char *da
                 ok=ok && chat && chat_load_messages(chat,messages,count);
                 chat_store_free_messages(messages,count);
                 ok=ok && chat_memory_configure(chat,manager,vectors,folder,conversation,true) &&
-                    chat_memory_set_presentation(chat,operations ? CHAT_MEMORY_EPISODE : (ChatMemoryPresentation)mode);
+                    chat_memory_set_presentation(chat,operations ? CHAT_MEMORY_EPISODE : canon ? CHAT_MEMORY_LEGACY : (ChatMemoryPresentation)mode) &&
+                    (!canon || chat_set_canon_reference(chat,mode==1));
                 ChatSampling sampling={.max_reply=1024,.temperature=0,.edit_temperature=0,.top_p=0.95,.top_k=50,.min_p=0.05,.repeat_penalty=1.05};
                 if (chat) chat_set_sampling(chat,&sampling);
                 double start=memory_budget_now_ms(),first=-1;
@@ -155,7 +171,11 @@ static bool native_workload(const cJSON *input, const char *root, const char *da
                 cJSON_AddStringToObject(event,"event","answer");
                 cJSON_AddStringToObject(event,"task",native_string(scenario,"name"));
                 cJSON_AddStringToObject(event,"layout",layout ? "consecutive_user" : "alternating");
-                cJSON_AddStringToObject(event,"presentation",operations ? "episode" : mode==0 ? "legacy" : mode==1 ? "compact" : "episode");
+                cJSON_AddStringToObject(event,"presentation",operations ? "episode" : canon ? "legacy" : mode==0 ? "legacy" : mode==1 ? "compact" : "episode");
+                if (canon) {
+                    cJSON_AddStringToObject(event,"arm",mode==1 ? "canon_on" : "canon_off");
+                    cJSON_AddNumberToObject(event,"canon_entries",(double)canon_count);
+                }
                 if (operations) {
                     cJSON_AddStringToObject(event,"operation",operation);
                     cJSON_AddStringToObject(event,"arm",arm ? "specialized" : "generalist");
@@ -179,6 +199,13 @@ static bool native_workload(const cJSON *input, const char *root, const char *da
                     chat_unlock(chat);
                     native_emit(events,event); chat_destroy(chat);
                 } else native_emit(events,event);
+            }
+        }
+        if (canon) {
+            for (size_t i=0; i<canon_count; i++) {
+                int ver=0;
+                const char *text=cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(scenario,"canon"),(int)i)->valuestring;
+                ok=records_append(manager,folder,REC_CANON,canon_ids[i],"retracted",text,NULL,0,&ver) && ok;
             }
         }
         if (!ok) break;

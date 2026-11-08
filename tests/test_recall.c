@@ -8,6 +8,7 @@
 #include "app/recall.h"
 #include "app/recall_job.h"
 #include "app/store_backends.h"
+#include "llm/canon_reference.h"
 #include "llm/memory_tokens.h"
 #include "test_util.h"
 #include <stdlib.h>
@@ -331,6 +332,32 @@ static void lexical_length_normalization(void)
     recall_result_free(&r);
 }
 
+
+/* Canon-aware chat block (MEMORY-014 P1): committed entries only, best match
+ * first, exact text, bounded, placed before the author's request. */
+static void canon_reference_block(void)
+{
+    size_t count = 0;
+    char *block = canon_reference_build(store, folder, "amber key", CANON_REFERENCE_ENTRIES, CANON_REFERENCE_BYTES, &count);
+    CHECK(block && count >= 2 && strstr(block, "AUTHOR-COMMITTED CANON") && strstr(block, "END OF CANON"));
+    CHECK(block && strstr(block, canon_amber) && !strstr(block, "cobalt heron")); /* retracted canon never appears */
+    CHECK(block && strstr(block, "[C1 | v1 | committed] The Asterholt observatory key is amber.")); /* two terms outrank one */
+    CHECK(block && strlen(block) <= CANON_REFERENCE_BYTES);
+    const char *request = "{\"messages\":[{\"role\":\"system\",\"content\":\"persona\"},{\"role\":\"user\",\"content\":\"What colour is the key?\"}],\"max_tokens\":8}";
+    char *applied = block ? canon_reference_apply(block, request) : NULL;
+    CHECK(applied && strstr(applied, "AUTHOR-COMMITTED CANON") && strstr(applied, "What colour is the key?"));
+    CHECK(applied && strstr(applied, "\"max_tokens\":8"));
+    CHECK(!canon_reference_apply(block, "{\"messages\":[{\"role\":\"assistant\",\"content\":\"x\"}]}"));
+    free(applied); free(block);
+    CHECK(!canon_reference_build(store, folder, "zzqx", CANON_REFERENCE_ENTRIES, CANON_REFERENCE_BYTES, &count) && count == 0);
+    /* Only the retracted entry mentions the cobalt heron: a retracted assertion is never supplied as canon. */
+    CHECK(!canon_reference_build(store, folder, "cobalt heron", CANON_REFERENCE_ENTRIES, CANON_REFERENCE_BYTES, &count) && count == 0);
+    CHECK(!canon_reference_build(store, folder, "a", CANON_REFERENCE_ENTRIES, CANON_REFERENCE_BYTES, &count)); /* no term */
+    block = canon_reference_build(store, folder, "amber", 1, CANON_REFERENCE_BYTES, &count);
+    CHECK(block && count == 1 && !strstr(block, "[C2 "));
+    free(block);
+}
+
 int main(void)
 {
     char name[64], command[256], why[512];
@@ -360,7 +387,8 @@ int main(void)
                                    { "file project and empty queries", file_project_and_empty_queries },
                                    { "bounds", bounds },
                                    { "background job", background_job },
-                                   { "lexical length normalization", lexical_length_normalization } };
+                                   { "lexical length normalization", lexical_length_normalization },
+                                   { "canon reference block", canon_reference_block } };
         run_tests(tests, sizeof(tests) / sizeof(tests[0]));
     }
     store_manager_destroy(store);

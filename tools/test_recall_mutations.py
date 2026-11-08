@@ -18,7 +18,7 @@ FRAGMENT = """
 RECALL_MUTANT_OBJS := $(filter-out $(BUILD)/$(ORIGINAL_OBJ),$(CORE_OBJS) $(LLM_OBJS)) $(BUILD)/tests/test_recall.o
 .PHONY: recall-mutant
 recall-mutant: $(RECALL_MUTANT_OBJS)
-\t$(CC) $(CFLAGS) $(INCLUDES) -Isrc/app $(MUTANT) $(RECALL_MUTANT_OBJS) -o $(OUT) $(MARIADB_LIBS) -lpthread
+\t$(CC) $(CFLAGS) $(INCLUDES) -Isrc/app -Isrc/llm $(MUTANT) $(RECALL_MUTANT_OBJS) -o $(OUT) $(MARIADB_LIBS) -lpthread
 """
 
 
@@ -40,6 +40,7 @@ def main():
         ("lexical_length_norm", ('" / POW(CHAR_LENGTH(u.text)," MEMORY_LEXICAL_LENGTH_NORM ") AS score"', '" AS score"'), "src/app/memory_store.c"),
         ("lexical_case_fold", ("COLLATE utf8mb4_unicode_ci NOT NULL", "COLLATE utf8mb4_bin NOT NULL"), "src/app/db.c"),
         ("short_token_fallback", ("#define RECALL_FULLTEXT_MIN_TOKEN 3u", "#define RECALL_FULLTEXT_MIN_TOKEN 0u")),
+        ("canon_committed_only", ('if (strcmp(v->status, "committed") != 0 || !v->content) continue;', "if (!v->content) continue;"), "src/llm/canon_reference.c"),
     ]
     for case in cases:
         name, replacement = case[0], case[1]
