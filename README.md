@@ -132,10 +132,10 @@ make run    # launch with assets/sample/sample.md
 ./build/scribodo path/to/chapter.md
 ```
 
-For a smaller first checkout, fetch only the pinned revisions with
+For a smaller first checkout, use shallow repository and submodule histories:
 `git clone --recurse-submodules --shallow-submodules --depth 1 https://github.com/anjaustin/scribodo.git`.
-The full dependency history is not needed to build: `.git/modules` is about
-940 MB, mostly raylib and llama.cpp.
+Full dependency history is not needed to build; see the
+[measured clone comparison](docs/REDTEAM-017-repository-audit.md#clean-shallow-checkout).
 
 On first launch the app checks the model file against its pinned hash (once), then starts `llama-server` in the background. The toolbar shows the model's status, which turns green when it's ready. The server listens only on a private Unix socket, uses a fresh API key each launch, and stops when the app quits.
 

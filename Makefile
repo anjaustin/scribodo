@@ -92,7 +92,7 @@ TESTS += $(BUILD)/test_memory_document_cache $(BUILD)/test_memory_budget $(BUILD
 TESTS += $(BUILD)/test_http_deadlines $(BUILD)/test_db_deadlines $(BUILD)/test_memory_brief_model
 TESTS += $(BUILD)/test_http_poll_errno
 
-.PHONY: all run test analyze uitest uitest-real sanitize tsan cstest dbtest uitest-db backuptest remotetest offlinetest dependency-report clean distclean llama model llmtest
+.PHONY: all run test analyze analyzetest uitest uitest-real sanitize tsan cstest dbtest uitest-db backuptest remotetest offlinetest dependency-report clean distclean llama model llmtest
 
 all: $(APP)
 
@@ -443,10 +443,13 @@ uitest-real: $(APP) $(LLAMA_BIN)
 	    $(WATCHDOG) 600 ui-$$name ./$(APP) 2>build/ui/$$name/stderr.log || fail=1; echo; \
 	done; exit $$fail
 
-# Static analysis over every first-party source file (the vendored amalgamations
-# are excluded). Any diagnostic fails the target; the log is kept under build/.
+# Static analysis over first-party C/Objective-C translation units (the vendored
+# amalgamations are excluded). Any diagnostic fails; the log is kept under build/.
 ANALYZE      ?= clang
-ANALYZE_SRCS := $(shell find src -name '*.c' ! -name 'vendor_impl.c' ! -name 'json_vendor.c')
+ANALYZE_SRCS := $(shell find src -name '*.[cm]' ! -name 'vendor_impl.c' ! -name 'json_vendor.c')
+analyzetest: $(MARIADB_LIB)
+	$(WATCHDOG) $(TEST_TIMEOUT) analyzetest python3 tests/test_analyze.py
+
 analyze: $(MARIADB_LIB)
 	@mkdir -p $(BUILD)
 	@$(ANALYZE) --analyze $(CSTD) $(OPT) -g $(INCLUDES) \

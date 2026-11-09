@@ -3,6 +3,7 @@
 #include "test_util.h"
 #include "test_state_fixture.h"
 #include "app/chat_store.h"
+#include "app/observer_store_internal.h"
 #include "llm/chat_history.h"
 #include "app/records.h"
 #include "app/revisions.h"
@@ -292,6 +293,10 @@ static void chat_unterminated_list_faults(void)
         fault_alloc_after(-1);
         CHECK(chat_store_list_checked(store, project, &chats, &n) && n == 1);
         long count = fault_alloc_count();
+        if (chats && n == 1) {
+            CHECK(!strcmp(chats[0].title, c == 0 ? "No final newline" : "Observer"));
+            CHECK(chats[0].observer_ignore == (c == 1));
+        }
         free(chats);
         for (long i = 0; i < count * 2; i++) {
             allocation_case(i, count);
@@ -301,6 +306,44 @@ static void chat_unterminated_list_faults(void)
             free(chats);
         }
     }
+}
+
+static void observer_rules_boundaries(void)
+{
+    const struct {
+        const char *text;
+        size_t len;
+        bool valid;
+    } cases[] = {
+        { "", 0, true },
+        { "0123456789abcdef", 16, true },
+        { "ABCDEF0123456789", 16, true },
+        { "0", 1, false },
+        { "0123456789abcde", 15, false },
+        { "0123456789abcdef0", 17, false },
+        { "0123456789abcdef\n", 17, false },
+        { "0123456789abcdeg", 16, false },
+        { "01234567\0abcdef0", 16, false }
+    };
+    char path[900], out[17];
+    snprintf(path, sizeof(path), "%s/.scribodo/observer-rules", project);
+    CHECK(access(path, F_OK) != 0);
+    CHECK(observer_rules_import_files(project, out) && !out[0]);
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        FILE *f = fopen(path, "wb");
+        CHECK(f != NULL);
+        if (!f) return;
+        CHECK(fwrite(cases[i].text, 1, cases[i].len, f) == cases[i].len);
+        CHECK(fclose(f) == 0);
+        memset(out, 'x', sizeof(out));
+        CHECK(observer_rules_import_files(project, out) == cases[i].valid);
+        CHECK(out[16] == '\0' || cases[i].len < 16);
+        if (cases[i].valid) CHECK(!strcmp(out, cases[i].text));
+    }
+    CHECK(unlink(path) == 0);
+    CHECK(mkdir(path, 0755) == 0);
+    CHECK(!observer_rules_import_files(project, out));
+    CHECK(rmdir(path) == 0);
 }
 
 int main(void)
@@ -324,7 +367,8 @@ int main(void)
                         { "chat_send_allocations", chat_send_faults },
                         { "window_shrink_allocations", window_shrink_faults },
                           { "chat_allocations", chat_faults }, { "writer_allocations", writer_faults },
-                          { "chat_unterminated_list_allocations", chat_unterminated_list_faults } };
+                          { "chat_unterminated_list_allocations", chat_unterminated_list_faults },
+                          { "observer_rules_boundaries", observer_rules_boundaries } };
     int rc = run_tests(tests, sizeof(tests) / sizeof(tests[0]));
     test_state_fixture_destroy(root, store);
     return rc;

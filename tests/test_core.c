@@ -410,6 +410,15 @@ static void test_diff(void)
 
     CHECK(diff_words("", "new text", 0, &d) && d.count == 1 && d.ops[0].kind == DIFF_INSERT);
     diff_free(&d);
+    CHECK(diff_words("", "", 0, &d));
+    CHECK(d.count == 0 && d.inserted_bytes == 0 && d.deleted_bytes == 0);
+    CHECK(diff_roundtrip("", "", &d));
+    diff_free(&d);
+    CHECK(diff_words("old text", "", 0, &d));
+    CHECK(d.count == 1 && d.ops[0].kind == DIFF_DELETE);
+    CHECK(d.inserted_bytes == 0 && d.deleted_bytes == strlen("old text"));
+    CHECK(diff_roundtrip("old text", "", &d));
+    diff_free(&d);
     CHECK(diff_words("same", "same", 0, &d) && d.count == 1 && d.ops[0].kind == DIFF_EQUAL);
     diff_free(&d);
     CHECK(diff_words("Zoë’s letter", "Zoë’s old letter", 0, &d) && diff_roundtrip("Zoë’s letter", "Zoë’s old letter", &d));

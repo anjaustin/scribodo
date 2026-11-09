@@ -17,6 +17,15 @@ development Mac, not tracked files. Nothing cited is deleted; it is archived.
 
 | `scribodo-evidence-2026-11-08d.tar.gz` | The red-team of the real-manuscript changes (REDTEAM-016): `build/manuscripts/pride-and-prejudice/runs/redteam016` (the explorer-scroll probe against the baseline and the fixed app, the baseline import test run) and the suite logs `build/make-{test,uitest,dbtest,tsan}-redteam016.log` | same folder, `SHA256SUMS` and `manifest-2026-11-08d.txt` |
 
+The 2026-11-09 repository audit and follow-up red-team evidence is in
+`scribodo-evidence-2026-11-09-audit.tar.gz` in the same folder, with
+`manifest-2026-11-09-audit.txt` and an entry in `SHA256SUMS`. It contains 108 files:
+the `build/audit-*.log`/`.json` and `build/redteam017-*.log`/`.json` run records,
+the generated mutation sources/logs/results under `build/audit-mutations/`, and
+the clean shallow checkout's Connector/C and analyzer logs. It excludes compiled
+binaries and the shallow checkout itself. Archive SHA-256:
+`796386b993c464e353a5a650c99f3c6f8e918d5b2d3a97e7622c075c810715f3`.
+
 To consult a cited path, extract the archive into an empty folder and read the
 path relative to it. Stale `llama.sock` files inside a few run directories were
 not archivable and are not evidence.

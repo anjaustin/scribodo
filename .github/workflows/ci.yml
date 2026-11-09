@@ -55,7 +55,7 @@ jobs:
       - name: Analyze
         env:
           ARCH_FLAGS: ""
-        run: make analyze
+        run: make analyzetest analyze
 
   sanitize:
     name: AddressSanitizer and UndefinedBehaviorSanitizer

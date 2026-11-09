@@ -2,6 +2,8 @@
 
 **Date:** 2026-11-09
 **Baseline:** `af57a32` (`REDTEAM-016: red-team the real-manuscript changes and remediate`)
+**Committed as:** `6d1a3b3`; subsequent adversarial review is recorded in
+[REDTEAM-017](REDTEAM-017-repository-audit.md).
 **Scope:** build hygiene, every test suite including the Docker-backed paths,
 static analysis, dependency pins and licenses, and repository/remote hygiene.
 
@@ -22,7 +24,7 @@ percentages are rounded to one decimal place.
 | 7 | Additional analyzer findings in tokenization and recall ranking. The token warning alone does not establish a reachable uninitialized read. | Analyzer warning for `x->hash`; dead store in `recall.c`. | Token allocation is zero-initialized; dead assignment removed. | Both files re-analyze clean. |
 | 8 | Three remote-tracking branches were stale. | `fix/persistence-audit-redteam` `bb21814`, `fix/legacy-fork-redteam-final` `a2ae1a7`, `harden-trusted-acceptance` `8f4427b`. | Verified every file each branch touches is byte-identical at its squash commit in `main`. Deleted the first two remote branches; the third was already absent remotely and its tracking ref was pruned. | 31/31, 25/25 and 8/8 files identical at `938e51b`, `b40dcb0` and `8830315`; zero unexplained files. `git ls-remote --heads` confirms all three absent. |
 
-## Test matrix (final tree)
+## Test matrix (AUDIT-001 tree, before REDTEAM-017)
 
 | Command | Result |
 |---|---|
@@ -81,4 +83,5 @@ Other final checks:
 - `build/audit-fsck-final.log`
 
 The CI analyzer job was added but has not been executed on GitHub Actions in
-this session; the matching local target passed. Changes are uncommitted.
+this audit session; the matching local target passed. These measurements were
+recorded before committing the audit as `6d1a3b3`.
