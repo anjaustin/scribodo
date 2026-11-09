@@ -1,0 +1,39 @@
+# Diagnostic preparation probe, NOT a faithful-answer or complete-index gate.
+# Same real book, chat and question as 18_manuscript_questions. Indexing may
+# still be warming. Stop generation after the preparation notice is published.
+wait 5
+dialog "$DIR/manuscript"
+click_element WelcomeOpen
+wait_status "now kept in the project store" 1800
+click_element ChatItem0
+wait_history
+click_element AttachAdd
+click_element MenuItem0
+click_element AttachAdd
+click_element MenuItem1
+click_element AttachAdd
+click_element MenuItem2
+click_element AttachAdd
+click_element MenuItem3
+click_element AttachAdd
+click_element MenuItem4
+click_element AttachAdd
+click_element MenuItem5
+click_element AttachAdd
+click_element MenuItem6
+click_element AttachAdd
+click_element MenuItem7
+expect attached "part01.md,part02.md,part03.md,part04.md,part05.md,part06.md,part07.md,part08.md"
+right_click_element ChatItem0
+click_element MenuItem2
+wait_ready 36000
+wait 300
+expect memory_enabled yes
+click_element ChatInput
+type "In my opening scene, what does Mrs. Bennet tell her husband about Netherfield Park?"
+key ENTER
+wait_status "Local memory" 1800
+expect memory_sources "let at last"
+cancel_chat
+wait_chat 1800
+expect chat_busy no

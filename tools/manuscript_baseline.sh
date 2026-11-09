@@ -11,22 +11,27 @@ usage() {
     echo '--script FILE drives a different UI script (default tests/ui/store/16_manuscript_baseline.scribo).'
     echo '--keep leaves the disposable database and the work directory in place for diagnosis (prints both).'
     echo '--real uses the pinned local model (slower; needs make llama and make model); default is the fake model.'
+    echo '--context N fixes the requested per-conversation context (8192, 16384, 24576 or 32768); actual memory-fit reductions still apply.'
     echo 'Default: the 100K-word fixture with 4 items per category.'
     echo 'Requires tools/services.sh up and a built app (build/scribodo).'
 }
-words=100000; per=4; llm=fake; script=tests/ui/store/16_manuscript_baseline.scribo; keep=0
+words=100000; per=4; llm=fake; script=tests/ui/store/16_manuscript_baseline.scribo; keep=0; context=
 while (( $# )); do
     case "$1" in
         --real) llm=real; shift ;;
         --manuscript) manuscript=$2; shift 2 ;;
         --script) script=$2; shift 2 ;;
         --keep) keep=1; shift ;;
+        --context) context=$2; shift 2 ;;
         --words) words=$2; shift 2 ;;
         --per-category) per=$2; shift 2 ;;
         --help) usage; exit 0 ;;
         *) usage >&2; exit 2 ;;
     esac
 done
+if [[ -n $context && $context != 8192 && $context != 16384 && $context != 24576 && $context != 32768 ]]; then
+    echo 'context must be 8192, 16384, 24576 or 32768' >&2; exit 2
+fi
 cd "$here"
 app=${SCRIBODO_SOAK_APP:-build/scribodo}
 [[ -x $app ]] || { echo "Build an executable app first: $app" >&2; exit 1; }
@@ -55,6 +60,9 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 mkdir "$temp/work"
+if [[ -n $context ]]; then
+    printf '{"context":%s}\n' "$context" > "$temp/work/model-settings.json"
+fi
 python3 tests/seed_manuscript.py "$temp/work/manuscript" --words "$words" --per-category "$per" ${manuscript:+--manuscript "$manuscript"}
 echo "manuscript_baseline: disposable_database=$name"
 created=1

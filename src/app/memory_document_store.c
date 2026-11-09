@@ -240,15 +240,17 @@ bool memory_document_ingest_step(Db *db, const MemoryScope *s, const MemoryDocum
             db_rows_free(&rows);
         }
         if (ok) {
+            const char *small = getenv("SCRIBODO_MEMORY_SMALL_UNITS");
+            size_t token_limit = small && !strcmp(small, "1") ? MEMORY_DOCUMENT_SMALL_UNIT_TOKENS : MEMORY_UNIT_TOKENS;
             tokens = count(text, context);
             if (db_in_transaction(db)) return false;
-            while (tokens > 512 && n) {
+            while (tokens > (long)token_limit && n) {
                 n = text_cut(text, n / 2);
                 text[n] = 0;
                 tokens = count(text, context);
                 if (db_in_transaction(db)) return false;
             }
-            ok = tokens >= 0 && tokens <= 512 && (n || off == ref->bytes);
+            ok = tokens >= 0 && tokens <= (long)token_limit && (n || off == ref->bytes);
         }
         if (db_in_transaction(db)) return false;
         if (!ok) {
@@ -368,14 +370,20 @@ bool memory_candidate_hydrate_with_documents(Db *db, const MemoryScope *s, const
 bool memory_lexical_candidates_with_documents(Db *db, const MemoryScope *s, const MemoryDocumentSet *set,
                                               const char *query, size_t limit, MemoryCandidate *out, size_t *count)
 {
+    return memory_lexical_candidates_with_documents_before(db, s, set, query, INT64_MAX, limit, out, count);
+}
+
+bool memory_lexical_candidates_with_documents_before(Db *db, const MemoryScope *s, const MemoryDocumentSet *set,
+                                              const char *query, int64_t before, size_t limit, MemoryCandidate *out, size_t *count)
+{
     if (count) *count = 0;
     if (out && limit > 0 && limit <= MEMORY_CANDIDATES) memset(out, 0, limit * sizeof(*out));
-    if (!db || !out || !count || !valid(s, set) || !bounded(query, 2001) || !limit || limit > MEMORY_CANDIDATES) return false;
+    if (!db || !out || !count || before < 0 || !valid(s, set) || !bounded(query, 2001) || !limit || limit > MEMORY_CANDIDATES) return false;
     /* At most eight indexed revision streams, filtered before their limit.
      * Merge their top-k with chat top-k; no attachment can starve chats. */
     MemoryCandidate all[MEMORY_CANDIDATES * (MEMORY_DOCUMENTS_MAX + 1)];
     size_t n = 0;
-    if (!memory_lexical_candidates(db, s, query, limit, all, &n)) return false;
+    if (!memory_lexical_candidates_before(db, s, query, before, limit, all, &n)) return false;
     for (size_t i = 0; set && i < set->count; i++) {
         const MemoryDocumentRef *ref = &set->refs[i];
         DbRows rows;

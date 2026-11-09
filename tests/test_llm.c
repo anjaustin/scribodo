@@ -480,12 +480,21 @@ static void test_request_builder(void)
     for (int i = 0; i < 400; i++) many[i] = (ChatMessage){ .role = i % 2 ? CHAT_ASSISTANT : CHAT_USER, .content = filler };
     many[399].content = "latest question";
     many[399].role = CHAT_USER;
-    req = chat_build_request(many, 400, NULL, 32768, NULL, NULL, &trunc);
+    size_t first = 400;
+    req = chat_build_request_selected(many, 400, NULL, NULL, 32768, dense_count, NULL, &trunc, &first);
     cJSON *mm = messages_of(req);
     int count = cJSON_GetArraySize(mm);
     CHECK(count > 2 && count < 200);
+    CHECK(first > 0 && first < 399 && (size_t)count == 400 - first + 1);
     CHECK(!strcmp(cJSON_GetObjectItem(cJSON_GetArrayItem(mm, 1), "role")->valuestring, "user"));
     CHECK(!strcmp(cJSON_GetObjectItem(cJSON_GetArrayItem(mm, count - 1), "content")->valuestring, "latest question"));
+    free(req);
+
+    many[398].error = true; /* a skipped user row is not retained context */
+    req = chat_build_request_selected(many, 400, NULL, NULL, 2048, dense_count, NULL, &trunc, &first);
+    mm = messages_of(req);
+    CHECK(first == 399 && cJSON_GetArraySize(mm) == 2);
+    CHECK(!strcmp(cJSON_GetObjectItem(cJSON_GetArrayItem(mm, 1), "content")->valuestring, "latest question"));
     free(req);
 }
 

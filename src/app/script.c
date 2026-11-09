@@ -685,6 +685,10 @@ static bool run_line(Script *s, ScriptHost *h)
         s->wait_chat = t.n >= 2 ? atoi(t.tok[1]) : 1200;
         return true;
     }
+    if (!strcmp(cmd, "cancel_chat") && t.n == 1 && h->chat) {
+        chat_cancel(h->chat);
+        return false;
+    }
     if (!strcmp(cmd, "wait_recall") && h->recall_busy) {
         s->wait_recall = t.n >= 2 ? atoi(t.tok[1]) : 1200;
         if (s->wait_recall <= 0) { report(s, false, "recall wait needs a positive frame limit"); return false; }

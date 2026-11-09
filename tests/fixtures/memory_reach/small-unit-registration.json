@@ -1,0 +1,28 @@
+{
+  "protocol": "document-small-unit-dev-v1",
+  "date": "2026-11-09",
+  "hypothesis": "Index smaller complete document units so the existing tokenizer-verified reference budget admits more independently relevant sources without request-time context removal",
+  "change": "New saved-document units use a measured-token cap of 128 instead of 512; legacy units remain readable; at most 16 units when saved attachments are authorized, 8 for chat-only",
+  "query_windows": "Disabled by default after two failed development measurements; retained behind SCRIBODO_MEMORY_EXCERPTS=1",
+  "reference_limits": { "bytes": 16384, "tokens": 4096 },
+  "fixture": { "seed": 20261107, "words": 30000, "per_category": 3, "document_tasks": "pride-and-prejudice-tasks.json" },
+  "targets": {
+    "exact_key_sentences_admitted": { "passed": 14, "total": 14 },
+    "answer_alias_reach": { "passed": 14, "total": 14, "note": "Reported separately; never substituted for exact-key sentence reach" },
+    "chat_source_reach": { "passed": 24, "total": 24 },
+    "source_range_violations": 0,
+    "reference_budget_violations": 0
+  },
+  "use_measurement": {
+    "script": "tests/ui/store/18_manuscript_questions.scribo",
+    "method": "Original and changed application, same script, seed 42, complete saved replies; six factual questions and a separately reviewed absence question",
+    "target_factual_answers": { "passed": 6, "total": 6 },
+    "caution": "Inspect full answers; source presence and substring assertions alone are not faithful-use acceptance"
+  },
+  "limits": [
+    "One development novel and authored tasks, not held-out general quality evidence",
+    "Measure ingestion work and failures; smaller units add index work",
+    "Preserve originals, authority, consent, pinned models and default-off memory",
+    "Do not change instructions, the task set or answer keys to conceal failures"
+  ]
+}

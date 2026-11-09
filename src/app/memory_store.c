@@ -401,11 +401,17 @@ bool memory_candidate_hydrate(Db *db, const MemoryScope *s, const MemoryCandidat
 }
 
 bool memory_lexical_candidates(Db *db, const MemoryScope *s, const char *q, size_t limit,
-                               MemoryCandidate out[MEMORY_CANDIDATES], size_t *n)
+                                MemoryCandidate out[MEMORY_CANDIDATES], size_t *n)
+{
+    return memory_lexical_candidates_before(db, s, q, INT64_MAX, limit, out, n);
+}
+
+bool memory_lexical_candidates_before(Db *db, const MemoryScope *s, const char *q, int64_t before, size_t limit,
+                                MemoryCandidate out[MEMORY_CANDIDATES], size_t *n)
 {
     if (n) *n = 0;
     if (out && limit > 0 && limit <= MEMORY_CANDIDATES) memset(out, 0, limit * sizeof(*out));
-    if (!db || !n || !out || !valid_scope(s) || !valid_text(q, 2000) || !limit || limit > MEMORY_CANDIDATES) return false;
+    if (!db || !n || !out || before < 0 || !valid_scope(s) || !valid_text(q, 2000) || !limit || limit > MEMORY_CANDIDATES) return false;
     DbRows r;
     bool ok = db_query(db, "SELECT u.id,u.text_hash,MATCH(u.text) AGAINST (? IN NATURAL LANGUAGE MODE)"
                           " / POW(CHAR_LENGTH(u.text)," MEMORY_LEXICAL_LENGTH_NORM ") AS score"
@@ -414,11 +420,12 @@ bool memory_lexical_candidates(Db *db, const MemoryScope *s, const char *q, size
                           " AND s.history_epoch=? AND s.policy_epoch=? AND s.generation=?"
                            " AND u.source_kind='chat' AND u.generation=s.generation AND u.tokenizer=s.tokenizer"
                           " AND u.history_epoch=s.history_epoch AND u.policy_epoch=s.policy_epoch"
-                          " AND DATABASE()=? AND s.tokenizer=? AND MATCH(u.text) AGAINST (? IN NATURAL LANGUAGE MODE)>0"
-                          " ORDER BY score DESC,u.id LIMIT ?",
+                           " AND DATABASE()=? AND s.tokenizer=? AND MATCH(u.text) AGAINST (? IN NATURAL LANGUAGE MODE)>0"
+                           " AND u.sequence<?"
+                           " ORDER BY score DESC,u.id LIMIT ?",
                        (DbArg[]){ DB_S(q), DB_S(s->id), DB_S(s->project_id), DB_S(s->conversation_id),
                                   DB_I(s->history_epoch), DB_I(s->policy_epoch), DB_I(s->generation),
-                                  DB_S(s->database), DB_S(s->tokenizer), DB_S(q), DB_I(limit) }, 11, &r);
+                                   DB_S(s->database), DB_S(s->tokenizer), DB_S(q), DB_I(before), DB_I(limit) }, 12, &r);
     if (!ok) return false;
     ok = r.ncols == 3 && r.nrows <= limit;
     for (size_t i = 0; ok && i < r.nrows; i++) {

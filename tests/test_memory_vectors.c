@@ -25,7 +25,8 @@ enum { NORMAL, BAD_SHAPE, BAD_METRIC, NAMED_VECTOR, ACK_ONLY, BAD_RESULT, WRONG_
        OLD_GENERATION, OLD_POLICY, NUMBER_EPOCH, BAD_SCORE, TOO_MANY, EMBED_DIM, EMBED_NAN, TRAILING_JSON,
        WRONG_DIM, INFINITE_SCORE, DUPLICATE_KEY, BAD_UNIT_ID, BAD_HASH, WRONG_EMBEDDING,
        NUL_LOCATOR, NUL_FIELD, DUPLICATE_CONFLICT, MIXED_INVALID, MISSING_KIND, WRONG_KIND, WRONG_REVISION,
-        DUPLICATE_IDENTICAL, RETIRE_DURING_CREATE, REVOKE_DURING_EXISTS,
+         MISSING_SEQUENCE, FRACTIONAL_SEQUENCE, NEGATIVE_SEQUENCE, TOO_LARGE_SEQUENCE,
+         DUPLICATE_IDENTICAL, RETIRE_DURING_CREATE, REVOKE_DURING_EXISTS,
         DELETE_FALSE, DELETE_GENERIC_404, DELETE_EXACT_404, DELETE_WRONG_404 };
 typedef struct {
     int fd, port;
@@ -61,6 +62,12 @@ static bool filter_matches(const cJSON *payload, const cJSON *filter)
         const cJSON *key = cJSON_GetObjectItem(it, "key"), *match = cJSON_GetObjectItem(it, "match");
         const cJSON *value = cJSON_GetObjectItem(match, "value");
         const cJSON *actual = cJSON_IsString(key) ? cJSON_GetObjectItem(payload, key->valuestring) : NULL;
+        const cJSON *range = cJSON_GetObjectItem(it, "range");
+        if (range) {
+            const cJSON *lt = cJSON_GetObjectItem(range, "lt");
+            if (!cJSON_IsNumber(lt) || !cJSON_IsNumber(actual) || !(actual->valuedouble < lt->valuedouble)) return false;
+            continue;
+        }
         if (!cJSON_IsString(value) || !cJSON_IsString(actual) || strcmp(value->valuestring, actual->valuestring)) return false;
     }
     const cJSON *should = cJSON_GetObjectItem(filter, "should");
@@ -169,6 +176,10 @@ static char *response(Stub *s, const char *method, const char *path, cJSON *body
             if (mode == BAD_HASH) cJSON_ReplaceItemInObject(copy, "text_hash", cJSON_CreateString("NOT-LOWERCASE-HEX"));
             if (mode == WRONG_EMBEDDING) cJSON_ReplaceItemInObject(copy, "embedding", cJSON_CreateString("wrong-embedding-fingerprint"));
             if (mode == MISSING_KIND) cJSON_DeleteItemFromObject(copy, "source_kind");
+            if (mode == MISSING_SEQUENCE) cJSON_DeleteItemFromObject(copy, "sequence");
+            if (mode == FRACTIONAL_SEQUENCE) cJSON_ReplaceItemInObject(copy, "sequence", cJSON_CreateNumber(0.5));
+            if (mode == NEGATIVE_SEQUENCE) cJSON_ReplaceItemInObject(copy, "sequence", cJSON_CreateNumber(-1));
+            if (mode == TOO_LARGE_SEQUENCE) cJSON_ReplaceItemInObject(copy, "sequence", cJSON_CreateNumber(2147483648.0));
             if (mode == WRONG_KIND) cJSON_ReplaceItemInObject(copy, "source_kind", cJSON_CreateString("document"));
             if (mode == WRONG_REVISION) {
                 cJSON_ReplaceItemInObject(copy, "source_kind", cJSON_CreateString("document"));
@@ -212,7 +223,7 @@ static char *response(Stub *s, const char *method, const char *path, cJSON *body
         cJSON *kind = cJSON_GetObjectItem(p, "source_kind");
         bool document = cJSON_IsString(kind) && !strcmp(kind->valuestring, "document");
         if (!cJSON_IsString(id) || !cJSON_IsString(kind) || cJSON_HasObjectItem(p, "text") ||
-            cJSON_HasObjectItem(p, "document_name") || cJSON_GetArraySize(p) != (document ? 13 : 11)) s->bad_requests++;
+            cJSON_HasObjectItem(p, "document_name") || cJSON_GetArraySize(p) != (document ? 13 : 12)) s->bad_requests++;
         if (cJSON_IsString(id)) {
             snprintf(s->last_id, sizeof(s->last_id), "%s", id->valuestring);
             size_t i;
@@ -447,7 +458,13 @@ static void allocation_sweeps(Stub *stub, SemanticClient *client, const MemoryIn
             if (i < allocations) fault_alloc_once_after(i);
             else fault_alloc_after(i - allocations);
             ok = allocation_call(operation, client, lease, out, &count, &exists, why);
+            long calls = fault_alloc_count(), failures = fault_alloc_failures();
             fault_alloc_after(-1);
+            if (ok || !why[0] || ((operation == ALLOC_SEARCH || operation == ALLOC_SEARCH_DOCUMENTS) &&
+                (count || memcmp(out, sentinel, sizeof(out)))))
+                fprintf(stderr, "allocation diagnostic: operation=%d position=%ld mode=%s control_calls=%ld actual_calls=%ld actual_failures=%ld ok=%d count=%zu why=%s\n",
+                    operation, i < allocations ? i : i - allocations, i < allocations ? "once" : "persistent",
+                    allocations, calls, failures, ok, count, why);
             CHECK(!ok && why[0]);
             if (operation == ALLOC_SEARCH || operation == ALLOC_SEARCH_DOCUMENTS) CHECK(!count && !memcmp(out, sentinel, sizeof(out)));
             if (operation == ALLOC_EXISTS) CHECK(!exists);
@@ -555,6 +572,13 @@ static void projection(void)
     CHECK(memory_vectors_upsert(client, &document, why, sizeof(why)));
     CHECK(memory_vectors_search(client, &lease.scope, "lantern", 16, out, &count, why, sizeof(why)) && count == 1);
     CHECK(memory_vectors_search_with_documents(client, &lease.scope, &documents, "lantern", 32, out, &count, why, sizeof(why)) && count == 2);
+    CHECK(memory_vectors_search_with_documents_before(client, &lease.scope, &documents, "lantern", 0, 32,
+                                                      out, &count, why, sizeof(why)) && count == 1);
+    CHECK(!strcmp(out[0].unit_id, document.unit.id)); /* cutoff zero still permits saved documents */
+    CHECK(memory_vectors_search_with_documents_before(client, &lease.scope, &documents, "lantern", 1, 32,
+                                                      out, &count, why, sizeof(why)) && count == 2);
+    CHECK(!memory_vectors_search_with_documents_before(client, &lease.scope, &documents, "lantern", -1, 32,
+                                                      out, &count, why, sizeof(why)) && count == 0);
     pthread_mutex_lock(&stub.lock); CHECK(stub.last_sources == 9 && stub.last_limit == 32); pthread_mutex_unlock(&stub.lock);
     documents.refs[0].revision_id[33] = 'f';
     CHECK(memory_vectors_search_with_documents(client, &lease.scope, &documents, "lantern", 16, out, &count, why, sizeof(why)) && count == 1);

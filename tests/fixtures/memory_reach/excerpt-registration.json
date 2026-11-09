@@ -1,0 +1,27 @@
+{
+  "protocol": "document-excerpt-dev-v1",
+  "scope": "Host-side admission of exact excerpts from currently authorized saved attachments; not project-wide memory",
+  "fixture": "pride-and-prejudice-tasks.json, unchanged; 30000-word chat fixture, seed 20261107, 3 items per category",
+  "targets": {
+    "document_whole_sentence_admitted": { "passed": 14, "total": 14 },
+    "chat_required_sources_admitted": { "passed": 24, "total": 24 },
+    "source_byte_range_violations": 0,
+    "reference_byte_limit": 16384,
+    "reference_token_limit": 4096,
+    "remote_retrieval_calls": 0
+  },
+  "faithful_use": {
+    "separate_measure": true,
+    "script": "tests/ui/store/18_manuscript_questions.scribo",
+    "fact_questions": 6,
+    "target_correct_answers": 6,
+    "absence_question": "Record the complete answer separately; the existing script does not assert correctness on absence"
+  },
+  "rules": [
+    "Keep the original units and source hashes intact; rendered text must be an exact contiguous source span before existing model-token neutralization",
+    "Do not change the model, prompts, source eligibility, consent, remote policy or default-off memory setting",
+    "Do not combine answer quality with source reach or call a substring answer check a semantic quality pass",
+    "Record misses and failed gates; do not modify the answer key or remove failing tasks",
+    "These are development fixtures, not held-out evidence or certification of a complete product"
+  ]
+}

@@ -103,7 +103,7 @@ class RssStats:
         self.last_at = now
         self.count += 1
 
-    def report(self, pid, wall_seconds, exit_code):
+    def report(self, pid, wall_seconds, exit_code, backend="fake"):
         duration = self.last_at - self.first_at if self.count else 0.0
         age = time.monotonic() - self.last_at if self.count else 0.0
         def display(value):
@@ -116,8 +116,9 @@ class RssStats:
             f"process_wall_seconds={wall_seconds:.3f} sample_cap={MAX_SAMPLES} "
             f"sample_cap_reached={'yes' if self.attempts >= MAX_SAMPLES else 'no'} "
             f"exit_code={exit_code} "
+            f"backend={'real-pinned-model' if backend == 'real' else 'fake-no-LLM'} "
             "(sampled app PID only; final=last live sample; "
-            "fake backend/no LLM; excludes service RSS; not an SLA)",
+            "excludes model-server and service RSS; not an SLA)",
             flush=True,
         )
 
@@ -177,7 +178,7 @@ def run(app):
                     except subprocess.TimeoutExpired:
                         child.kill()
                         child.wait()
-                stats.report(child.pid, time.monotonic() - started, exit_code)
+                stats.report(child.pid, time.monotonic() - started, exit_code, backend)
                 services.report()
         finally:
             for sig, handler in previous.items():

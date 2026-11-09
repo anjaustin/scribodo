@@ -29,8 +29,14 @@ bool memory_vectors_upsert(SemanticClient *client, const MemoryIndexLease *lease
 bool memory_vectors_search(SemanticClient *client, const MemoryScope *scope, const char *query, size_t limit,
                            MemoryCandidate out[MEMORY_CANDIDATES], size_t *count, char *why, size_t whylen);
 bool memory_vectors_search_with_documents(SemanticClient *client, const MemoryScope *scope,
-                           const MemoryDocumentSet *documents, const char *query, size_t limit,
-                           MemoryCandidate out[MEMORY_CANDIDATES], size_t *count, char *why, size_t whylen);
+                            const MemoryDocumentSet *documents, const char *query, size_t limit,
+                            MemoryCandidate out[MEMORY_CANDIDATES], size_t *count, char *why, size_t whylen);
+/* SQL's retained-history cutoff applies inside Qdrant's chat branch before
+ * top-k. Saved revisions remain independently eligible. Payload sequence is a
+ * locator projection only; SQL hydration and final cutoff checks remain required. */
+bool memory_vectors_search_with_documents_before(SemanticClient *client, const MemoryScope *scope,
+                            const MemoryDocumentSet *documents, const char *query, int64_t before, size_t limit,
+                            MemoryCandidate out[MEMORY_CANDIDATES], size_t *count, char *why, size_t whylen);
 /* Deletes only this exact scope/epochs/generation, NOT other conversations
  * sharing the project collection. Missing collections are already clean. */
 bool memory_vectors_drop(SemanticClient *client, const MemoryScope *scope, char *why, size_t whylen);

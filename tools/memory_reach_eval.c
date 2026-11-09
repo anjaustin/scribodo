@@ -31,6 +31,7 @@ static SemanticClient *vectors;
 static MemoryTokenizer tokenizer;
 static MemoryScope archive, private_scope;
 static MemoryDocumentSet attached; /* the conversation's attached saved documents */
+static int64_t query_before;
 static char project[64], conversation[40], tokenizer_id[65];
 static FILE *events;
 static double tokenize_seconds, embedding_seconds;
@@ -172,7 +173,7 @@ static bool rec_lexical(void *ctx, const MemoryScope *s, const char *q, size_t l
 {
     (void)ctx;
     double t = now();
-    bool ok = memory_lexical_candidates_with_documents(db, s, attached.count ? &attached : NULL, q, limit, out, n);
+    bool ok = memory_lexical_candidates_with_documents_before(db, s, attached.count ? &attached : NULL, q, query_before, limit, out, n);
     trace.lexical_seconds = now() - t;
     trace.lexical_ok = ok;
     trace.nl = ok && *n <= MEMORY_CANDIDATES ? *n : 0;
@@ -183,7 +184,7 @@ static bool rec_semantic(void *ctx, const MemoryScope *s, const char *q, size_t 
 {
     (void)ctx;
     double t = now();
-    bool ok = memory_vectors_search_with_documents(vectors, s, attached.count ? &attached : NULL, q, limit, out, n, trace.why, sizeof(trace.why));
+    bool ok = memory_vectors_search_with_documents_before(vectors, s, attached.count ? &attached : NULL, q, query_before, limit, out, n, trace.why, sizeof(trace.why));
     trace.semantic_seconds = now() - t;
     trace.semantic_ok = ok;
     trace.ns = ok && *n <= MEMORY_CANDIDATES ? *n : 0;
@@ -224,6 +225,7 @@ static cJSON *candidates_json(const MemoryCandidate *list, size_t n)
 
 static bool run_task(const cJSON *task, int64_t boundary)
 {
+    query_before = boundary;
     memset(&trace, 0, sizeof(trace));
     double started = now(), token_seconds = tokenize_seconds;
     size_t token_calls = tokenize_calls;
@@ -259,19 +261,29 @@ static bool run_task(const cJSON *task, int64_t boundary)
     cJSON *units = cJSON_AddArrayToObject(j, "admitted_units");
     for (size_t i = 0; i < plan.count; i++) {
         const MemoryUnit *u = &plan.units[i];
-        cJSON *r = cJSON_CreateObject();
-        cJSON_AddStringToObject(r, "id", u->id);
-        cJSON_AddNumberToObject(r, "sequence", (double)u->sequence);
-        cJSON_AddNumberToObject(r, "byte_start", (double)u->byte_start);
-        cJSON_AddNumberToObject(r, "text_bytes", u->text_bytes);
-        cJSON_AddNumberToObject(r, "tokens", u->tokens);
-        cJSON_AddStringToObject(r, "role", u->role == CHAT_USER ? "user" : "assistant");
-        if (u->kind == MEMORY_SOURCE_DOCUMENT) {
-            cJSON_AddStringToObject(r, "document_name", u->document_name);
-            cJSON_AddStringToObject(r, "revision_id", u->revision_id);
+        for (size_t part = 0; part < memory_plan_excerpt_count(&plan, i); part++) {
+            const char *source;
+            size_t source_bytes;
+            uint64_t source_offset;
+            NEED(memory_plan_excerpt(&plan, i, part, &source, &source_bytes, &source_offset));
+            char *excerpt = strndup(source, source_bytes);
+            NEED(excerpt);
+            cJSON *r = cJSON_CreateObject();
+            cJSON_AddStringToObject(r, "id", u->id);
+            cJSON_AddNumberToObject(r, "sequence", (double)u->sequence);
+            cJSON_AddNumberToObject(r, "byte_start", (double)source_offset);
+            cJSON_AddNumberToObject(r, "text_bytes", source_bytes);
+            cJSON_AddNumberToObject(r, "canonical_text_bytes", u->text_bytes);
+            cJSON_AddNumberToObject(r, "canonical_tokens", u->tokens);
+            cJSON_AddStringToObject(r, "role", u->role == CHAT_USER ? "user" : "assistant");
+            if (u->kind == MEMORY_SOURCE_DOCUMENT) {
+                cJSON_AddStringToObject(r, "document_name", u->document_name);
+                cJSON_AddStringToObject(r, "revision_id", u->revision_id);
+            }
+            cJSON_AddStringToObject(r, "text", excerpt);
+            free(excerpt);
+            cJSON_AddItemToArray(units, r);
         }
-        cJSON_AddStringToObject(r, "text", u->text ? u->text : "");
-        cJSON_AddItemToArray(units, r);
     }
     emit(j);
     memory_plan_free(&plan);

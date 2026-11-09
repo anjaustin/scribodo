@@ -4,6 +4,7 @@
 #include "llm/llm_text.h"
 #include "core/utf8.h"
 #include "core/json.h"
+#include "core/recall_terms.h"
 
 #include <inttypes.h>
 #include <math.h>
@@ -42,6 +43,118 @@ static bool utf8_valid(const char *text, size_t bytes)
         i += (size_t)n;
     }
     return true;
+}
+
+size_t memory_plan_excerpt_count(const MemoryPlan *plan, size_t index)
+{
+    if (!plan || index >= plan->count || index >= MEMORY_PLAN_UNITS || plan->excerpt_count[index] > MEMORY_EXCERPTS_MAX) return 0;
+    return plan->excerpt_count[index] ? plan->excerpt_count[index] : 1;
+}
+
+bool memory_plan_excerpt(const MemoryPlan *plan, size_t index, size_t part, const char **text, size_t *bytes, uint64_t *offset)
+{
+    size_t count = memory_plan_excerpt_count(plan, index);
+    if (!text || !bytes || !offset || !count || part >= count) return false;
+    const MemoryUnit *u = &plan->units[index];
+    MemoryExcerpt e = plan->excerpts[index][part];
+    if (!u->text || !u->text_bytes || u->text_bytes > MEMORY_UNIT_BYTES ||
+        strnlen(u->text, MEMORY_UNIT_BYTES + 1) != u->text_bytes ||
+        u->byte_start > UINT64_MAX - u->text_bytes) return false;
+    if (!e.bytes) {
+        if (e.start || plan->excerpt_count[index]) return false;
+        e.bytes = u->text_bytes;
+    }
+    if (e.start > u->text_bytes || e.bytes > u->text_bytes - e.start ||
+        u->byte_start > UINT64_MAX - e.start || !utf8_valid(u->text + e.start, e.bytes)) return false;
+    if (part && (plan->excerpts[index][part - 1].start > e.start ||
+        plan->excerpts[index][part - 1].bytes > e.start - plan->excerpts[index][part - 1].start)) return false;
+    *text = u->text + e.start;
+    *bytes = e.bytes;
+    *offset = u->byte_start + e.start;
+    return true;
+}
+
+/* Select bounded contiguous, verbatim document windows. No summaries, generated
+ * text or new eligibility: the full SQL unit remains owned and revalidated.
+ * Short units and semantic-only matches retain all their original context. */
+static size_t document_excerpts(const MemoryUnit *u, const char *query, MemoryExcerpt out[MEMORY_EXCERPTS_MAX])
+{
+    if (u->kind != MEMORY_SOURCE_DOCUMENT || u->text_bytes <= 512) return 0;
+    RecallTerm terms[RECALL_TERMS_MAX];
+    unsigned count = recall_terms(query, terms), kept = 0;
+    static const char *const stop[] = { "a", "an", "the", "what", "which", "who", "where", "when", "why", "how",
+        "is", "are", "was", "were", "does", "did", "do", "of", "to", "in", "on", "at", "by", "for", "with",
+        "and", "or", "as", "it", "its", "my", "me", "your", "his", "her", "their", "tell", "about",
+        "mr", "mrs", "ms", "miss", "said", "first", "have", "has" };
+    for (unsigned i = 0; i < count; i++) {
+        bool ignored = false;
+        for (size_t j = 0; j < sizeof(stop)/sizeof(stop[0]); j++)
+            if (!strcmp(terms[i].text, stop[j])) { ignored = true; break; }
+        if (!ignored) terms[kept++] = terms[i];
+    }
+    if (!kept) return 0;
+    size_t ends[MEMORY_UNIT_BYTES + 1], sentences = 0;
+    ends[sentences++] = 0;
+    for (size_t i = 0; i < u->text_bytes; i++) {
+        if (u->text[i] != '.' && u->text[i] != '!' && u->text[i] != '?' && u->text[i] != '\n') continue;
+        if (u->text[i] == '.') {
+            size_t start = i;
+            while (start && ((u->text[start - 1] >= 'A' && u->text[start - 1] <= 'Z') ||
+                             (u->text[start - 1] >= 'a' && u->text[start - 1] <= 'z'))) start--;
+            char word[8] = {0};
+            if (i - start < sizeof(word)) {
+                for (size_t j = start; j < i; j++) {
+                    unsigned char c = (unsigned char)u->text[j];
+                    word[j - start] = (char)(c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c);
+                }
+                if (!strcmp(word, "mr") || !strcmp(word, "mrs") || !strcmp(word, "ms") ||
+                    !strcmp(word, "dr") || !strcmp(word, "st") || !strcmp(word, "rev") ||
+                    !strcmp(word, "col") || !strcmp(word, "capt")) continue;
+            }
+        }
+        size_t end = i + 1;
+        while (end < u->text_bytes) {
+            if (u->text[end] == '"' || u->text[end] == '\'') end++;
+            else if (u->text_bytes - end >= 3 && (!memcmp(u->text + end, "”", 3) || !memcmp(u->text + end, "’", 3))) end += 3;
+            else break;
+        }
+        if (u->text[i] != '\n' && end < u->text_bytes && u->text[end] != ' ' && u->text[end] != '\n' && u->text[end] != '\r' && u->text[end] != '\t') continue;
+        while (end < u->text_bytes && (u->text[end] == ' ' || u->text[end] == '\n' || u->text[end] == '\r' || u->text[end] == '\t')) end++;
+        if (end > ends[sentences - 1]) ends[sentences++] = end;
+        i = end - 1;
+    }
+    if (ends[sentences - 1] != u->text_bytes) ends[sentences++] = u->text_bytes;
+    bool selected[MEMORY_UNIT_BYTES + 1] = {0};
+    for (size_t i = 0; i + 1 < sentences; i++) {
+        char sentence[MEMORY_UNIT_BYTES + 1];
+        size_t bytes = ends[i+1] - ends[i];
+        memcpy(sentence, u->text + ends[i], bytes); sentence[bytes] = 0;
+        if (!recall_match(sentence, terms, kept)) continue;
+        /* Dialogue often names the subject in one sentence and gives its
+         * answer in the next turn. Keep every anchor and nearby context,
+         * rather than selecting one high-scoring but incomplete sentence. */
+        size_t first = i ? i - 1 : 0;
+        size_t last = i + 3 < sentences ? i + 3 : sentences - 1;
+        for (size_t j = first; j < last; j++) selected[j] = true;
+    }
+    size_t count_out = 0;
+    for (size_t i = 0; i + 1 < sentences;) {
+        if (!selected[i]) { i++; continue; }
+        size_t first = i;
+        while (i + 1 < sentences && selected[i]) i++;
+        if (count_out == MEMORY_EXCERPTS_MAX) return 0; /* retain all context, never silently lose a window */
+        out[count_out++] = (MemoryExcerpt){ ends[first], ends[i] - ends[first] };
+    }
+    if (count_out == 1 && !out[0].start && out[0].bytes == u->text_bytes) return 0;
+    return count_out;
+}
+
+static size_t selected_bytes(const MemoryPlan *plan, size_t index)
+{
+    if (!plan->excerpt_count[index]) return plan->units[index].text_bytes;
+    size_t bytes = 0;
+    for (size_t i = 0; i < plan->excerpt_count[index] && i < MEMORY_EXCERPTS_MAX; i++) bytes += plan->excerpts[index][i].bytes;
+    return bytes;
 }
 
 static bool request_shape(const cJSON *node, unsigned depth, size_t *remaining)
@@ -238,7 +351,13 @@ static char *reference_full(const MemoryPlan *plan)
         if (plan->compact_sources && !append_reference(text, capacity, &used, "\n[S%zu] Original source binding:\n", i+1)) {
             free(text); return NULL;
         }
-        char *clean = llm_neutralize(unit->text);
+        const char *source;
+        size_t source_bytes;
+        uint64_t source_offset;
+        if (!memory_plan_excerpt(plan, i, 0, &source, &source_bytes, &source_offset)) { free(text); return NULL; }
+        char *excerpt = strndup(source, source_bytes);
+        char *clean = excerpt ? llm_neutralize(excerpt) : NULL;
+        free(excerpt);
         if (!clean) { free(text); return NULL; }
         int n;
         if (unit->kind == MEMORY_SOURCE_DOCUMENT) {
@@ -248,17 +367,28 @@ static char *reference_full(const MemoryPlan *plan)
             free(name); cJSON_Delete(label);
             if (!quoted) { free(clean); free(text); return NULL; }
             n = snprintf(text + used, capacity - used,
-                         "\n--- SOURCE %zu | document-name (untrusted data)=%s | document=%s | revision=%s | SHA256=%s | unit=%s | bytes=%" PRIu64 "+%zu ---\n%s\n--- END SOURCE ---\n",
+                         "\n--- SOURCE %zu | document-name (untrusted data)=%s | document=%s | revision=%s | SHA256=%s | unit=%s | bytes=%" PRIu64 "+%zu ---\n%s\n",
                          i + 1, quoted, unit->document_id, unit->revision_id, unit->source_hash, unit->id,
-                         unit->byte_start, unit->text_bytes, clean);
+                          source_offset, source_bytes, clean);
             free(quoted);
         } else n = snprintf(text + used, capacity - used,
-                         "\n--- SOURCE %zu | unit=%s | message=%" PRId64 " | role=%s | bytes=%" PRIu64 "+%zu ---\n%s\n--- END SOURCE ---\n",
+                         "\n--- SOURCE %zu | unit=%s | message=%" PRId64 " | role=%s | bytes=%" PRIu64 "+%zu ---\n%s\n",
                          i + 1, unit->id, unit->sequence, unit->role == CHAT_USER ? "author" : "assistant",
-                         unit->byte_start, unit->text_bytes, clean);
+                          source_offset, source_bytes, clean);
         free(clean);
         if (n < 0 || (size_t)n >= capacity - used) { free(text); return NULL; }
         used += (size_t)n;
+        for (size_t part = 1; part < memory_plan_excerpt_count(plan, i); part++) {
+            if (!memory_plan_excerpt(plan, i, part, &source, &source_bytes, &source_offset)) { free(text); return NULL; }
+            excerpt = strndup(source, source_bytes);
+            clean = excerpt ? llm_neutralize(excerpt) : NULL;
+            free(excerpt);
+            bool ok = clean && append_reference(text, capacity, &used,
+                "--- SOURCE %zu CONTINUED | bytes=%" PRIu64 "+%zu ---\n%s\n", i+1, source_offset, source_bytes, clean);
+            free(clean);
+            if (!ok) { free(text); return NULL; }
+        }
+        if (!append_reference(text, capacity, &used, "--- END SOURCE ---\n")) { free(text); return NULL; }
     }
     for (size_t i = 0; i < plan->brief_count; i++) {
         const MemoryBrief *brief = &plan->briefs[i];
@@ -299,18 +429,34 @@ static char *reference_for(const MemoryPlan *plan)
         "S labels identify the exact excerpts supplied for this reply.\n");
     for (size_t i = 0; ok && i < plan->count; i++) {
         const MemoryUnit *u = &plan->units[i];
-        char *clean = llm_neutralize(u->text);
+        const char *source;
+        size_t source_bytes;
+        uint64_t source_offset;
+        if (!memory_plan_excerpt(plan, i, 0, &source, &source_bytes, &source_offset)) { free(text); return NULL; }
+        char *excerpt = strndup(source, source_bytes);
+        char *clean = excerpt ? llm_neutralize(excerpt) : NULL;
+        free(excerpt);
         char *name = u->kind == MEMORY_SOURCE_DOCUMENT ? llm_neutralize(u->document_name) : NULL;
         cJSON *name_json = name ? cJSON_CreateString(name) : NULL;
         char *quoted = name_json ? cJSON_PrintUnformatted(name_json) : NULL;
         if (u->kind == MEMORY_SOURCE_DOCUMENT)
             ok = clean && quoted && append_reference(text, capacity, &used,
-                "\n[S%zu | saved document excerpt | name=%s]\n%s\n[/S%zu]\n", i+1, quoted, clean, i+1);
+                "\n[S%zu | saved document excerpt | name=%s]\n%s\n", i+1, quoted, clean);
         else ok = clean && append_reference(text, capacity, &used,
-            "\n[S%zu | %s | sequence=%" PRId64 "]\n%s\n[/S%zu]\n", i+1,
+            "\n[S%zu | %s | sequence=%" PRId64 "]\n%s\n", i+1,
             u->role == CHAT_USER ? "author chat excerpt" : "assistant chat excerpt",
-            u->sequence, clean, i+1);
+            u->sequence, clean);
         free(clean); free(name); cJSON_Delete(name_json); free(quoted);
+        for (size_t part = 1; ok && part < memory_plan_excerpt_count(plan, i); part++) {
+            if (!memory_plan_excerpt(plan, i, part, &source, &source_bytes, &source_offset)) { free(text); return NULL; }
+            excerpt = strndup(source, source_bytes);
+            clean = excerpt ? llm_neutralize(excerpt) : NULL;
+            free(excerpt);
+            ok = clean && append_reference(text, capacity, &used,
+                "[same source, bytes=%" PRIu64 "+%zu]\n%s\n", source_offset, source_bytes, clean);
+            free(clean);
+        }
+        if (ok) ok = append_reference(text, capacity, &used, "[/S%zu]\n", i+1);
     }
     /* T1 retains its existing representation until a separate quality/cost
      * experiment earns a revised contract. It remains noncanonical. */
@@ -417,21 +563,34 @@ bool memory_plan_recall(const MemoryRecallOps *ops, const char *project, const c
             Ranked tmp = ranked[j]; ranked[j] = ranked[j - 1]; ranked[j - 1] = tmp;
         }
     bool hydration_ok = true;
-    for (size_t i = 0; i < nr && plan.count < MEMORY_PLAN_UNITS && !stopped(cancel); i++) {
+    /* The query-window experiment did not pass its real-manuscript gate.
+     * Retain it for reproducibility, never silently replace complete units. */
+    const char *excerpt_flag = getenv("SCRIBODO_MEMORY_EXCERPTS");
+    bool use_excerpts = excerpt_flag && !strcmp(excerpt_flag, "1");
+    const char *small_flag = getenv("SCRIBODO_MEMORY_SMALL_UNITS");
+    bool small_units = small_flag && !strcmp(small_flag, "1");
+    size_t unit_limit = plan.documents.count && (use_excerpts || small_units) ? MEMORY_PLAN_UNITS : MEMORY_PLAN_CHAT_UNITS;
+    for (size_t i = 0; i < nr && plan.count < unit_limit && !stopped(cancel); i++) {
         MemoryUnit unit = {0};
         bool found = false;
         if (!ops->hydrate(ops->context, &plan.scope, &ranked[i].locator, &unit, &found)) {
             memory_unit_free(&unit); hydration_ok = false; break;
         }
         if (!found || !unit_valid(&unit, &ranked[i].locator, older_than, &plan.documents)) { memory_unit_free(&unit); continue; }
-        if (unit.text_bytes > MEMORY_PLAN_BYTES - plan.text_bytes || unit.tokens > MEMORY_PLAN_TOKENS - plan.tokens) {
+        MemoryExcerpt excerpts[MEMORY_EXCERPTS_MAX] = {0};
+        size_t count = use_excerpts ? document_excerpts(&unit, query, excerpts) : 0;
+        size_t excerpt_bytes = count ? 0 : unit.text_bytes;
+        for (size_t j = 0; j < count; j++) excerpt_bytes += excerpts[j].bytes;
+        if (excerpt_bytes < unit.text_bytes) plan.limited = true;
+        if (excerpt_bytes > MEMORY_PLAN_BYTES - plan.text_bytes) {
             plan.limited = true; memory_unit_free(&unit); continue;
         }
-        plan.text_bytes += unit.text_bytes;
-        plan.tokens += unit.tokens;
+        plan.text_bytes += excerpt_bytes;
+        if (count) memcpy(plan.excerpts[plan.count], excerpts, sizeof(excerpts));
+        plan.excerpt_count[plan.count] = count;
         plan.units[plan.count++] = unit;
     }
-    if (plan.count == MEMORY_PLAN_UNITS && nr > plan.count) plan.limited = true;
+    if (plan.count == unit_limit && nr > plan.count) plan.limited = true;
     if (stopped(cancel)) { memory_plan_free(&plan); out->readiness = MEMORY_UNAVAILABLE; return true; }
     MemoryScope admission;
     if (!ops->scope(ops->context, project, conversation, &admission) || !memory_scope_same(&plan.scope, &admission) ||
@@ -447,7 +606,9 @@ bool memory_plan_recall(const MemoryRecallOps *ops, const char *project, const c
         if (tokens >= 0 && (uint64_t)tokens <= MEMORY_PLAN_TOKENS) { plan.tokens = (size_t)tokens; break; }
         free(plan.reference); plan.reference = NULL;
         MemoryUnit *last = &plan.units[--plan.count];
-        plan.text_bytes -= last->text_bytes;
+        plan.text_bytes -= selected_bytes(&plan, plan.count);
+        memset(plan.excerpts[plan.count], 0, sizeof(plan.excerpts[plan.count]));
+        plan.excerpt_count[plan.count] = 0;
         memory_unit_free(last);
         plan.limited = true;
         if (tokens < 0) { memory_plan_free(&plan); out->readiness = MEMORY_UNAVAILABLE; return true; }
@@ -459,7 +620,7 @@ bool memory_plan_recall(const MemoryRecallOps *ops, const char *project, const c
 }
 
 typedef struct { Db *db; SemanticClient *vectors; MemoryTokenCount count; void *count_context;
-                 const MemoryDocumentSet *documents; } RecallContext;
+                 const MemoryDocumentSet *documents; int64_t before; } RecallContext;
 static bool read_scope(void *p, const char *project, const char *conversation, MemoryScope *out)
 {
     return memory_scope_get(((RecallContext *)p)->db, project, conversation, out);
@@ -467,13 +628,13 @@ static bool read_scope(void *p, const char *project, const char *conversation, M
 static bool lexical(void *p, const MemoryScope *scope, const char *query, size_t limit, MemoryCandidate *out, size_t *count)
 {
     RecallContext *ctx = p;
-    return memory_lexical_candidates_with_documents(ctx->db, scope, ctx->documents, query, limit, out, count);
+    return memory_lexical_candidates_with_documents_before(ctx->db, scope, ctx->documents, query, ctx->before, limit, out, count);
 }
 static bool semantic(void *p, const MemoryScope *scope, const char *query, size_t limit, MemoryCandidate *out, size_t *count)
 {
     char why[256];
     RecallContext *ctx = p;
-    return memory_vectors_search_with_documents(ctx->vectors, scope, ctx->documents, query, limit, out, count, why, sizeof(why));
+    return memory_vectors_search_with_documents_before(ctx->vectors, scope, ctx->documents, query, ctx->before, limit, out, count, why, sizeof(why));
 }
 static bool hydrate(void *p, const MemoryScope *scope, const MemoryCandidate *candidate, MemoryUnit *out, bool *found)
 {
@@ -504,7 +665,7 @@ bool memory_plan_build_with_documents(Db *db, SemanticClient *vectors, const cha
                         const MemoryDocumentSet *documents)
 {
     if (!remote && (!db || db_in_transaction(db))) { if (out) *out = (MemoryPlan){ .readiness = MEMORY_UNAVAILABLE }; return false; }
-    RecallContext context = { db, vectors, count, count_context, documents };
+    RecallContext context = { db, vectors, count, count_context, documents, older_than };
     MemoryRecallOps ops = { &context, read_scope, lexical, semantic, hydrate, count_reference, tokenizer, documents, documents_current };
     return memory_plan_recall(&ops, project, conversation, query, older_than, remote, cancel, out);
 }
@@ -524,6 +685,11 @@ bool memory_plan_admit_with_documents(Db *db, const MemoryPlan *plan, const Memo
         !documents_same(&plan->documents, documents)) return false;
     for (size_t i = 0; i < plan->count; i++) {
         const MemoryUnit *unit = &plan->units[i];
+        const char *text; size_t bytes; uint64_t offset;
+        size_t parts = memory_plan_excerpt_count(plan, i);
+        if (!parts) return false;
+        for (size_t part = 0; part < parts; part++)
+            if (!memory_plan_excerpt(plan, i, part, &text, &bytes, &offset)) return false;
         if (unit->kind == MEMORY_SOURCE_DOCUMENT) {
             MemoryCandidate candidate = {0};
             memcpy(candidate.unit_id, unit->id, sizeof(candidate.unit_id));
@@ -566,7 +732,9 @@ static bool drop_optional(MemoryPlan *plan)
         if (!plan->brief_count) plan->brief_model_fingerprint[0] = 0;
     } else if (plan->count) {
         MemoryUnit *last = &plan->units[--plan->count];
-        plan->text_bytes -= last->text_bytes;
+        plan->text_bytes -= selected_bytes(plan, plan->count);
+        memset(plan->excerpts[plan->count], 0, sizeof(plan->excerpts[plan->count]));
+        plan->excerpt_count[plan->count] = 0;
         memory_unit_free(last);
     } else return false;
     plan->limited = true;

@@ -10,7 +10,8 @@
 #define MEMORY_UNIT_BYTES 2000u /* never silently clipped by the pinned embedder */
 #define MEMORY_UNIT_TOKENS 512u
 #define MEMORY_CANDIDATES 32u
-#define MEMORY_PLAN_UNITS 8u
+#define MEMORY_PLAN_CHAT_UNITS 8u
+#define MEMORY_PLAN_UNITS 16u /* document excerpts; the rendered/token budgets do not grow */
 /* Lexical candidate score: InnoDB's natural-language MATCH score divided by
  * CHAR_LENGTH(text) to this power. The raw score sums term frequency without
  * length normalization, so a long paragraph that mentions the query's common
@@ -86,7 +87,10 @@ bool memory_outbox_ack(Db *db, const MemoryIndexLease *lease, bool delivered);
  * acknowledged without enabling consent or changing generation. */
 bool memory_scope_rebuild(Db *db, const char *project, const char *conversation, MemoryScope *out);
 bool memory_lexical_candidates(Db *db, const MemoryScope *scope, const char *query,
-                                size_t limit, MemoryCandidate out[MEMORY_CANDIDATES], size_t *count);
+                                 size_t limit, MemoryCandidate out[MEMORY_CANDIDATES], size_t *count);
+/* Exclude the actual retained LLM tail before ranking/LIMIT, not after top-k. */
+bool memory_lexical_candidates_before(Db *db, const MemoryScope *scope, const char *query, int64_t before,
+                                 size_t limit, MemoryCandidate out[MEMORY_CANDIDATES], size_t *count);
 /* Exact substring match for a short term the full-text index cannot carry (recall view). */
 bool memory_substring_candidates(Db *db, const MemoryScope *scope, const char *term,
                                  size_t limit, MemoryCandidate out[MEMORY_CANDIDATES], size_t *count);

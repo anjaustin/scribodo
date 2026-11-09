@@ -21,6 +21,7 @@
  *   drag_index A B               drag from index A to index B
  *   click_element NAME [COUNT]   click the centre of a named UI element
  *   wait_chat [MAX_FRAMES]       wait until no chat reply is streaming
+ *   cancel_chat                 cancel this test's reply through the chat API
  *   wait_history [MAX_FRAMES]    wait until history completion is applied/rejected
  *   history_hold yes|no         script-only delayed history reader
  *   measure_frames start|stop   reset/report bounded interframe histogram;

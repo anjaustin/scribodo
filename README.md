@@ -156,6 +156,16 @@ canon. Everything here is default-off, and unsaved buffers are foreground-only.
 The current slice is [MEMORY-009](docs/MEMORY-009-resource-and-brief-experiment.md);
 the direction after the continuity experiments is
 [MEMORY-014](docs/MEMORY-014-canon-first-continuity.md).
+Local memory reserves room for recalled sources instead of filling the window
+with recent history and saved-document heads first. Messages removed from the
+actual request remain retrievable, even when they were in the bounded host
+snapshot. Unsaved buffers, reviewed edits and remote requests keep their
+foreground policy. Measured remediation and failed development variants are
+recorded in [MEMORY-022](docs/MEMORY-022-product-remediation.md); they are not a
+claim of complete manuscript recall or reliable model answers.
+The latest real-app check delivered the required sources for all six factual
+questions, but failed two answer-substring checks and full-reply review found
+additional factual errors and repetition. Source delivery is not answer accuracy.
 
 **Projects and documents:** a project is a folder of `.md` and `.txt` files.
 - On launch, Scribodo reopens the project and document you last had open. The first time, it shows a welcome screen: **Open folder…**, **New project…**, **Open the sample**, and your recent projects.
@@ -252,6 +262,9 @@ in [`docs/TESTING.md`](docs/TESTING.md).
 | `SCRIBODO_MEMORY_EXPERIMENT` | unset | `1` enables the opt-in local memory experiment described above. |
 | `SCRIBODO_MEMORY_BRIEFS` | unset | `1` additionally enables generated T1 briefs. Requires the experiment flag. |
 | `SCRIBODO_MEMORY_PRESENTATION` | `legacy` | `compact` or `episode` selects an experimental source layout for memory requests. Diagnostic only; requires the experiment flag and never changes what is eligible. |
+| `SCRIBODO_MEMORY_TRACE` | unset | `1` logs local preparation timings and counts, not prompts or source text. |
+| `SCRIBODO_MEMORY_EXCERPTS` | unset | `1` selects the failed query-window development variant. Reproduction only; off by default. Requires local memory. |
+| `SCRIBODO_MEMORY_SMALL_UNITS` | unset | `1` tests 128-token saved-document units and a 16-unit candidate packet. Failed its 14/14 development reach target; off by default. Rebuild memory to change existing units. |
 
 ### Dependencies
 

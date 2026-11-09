@@ -185,6 +185,11 @@ typedef struct {
  * documents go into the newest user message, before the author's words. */
 char *chat_build_request_ex(const ChatMessage *msgs, size_t n, const ChatContext *ctx, const ChatNames *names, int ctx_tokens,
                             ChatTokenCount count, void *count_ctx, bool *doc_truncated);
+/* Same request, with the exact first retained input-history index. On failure
+ * first_history is n. Copying into a host snapshot does not mean a message
+ * survived model-context trimming. */
+char *chat_build_request_selected(const ChatMessage *msgs, size_t n, const ChatContext *ctx, const ChatNames *names, int ctx_tokens,
+                                  ChatTokenCount count, void *count_ctx, bool *doc_truncated, size_t *first_history);
 
 /* The request for an edit: an editor persona, the document as context, and
  * the instruction plus passage. No chat history (keeps a small model on

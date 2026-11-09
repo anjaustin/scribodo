@@ -8,6 +8,7 @@
 void fault_alloc_after(long successful_calls);
 void fault_alloc_once_after(long successful_calls);
 long fault_alloc_count(void);
+long fault_alloc_failures(void); /* actual injected failures, not merely an armed position */
 void *fault_malloc(size_t n);
 void *fault_calloc(size_t n, size_t size);
 void *fault_realloc(void *p, size_t n);

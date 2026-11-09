@@ -9,6 +9,7 @@
 #include "llm/generative_gate.h"
 #include "llm/memory_brief.h"
 #include "llm/memory_tokens.h"
+#include "llm/memory_vectors.h"
 #include "llm/semantic.h"
 #include "test_util.h"
 #include <stdlib.h>
@@ -145,6 +146,111 @@ static void edit_bypasses_recall(void)
     }
 }
 
+static void context_trimmed_history_remains_retrievable(void)
+{
+    const char *id = "history-gap";
+    const char *fact = "The Brannock ledger records 61 silver seals.";
+    char text[1001];
+    for (unsigned i = 0; i < 70; i++) {
+        memset(text, 'x', sizeof(text)-1); text[sizeof(text)-1] = 0;
+        if (i == 20) memcpy(text, fact, strlen(fact));
+        ChatMessage message = {.role=CHAT_USER, .content=text};
+        CHECK(sdb_chat_append(db, project, id, "Trimmed history", &message));
+    }
+    MemoryScope scope;
+    MemoryTokenizer tokenizer = {0}; char fingerprint[65], why[256];
+    CHECK(memory_scope_set(db, project, id, true, &scope));
+    CHECK(memory_tokenizer_fingerprint(&tokenizer, fingerprint));
+    bool progress = true;
+    unsigned steps = 0;
+    while (progress && steps++ < 1024)
+        CHECK(memory_ingest_step(db, scope.id, "gap-test", memory_source_tokens, &tokenizer,
+                                 fingerprint, &progress, why, sizeof(why)));
+    CHECK(!progress && steps < 1024);
+    ChatMessage *messages = NULL; size_t count = 0;
+    CHECK(sdb_chat_load(db, project, id, &messages, &count) && count == 70);
+    ChatSession *chat = chat_create(NULL);
+    CHECK(chat && chat_load_messages(chat, messages, count));
+    chat_store_free_messages(messages, count);
+    CHECK(chat_memory_configure(chat, store, vectors, folder, id, true));
+    CHECK(chat_send(chat, "How many silver seals does the Brannock ledger record?", NULL, why, sizeof(why)));
+    wait_chat(chat);
+    chat_lock(chat);
+    CHECK(!chat_message(chat, chat_count(chat)-1)->error);
+    chat_unlock(chat);
+    char *sources = chat_memory_sources(chat);
+    CHECK(sources && strstr(sources, fact));
+    free(sources); chat_destroy(chat);
+}
+
+static void retained_tail_must_not_starve_archive_candidates(void)
+{
+    const char *id = "candidate-starvation";
+    const char *query = "Zorwick gate passphrase";
+    const char *fact = "The Zorwick gate passphrase is amber.";
+    char old[401];
+    memset(old, 'x', sizeof(old)-1); old[sizeof(old)-1] = 0;
+    memcpy(old, fact, strlen(fact));
+    ChatMessage message = {.role=CHAT_USER, .content=old};
+    CHECK(sdb_chat_append(db, project, id, "Candidate starvation", &message));
+    for (unsigned i = 0; i < 32; i++) {
+        message.content = (char *)query;
+        CHECK(sdb_chat_append(db, project, id, "Candidate starvation", &message));
+    }
+    MemoryScope scope;
+    MemoryTokenizer tokenizer = {0}; char fingerprint[65], why[256];
+    CHECK(memory_scope_set(db, project, id, true, &scope));
+    CHECK(memory_tokenizer_fingerprint(&tokenizer, fingerprint));
+    bool progress = true;
+    unsigned steps = 0;
+    while (progress && steps++ < 1024)
+        CHECK(memory_ingest_step(db, scope.id, "starve-test", memory_source_tokens, &tokenizer,
+                                 fingerprint, &progress, why, sizeof(why)));
+    CHECK(!progress && steps < 1024);
+    CHECK(memory_scope_get(db, project, id, &scope));
+    CHECK(memory_vectors_create(vectors, &scope, why, sizeof(why)));
+    unsigned indexed = 0;
+    for (;;) {
+        MemoryIndexLease lease = {0}; bool claimed = false;
+        bool ok = memory_outbox_claim(db, scope.id, "starve-index", &lease, &claimed);
+        CHECK(ok);
+        if (!ok || !claimed) { memory_index_lease_free(&lease); break; }
+        bool delivered = memory_vectors_upsert(vectors, &lease, why, sizeof(why));
+        CHECK(delivered);
+        CHECK(memory_outbox_ack(db, &lease, delivered));
+        memory_index_lease_free(&lease);
+        if (!delivered || ++indexed > 1024) break;
+    }
+    CHECK(indexed == 33);
+    CHECK(memory_scope_get(db, project, id, &scope) && !scope.index_pending);
+    MemoryCandidate lexical[MEMORY_CANDIDATES], semantic[MEMORY_CANDIDATES];
+    size_t nl = 0, ns = 0;
+    CHECK(memory_lexical_candidates_before(db, &scope, query, 1, 16, lexical, &nl));
+    CHECK(memory_vectors_search_with_documents_before(vectors, &scope, NULL, query, 1, 16,
+                                                       semantic, &ns, why, sizeof(why)));
+    CHECK(nl == 1 && ns == 1);
+    CHECK(nl && ns && !strcmp(lexical[0].unit_id, semantic[0].unit_id));
+    printf("    pre-top-k cutoff: lexical=%zu semantic=%zu same_original=%d\n", nl, ns,
+           nl && ns && !strcmp(lexical[0].unit_id, semantic[0].unit_id));
+    MemoryPlan plan = {0};
+    /* The 32 recent units are already in the actual model context. Only
+     * sequence 0 needs retrieval. They must be excluded BEFORE either top-k. */
+    CHECK(memory_plan_build(db, vectors, project, id, query, 1, false,
+                            memory_reference_tokens, &tokenizer, fingerprint, NULL, &plan));
+    printf("    archive starvation: indexed=%u lexical_ok=%d semantic_ok=%d candidates=%zu admitted=%zu\n",
+           indexed, plan.lexical_ok, plan.semantic_ok, plan.candidates, plan.count);
+    CHECK(plan.lexical_ok && plan.semantic_ok);
+    CHECK(plan.reference && strstr(plan.reference, fact));
+    memory_plan_free(&plan);
+    /* Positive control: the old unit is valid and reachable when queried by
+     * its distinguishing term. This is not missing ingestion or a stale index. */
+    CHECK(memory_plan_build(db, vectors, project, id, "amber", 1, false,
+                            memory_reference_tokens, &tokenizer, fingerprint, NULL, &plan));
+    CHECK(plan.reference && strstr(plan.reference, fact));
+    memory_plan_free(&plan);
+    CHECK(memory_vectors_drop(vectors, &scope, why, sizeof(why)));
+}
+
 int main(void)
 {
     char name[64], command[256], why[512];
@@ -167,7 +273,9 @@ int main(void)
         vectors = semantic_client_create(store, NULL); CHECK(vectors);
         const TestCase tests[] = {{"brief failure preserves only eligible originals", invalid_brief_does_not_disable_originals},
                                   {"canceled native preparation", canceled_preparation_has_no_sources},
-                                  {"edit bypasses recall", edit_bypasses_recall}};
+                                   {"edit bypasses recall", edit_bypasses_recall},
+                                    {"context-trimmed history remains retrievable", context_trimmed_history_remains_retrievable},
+                                    {"retained tail cannot starve archive candidates", retained_tail_must_not_starve_archive_candidates}};
         run_tests(tests, sizeof(tests) / sizeof(tests[0]));
         semantic_client_destroy(vectors);
     }

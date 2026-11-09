@@ -57,7 +57,26 @@ def percentile(values, q):
 DOCUMENTS = {}  # name -> text of the fixture's attached documents, set by summarize()
 
 
-def score_document_task(task, event):
+def source_violations(event, archive):
+    """Verify every admitted byte range against the original, including document
+    tasks. An answer alias elsewhere in a book is not a provenance check."""
+    violations = 0
+    for row in event.get("admitted_units", []):
+        name, sequence = row.get("document_name"), row.get("sequence")
+        original = DOCUMENTS.get(name) if name else (
+            archive[sequence]["text"] if isinstance(sequence, int) and 0 <= sequence < len(archive) else None)
+        text, start, size = row.get("text"), row.get("byte_start"), row.get("text_bytes")
+        if (not isinstance(original, str) or not isinstance(text, str) or not text or CANARY in text or
+                not isinstance(start, int) or start < 0 or not isinstance(size, int) or size <= 0):
+            violations += 1
+            continue
+        raw, selected = original.encode("utf-8"), text.encode("utf-8")
+        if len(selected) != size or start + size > len(raw) or raw[start:start + size] != selected:
+            violations += 1
+    return violations
+
+
+def score_document_task(task, event, archive):
     """Reach for a fact planted inside an attached saved document: the admitted
     or candidate unit must carry the planted sentence and come from that document."""
     sentence = task["required_document_text"]
@@ -73,22 +92,25 @@ def score_document_task(task, event):
     hit_admitted = any(r.get("document_name") == name and carries(r.get("text")) for r in admitted_rows)
     hit_candidates = any(c.get("document_name") == name and carries(c.get("text")) for c in candidates)
     whole_admitted = any(r.get("document_name") == name and whole(r.get("text")) for r in admitted_rows)
+    whole_candidates = any(c.get("document_name") == name and whole(c.get("text")) for c in candidates)
     lexical = any(c.get("document_name") == name and carries(c.get("text")) for c in event.get("lexical_candidates", []))
     semantic = any(c.get("document_name") == name and carries(c.get("text")) for c in event.get("semantic_candidates", []))
     return {"task": task["id"], "category": task["category"], "required": [name], "admitted": [r.get("document_name") or r.get("sequence") for r in admitted_rows],
-            "admitted_count": len(admitted_rows), "candidate_count": len(candidates), "privacy_violations": 0,
+            "admitted_count": len({r.get("id") for r in admitted_rows}), "rendered_spans": len(admitted_rows),
+            "candidate_count": len(candidates), "privacy_violations": source_violations(event, archive),
             "planning_seconds": event.get("planning_seconds"), "over_budget": (event.get("planning_seconds") or 0) > BUDGET_SECONDS,
             "lexical_ok": event.get("lexical_ok") is True, "semantic_ok": event.get("semantic_ok") is True,
             "planned": event.get("planned") is True, "admitted_ok": event.get("admitted") is True,
             "distractors_admitted": 0, "distractors_planted": 0,
             "reach_candidates": 1.0 if hit_candidates else 0.0, "reach_admitted": 1.0 if hit_admitted else 0.0,
             "whole_sentence_admitted": 1.0 if whole_admitted else 0.0,
+            "whole_sentence_candidates": 1.0 if whole_candidates else 0.0,
             "lexical_hit": 1.0 if lexical else 0.0, "semantic_hit": 1.0 if semantic else 0.0}
 
 
 def score_task(task, event, archive):
     if task.get("required_document"):
-        return score_document_task(task, event)
+        return score_document_task(task, event, archive)
     required = set(task["required_sequences"])
     distractors = set(task["distractor_sequences"])
     lexical = {c["sequence"] for c in event.get("lexical_candidates", []) if isinstance(c.get("sequence"), int)}
@@ -96,18 +118,14 @@ def score_task(task, event, archive):
     candidates = lexical | semantic
     admitted_rows = event.get("admitted_units", [])
     admitted = set()
-    privacy = 0
+    privacy = source_violations(event, archive)
     for row in admitted_rows:
         sequence = row.get("sequence")
         text = row.get("text", "")
         if row.get("document_name"):
-            doc = DOCUMENTS.get(row["document_name"], "")
-            if not text or text not in doc or CANARY in text:
-                privacy += 1
             continue  # an attached-document excerpt is not a chat sequence
         if (not isinstance(sequence, int) or not 0 <= sequence < len(archive) or not text or
                 text not in archive[sequence]["text"] or CANARY in text):
-            privacy += 1
             continue
         admitted.add(sequence)
     result = {"task": task["id"], "category": task["category"], "required": sorted(required),
@@ -153,6 +171,7 @@ def summarize(fixture, events, driver_rc, manifest_hash):
             "semantic_hit": mean(r["semantic_hit"] for r in rows),
             "mean_admitted": mean(r["admitted_count"] for r in rows),
             "whole_sentence_admitted": mean(r.get("whole_sentence_admitted") for r in rows if "whole_sentence_admitted" in r),
+            "whole_sentence_candidates": mean(r.get("whole_sentence_candidates") for r in rows if "whole_sentence_candidates" in r),
             "distractors_admitted": sum(r["distractors_admitted"] for r in rows),
             "distractors_planted": sum(r["distractors_planted"] for r in rows),
             "planning_p50": percentile([r["planning_seconds"] for r in rows if r["planning_seconds"] is not None], .5),
@@ -171,6 +190,10 @@ def summarize(fixture, events, driver_rc, manifest_hash):
         "ingestion_and_index_complete": bool(archive_event) and archive_event.get("pending_sequence") == archive_event.get("ingested_sequence")
                                         and archive_event.get("index_pending") is False,
         "privacy_zero": bool(scored) and all(r["privacy_violations"] == 0 for r in scored),
+        "reference_budgets": bool(selections) and all(
+            isinstance(e.get("reference_bytes"), (int, float)) and 0 <= e["reference_bytes"] <= 16384 and
+            isinstance(e.get("reference_tokens"), (int, float)) and 0 <= e["reference_tokens"] <= 4096
+            for e in selections),
         "control_reach_admitted_1_0": control.get("reach_admitted") == 1.0,
         "namespaces_cleaned": bool(cleanup) and all(c.get("ok") for c in cleanup),
     }
@@ -192,6 +215,18 @@ def summarize(fixture, events, driver_rc, manifest_hash):
 
 
 def self_test():
+    DOCUMENTS["proof.md"] = "Before. Zoë chose amber. After."
+    selected = "Zoë chose amber."
+    start = len("Before. ".encode())
+    row = {"document_name": "proof.md", "text": selected, "byte_start": start,
+           "text_bytes": len(selected.encode())}
+    task = {"id": "proof", "category": "document_fact", "required_document": "proof.md",
+            "required_document_text": selected, "answers": ["amber"]}
+    assert score_document_task(task, {"admitted_units": [row]}, [])["privacy_violations"] == 0
+    for bad in (dict(row, byte_start=start+1), dict(row, text_bytes=len(selected)),
+                dict(row, document_name="private.md"), dict(row, text="invented amber")):
+        assert score_document_task(task, {"admitted_units": [bad]}, [])["privacy_violations"] == 1
+    DOCUMENTS.clear()
     for seed in (1, 20261107, 777):
         fixture = memory_fixture.build(seed, 12000, 2)
         by = {}
@@ -235,6 +270,7 @@ def main():
         events = [json.loads(l) for l in (run / "events.jsonl").read_text().splitlines() if l.strip()]
         report = summarize(fixture, events, 0, (run / "FROZEN.sha256").read_text().strip())
         report["rescored"] = True
+        report["scorer_sha256"] = sha(Path(__file__))
         save(run / "report.rescored.json", report)
         print(json.dumps({"result": report["result"], "gates": report["gates"], "overall": report["overall"],
                           "document_fact": report["per_category"].get("document_fact")}, indent=2))
@@ -286,7 +322,10 @@ def main():
     if args.export_native:
         count = memory_fixture.export_native(fixture, args.export_native)
         print(f"native episodes written: {count} -> {args.export_native}")
-    sources = [ROOT / "tools/memory_fixture.py", Path(__file__), ROOT / "tools/memory_reach_eval.c", ROOT / "tools/memory_reach_eval.sh"]
+    sources = [ROOT / "tools/memory_fixture.py", Path(__file__), ROOT / "tools/memory_reach_eval.c", ROOT / "tools/memory_reach_eval.sh",
+               ROOT / "Makefile", ROOT / "tests/fixtures/memory_reach/excerpt-registration.json",
+               ROOT / "tests/fixtures/memory_reach/small-unit-registration.json"]
+    sources += sorted(p for p in (ROOT / "src").rglob("*") if p.suffix in (".c", ".h", ".m"))
     binary = args.binary.resolve()
     owned = run / "memory_reach_eval"
     if binary.is_file():

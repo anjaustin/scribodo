@@ -12,19 +12,26 @@
 #define MEMORY_PLAN_BYTES (16u * 1024u)
 #define MEMORY_PLAN_TOKENS 4096u
 #define MEMORY_BASE_REQUEST_BYTES (2u * 1024u * 1024u)
+#define MEMORY_EXCERPTS_MAX 8u
 
 typedef enum {
     MEMORY_DISABLED, MEMORY_WARMING, MEMORY_PARTIAL, MEMORY_READY, MEMORY_UNAVAILABLE
 } MemoryReadiness;
 
 typedef struct {
+    size_t start, bytes; /* relative to the canonical unit; explicit windows are nonempty */
+} MemoryExcerpt;
+
+typedef struct {
     MemoryScope scope;
     MemoryDocumentSet documents; /* owned immutable refs only, never source bodies */
     MemoryUnit units[MEMORY_PLAN_UNITS];
+    MemoryExcerpt excerpts[MEMORY_PLAN_UNITS][MEMORY_EXCERPTS_MAX];
+    size_t excerpt_count[MEMORY_PLAN_UNITS]; /* zero means the whole original unit */
     MemoryBrief briefs[MEMORY_BRIEF_INPUTS]; /* original inputs owned for provenance, not full-text rendering */
     size_t brief_count;
     char brief_model_fingerprint[65];
-    size_t count, text_bytes, tokens, candidates;
+    size_t count, text_bytes, tokens, candidates; /* text_bytes counts selected excerpts, not retained canonical units */
     bool lexical_ok, semantic_ok, limited;
     MemoryReadiness readiness;
     char *reference; /* owned, neutralized reference data, never instructions/canon */
@@ -47,6 +54,10 @@ typedef struct {
 } MemoryRecallOps;
 
 void memory_plan_free(MemoryPlan *plan);
+/* Borrowed exact source span, not NUL-terminated. The byte offset is absolute
+ * in the original message/revision. Rejects malformed ranges and UTF-8 cuts. */
+size_t memory_plan_excerpt_count(const MemoryPlan *plan, size_t index);
+bool memory_plan_excerpt(const MemoryPlan *plan, size_t index, size_t part, const char **text, size_t *bytes, uint64_t *offset);
 bool memory_scope_same(const MemoryScope *a, const MemoryScope *b);
 /* remote=true returns disabled BEFORE invoking any callback. Older-than excludes
  * the protected recent tail (use INT64_MAX if it contains no persisted row).

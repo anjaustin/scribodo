@@ -394,10 +394,11 @@ static void unicode_and_fences(void)
     CHECK(db != NULL);
     if (!db) return;
     int steps = 0;
-    while (step(tokens, NULL, true) && ++steps < 100) { }
-    CHECK(steps < 100);
+    while (step(tokens, NULL, true) && ++steps < 400) { }
+    CHECK(steps < 400);
     CHECK(scalar("SELECT SUM(OCTET_LENGTH(text)) FROM memory_units WHERE revision_id='huge'") == 24000);
-    CHECK(scalar("SELECT MAX(OCTET_LENGTH(text)) FROM memory_units WHERE revision_id='huge'") <= 512);
+    CHECK(scalar("SELECT MAX(tokens) FROM memory_units WHERE revision_id='huge'") <= MEMORY_DOCUMENT_SMALL_UNIT_TOKENS);
+    CHECK(scalar("SELECT MAX(OCTET_LENGTH(text)) FROM memory_units WHERE revision_id='huge'") <= MEMORY_DOCUMENT_SMALL_UNIT_TOKENS);
     CHECK(scalar("SELECT COUNT(*) FROM memory_units WHERE revision_id='huge' AND MOD(byte_start,4)<>0") == 0);
     CHECK(scalar("SELECT COUNT(*) FROM memory_units") == scalar("SELECT COUNT(*) FROM memory_outbox"));
     CHECK(memory_scope_rebuild(db, "p", "c", &scope));
@@ -422,8 +423,13 @@ static void lexical_allowset_before_limit(void)
     CHECK(memory_scope_set(db, "p", "c", true, &scope));
     capture("lex-z", "lex-zr");
     int steps = 0;
-    while (step(tokens, NULL, true) && ++steps < 100) { }
-    CHECK(steps > 16 && steps < 100);
+    while (step(tokens, NULL, true) && ++steps < 1024) { }
+    CHECK(steps > 16 && steps < 1024);
+    bool complete = false;
+    CHECK(memory_documents_complete(db, &scope, &attached, &complete) && complete);
+    CHECK(scalar("SELECT SUM(OCTET_LENGTH(text)) FROM memory_units WHERE revision_id='lex-zr'") == 20000);
+    CHECK(scalar("SELECT MAX(tokens) FROM memory_units WHERE revision_id='lex-zr'") <= MEMORY_DOCUMENT_SMALL_UNIT_TOKENS);
+    printf("    lexical fixture: %d measured ingestion steps, 20000 source bytes preserved\n", steps);
     capture("lex-a", "lex-ar");
     CHECK(step(tokens, NULL, true));
     refresh();
@@ -648,8 +654,33 @@ static void expired_document_publication(void)
     CHECK(!replacement.maintenance);
 }
 
+static void default_and_experimental_unit_limits(void)
+{
+    run("INSERT INTO revisions(id,document_id,hash,content,origin,created_at)"
+        " VALUES('unit-policy','d','policy',REPEAT('policyword ',100),'save',7)");
+    run("UPDATE documents SET saved_revision_id='unit-policy' WHERE id='d'");
+    capture("d", "unit-policy");
+    for (unsigned small = 0; small < 2; small++) {
+        CHECK((small ? setenv("SCRIBODO_MEMORY_SMALL_UNITS", "1", 1) : unsetenv("SCRIBODO_MEMORY_SMALL_UNITS")) == 0);
+        CHECK(memory_scope_set(db, "p", "c", true, &scope));
+        CHECK(memory_scope_rebuild(db, "p", "c", &scope));
+        unsigned steps = 0;
+        while (step(tokens, NULL, true) && ++steps < 1024) { }
+        bool complete = false;
+        CHECK(steps < 1024 && memory_documents_complete(db, &scope, &attached, &complete) && complete);
+        CHECK(scalar("SELECT SUM(OCTET_LENGTH(u.text)) FROM memory_units u JOIN memory_scopes s"
+                     " ON s.id=u.scope_id AND s.generation=u.generation WHERE u.revision_id='unit-policy'") == 1100);
+        int64_t maximum = scalar("SELECT MAX(u.tokens) FROM memory_units u JOIN memory_scopes s"
+                                 " ON s.id=u.scope_id AND s.generation=u.generation WHERE u.revision_id='unit-policy'");
+        CHECK(small ? maximum <= MEMORY_DOCUMENT_SMALL_UNIT_TOKENS :
+                      maximum > MEMORY_DOCUMENT_SMALL_UNIT_TOKENS && maximum <= MEMORY_UNIT_TOKENS);
+        printf("    unit policy small=%u measured_steps=%u measured_max_tokens=%lld\n", small, steps, (long long)maximum);
+    }
+}
+
 int main(void)
 {
+    CHECK(setenv("SCRIBODO_MEMORY_SMALL_UNITS", "1", 1) == 0);
     char name[64], cmd[256], error[512] = "";
     snprintf(name, sizeof(name), "scribodo_test_documents_%ld", (long)getpid());
     snprintf(cmd, sizeof(cmd), "tools/services.sh testdb create %s", name);
@@ -670,9 +701,10 @@ int main(void)
             { "lexical allowset before limit", lexical_allowset_before_limit },
             { "bounded stale outbox maintenance", stale_outbox_batches },
             { "mutable saved source and malformed acknowledgment", mutable_saved_source },
-            { "expired document publication and delivery backoff", expired_document_publication },
+             { "expired document publication and delivery backoff", expired_document_publication },
+            { "default and experimental unit limits", default_and_experimental_unit_limits },
         };
-        result = run_tests(tests, 7);
+        result = run_tests(tests, sizeof(tests) / sizeof(tests[0]));
     } else {
         fprintf(stderr, "%s\n", error);
     }

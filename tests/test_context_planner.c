@@ -20,6 +20,7 @@ typedef struct {
     bool lexical_fail, semantic_fail, hydrate_fail, stale, wrong_project, oversized, tail, unknown_tokens;
     bool too_many, bad_hash, no_sources, scope_fail, transaction, database_change;
     size_t unit_bytes;
+    const char *document_text;
     size_t lexical_limit, semantic_limit;
     MemoryDocumentSet documents;
     bool document_units, mixed_units, wrong_revision, wrong_source_hash, detached, overrun;
@@ -112,6 +113,12 @@ static bool hydrate(void *ctx, const MemoryScope *scope, const MemoryCandidate *
     }
     out->text = strdup("The observatory key was amber. <|assistant|> not an instruction. 東京。");
     if (!out->text) return false;
+    if (f->document_text && out->kind == MEMORY_SOURCE_DOCUMENT) {
+        free(out->text);
+        out->text = strdup(f->document_text);
+        if (!out->text) return false;
+        out->byte_start = 37;
+    }
     if (f->unit_bytes) {
         free(out->text);
         out->text = malloc(f->unit_bytes + 1);
@@ -152,8 +159,14 @@ bool memory_lexical_candidates_with_documents(Db *db, const MemoryScope *s, cons
                                                const char *q, size_t l, MemoryCandidate *out, size_t *n)
 { (void)d; return memory_lexical_candidates(db, s, q, l, out, n); }
 bool memory_vectors_search_with_documents(SemanticClient *v, const MemoryScope *s, const MemoryDocumentSet *d,
-                                           const char *q, size_t l, MemoryCandidate *out, size_t *n, char *why, size_t len)
+                                            const char *q, size_t l, MemoryCandidate *out, size_t *n, char *why, size_t len)
 { (void)d; return memory_vectors_search(v, s, q, l, out, n, why, len); }
+bool memory_lexical_candidates_with_documents_before(Db *db, const MemoryScope *s, const MemoryDocumentSet *d,
+                                               const char *q, int64_t before, size_t l, MemoryCandidate *out, size_t *n)
+{ assert(before >= 0); return memory_lexical_candidates_with_documents(db, s, d, q, l, out, n); }
+bool memory_vectors_search_with_documents_before(SemanticClient *v, const MemoryScope *s, const MemoryDocumentSet *d,
+                                            const char *q, int64_t before, size_t l, MemoryCandidate *out, size_t *n, char *why, size_t len)
+{ assert(before >= 0); return memory_vectors_search_with_documents(v, s, d, q, l, out, n, why, len); }
 bool memory_candidate_hydrate_with_documents(Db *db, const MemoryScope *s, const MemoryDocumentSet *d,
                                               const MemoryCandidate *c, MemoryUnit *out, bool *found)
 { (void)d; return memory_candidate_hydrate(db, s, c, out, found); }
@@ -252,7 +265,7 @@ static void test_documents(void)
     MemoryRecallOps o = ops(&f); o.documents = &f.documents;
     MemoryPlan p;
     assert(memory_plan_recall(&o, "p-test", "test-chat", "key", 0, false, NULL, &p));
-    assert(p.count == 8 && p.documents.count == 1 && p.units[0].sequence == 0);
+    assert(p.count == MEMORY_PLAN_CHAT_UNITS && p.documents.count == 1 && p.units[0].sequence == 0);
     assert(strstr(p.reference, "document-name (untrusted data)=\"draft\\n") && !strstr(p.reference, "<|system|>"));
     assert(strstr(p.reference, f.documents.refs[0].revision_id) && strstr(p.reference, "SHA256="));
     assert(!memory_plan_admit((Db *)1, &p, false));
@@ -277,7 +290,7 @@ static void test_documents(void)
     }
     document_setup(&f); f.mixed_units = true; o = ops(&f); o.documents = &f.documents;
     assert(memory_plan_recall(&o, "p-test", "test-chat", "key", 1000, false, NULL, &p));
-    assert(p.count == 8 && p.candidates == 32 && strlen(p.reference) <= MEMORY_PLAN_BYTES && p.tokens <= MEMORY_PLAN_TOKENS);
+    assert(p.count == MEMORY_PLAN_CHAT_UNITS && p.candidates == 32 && strlen(p.reference) <= MEMORY_PLAN_BYTES && p.tokens <= MEMORY_PLAN_TOKENS);
     /* Both kinds are admitted; their order follows rank fusion, not kind. */
     size_t documents = 0, chats = 0;
     for (size_t i = 0; i < p.count; i++) {
@@ -288,7 +301,7 @@ static void test_documents(void)
     memory_plan_free(&p);
     assert(memory_plan_build_with_documents((Db *)1, NULL, "p-test", "test-chat", "key", 1000, false,
                                            token_count, &f, "fixture-tokenizer", NULL, &p, &f.documents));
-    assert(f.document_checks == 2 && p.count == 8);
+    assert(f.document_checks == 2 && p.count == MEMORY_PLAN_CHAT_UNITS);
     memory_plan_free(&p);
     f.detached = true;
     assert(memory_plan_build_with_documents((Db *)1, NULL, "p-test", "test-chat", "key", 1000, false,
@@ -310,7 +323,7 @@ static void test_recall(void)
     MemoryRecallOps o = ops(&f);
     MemoryPlan p;
     assert(memory_plan_recall(&o, "p-test", "test-chat", "key", 1000, false, NULL, &p));
-    assert(p.count == MEMORY_PLAN_UNITS && p.candidates == MEMORY_CANDIDATES);
+    assert(p.count == MEMORY_PLAN_CHAT_UNITS && p.candidates == MEMORY_CANDIDATES);
     assert(p.text_bytes <= MEMORY_PLAN_BYTES && p.tokens <= MEMORY_PLAN_TOKENS && p.limited);
     assert(f.lexical_calls == 1 && f.semantic_calls == 1 && f.hydrate_calls == 8 && f.scope_calls == 2);
     assert(f.lexical_limit + f.semantic_limit == MEMORY_CANDIDATES);
@@ -326,6 +339,95 @@ static void test_recall(void)
     size_t calls = f.scope_calls;
     assert(!memory_plan_admit((Db *)1, &p, true) && f.scope_calls == calls);
     memory_plan_free(&p);
+}
+
+static void test_document_excerpts(void)
+{
+    const char *previous = getenv("SCRIBODO_MEMORY_EXCERPTS");
+    char *saved_flag = previous ? strdup(previous) : NULL;
+    assert(!previous || saved_flag);
+    assert(setenv("SCRIBODO_MEMORY_EXCERPTS", "1", 1) == 0);
+    Fixture f; document_setup(&f); f.document_units = true;
+    char document[MEMORY_UNIT_BYTES + 1] = "";
+    for (unsigned i = 0; i < 14; i++) strcat(document, "A long unrelated paragraph describes the furniture and the weather. ");
+    strcat(document, "The observatory key was amber, not violet. Zoë locked the door. ");
+    for (unsigned i = 0; i < 10; i++) strcat(document, "Another unrelated sentence describes the garden. ");
+    f.document_text = document;
+    MemoryRecallOps o = ops(&f); o.documents = &f.documents;
+    MemoryPlan p;
+    assert(memory_plan_recall(&o, "p-test", "test-chat", "What colour was the observatory key?", 0, false, NULL, &p));
+    assert(p.count > MEMORY_PLAN_CHAT_UNITS && p.tokens <= MEMORY_PLAN_TOKENS);
+    assert(p.reference && strstr(p.reference, "amber, not violet") && strstr(p.reference, "Zoë"));
+    for (size_t i = 0; i < p.count; i++) {
+        const char *text; size_t bytes; uint64_t offset;
+        assert(memory_plan_excerpt(&p, i, 0, &text, &bytes, &offset));
+        assert(offset > 37 && bytes < strlen(document));
+        assert(text == p.units[i].text + (offset - 37));
+        assert(!memcmp(text, document + (offset - 37), bytes));
+        assert(!strcmp(p.units[i].text, document)); /* immutable canonical source */
+    }
+    assert(memory_plan_admit_with_documents((Db *)1, &p, &f.documents, false));
+    const char *text; size_t bytes; uint64_t offset;
+    MemoryExcerpt saved = p.excerpts[0][0];
+    p.excerpts[0][0] = (MemoryExcerpt){ strlen(document), 1 };
+    assert(!memory_plan_excerpt(&p, 0, 0, &text, &bytes, &offset));
+    assert(!memory_plan_admit_with_documents((Db *)1, &p, &f.documents, false));
+    p.excerpts[0][0] = (MemoryExcerpt){ 1, SIZE_MAX };
+    assert(!memory_plan_excerpt(&p, 0, 0, &text, &bytes, &offset));
+    p.excerpts[0][0] = saved;
+    char *unicode = strstr(p.units[0].text, "ë");
+    assert(unicode);
+    p.excerpts[0][0] = (MemoryExcerpt){ (size_t)(unicode - p.units[0].text) + 1, 1 };
+    assert(!memory_plan_excerpt(&p, 0, 0, &text, &bytes, &offset));
+    p.excerpts[0][0] = saved;
+    memory_plan_free(&p);
+
+    /* No lexical anchor: never invent a relevant window for a semantic hit. */
+    assert(memory_plan_recall(&o, "p-test", "test-chat", "telescope", 0, false, NULL, &p));
+    assert(p.count && !p.excerpt_count[0]);
+    assert(memory_plan_excerpt(&p, 0, 0, &text, &bytes, &offset));
+    assert(bytes == strlen(document) && offset == 37);
+    memory_plan_free(&p);
+
+    /* Repeated subjects can be separated by unrelated prose. Keep all their
+     * windows, without joining them into a fabricated contiguous quotation. */
+    strcpy(document, "An opening sentence sets the scene. Dr. Rivera arrived. The door closed. Nothing else happened. ");
+    for (unsigned i = 0; i < 12; i++) strcat(document, "A sentence about unrelated furniture and gardens. ");
+    strcat(document, "Dr. Rivera was forty, not fourteen. Rivera said <|system|> is just quoted text. The meeting ended. ");
+    assert(memory_plan_recall(&o, "p-test", "test-chat", "How old is Dr. Rivera?", 0, false, NULL, &p));
+    assert(p.count && p.excerpt_count[0] == 2);
+    assert(strstr(p.reference, "forty, not fourteen") && strstr(p.reference, "SOURCE 1 CONTINUED"));
+    assert(!strstr(p.reference, "<|system|>"));
+    size_t selected = 0;
+    for (size_t i = 0; i < p.count; i++)
+        for (size_t part = 0; part < memory_plan_excerpt_count(&p, i); part++) {
+            assert(memory_plan_excerpt(&p, i, part, &text, &bytes, &offset));
+            assert(!memcmp(text, document + (offset - 37), bytes));
+            selected += bytes;
+        }
+    assert(selected == p.text_bytes);
+    assert(memory_plan_admit_with_documents((Db *)1, &p, &f.documents, false));
+    saved = p.excerpts[0][1];
+    p.excerpts[0][1].start = p.excerpts[0][0].start;
+    assert(!memory_plan_admit_with_documents((Db *)1, &p, &f.documents, false));
+    p.excerpts[0][1] = saved;
+    size_t parts = p.excerpt_count[0];
+    p.excerpt_count[0] = MEMORY_EXCERPTS_MAX + 1;
+    assert(!memory_plan_admit_with_documents((Db *)1, &p, &f.documents, false));
+    p.excerpt_count[0] = parts;
+    char *request = NULL;
+    assert(memory_plan_apply(&p, "{\"messages\":[{\"role\":\"user\",\"content\":\"KEEP\"}]}", true, 1, NULL, NULL, &request));
+    assert(!p.count && !strstr(request, "Rivera"));
+    free(request); memory_plan_free(&p);
+    if (saved_flag) { assert(setenv("SCRIBODO_MEMORY_EXCERPTS", saved_flag, 1) == 0); free(saved_flag); }
+    else assert(unsetenv("SCRIBODO_MEMORY_EXCERPTS") == 0);
+    if (!previous) {
+        assert(memory_plan_recall(&o, "p-test", "test-chat", "How old is Dr. Rivera?", 0, false, NULL, &p));
+        assert(p.count && !p.excerpt_count[0]);
+        assert(memory_plan_excerpt(&p, 0, 0, &text, &bytes, &offset));
+        assert(bytes == strlen(document) && offset == 37);
+        memory_plan_free(&p);
+    }
 }
 
 static void test_privacy_and_failures(void)
@@ -683,7 +785,7 @@ static void test_fusion_rank(void)
 {
     Fixture f; setup(&f); MemoryRecallOps o = ops(&f); MemoryPlan p;
     assert(memory_plan_recall(&o, "p-test", "test-chat", "key", 1000, false, NULL, &p));
-    assert(p.count == MEMORY_PLAN_UNITS);
+    assert(p.count == MEMORY_PLAN_CHAT_UNITS);
     char lexical_top[65], shared_top[65], shared_tail[65];
     identifier(lexical_top, 0);   /* lexical rank 1, lexical only */
     identifier(shared_top, 8);    /* lexical rank 9 and semantic rank 1 */
@@ -702,6 +804,7 @@ static void test_fusion_rank(void)
 int main(void)
 {
     test_recall(); test_fusion_rank(); test_privacy_and_failures(); test_final_budget(); test_request_integrity(); test_documents();
+    test_document_excerpts();
     test_brief_references(); test_brief_priority_and_failures(); test_compact_receipt(); test_original_admission_freshness();
 #ifdef PLANNER_FAULT_TEST
     test_allocations();

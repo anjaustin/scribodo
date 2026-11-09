@@ -847,7 +847,10 @@ bool memory_vectors_fingerprint(SemanticClient *client, char out[65])
         identity = cfg->sha256;
     }
     char key[512];
-    snprintf(key, sizeof(key), "memory-v2|%s|dim=%d|pool=last|normalize=l2|query=%s", identity, SEM_DIM, k_query_instruction);
+    /* The sequence projection changes search eligibility. A new fingerprint
+     * makes old collections missing, so the worker reseeds SQL generations
+     * before creating/reindexing; never silently query mixed payload formats. */
+    snprintf(key, sizeof(key), "memory-v2|chat-sequence=int-v1|%s|dim=%d|pool=last|normalize=l2|query=%s", identity, SEM_DIM, k_query_instruction);
     mv_sha(key, strlen(key), out);
     return true;
 }
@@ -1185,7 +1188,8 @@ bool memory_vectors_upsert(SemanticClient *c, const MemoryIndexLease *lease, cha
               cJSON_AddStringToObject(p, "source_kind", lease->unit.kind == MEMORY_SOURCE_DOCUMENT ? "document" : "chat");
     if (lease->unit.kind == MEMORY_SOURCE_DOCUMENT)
         ok = ok && cJSON_AddStringToObject(p, "document_id", lease->unit.document_id) &&
-                   cJSON_AddStringToObject(p, "revision_id", lease->unit.revision_id);
+                    cJSON_AddStringToObject(p, "revision_id", lease->unit.revision_id);
+    else ok = ok && cJSON_AddNumberToObject(p, "sequence", (double)lease->unit.sequence);
     char key[700], uuid[37];
     snprintf(key, sizeof(key), "%s|%s|%s|%s|%s|%s|%llu|%llu|%llu|%s", lease->scope.database, lease->scope.id, lease->scope.project_id,
              lease->scope.conversation_id, lease->unit.id, lease->unit.text_hash,
@@ -1222,7 +1226,7 @@ static cJSON *mv_filter(const cJSON *scope)
 
 /* This union is applied by Qdrant BEFORE its top-k limit; detached documents
  * must never crowd out authorized chat/document locators. */
-static bool mv_sources_filter(cJSON *filter, const MemoryDocumentSet *documents)
+static bool mv_sources_filter(cJSON *filter, const MemoryDocumentSet *documents, int64_t before)
 {
     cJSON *should = cJSON_AddArrayToObject(filter, "should");
     if (!should) return false;
@@ -1237,15 +1241,31 @@ static bool mv_sources_filter(cJSON *filter, const MemoryDocumentSet *documents)
         }
         cJSON *branch = ok ? mv_filter(source) : NULL;
         cJSON_Delete(source);
+        if (branch && !i) {
+            cJSON *must = cJSON_GetObjectItemCaseSensitive(branch, "must");
+            cJSON *condition = cJSON_CreateObject();
+            cJSON *range = condition ? cJSON_AddObjectToObject(condition, "range") : NULL;
+            /* SQL sequences are <= INT_MAX; clamp the all-history sentinel to
+             * an exactly represented JSON integer, rather than rounding int64. */
+            double bound = before > INT_MAX ? (double)INT_MAX + 1 : (double)before;
+            bool ranged = range && cJSON_AddStringToObject(condition, "key", "sequence") &&
+                          cJSON_AddNumberToObject(range, "lt", bound) && cJSON_AddItemToArray(must, condition);
+            if (!ranged) { cJSON_Delete(condition); cJSON_Delete(branch); return false; }
+        }
         if (!branch || !cJSON_AddItemToArray(should, branch)) { cJSON_Delete(branch); return false; }
     }
     return true;
 }
 
-static bool mv_source_allowed(const cJSON *payload, const MemoryDocumentSet *documents)
+static bool mv_source_allowed(const cJSON *payload, const MemoryDocumentSet *documents, int64_t before)
 {
-    if (mv_string(payload, "source_kind", "chat"))
-        return !cJSON_HasObjectItem(payload, "document_id") && !cJSON_HasObjectItem(payload, "revision_id");
+    if (mv_string(payload, "source_kind", "chat")) {
+        const cJSON *seq = cJSON_GetObjectItemCaseSensitive(payload, "sequence");
+        return cJSON_IsNumber(seq) && isfinite(seq->valuedouble) && seq->valuedouble >= 0 &&
+               seq->valuedouble <= INT_MAX && floor(seq->valuedouble) == seq->valuedouble &&
+               (int64_t)seq->valuedouble < before &&
+               !cJSON_HasObjectItem(payload, "document_id") && !cJSON_HasObjectItem(payload, "revision_id");
+    }
     if (!mv_string(payload, "source_kind", "document") || !documents) return false;
     const cJSON *doc = cJSON_GetObjectItemCaseSensitive(payload, "document_id");
     const cJSON *rev = cJSON_GetObjectItemCaseSensitive(payload, "revision_id");
@@ -1282,13 +1302,19 @@ bool memory_vectors_search(SemanticClient *c, const MemoryScope *s, const char *
 }
 
 bool memory_vectors_search_with_documents(SemanticClient *c, const MemoryScope *s, const MemoryDocumentSet *documents,
-                           const char *query, size_t limit, MemoryCandidate out[MEMORY_CANDIDATES], size_t *count, char *why, size_t n)
+                            const char *query, size_t limit, MemoryCandidate out[MEMORY_CANDIDATES], size_t *count, char *why, size_t n)
+{
+    return memory_vectors_search_with_documents_before(c, s, documents, query, INT64_MAX, limit, out, count, why, n);
+}
+
+bool memory_vectors_search_with_documents_before(SemanticClient *c, const MemoryScope *s, const MemoryDocumentSet *documents,
+                            const char *query, int64_t before, size_t limit, MemoryCandidate out[MEMORY_CANDIDATES], size_t *count, char *why, size_t n)
 {
     if (count) *count = 0;
     if (why && n) why[0] = '\0';
     char path[400], fp[65];
     size_t bytes;
-    if (!count || !out || !limit || limit > MEMORY_CANDIDATES || !s || !s->enabled ||
+    if (!count || !out || before < 0 || !limit || limit > MEMORY_CANDIDATES || !s || !s->enabled ||
         !mv_path(c, s, "/points/search", path) || !mv_text(query, &bytes) || !mv_documents(s, documents))
         return mv_fail(why, n, "Invalid memory search scope or query");
     bool exists;
@@ -1300,7 +1326,7 @@ bool memory_vectors_search_with_documents(SemanticClient *c, const MemoryScope *
     memory_vectors_fingerprint(c, fp);
     cJSON *scope = mv_scope_payload(s, fp), *filter = scope ? mv_filter(scope) : NULL;
     cJSON *body = cJSON_CreateObject(), *vec = mv_vector(v);
-    bool ok = scope && body && filter && vec && mv_sources_filter(filter, documents) &&
+    bool ok = scope && body && filter && vec && mv_sources_filter(filter, documents, before) &&
               cJSON_AddNumberToObject(body, "limit", (double)limit) &&
               cJSON_AddBoolToObject(body, "with_payload", true);
     if (ok && cJSON_AddItemToObject(body, "vector", vec)) vec = NULL; else ok = false;
@@ -1320,7 +1346,7 @@ bool memory_vectors_search_with_documents(SemanticClient *c, const MemoryScope *
         cJSON_ArrayForEach(field, scope) if (!mv_string(p, field->string, field->valuestring)) ok = false;
         const cJSON *id = cJSON_GetObjectItemCaseSensitive(p, "unit_id"), *hash = cJSON_GetObjectItemCaseSensitive(p, "text_hash");
         ok = ok && cJSON_IsString(id) && mv_hex(id->valuestring, 65) && cJSON_IsString(hash) && mv_hex(hash->valuestring, 65) &&
-             mv_source_allowed(p, documents);
+              mv_source_allowed(p, documents, before);
         if (!ok) break;
         ok = mv_candidate_add(candidates, &used, s, id->valuestring, hash->valuestring, score->valuedouble);
     }

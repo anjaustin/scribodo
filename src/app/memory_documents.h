@@ -7,6 +7,7 @@
 #include <stdatomic.h>
 
 #define MEMORY_DOCUMENTS_MAX 8u
+#define MEMORY_DOCUMENT_SMALL_UNIT_TOKENS 128u /* gated experiment; normal/legacy cap remains 512 */
 
 typedef struct {
     char database[64], project_id[40], document_id[40], revision_id[40];
@@ -95,7 +96,9 @@ bool memory_document_ingest_step(Db *db, const MemoryScope *scope, const MemoryD
 /* Select/hydrate the bounded union of eligible chats and these exact revisions.
  * No document set means chat-only. Admission never trusts Qdrant payload text. */
 bool memory_lexical_candidates_with_documents(Db *db, const MemoryScope *scope, const MemoryDocumentSet *documents,
-                                              const char *query, size_t limit, MemoryCandidate *out, size_t *count);
+                                               const char *query, size_t limit, MemoryCandidate *out, size_t *count);
+bool memory_lexical_candidates_with_documents_before(Db *db, const MemoryScope *scope, const MemoryDocumentSet *documents,
+                                               const char *query, int64_t before, size_t limit, MemoryCandidate *out, size_t *count);
 bool memory_candidate_hydrate_with_documents(Db *db, const MemoryScope *scope, const MemoryDocumentSet *documents,
                                              const MemoryCandidate *candidate, MemoryUnit *out, bool *found);
 

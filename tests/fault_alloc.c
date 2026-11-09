@@ -3,17 +3,20 @@
 
 static _Thread_local long remaining = -1;
 static _Thread_local long calls;
+static _Thread_local long failures;
 static _Thread_local int single_failure;
 
-void fault_alloc_after(long successful_calls) { remaining = successful_calls; calls = 0; single_failure = 0; }
-void fault_alloc_once_after(long successful_calls) { remaining = successful_calls; calls = 0; single_failure = 1; }
+void fault_alloc_after(long successful_calls) { remaining = successful_calls; calls = 0; failures = 0; single_failure = 0; }
+void fault_alloc_once_after(long successful_calls) { remaining = successful_calls; calls = 0; failures = 0; single_failure = 1; }
 long fault_alloc_count(void) { return calls; }
+long fault_alloc_failures(void) { return failures; }
 
 static int fail(void)
 {
     calls++;
     if (remaining < 0) return 0;
     if (remaining == 0) {
+        failures++;
         if (single_failure) remaining = -1;
         return 1;
     }

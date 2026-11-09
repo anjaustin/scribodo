@@ -220,6 +220,45 @@ static void window_shrink_faults(void)
     free(rows);
 }
 
+static void request_builder_faults(void)
+{
+    ChatMessage message = {.role=CHAT_USER, .content="KEEP the author's exact request: Zoë chooses amber."};
+    ChatContext context = {.doc_title="chapter.md", .doc_text="KEEP the attached passage exactly."};
+    for (unsigned edit = 0; edit < 2; edit++) {
+        size_t first = 1;
+        fault_alloc_after(-1);
+        char *control = edit ? chat_build_edit_request("KEEP this instruction", "KEEP this selected passage", &context,
+                                                       32768, NULL, NULL, NULL)
+                             : chat_build_request_selected(&message, 1, &context, NULL, 32768, NULL, NULL, NULL, &first);
+        long allocations = fault_alloc_count();
+        fault_alloc_after(-1);
+        CHECK(control && allocations > 0 && (edit || first == 0));
+        if (!control) continue;
+        long partial = 0, missing_author = 0, missing_context = 0;
+        for (long i = 0; i < allocations * 2; i++) {
+            first = 1;
+            allocation_case(i, allocations);
+            char *request = edit ? chat_build_edit_request("KEEP this instruction", "KEEP this selected passage", &context,
+                                                           32768, NULL, NULL, NULL)
+                                 : chat_build_request_selected(&message, 1, &context, NULL, 32768, NULL, NULL, NULL, &first);
+            long failed = fault_alloc_failures();
+            fault_alloc_after(-1);
+            if (request && strcmp(request, control)) {
+                partial++;
+                if (!strstr(request, edit ? "KEEP this selected passage" : message.content)) missing_author++;
+                if (!strstr(request, context.doc_text)) missing_context++;
+            }
+            CHECK(failed > 0);
+            CHECK(!request || !strcmp(request, control)); /* no incomplete request may be published */
+            if (!edit) CHECK(first == (request ? 0u : 1u));
+            free(request);
+        }
+        printf("    request builder edit=%u measured_allocations=%ld partial_requests=%ld missing_author_text=%ld missing_document_context=%ld (once + persistent)\n",
+               edit, allocations, partial, missing_author, missing_context);
+        free(control);
+    }
+}
+
 static void writer_faults(void)
 {
     SourceRef source = { .kind = SRC_DOC, .quote = "A quote" };
@@ -365,6 +404,7 @@ int main(void)
                         { "packed_history_allocations", packed_history_faults },
                         { "chat_load_allocations", chat_load_faults },
                         { "chat_send_allocations", chat_send_faults },
+                        { "request_builder_allocations", request_builder_faults },
                         { "window_shrink_allocations", window_shrink_faults },
                           { "chat_allocations", chat_faults }, { "writer_allocations", writer_faults },
                           { "chat_unterminated_list_allocations", chat_unterminated_list_faults },

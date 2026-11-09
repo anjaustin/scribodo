@@ -146,7 +146,7 @@ $(BUILD)/test_frame_metrics: src/app/frame_metrics.c tests/test_frame_metrics.c 
 	$(CC) $(CFLAGS) -Isrc src/app/frame_metrics.c tests/test_frame_metrics.c -o $@
 
 # Deliberately headless: tests provide store/vector doubles. Do not link LLM_OBJS.
-CONTEXT_PLANNER_TEST_SRCS := src/llm/context_planner.c src/llm/llm_text.c src/core/utf8.c src/core/json.c src/core/json_vendor.c tests/test_context_planner.c
+CONTEXT_PLANNER_TEST_SRCS := src/llm/context_planner.c src/llm/llm_text.c src/core/utf8.c src/core/recall_terms.c src/core/json.c src/core/json_vendor.c tests/test_context_planner.c
 $(BUILD)/test_context_planner: $(CONTEXT_PLANNER_TEST_SRCS) src/llm/context_planner.h src/app/memory_store.h src/llm/semantic.h
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Isrc -Ithird_party/cJSON $(CONTEXT_PLANNER_TEST_SRCS) -o $@
@@ -253,6 +253,7 @@ $(BUILD)/test_memory_vectors_faults: $(MEMORY_VECTORS_FAULT_SRCS) $(wildcard src
 test: $(TESTS)
 	@set -e; for t in $(TESTS); do echo "== $$t"; $(WATCHDOG) $(TEST_TIMEOUT) $$(basename $$t) ./$$t; echo; done
 	$(WATCHDOG) $(TEST_TIMEOUT) test_backup python3 tests/test_backup.py
+	$(WATCHDOG) $(TEST_TIMEOUT) test_frame_soak python3 tests/test_frame_soak.py
 
 # Verify pinned dependency inventory, upstream refs, container digests and OSV
 # advisories. The scheduled workflow publishes the same report as an artifact.

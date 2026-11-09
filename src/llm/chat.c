@@ -546,6 +546,18 @@ static bool fit_document(char *doc, long max_tokens, ChatTokenCount count, void 
     return cut;
 }
 
+/* Publish a complete message or nothing. Failed field allocations must not
+ * turn an author's request or selected passage into an empty model turn. */
+static bool request_message(cJSON *array, const char *role, const char *content)
+{
+    if (!array || !role || !content) return false;
+    cJSON *message = cJSON_CreateObject();
+    bool ok = message && cJSON_AddStringToObject(message, "role", role) &&
+              cJSON_AddStringToObject(message, "content", content) && cJSON_AddItemToArray(array, message);
+    if (!ok) cJSON_Delete(message);
+    return ok;
+}
+
 char *chat_build_request(const ChatMessage *msgs, size_t n, const ChatContext *ctx, int ctx_tokens,
                          ChatTokenCount count, void *cctx, bool *doc_truncated)
 {
@@ -555,6 +567,13 @@ char *chat_build_request(const ChatMessage *msgs, size_t n, const ChatContext *c
 char *chat_build_request_ex(const ChatMessage *msgs, size_t n, const ChatContext *ctx, const ChatNames *names, int ctx_tokens,
                             ChatTokenCount count, void *cctx, bool *doc_truncated)
 {
+    return chat_build_request_selected(msgs, n, ctx, names, ctx_tokens, count, cctx, doc_truncated, NULL);
+}
+
+char *chat_build_request_selected(const ChatMessage *msgs, size_t n, const ChatContext *ctx, const ChatNames *names, int ctx_tokens,
+                                  ChatTokenCount count, void *cctx, bool *doc_truncated, size_t *first_history)
+{
+    if (first_history) *first_history = n;
     if (doc_truncated) *doc_truncated = false;
     long budget = (long)(ctx_tokens > 0 ? ctx_tokens : SLOT_CTX_TOKENS) - MAX_REPLY_TOKENS - 256;
 
@@ -683,12 +702,9 @@ char *chat_build_request_ex(const ChatMessage *msgs, size_t n, const ChatContext
 
     cJSON *root = cJSON_CreateObject();
     cJSON *arr = cJSON_AddArrayToObject(root, "messages");
-    cJSON *m = cJSON_CreateObject();
-    cJSON_AddStringToObject(m, "role", "system");
-    cJSON_AddStringToObject(m, "content", sys);
-    cJSON_AddItemToArray(arr, m);
+    bool json_ok = arr && request_message(arr, "system", sys);
     free(sys);
-    for (size_t i = first; i < n; i++) {
+    for (size_t i = first; json_ok && i < n; i++) {
         if (msgs[i].error) continue; /* failed replies are not context */
         char *visible = NULL;
         /* Assistant history: drop any reasoning that slipped into content. */
@@ -704,8 +720,6 @@ char *chat_build_request_ex(const ChatMessage *msgs, size_t n, const ChatContext
         }
         char *clean = llm_neutralize(visible ? visible : msgs[i].content);
         free(visible);
-        cJSON *e = cJSON_CreateObject();
-        cJSON_AddStringToObject(e, "role", msgs[i].role == CHAT_USER ? "user" : "assistant");
         bool newest_user = msgs[i].role == CHAT_USER && i == n - 1;
         if (newest_user && docblock && clean) {
             char *with = malloc(strlen(docblock) + strlen(clean) + 1);
@@ -714,27 +728,29 @@ char *chat_build_request_ex(const ChatMessage *msgs, size_t n, const ChatContext
                 strcat(with, clean);
                 free(clean);
                 clean = with;
-            }
+            } else json_ok = false;
         }
-        cJSON_AddStringToObject(e, "content", clean ? clean : "");
+        json_ok = json_ok && clean && request_message(arr, msgs[i].role == CHAT_USER ? "user" : "assistant", clean);
         free(clean);
-        cJSON_AddItemToArray(arr, e);
     }
-    cJSON_AddBoolToObject(root, "stream", true);
-    cJSON_AddNumberToObject(root, "max_tokens", MAX_REPLY_TOKENS);
-    cJSON_AddNumberToObject(root, "temperature", 0.7);
+    json_ok = json_ok && cJSON_AddBoolToObject(root, "stream", true) &&
+              cJSON_AddNumberToObject(root, "max_tokens", MAX_REPLY_TOKENS) &&
+              cJSON_AddNumberToObject(root, "temperature", 0.7);
     /* Reproducible sampling for test runs (local model only). */
     const char *seed = getenv("SCRIBODO_SEED");
-    if (seed && seed[0]) cJSON_AddNumberToObject(root, "seed", atoi(seed));
-    cJSON_AddNumberToObject(root, "top_p", 0.95);
-    cJSON_AddNumberToObject(root, "repeat_penalty", 1.05);
-    cJSON_AddNumberToObject(root, "id_slot", CHAT_SLOT);
-    cJSON_AddBoolToObject(root, "cache_prompt", true);
-    cJSON *kw = cJSON_AddObjectToObject(root, "chat_template_kwargs");
-    cJSON_AddBoolToObject(kw, "enable_thinking", false);
-    char *out = cJSON_PrintUnformatted(root);
+    if (seed && seed[0]) json_ok = json_ok && cJSON_AddNumberToObject(root, "seed", atoi(seed));
+    json_ok = json_ok && cJSON_AddNumberToObject(root, "top_p", 0.95) &&
+              cJSON_AddNumberToObject(root, "repeat_penalty", 1.05) &&
+              cJSON_AddNumberToObject(root, "id_slot", CHAT_SLOT) && cJSON_AddBoolToObject(root, "cache_prompt", true);
+    cJSON *kw = json_ok ? cJSON_AddObjectToObject(root, "chat_template_kwargs") : NULL;
+    json_ok = kw && cJSON_AddBoolToObject(kw, "enable_thinking", false);
+    char *out = json_ok ? cJSON_PrintUnformatted(root) : NULL;
     cJSON_Delete(root);
     free(docblock);
+    if (out && first_history) {
+        while (first < n && msgs[first].error) first++;
+        *first_history = first;
+    }
     return out;
 }
 
@@ -781,28 +797,20 @@ char *chat_build_edit_request(const char *instruction, const char *passage, cons
     snprintf(user, ucap, "Instruction: %s\n\nPassage:\n%s", instr, pass);
     cJSON *root = cJSON_CreateObject();
     cJSON *arr = cJSON_AddArrayToObject(root, "messages");
-    cJSON *m = cJSON_CreateObject();
-    cJSON_AddStringToObject(m, "role", "system");
-    cJSON_AddStringToObject(m, "content", sys);
-    cJSON_AddItemToArray(arr, m);
-    m = cJSON_CreateObject();
-    cJSON_AddStringToObject(m, "role", "user");
-    cJSON_AddStringToObject(m, "content", user);
-    cJSON_AddItemToArray(arr, m);
-    cJSON_AddBoolToObject(root, "stream", true);
+    bool json_ok = arr && request_message(arr, "system", sys) && request_message(arr, "user", user) &&
+                   cJSON_AddBoolToObject(root, "stream", true);
     /* A rewrite is about the passage's size; leave room for it to grow. */
-    long out_tokens = count_tokens(count, cctx, pass) * 2 + 64;
-    cJSON_AddNumberToObject(root, "max_tokens", out_tokens > MAX_REPLY_TOKENS ? out_tokens : MAX_REPLY_TOKENS);
-    cJSON_AddNumberToObject(root, "temperature", 0.4);
+    long out_tokens = json_ok ? count_tokens(count, cctx, pass) * 2 + 64 : 0;
+    json_ok = json_ok && cJSON_AddNumberToObject(root, "max_tokens", out_tokens > MAX_REPLY_TOKENS ? out_tokens : MAX_REPLY_TOKENS) &&
+              cJSON_AddNumberToObject(root, "temperature", 0.4);
     const char *seed = getenv("SCRIBODO_SEED");
-    if (seed && seed[0]) cJSON_AddNumberToObject(root, "seed", atoi(seed));
-    cJSON_AddNumberToObject(root, "top_p", 0.95);
-    cJSON_AddNumberToObject(root, "repeat_penalty", 1.05);
-    cJSON_AddNumberToObject(root, "id_slot", CHAT_SLOT);
-    cJSON_AddBoolToObject(root, "cache_prompt", true);
-    cJSON *kw = cJSON_AddObjectToObject(root, "chat_template_kwargs");
-    cJSON_AddBoolToObject(kw, "enable_thinking", false);
-    char *out = cJSON_PrintUnformatted(root);
+    if (seed && seed[0]) json_ok = json_ok && cJSON_AddNumberToObject(root, "seed", atoi(seed));
+    json_ok = json_ok && cJSON_AddNumberToObject(root, "top_p", 0.95) &&
+              cJSON_AddNumberToObject(root, "repeat_penalty", 1.05) &&
+              cJSON_AddNumberToObject(root, "id_slot", CHAT_SLOT) && cJSON_AddBoolToObject(root, "cache_prompt", true);
+    cJSON *kw = json_ok ? cJSON_AddObjectToObject(root, "chat_template_kwargs") : NULL;
+    json_ok = kw && cJSON_AddBoolToObject(kw, "enable_thinking", false);
+    char *out = json_ok ? cJSON_PrintUnformatted(root) : NULL;
     cJSON_Delete(root);
     free(sys);
     free(user);
@@ -964,10 +972,19 @@ static bool foreground_admit(ChatSession *s)
 static long server_count(const char *text, void *ctx)
 {
     ChatSession *s = ctx;
+    if (!s->server) {
+        /* The headless memory protocol measures bytes, not the ordinary
+         * chat fallback estimate. Use the same counter in both stages. */
+        if (!text || strnlen(text, MEMORY_TOKENS_MAX_REQUEST_BYTES + 1u) > MEMORY_TOKENS_MAX_REQUEST_BYTES) return -1;
+        char *clean = llm_neutralize(text);
+        if (!clean) return -1;
+        long tokens = (long)strlen(clean);
+        free(clean);
+        return tokens;
+    }
     cJSON *body = cJSON_CreateObject();
-    cJSON_AddStringToObject(body, "content", text);
-    cJSON_AddBoolToObject(body, "add_special", false);
-    char *js = cJSON_PrintUnformatted(body);
+    bool body_ok = body && cJSON_AddStringToObject(body, "content", text) && cJSON_AddBoolToObject(body, "add_special", false);
+    char *js = body_ok ? cJSON_PrintUnformatted(body) : NULL;
     cJSON_Delete(body);
     if (!js) return -1;
     HttpResult r;
@@ -998,6 +1015,7 @@ static bool memory_identity_current(ChatSession *s)
 
 static bool build_in_worker(ChatSession *s)
 {
+    double preparation_started = memory_budget_now_ms();
     MemoryBudget budget;
     bool budget_started = s->memory_enabled && !s->via_remote &&
         memory_budget_begin(&budget, &s->cancel, MEMORY_PREPARE_BUDGET_MS);
@@ -1025,7 +1043,19 @@ static bool build_in_worker(ChatSession *s)
     bool use_samp = s->has_sampling;
     if (use_samp) slot_ctx -= samp.max_reply - MAX_REPLY_TOKENS;
     /* The local tokenizer counts only for the local model; remote budgets are estimated. */
-    ChatTokenCount counter = !s->via_remote && s->server ? server_count : NULL;
+    ChatTokenCount counter = !s->via_remote && (s->server || (s->memory_enabled && !s->edit_passage)) ? server_count : NULL;
+    int base_ctx = slot_ctx;
+    bool protected_document = s->has_doc && !ctx.ndocs && ctx.doc_text;
+    for (size_t i = 0; i < ctx.ndocs; i++) protected_document = protected_document || ctx.docs[i].unsaved;
+    /* Older history and saved-document heads are optional context. Do not
+     * fill the physical window with them before trying to add recall. The
+     * current author turn is still protected by the builder, and the complete
+     * request is recounted against slot_ctx at admission. Unsaved buffers,
+     * reviewed edits and remote requests keep their existing foreground policy. */
+    if (s->memory_enabled && !s->via_remote && !s->edit_passage && !protected_document &&
+        slot_ctx > (int)MEMORY_PLAN_TOKENS + MAX_REPLY_TOKENS + 256)
+        base_ctx -= (int)MEMORY_PLAN_TOKENS;
+    size_t first_history = 0;
     char *req = NULL;
     s->build_error[0] = '\0';
     if (!ok)
@@ -1044,8 +1074,10 @@ static bool build_in_worker(ChatSession *s)
         req = chat_build_edit_request(s->edit_instruction, s->edit_passage, s->has_doc ? &ctx : NULL, slot_ctx,
                                       counter, s, &truncated);
     else if (ok)
-        req = chat_build_request_ex(history.messages, history.count, s->has_doc ? &ctx : NULL, &names, slot_ctx, counter, s, &truncated);
+        req = chat_build_request_selected(history.messages, history.count, s->has_doc ? &ctx : NULL, &names, base_ctx,
+                                          counter, s, &truncated, &first_history);
     char memory_notice[256] = "";
+    double base_finished = memory_budget_now_ms();
     /* This branch precedes all store/vector work: switching to remote never
      * exports local retrieval material, including through the edit path. */
     if (req && s->memory_enabled && !s->via_remote && !s->edit_passage) {
@@ -1071,7 +1103,7 @@ static bool build_in_worker(ChatSession *s)
                 &budget.stop, budget.deadline_ms, project_id, sizeof(project_id)) == STORE_DB &&
             !strcmp(project_id, s->memory_identity.project_id);
         int64_t before = INT64_MAX;
-        for (size_t i = 0; i < history.count; i++)
+        for (size_t i = first_history; i < history.count; i++)
             if (history.messages[i].sequence_known && history.messages[i].sequence < before) before = history.messages[i].sequence;
         const char *query = history.count ? history.messages[history.count - 1].content : "";
         MemoryScope scope;
@@ -1080,9 +1112,13 @@ static bool build_in_worker(ChatSession *s)
                 ? memory_documents_capture_cached_on_db(s->document_cache, db, s->memory_store, s->memory_project, &s->memory_identity,
                     attachment_names, nattachments, false, &budget.stop, budget.deadline_ms, &documents)
                 : !nattachments; /* no uncached manuscript hashing in foreground preparation */
+        double recall_started = memory_budget_now_ms();
         available = available && s->request_attachment_epoch == chat_memory_attachment_version(s) &&
             memory_plan_build_with_documents(db, bounded_vectors, project_id, s->memory_conversation,
                 query, before, false, memory_reference_tokens, &tokenizer, fingerprint, &budget.stop, &plan, &documents);
+        double recall_finished = memory_budget_now_ms();
+        size_t recalled = plan.count;
+        bool packet_prepared = false;
         if (available && plan.scope.enabled) {
             plan.compact_sources = s->memory_presentation != CHAT_MEMORY_LEGACY;
             if (s->memory_presentation == CHAT_MEMORY_EPISODE) {
@@ -1126,7 +1162,7 @@ static bool build_in_worker(ChatSession *s)
                 }
             }
             bool timed_out = memory_budget_expired(&budget) && !atomic_load(&s->cancel);
-            if (admitted) { free(req); req = with_memory; }
+            if (admitted) { free(req); req = with_memory; packet_prepared = plan.count || plan.brief_count; }
             else if (!timed_out) { free(req); req = NULL; }
             if (!admitted) {
                 free(with_memory);
@@ -1156,6 +1192,15 @@ static bool build_in_worker(ChatSession *s)
                 snprintf(memory_notice + used, sizeof(memory_notice) - used, " Canon: %zu committed entries supplied as exact reference.", canon_count);
             } else free(with_canon);
             free(block);
+        }
+        const char *trace = getenv("SCRIBODO_MEMORY_TRACE");
+        if (trace && !strcmp(trace, "1")) {
+            double prepared_at = memory_budget_now_ms();
+            fprintf(stderr, "MEMORY_PREPARE base_ms=%.3f setup_ms=%.3f recall_ms=%.3f admission_ms=%.3f total_ms=%.3f history_messages=%zu history_bytes=%zu history_first=%zu reserved_tokens=%d request_bytes=%zu available=%d readiness=%d documents=%zu recalled=%zu retained=%zu packet_prepared=%d expired=%d notice=%s\n",
+                base_finished - preparation_started, recall_started - base_finished, recall_finished - recall_started,
+                prepared_at - recall_finished, prepared_at - preparation_started,
+                history.count, history.content_bytes, first_history, slot_ctx - base_ctx, req ? strlen(req) : 0,
+                available, plan.readiness, documents.count, recalled, plan.count, packet_prepared, memory_budget_expired(&budget), memory_notice);
         }
         memory_plan_free(&plan);
         semantic_client_destroy(bounded_vectors);

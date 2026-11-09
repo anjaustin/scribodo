@@ -51,6 +51,21 @@ modify a database while any Scribodo process is running.
 
 ### Recall regressions (MEMORY-015 S1)
 
+- Product-memory regressions: `test_memory_chat` in `make dbtest` verifies that
+  context-trimmed history remains eligible for recall. `test_persistence_faults`
+  in `make test` sweeps one-shot and persistent allocation failures through chat
+  and edit construction: any published request must equal the complete control,
+  preserving the author's text, selected passage and attached context.
+- `python3 tools/test_product_memory_mutations.py` needs local test DB services,
+  not models. It runs two controls and weakens four guards independently.
+  Only assertion failures kill a mutant; crashes, timeouts and build failures
+  are errors. Generated sources and evidence stay under `build/`.
+- `test_memory_chat` also checks that 32 already-retained recent units cannot
+  starve an older original before SQL/vector top-k. Both channels must return
+  the same older original under the shared sequence cutoff.
+  `python3 tools/test_memory_cutoff_mutations.py` independently bypasses each
+  discovery cutoff; it requires SQL/Qdrant but no model servers.
+
 - `test_recall` (in `make dbtest`) drives `recall_run` against real SQL in a
   throwaway database: displayed canon text is byte-equal to the current
   committed version; retracted canon, unmatched canon and another project's
