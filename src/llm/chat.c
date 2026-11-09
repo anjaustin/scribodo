@@ -698,7 +698,7 @@ char *chat_build_request_selected(const ChatMessage *msgs, size_t n, const ChatC
         used += t;
         first--;
     }
-    while (first < n && msgs[first].role != CHAT_USER) first++;
+    while (first < n && (msgs[first].error || msgs[first].role != CHAT_USER)) first++;
 
     cJSON *root = cJSON_CreateObject();
     cJSON *arr = cJSON_AddArrayToObject(root, "messages");
@@ -709,14 +709,14 @@ char *chat_build_request_selected(const ChatMessage *msgs, size_t n, const ChatC
         char *visible = NULL;
         /* Assistant history: drop any reasoning that slipped into content. */
         if (msgs[i].role == CHAT_ASSISTANT) llm_split_thinking(msgs[i].content, &visible, NULL);
+        if (msgs[i].role == CHAT_ASSISTANT && !visible) { json_ok = false; break; }
         /* ...and speaker labels ("Tripp: "), which would teach the model to
          * keep writing them (replies saved before they were removed). */
         if (msgs[i].role == CHAT_ASSISTANT && !msgs[i].is_edit) {
-            char *unlabelled = llm_strip_speaker_labels(visible ? visible : msgs[i].content, names ? names->author : NULL, self);
-            if (unlabelled) {
-                free(visible);
-                visible = unlabelled;
-            }
+            char *unlabelled = llm_strip_speaker_labels(visible, names ? names->author : NULL, self);
+            free(visible);
+            visible = unlabelled;
+            if (!visible) { json_ok = false; break; }
         }
         char *clean = llm_neutralize(visible ? visible : msgs[i].content);
         free(visible);
@@ -1566,19 +1566,21 @@ void chat_set_names(ChatSession *s, const char *author, const char *assistant)
 
 char *chat_apply_sampling(const char *request, const ChatSampling *sp, bool edit)
 {
+    if (!sp) return NULL;
     cJSON *j = json_parse(request);
-    if (!j) return NULL;
+    if (!cJSON_IsObject(j)) { cJSON_Delete(j); return NULL; }
     /* An edit's own length (sized to the passage) is kept if it's larger. */
     cJSON *mt = cJSON_GetObjectItem(j, "max_tokens");
     double want = sp->max_reply;
     if (edit && cJSON_IsNumber(mt) && mt->valuedouble > want) want = mt->valuedouble;
     static const char *const keys[] = { "max_tokens", "temperature", "top_p", "top_k", "min_p", "repeat_penalty" };
     double vals[] = { want, edit ? sp->edit_temperature : sp->temperature, sp->top_p, sp->top_k, sp->min_p, sp->repeat_penalty };
-    for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
+    bool ok = true;
+    for (size_t i = 0; ok && i < sizeof(keys) / sizeof(keys[0]); i++) {
         cJSON_DeleteItemFromObject(j, keys[i]);
-        cJSON_AddNumberToObject(j, keys[i], vals[i]);
+        ok = cJSON_AddNumberToObject(j, keys[i], vals[i]) != NULL;
     }
-    char *out = cJSON_PrintUnformatted(j);
+    char *out = ok ? cJSON_PrintUnformatted(j) : NULL;
     cJSON_Delete(j);
     return out;
 }

@@ -4,6 +4,7 @@
 Generated sources only. Requires local SQL/Qdrant, not model servers.
 Build errors, crashes and timeouts are errors, not detected mutations.
 """
+import argparse
 import json
 from pathlib import Path
 import re
@@ -24,6 +25,10 @@ def compiler(target, changed):
 
 
 def main():
+    global OUT
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--output', type=Path, default=OUT)
+    OUT = parser.parse_args().output.resolve()
     OUT.mkdir(exist_ok=False)
     subprocess.run(['make', 'build/test_memory_chat'], cwd=ROOT, check=True)
     link = compiler('build/test_memory_chat', 'src/llm/chat.c')

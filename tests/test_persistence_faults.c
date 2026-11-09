@@ -259,6 +259,60 @@ static void request_builder_faults(void)
     }
 }
 
+static void assistant_history_builder_faults(void)
+{
+    ChatMessage messages[] = {
+        {.role=CHAT_USER, .content="An earlier author instruction."},
+        {.role=CHAT_ASSISTANT, .content="<think>PRIVATE-REASONING-MUST-NOT-RETURN</think>\nAssistant: KEEP all prior visible text, including this deliberately long sentence that exceeds the old 64-byte scratch allocation and must never be shortened by an allocation failure."},
+        {.role=CHAT_USER, .content="KEEP the current author request."},
+    };
+    fault_alloc_after(-1);
+    char *control = chat_build_request(messages, 3, NULL, 32768, NULL, NULL, NULL);
+    long allocations = fault_alloc_count();
+    fault_alloc_after(-1);
+    CHECK(control && allocations > 0 && !strstr(control, "PRIVATE-REASONING") && !strstr(control, "Assistant:"));
+    long partial = 0, leaked = 0;
+    for (long i = 0; control && i < allocations * 2; i++) {
+        allocation_case(i, allocations);
+        char *request = chat_build_request(messages, 3, NULL, 32768, NULL, NULL, NULL);
+        fault_alloc_after(-1);
+        if (request && strcmp(request, control)) partial++;
+        if (request && strstr(request, "PRIVATE-REASONING")) leaked++;
+        CHECK(!request || !strcmp(request, control));
+        CHECK(!request || !strstr(request, "PRIVATE-REASONING"));
+        free(request);
+    }
+    printf("    assistant history: allocations=%ld partial_requests=%ld reasoning_leaks=%ld\n", allocations, partial, leaked);
+    free(control);
+}
+
+static void sampling_builder_faults(void)
+{
+    const char *base = "{\"messages\":[{\"role\":\"user\",\"content\":\"KEEP the author text\"}],\"stream\":true,\"max_tokens\":4096}";
+    const ChatSampling sampling = {.max_reply=2048,.temperature=.7,.edit_temperature=.4,
+                                   .top_p=.95,.top_k=40,.min_p=.05,.repeat_penalty=1.05};
+    CHECK(!chat_apply_sampling(base, NULL, false));
+    CHECK(!chat_apply_sampling("[]", &sampling, false));
+    for (unsigned edit = 0; edit < 2; edit++) {
+        fault_alloc_after(-1);
+        char *control = chat_apply_sampling(base, &sampling, edit);
+        long allocations = fault_alloc_count();
+        fault_alloc_after(-1);
+        CHECK(control && allocations > 0);
+        long partial = 0;
+        for (long i = 0; control && i < allocations * 2; i++) {
+            allocation_case(i, allocations);
+            char *request = chat_apply_sampling(base, &sampling, edit);
+            fault_alloc_after(-1);
+            if (request && strcmp(request, control)) partial++;
+            CHECK(!request || !strcmp(request, control));
+            free(request);
+        }
+        printf("    sampling edit=%u allocations=%ld partial_requests=%ld\n", edit, allocations, partial);
+        free(control);
+    }
+}
+
 static void writer_faults(void)
 {
     SourceRef source = { .kind = SRC_DOC, .quote = "A quote" };
@@ -405,6 +459,8 @@ int main(void)
                         { "chat_load_allocations", chat_load_faults },
                         { "chat_send_allocations", chat_send_faults },
                         { "request_builder_allocations", request_builder_faults },
+                        { "assistant_history_builder_allocations", assistant_history_builder_faults },
+                        { "sampling_builder_allocations", sampling_builder_faults },
                         { "window_shrink_allocations", window_shrink_faults },
                           { "chat_allocations", chat_faults }, { "writer_allocations", writer_faults },
                           { "chat_unterminated_list_allocations", chat_unterminated_list_faults },

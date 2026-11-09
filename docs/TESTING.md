@@ -65,6 +65,16 @@ modify a database while any Scribodo process is running.
   the same older original under the shared sequence cutoff.
   `python3 tools/test_memory_cutoff_mutations.py` independently bypasses each
   discovery cutoff; it requires SQL/Qdrant but no model servers.
+- `python3 tools/test_memory_redteam_mutations.py` checks the additional history,
+  sampling, vector-sequence and failed-prefix guards without services/models.
+  All three memory mutation tools accept `--output DIR` for a fresh evidence
+  directory; existing runs are never overwritten.
+- `tests/test_answer_probes.py` (in `make test`) verifies diagnostic source
+  bindings, frozen questions, one-factor comparisons, private temporary cleanup,
+  process cleanup and invalid CLI bounds without inference. A corrected capture
+  must contain `transcript.json`; older captures are refused rather than silently
+  borrowing a later run's questions. See
+  [REDTEAM-018](REDTEAM-018-memory-contracts.md) for the measured failure controls.
 
 - `test_recall` (in `make dbtest`) drives `recall_run` against real SQL in a
   throwaway database: displayed canon text is byte-equal to the current

@@ -6,6 +6,7 @@ configuration is changed. The shorter diagnostic generation cap is explicit.
 """
 import argparse
 import copy
+from contextlib import contextmanager
 import hashlib
 import http.client
 import json
@@ -47,9 +48,66 @@ def call(sock, endpoint, data=None):
         connection.close()
 
 
+@contextmanager
+def private_socket():
+    preferred = Path(tempfile.gettempdir()) / 'opencode'
+    with tempfile.TemporaryDirectory(prefix='ab-', dir=preferred if preferred.is_dir() else None) as directory:
+        sock = Path(directory) / 's.sock'
+        if len(str(sock).encode()) >= 104:
+            raise ValueError('Temporary Unix socket path is too long; set a shorter TMPDIR')
+        yield sock
+
+
+def run_server(output, command, sock, variants):
+    results = []
+    with (output / 'server.log').open('w') as log:
+        server = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
+        try:
+            deadline = time.monotonic() + 120
+            while True:
+                if server.poll() is not None:
+                    raise RuntimeError('Server exited during startup')
+                try:
+                    call(sock, '/health')
+                    break
+                except (OSError, RuntimeError):
+                    if time.monotonic() > deadline:
+                        raise TimeoutError('Server startup')
+                    time.sleep(.2)
+            (output / 'props.json').write_text(json.dumps(call(sock, '/props'), indent=2)+'\n')
+            for name, request in variants:
+                (output / f'{name}-request.json').write_text(json.dumps(request, ensure_ascii=False, indent=2)+'\n')
+                rendered = call(sock, '/apply-template', request)
+                (output / f'{name}-template.json').write_text(json.dumps(rendered, ensure_ascii=False, indent=2)+'\n')
+                start = time.monotonic()
+                response = call(sock, '/v1/chat/completions', request)
+                (output / f'{name}-response.json').write_text(json.dumps(response, ensure_ascii=False, indent=2)+'\n')
+                choice = response['choices'][0]
+                row = {'arm': name, 'wall_seconds': time.monotonic()-start,
+                       'finish_reason': choice['finish_reason'], 'usage': response.get('usage'),
+                       'message': choice['message']}
+                results.append(row)
+                (output / 'results.json').write_text(json.dumps(results, ensure_ascii=False, indent=2)+'\n')
+                print(json.dumps(row, ensure_ascii=False), flush=True)
+        finally:
+            server.terminate()
+            try:
+                server.wait(timeout=20)
+            except subprocess.TimeoutExpired:
+                server.kill()
+                server.wait()
+
+
 def cases(capture, index, phase='components'):
     original = json.loads((capture / f'request-{index}.json').read_text())
-    question = json.loads((ROOT / 'build/product-memory-use/after/messages.json').read_text())[1 + 2*index]['content']
+    transcript_path = capture / 'transcript.json'
+    if not transcript_path.is_file():
+        raise ValueError('Capture lacks frozen transcript.json; create a new capture with answer_request_capture.py')
+    transcript = json.loads(transcript_path.read_text())
+    question_row = transcript[1 + 2*index]
+    if question_row.get('role') != 'user':
+        raise ValueError('Expected a frozen user question')
+    question = question_row['content']
     # Separate using the exact production boundary, not a guessed source suffix.
     boundary = "\nAuthor's current request (not part of the retrieved sources):\n"
     content = original['messages'][-1]['content']
@@ -70,23 +128,23 @@ def cases(capture, index, phase='components'):
         assert len(blocks) == 7
         target = [block for block in blocks if 'four or five thousand' in block.group(3)]
         assert len(target) == 1
-        opening = (ROOT / 'build/manuscripts/pride-and-prejudice/parts/part01.md').read_text().encode()[:1856].decode()
-        assert 'A single man of large fortune; four or five thousand a year.' in opening
+        first_request = json.loads((capture / 'request-0.json').read_text())
+        opening_ref = first_request['messages'][-1]['content'].split(boundary, 1)[0]
+        actual = [block for block in re.finditer(r'--- SOURCE (\d+) \|([^\n]*)---\n(.*?)\n--- END SOURCE ---', opening_ref, re.S)
+                  if 'A single man of large fortune; four or five thousand a year.' in block.group(3)]
+        assert len(actual) == 1
+        opening = actual[0].group(3)
         # Oracle controls use known answer-bearing passages only for diagnosis.
         # This is not a production selector and is not scored as retrieval reach.
         plain = '\n\n'.join(block.group(3) for block in blocks)
         late = target[0].group(3)
         reordered = reference[:blocks[0].start()] + '\n\n'.join(
             block.group(0) for block in blocks if block != target[0]) + '\n\n' + target[0].group(0)
-        replaced = reference[:target[0].start(3)] + opening + reference[target[0].end(3):]
+        # Move the entire captured source binding with its body. Replacing only
+        # text would falsely attribute Chapter 1 to the later-scene revision.
+        replacement = re.sub(r'^--- SOURCE \d+', '--- SOURCE ' + target[0].group(1), actual[0].group(0))
+        bound = reference[:target[0].start()] + replacement + reference[target[0].end():]
         if phase == 'attribution':
-            first_request = json.loads((capture / 'request-0.json').read_text())
-            opening_ref = first_request['messages'][-1]['content'].split(boundary, 1)[0]
-            actual = [block for block in re.finditer(r'--- SOURCE (\d+) \|([^\n]*)---\n(.*?)\n--- END SOURCE ---', opening_ref, re.S)
-                      if 'A single man of large fortune; four or five thousand a year.' in block.group(3)]
-            assert len(actual) == 1 and actual[0].group(3).strip() == opening.strip()
-            replacement = re.sub(r'^--- SOURCE \d+', '--- SOURCE ' + target[0].group(1), actual[0].group(0))
-            bound = reference[:target[0].start()] + replacement + reference[target[0].end():]
             darcy = [block for block in blocks if 'ten thousand a year' in block.group(3)]
             assert len(darcy) == 1
             unrelated = blocks[0]
@@ -104,7 +162,7 @@ def cases(capture, index, phase='components'):
                           variant('oracle_later_unit', late + '\n\n' + question),
                           variant('packet_plain', plain + '\n\n' + question),
                           variant('packet_target_last', reordered + boundary + question),
-                          variant('packet_opening_instead', replaced + boundary + question),
+                          variant('packet_opening_instead', bound + boundary + question),
                           variant('heads_only', foreground),
                           variant('sources_only_longer', reference + boundary + question)]
     sentence = {
@@ -141,14 +199,15 @@ def cases(capture, index, phase='components'):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--index', type=int, default=1)
+    parser.add_argument('--index', type=int, choices=range(7), default=1)
     parser.add_argument('--capture', type=Path, default=ROOT / 'build/answer-bedrock-capture')
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--arms', nargs='*')
+    parser.add_argument('--arms', nargs='+')
     parser.add_argument('--phase', choices=['components', 'evidence', 'attribution'], default='components')
     parser.add_argument('--max-tokens', type=int, default=256)
     args = parser.parse_args()
-    args.output.mkdir(parents=True, exist_ok=False)
+    if not 1 <= args.max_tokens <= 8192:
+        parser.error('--max-tokens must be 1..8192')
     original, variants = cases(args.capture, args.index, args.phase)
     for _, request in variants:
         request['max_tokens'] = args.max_tokens
@@ -156,6 +215,14 @@ def main():
         variants = [(name, req) for name, req in variants if name in args.arms]
         if len(variants) != len(args.arms):
             raise ValueError('Unknown/duplicate arm')
+    args.output.mkdir(parents=True, exist_ok=False)
+    inputs = args.output / 'inputs'
+    inputs.mkdir()
+    input_names = {'transcript.json', f'request-{args.index}.json'}
+    if args.phase in ('evidence', 'attribution'):
+        input_names.add('request-0.json')
+    for name in sorted(input_names):
+        (inputs / name).write_bytes((args.capture / name).read_bytes())
     model = Path.home() / f'.cache/huggingface/hub/models--LiquidAI--LFM3-1.7B-GGUF/snapshots/{REV}/LFM3-1.7B-BF16.gguf'
     if not model.exists():
         model = Path.home() / 'Library/Application Support/Scribodo/models/LFM3-1.7B-BF16.gguf'
@@ -165,57 +232,21 @@ def main():
             digest.update(block)
     if digest.hexdigest() != SHA:
         raise RuntimeError('Pinned model hash mismatch')
-    temp = Path(tempfile.mkdtemp(prefix='ab-', dir='/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode'))
-    sock = temp / 's.sock'
-    command = [str(ROOT / 'build/llama/bin/llama-server'), '-m', str(model), '-ngl', '99', '-fa', 'off',
-               '-ctk', 'bf16', '-ctv', 'bf16', '--jinja', '--reasoning-format', 'deepseek',
-               '-np', '2', '-c', '32768', '-b', '256', '-ub', '256', '--cache-ram', '0',
-               '--host', str(sock), '--no-webui', '--no-slots']
-    manifest = {'model_sha256': SHA, 'command': command, 'case_index': args.index,
-                'server_sha256': hashlib.sha256(Path(command[0]).read_bytes()).hexdigest(),
-                'probe_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-                'capture_request_sha256': hashlib.sha256(json.dumps(original, sort_keys=True).encode()).hexdigest(),
-                'diagnostic_cap': args.max_tokens, 'default_temperature': 0, 'cache_prompt': False,
-                'phase': args.phase,
-                'method': 'Reconstructed application request; component ablations, no production changes'}
-    (args.output / 'manifest.json').write_text(json.dumps(manifest, indent=2)+'\n')
-    results = []
-    with (args.output / 'server.log').open('w') as log:
-        server = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
-        try:
-            deadline = time.monotonic() + 120
-            while True:
-                if server.poll() is not None:
-                    raise RuntimeError('Server exited during startup')
-                try:
-                    call(sock, '/health')
-                    break
-                except (OSError, RuntimeError):
-                    if time.monotonic() > deadline:
-                        raise TimeoutError('Server startup')
-                    time.sleep(.2)
-            (args.output / 'props.json').write_text(json.dumps(call(sock, '/props'), indent=2)+'\n')
-            for name, request in variants:
-                (args.output / f'{name}-request.json').write_text(json.dumps(request, ensure_ascii=False, indent=2)+'\n')
-                rendered = call(sock, '/apply-template', request)
-                (args.output / f'{name}-template.json').write_text(json.dumps(rendered, ensure_ascii=False, indent=2)+'\n')
-                start = time.monotonic()
-                response = call(sock, '/v1/chat/completions', request)
-                (args.output / f'{name}-response.json').write_text(json.dumps(response, ensure_ascii=False, indent=2)+'\n')
-                choice = response['choices'][0]
-                row = {'arm': name, 'wall_seconds': time.monotonic()-start,
-                       'finish_reason': choice['finish_reason'], 'usage': response.get('usage'),
-                       'message': choice['message']}
-                results.append(row)
-                (args.output / 'results.json').write_text(json.dumps(results, ensure_ascii=False, indent=2)+'\n')
-                print(json.dumps(row, ensure_ascii=False), flush=True)
-        finally:
-            server.terminate()
-            try:
-                server.wait(timeout=20)
-            except subprocess.TimeoutExpired:
-                server.kill()
-                server.wait()
+    with private_socket() as sock:
+        command = [str(ROOT / 'build/llama/bin/llama-server'), '-m', str(model), '-ngl', '99', '-fa', 'off',
+                   '-ctk', 'bf16', '-ctv', 'bf16', '--jinja', '--reasoning-format', 'deepseek',
+                   '-np', '2', '-c', '32768', '-b', '256', '-ub', '256', '--cache-ram', '0',
+                   '--host', str(sock), '--no-webui', '--no-slots']
+        manifest = {'model_sha256': SHA, 'command': command, 'case_index': args.index,
+                    'server_sha256': hashlib.sha256(Path(command[0]).read_bytes()).hexdigest(),
+                    'probe_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+                    'capture_request_sha256': hashlib.sha256(json.dumps(original, sort_keys=True).encode()).hexdigest(),
+                    'diagnostic_cap': args.max_tokens, 'default_temperature': 0, 'cache_prompt': False,
+                    'phase': args.phase,
+                    'input_sha256': {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs.iterdir()},
+                    'method': 'Reconstructed application request; component ablations, no production changes'}
+        (args.output / 'manifest.json').write_text(json.dumps(manifest, indent=2)+'\n')
+        run_server(args.output, command, sock, variants)
 
 
 if __name__ == '__main__':

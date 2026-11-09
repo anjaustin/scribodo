@@ -254,6 +254,7 @@ test: $(TESTS)
 	@set -e; for t in $(TESTS); do echo "== $$t"; $(WATCHDOG) $(TEST_TIMEOUT) $$(basename $$t) ./$$t; echo; done
 	$(WATCHDOG) $(TEST_TIMEOUT) test_backup python3 tests/test_backup.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_frame_soak python3 tests/test_frame_soak.py
+	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_probes python3 tests/test_answer_probes.py
 
 # Verify pinned dependency inventory, upstream refs, container digests and OSV
 # advisories. The scheduled workflow publishes the same report as an artifact.

@@ -260,6 +260,9 @@ to **two candidates / one admitted original** when both discovery layers
 received the cutoff before top-k. This is a specific integration fix, not an
 answer-quality certification. The tested alternative embedding instructions
 did not improve exact passage admission and remain unpromoted.
+The follow-up [REDTEAM-018](REDTEAM-018-memory-contracts.md) records the
+additional history/sampling allocation and vector-projection validation fixes,
+diagnostic corrections, and completed negative-control/local acceptance runs.
 
 `PRODUCT-GAPS.md` remains open: this work does not establish broad model
 accuracy, turnkey installation, sustained use, exhaustive interruption recovery,

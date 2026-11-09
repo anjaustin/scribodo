@@ -166,6 +166,8 @@ claim of complete manuscript recall or reliable model answers.
 The latest real-app check delivered the required sources for all six factual
 questions, but failed two answer-substring checks and full-reply review found
 additional factual errors and repetition. Source delivery is not answer accuracy.
+The follow-up [memory red-team report](docs/REDTEAM-018-memory-contracts.md)
+records verified failure-path fixes and the remaining answer-quality limits.
 
 **Projects and documents:** a project is a folder of `.md` and `.txt` files.
 - On launch, Scribodo reopens the project and document you last had open. The first time, it shows a welcome screen: **Open folder…**, **New project…**, **Open the sample**, and your recent projects.

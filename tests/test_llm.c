@@ -179,6 +179,29 @@ static void test_split_thinking(void)
     llm_split_thinking("  \n<think>leading block</think>Answer.", &v, &r);
     CHECK(!strcmp(v, "Answer.") && !strcmp(r, "leading block"));
     free(v); free(r);
+    const char *cases[] = {NULL, "", " \t\n", "Visible.\n", "<think>open", "  <think>secret</think>\nVisible.",
+                           "orphaned reasoning</think> Visible.", "A literal <think> tag without a closing tag."};
+    for (size_t i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
+        char *only = NULL;
+        llm_split_thinking(cases[i], &only, NULL);
+        llm_split_thinking(cases[i], &v, &r);
+        CHECK(only && v && !strcmp(only, v));
+        free(only); free(v); free(r);
+    }
+    const char *fragments[] = {"text", " ", "\n", "<think>", "</think>", "Zoë", "<|im_start|>"};
+    unsigned state = 4819;
+    for (unsigned trial = 0; trial < 1000; trial++) {
+        char input[1024] = "";
+        for (unsigned part = 0; part < 16; part++) {
+            state = state * 1664525u + 1013904223u;
+            strcat(input, fragments[state % (sizeof(fragments)/sizeof(fragments[0]))]);
+        }
+        char *only = NULL;
+        llm_split_thinking(input, &only, NULL);
+        llm_split_thinking(input, &v, &r);
+        CHECK(only && v && !strcmp(only, v));
+        free(only); free(v); free(r);
+    }
 }
 
 typedef struct { char lines[16][128]; int n; } Lines;
@@ -495,6 +518,16 @@ static void test_request_builder(void)
     mm = messages_of(req);
     CHECK(first == 399 && cJSON_GetArraySize(mm) == 2);
     CHECK(!strcmp(cJSON_GetObjectItem(cJSON_GetArrayItem(mm, 1), "content")->valuestring, "latest question"));
+    free(req);
+    ChatMessage failed_pair[] = {
+        {.role=CHAT_USER, .content="Failed author row", .error=true},
+        {.role=CHAT_ASSISTANT, .content="Orphaned assistant reply"},
+        {.role=CHAT_USER, .content="KEEP the current request"},
+    };
+    req = chat_build_request_selected(failed_pair, 3, NULL, NULL, 32768, NULL, NULL, &trunc, &first);
+    mm = messages_of(req);
+    CHECK(first == 2 && cJSON_GetArraySize(mm) == 2);
+    CHECK(!strstr(req, "Orphaned assistant reply") && strstr(req, "KEEP the current request"));
     free(req);
 }
 

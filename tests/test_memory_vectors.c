@@ -6,6 +6,7 @@
 #include "llm/memory_vectors.h"
 #include <CommonCrypto/CommonDigest.h>
 #include <arpa/inet.h>
+#include <limits.h>
 #include <poll.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -524,6 +525,25 @@ static void projection(void)
     pthread_mutex_lock(&stub.lock); snprintf(id, sizeof(id), "%s", stub.last_id); pthread_mutex_unlock(&stub.lock);
     CHECK(memory_vectors_upsert(client, &lease, why, sizeof(why)));
     pthread_mutex_lock(&stub.lock); CHECK(!strcmp(id, stub.last_id) && stub.count == 1); pthread_mutex_unlock(&stub.lock);
+    const int64_t invalid_sequences[] = {-1, (int64_t)INT_MAX + 1, INT64_MAX};
+    for (size_t i = 0; i < sizeof(invalid_sequences)/sizeof(invalid_sequences[0]); i++) {
+        MemoryIndexLease invalid = lease;
+        invalid.unit.sequence = invalid_sequences[i];
+        pthread_mutex_lock(&stub.lock); int before = stub.requests; pthread_mutex_unlock(&stub.lock);
+        CHECK(!memory_vectors_unit_valid(&invalid, why, sizeof(why)) && why[0]);
+        CHECK(!memory_vectors_upsert(client, &invalid, why, sizeof(why)) && why[0]);
+        pthread_mutex_lock(&stub.lock); CHECK(stub.requests == before); pthread_mutex_unlock(&stub.lock);
+        CHECK(memory_vectors_upsert(client, &lease, why, sizeof(why))); /* restore for independent probes */
+    }
+    MemoryIndexLease maximum_sequence = lease;
+    maximum_sequence.unit.sequence = INT_MAX;
+    CHECK(memory_vectors_upsert(client, &maximum_sequence, why, sizeof(why)));
+    MemoryCandidate boundary_candidates[MEMORY_CANDIDATES]; size_t boundary_count = 99;
+    CHECK(memory_vectors_search_with_documents_before(client, &lease.scope, NULL, "lantern", INT_MAX, 16,
+              boundary_candidates, &boundary_count, why, sizeof(why)) && boundary_count == 0);
+    CHECK(memory_vectors_search_with_documents_before(client, &lease.scope, NULL, "lantern", INT64_MAX, 16,
+              boundary_candidates, &boundary_count, why, sizeof(why)) && boundary_count == 1);
+    CHECK(memory_vectors_upsert(client, &lease, why, sizeof(why)));
     MemoryCandidate out[MEMORY_CANDIDATES]; size_t count = 99;
     CHECK(memory_vectors_search(client, &lease.scope, "violet lantern", 16, out, &count, why, sizeof(why)) && count == 1);
     CHECK(!strcmp(out[0].unit_id, lease.unit.id) && !strcmp(out[0].text_hash, lease.unit.text_hash));

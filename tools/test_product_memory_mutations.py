@@ -4,6 +4,7 @@
 Only generated sources under build/ are changed. Compile errors, crashes and
 timeouts are errors, never successful mutation detections.
 """
+import argparse
 import json
 from pathlib import Path
 import re
@@ -24,7 +25,9 @@ def command(target, changed):
 
 
 def main():
-    output = ROOT / "build/product-memory-mutations"
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--output', type=Path, default=ROOT / 'build/product-memory-mutations')
+    output = parser.parse_args().output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     subprocess.run(["make", "build/test_memory_chat", "build/test_persistence_faults"], cwd=ROOT, check=True)
     compile_chat = command("build/src/llm/chat.o", "src/llm/chat.c")

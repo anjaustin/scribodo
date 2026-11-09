@@ -123,3 +123,9 @@ Post-commit result: all eight targets completed with exit code zero: `all`,
 Evidence: `build/answer-cutoff-validation/results.json`. This validates the
 mechanics at `1bfd022`, not real-model answer correctness. A subsequent
 red-team pass is tracked separately from these earlier green results.
+
+The subsequent pass is complete in
+[`REDTEAM-018`](../docs/REDTEAM-018-memory-contracts.md): failure-path and
+diagnostic-integrity remediations, ten detected guard mutations, twelve passing
+local validation targets and zero source drift. These are measured mechanical
+results; the earlier whole-answer failures are still an open acceptance gate.

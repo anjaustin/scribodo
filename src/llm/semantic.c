@@ -1157,7 +1157,8 @@ bool memory_vectors_unit_valid(const MemoryIndexLease *lease, char *why, size_t 
     if (!lease || !lease->scope.enabled ||
         !mv_hex(lease->unit.id, sizeof(lease->unit.id)) || !mv_hex(lease->unit.text_hash, sizeof(lease->unit.text_hash)) ||
         !mv_text(lease->unit.text, &bytes) || bytes != lease->unit.text_bytes ||
-        (lease->unit.kind != MEMORY_SOURCE_CHAT && lease->unit.kind != MEMORY_SOURCE_DOCUMENT) ||
+         (lease->unit.kind != MEMORY_SOURCE_CHAT && lease->unit.kind != MEMORY_SOURCE_DOCUMENT) ||
+         (lease->unit.kind == MEMORY_SOURCE_CHAT && (lease->unit.sequence < 0 || lease->unit.sequence > INT_MAX)) ||
         (lease->unit.kind == MEMORY_SOURCE_DOCUMENT &&
          (!mv_source_id(lease->unit.document_id, sizeof(lease->unit.document_id), 'd') ||
           !mv_source_id(lease->unit.revision_id, sizeof(lease->unit.revision_id), 'r'))))
