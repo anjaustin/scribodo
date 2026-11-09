@@ -117,3 +117,9 @@ and `sanitize`, including the added direct per-channel cutoff assertions.
 checkpoint. Evidence remains under `build/answer-cutoff-validation/`.
 `tools/test_memory_cutoff_mutations.py` has been added for independent SQL/vector
 guard controls but has not yet been run; do not count it as passing evidence.
+
+Post-commit result: all eight targets completed with exit code zero: `all`,
+`test`, `dbtest`, `sanitize`, `tsan`, `analyzetest`, `analyze`, `uitest-db`.
+Evidence: `build/answer-cutoff-validation/results.json`. This validates the
+mechanics at `1bfd022`, not real-model answer correctness. A subsequent
+red-team pass is tracked separately from these earlier green results.
