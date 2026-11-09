@@ -65,6 +65,18 @@ static MemoryDocumentRef from_saved(const SavedRevisionIdentity *saved, const ch
     return ref;
 }
 
+/* The saved identity of an attached document, adopting its on-disk file as
+ * the saved revision when the store has none: a project moved into the
+ * store before imports recorded saved files (red-team 016). Dirty documents
+ * never reach here; a file the app cannot read is left uncovered. */
+static bool saved_identity_adopting(Db *db, const char *project_id, const char *path, const char *name, SavedRevisionIdentity *out)
+{
+    if (sdb_saved_revision_identity(db, project_id, name, out)) return true;
+    bool adopted = false;
+    if (db_in_transaction(db) || !sdb_saved_file_adopt(db, project_id, path, name, false, &adopted) || !adopted) return false;
+    return sdb_saved_revision_identity(db, project_id, name, out);
+}
+
 bool memory_documents_capture(StoreManager *store, const char *path,
                                const StoreProjectIdentity *project, const MemoryDocumentName *names,
                                size_t count, bool remote, const atomic_bool *cancel, MemoryDocumentSet *out)
@@ -81,7 +93,7 @@ bool memory_documents_capture(StoreManager *store, const char *path,
         if (cancel && atomic_load(cancel)) return false;
         if (names[i].dirty || !names[i].name[0] || strnlen(names[i].name, sizeof(names[i].name)) == sizeof(names[i].name)) continue;
         SavedRevisionIdentity saved;
-        if (!sdb_saved_revision_identity(db, id, names[i].name, &saved)) continue;
+        if (!saved_identity_adopting(db, id, path, names[i].name, &saved)) continue;
         bool duplicate = false;
         for (size_t j = 0; j < result.count; j++)
             if (!strcmp(saved.document_id, result.refs[j].document_id)) { duplicate = true; break; }
@@ -201,7 +213,7 @@ static bool resolve_current(const DocumentLookup *lookup, StoreManager *store, c
             if (names[j].dirty && !strncmp(names[i].name, names[j].name, sizeof(names[j].name))) { dirty_alias = true; break; }
         if (dirty_alias) continue;
         SavedRevisionIdentity saved;
-        if (!sdb_saved_revision_identity(db, id, names[i].name, &saved)) continue;
+        if (!saved_identity_adopting(db, id, path, names[i].name, &saved)) continue;
         if (lookup_stopped(lookup)) return false;
         MemoryDocumentRef ref = from_saved(&saved, names[i].name);
         if (!reference_valid(&ref) || strcmp(ref.project_id, project->project_id)) continue;

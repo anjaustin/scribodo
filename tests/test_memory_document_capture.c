@@ -45,6 +45,15 @@ bool sdb_saved_revision_identity(Db *db, const char *owner, const char *name, Sa
     if (unsaved || strcmp(owner, project.project_id) || strcmp(name, "one.md")) return false;
     *out = saved; return true;
 }
+static bool adoptable;
+static unsigned adoptions;
+bool sdb_saved_file_adopt(Db *db, const char *owner, const char *dir, const char *name, bool import, bool *adopted)
+{
+    CHECK(db == &database && !import && dir && dir[0] && !transaction); adoptions++;
+    *adopted = false;
+    if (!adoptable || strcmp(owner, project.project_id) || strcmp(name, "one.md")) return true;
+    unsaved = false; *adopted = true; return true;
+}
 
 static void capture(void)
 {
@@ -89,6 +98,18 @@ static void capture(void)
     CHECK(reads == old_reads);
     names[0].dirty = false; unsaved = true;
     CHECK(memory_documents_capture(&manager, dir, &project, names, 1, false, NULL, &copy) && !copy.count);
+    CHECK(adoptions == 1); /* no saved pointer: the on-disk file was offered, nothing to adopt */
+    /* A project moved into the store before imports recorded saved files:
+     * the capture adopts the on-disk text as the saved revision and goes on. */
+    adoptable = true;
+    CHECK(memory_documents_capture(&manager, dir, &project, names, 1, false, NULL, &copy) && copy.count == 1);
+    CHECK(adoptions == 2 && !unsaved && memory_documents_same(&set, &copy));
+    CHECK(memory_documents_capture(&manager, dir, &project, names, 1, false, NULL, &copy) && copy.count == 1);
+    CHECK(adoptions == 2); /* saved now: not offered again */
+    adoptable = false; unsaved = true; names[0].dirty = true;
+    CHECK(memory_documents_capture(&manager, dir, &project, names, 1, false, NULL, &copy) && !copy.count);
+    CHECK(adoptions == 2); /* a dirty document is never adopted */
+    names[0].dirty = false;
     unsaved = false; offline = true;
     CHECK(!memory_documents_capture(&manager, dir, &project, names, 1, false, NULL, &copy) && !copy.count);
     offline = false;

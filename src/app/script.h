@@ -44,6 +44,7 @@
  *   expect chat_count N          expect chat_last "substring"
  *   expect chat_busy yes|no       expect chat_last_not "substring"
  *   expect element_w NAME MIN MAX (width of a named element; 0 if absent)
+ *   expect element_y NAME MIN MAX (vertical centre where a click on it would land, after any scroll the lookup applied)
  *   expect lines "path" "substring" COUNT  (lines of a file containing it)
  *   expect record "substring"    (the open note/canon panel: header + text)
  *   observer on|off              (scripts start with the observer off)

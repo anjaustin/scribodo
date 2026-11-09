@@ -92,6 +92,14 @@ StoreMode store_mode_borrowed(StoreManager *store, const char *path, const Store
     snprintf(id, len, "%s", identity.project_id);
     return STORE_DB;
 }
+/* The lazy adoption of an unsaved on-disk document (red-team 016): nothing
+ * to adopt here; the cache's own accounting is what this test measures. */
+bool sdb_saved_file_adopt(Db *db, const char *project, const char *dir, const char *name, bool import, bool *adopted)
+{
+    (void)db; (void)project; (void)dir; (void)name; (void)import;
+    if (adopted) *adopted = false;
+    return true;
+}
 bool sdb_saved_revision_identity(Db *db, const char *project, const char *name, SavedRevisionIdentity *out)
 {
     unlocked(); sql_calls++;

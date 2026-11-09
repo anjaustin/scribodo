@@ -282,6 +282,15 @@ the MEMORY-019 baseline on generated chapters the figures are the same
 within a frame, and the import stall that was 791 ms there is gone here
 because the import now runs on its worker.
 
+## Adversarial review
+
+The changes this work made were red-teamed afterwards; the findings and
+their remediations are in [REDTEAM-016](REDTEAM-016-real-manuscript.md):
+the saved-file pass could block a project's move into the store, the
+explorer scroll-into-view moved the explorer for toolbar buttons, and a
+project moved into the store before imports recorded saved files had no
+saved revisions for memory to cover.
+
 ## Evidence
 
 `build/manuscripts/pride-and-prejudice/` (import, source and checksum, and

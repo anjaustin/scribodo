@@ -74,6 +74,15 @@ bool sdb_chat_set_observer(Db *db, const char *project_id, const char *id, bool 
  * True if it is in the store afterwards (or already was). */
 bool store_import(StoreManager *manager, const char *project_dir, char *why, size_t whylen);
 bool store_needs_import(StoreManager *manager, const char *project_dir);
+/* The document file `name` in `project_dir` gets a saved revision holding its
+ * on-disk text (reusing a revision with that content, else an "import" one).
+ * import=true runs inside an import's transaction and makes both pointers
+ * follow the file; import=false runs in its own transaction and only fills a
+ * missing saved pointer (the lazy repair of projects moved before imports
+ * recorded saved files). Missing, special or unreadable files and names that
+ * are not document files return true without adopting. *adopted reports
+ * whether a pointer was set. */
+bool sdb_saved_file_adopt(Db *db, const char *project_id, const char *project_dir, const char *name, bool import, bool *adopted);
 /* A copied folder becomes its own project (the original's data, new ids). */
 bool store_fork(StoreManager *manager, const char *project_dir, char *why, size_t whylen);
 /* The project's store data written as files into `dir` (its .scribodo/),

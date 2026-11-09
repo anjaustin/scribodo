@@ -15,6 +15,8 @@ development Mac, not tracked files. Nothing cited is deleted; it is archived.
 
 | `scribodo-evidence-2026-11-08c.tar.gz` | The real-manuscript work (MEMORY-021): `build/manuscripts/pride-and-prejudice` with the Gutenberg source and checksum, the imported chapters and parts, and under `runs/` every application run log, database sample, probe script and screenshot; the reach run over the novel (`build/memory-reach/runs/scribodo_test_reach_15740_*`) | same folder, `SHA256SUMS` and `manifest-2026-11-08c.txt` |
 
+| `scribodo-evidence-2026-11-08d.tar.gz` | The red-team of the real-manuscript changes (REDTEAM-016): `build/manuscripts/pride-and-prejudice/runs/redteam016` (the explorer-scroll probe against the baseline and the fixed app, the baseline import test run) and the suite logs `build/make-{test,uitest,dbtest,tsan}-redteam016.log` | same folder, `SHA256SUMS` and `manifest-2026-11-08d.txt` |
+
 To consult a cited path, extract the archive into an empty folder and read the
 path relative to it. Stale `llama.sock` files inside a few run directories were
 not archivable and are not evidence.

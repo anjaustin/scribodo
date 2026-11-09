@@ -664,6 +664,16 @@ static void test_import(void)
     f = fopen(loose, "wb");
     fputs("Loose notes.\n", f);
     fclose(f);
+    /* Entries the app cannot read as text (red-team 016): a folder named like
+     * a document and a file with a NUL byte. The move into the store must
+     * succeed; they simply get no saved revision. */
+    char folder[600], binary[600];
+    snprintf(folder, sizeof(folder), "%s/folder.md", proj);
+    mkdir(folder, 0755);
+    snprintf(binary, sizeof(binary), "%s/binary.txt", proj);
+    f = fopen(binary, "wb");
+    fwrite("abc\0def", 1, 7, f);
+    fclose(f);
     /* Not in the store yet: everything below goes to files. */
     CHECK(store_mode(g_store, proj, NULL, 0, NULL) == STORE_FILES);
     ProjectStoreInspection inspection = project_store_inspect(g_store, proj);
@@ -748,6 +758,26 @@ static void test_import(void)
         CHECK(sdb && sdb_saved_revision_identity(sdb, pid_saved, "Chapter One.md", &saved) &&
               saved.bytes == strlen("Zoë kept the letter.\n"));
         CHECK(sdb && sdb_saved_revision_identity(sdb, pid_saved, "notes.txt", &saved) && saved.bytes == strlen("Loose notes.\n"));
+        CHECK(sdb && !sdb_saved_revision_identity(sdb, pid_saved, "folder.md", &saved));
+        CHECK(sdb && !sdb_saved_revision_identity(sdb, pid_saved, "binary.txt", &saved));
+        /* The lazy repair of a project moved before imports recorded saved
+         * files: with the pointer gone, adoption restores it to the revision
+         * that already holds the file's text (no duplicate), once. */
+        bool adopted = true;
+        CHECK(sdb && db_run(sdb, "UPDATE documents SET saved_revision_id = NULL WHERE project_id = ? AND name = 'notes.txt'",
+                            (DbArg[1]){ DB_S(pid_saved) }, 1, NULL));
+        CHECK(sdb && !sdb_saved_revision_identity(sdb, pid_saved, "notes.txt", &saved));
+        CHECK(sdb && sdb_saved_file_adopt(sdb, pid_saved, proj, "notes.txt", false, &adopted) && adopted);
+        CHECK(sdb && sdb_saved_revision_identity(sdb, pid_saved, "notes.txt", &saved) && saved.bytes == strlen("Loose notes.\n"));
+        CHECK(sdb && sdb_saved_file_adopt(sdb, pid_saved, proj, "notes.txt", false, &adopted) && !adopted);
+        /* Nothing to adopt from a folder, a NUL file or a missing file; a
+         * name that is not a plain document file is refused outright. */
+        CHECK(sdb && sdb_saved_file_adopt(sdb, pid_saved, proj, "folder.md", false, &adopted) && !adopted);
+        CHECK(sdb && sdb_saved_file_adopt(sdb, pid_saved, proj, "binary.txt", false, &adopted) && !adopted);
+        CHECK(sdb && sdb_saved_file_adopt(sdb, pid_saved, proj, "absent.md", false, &adopted) && !adopted);
+        CHECK(sdb && !sdb_saved_file_adopt(sdb, pid_saved, proj, "../notes.txt", false, &adopted));
+        CHECK(sdb && !sdb_saved_file_adopt(sdb, pid_saved, proj, "notes.pdf", false, &adopted));
+        CHECK(sdb && !sdb_saved_file_adopt(sdb, pid_saved, proj, "notes.txt", true, &adopted)); /* import mode needs its transaction */
         Revision *loose_revs = NULL;
         size_t nl = revisions_list(g_store, proj, loose, &loose_revs);
         CHECK(nl == 1 && !strcmp(loose_revs[0].origin, "import"));

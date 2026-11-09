@@ -206,6 +206,13 @@ shot saved                 # build/ui/<script>/saved.png
 
 Scripts click on text by buffer index (`click_index`, `drag_index`), not by pixel, so they don't depend on font metrics. Expectations that depend on where a line wraps use ranges (`cursor_range`, `length`).
 
+Element lookups (`click_element`, `expect element_w`, `expect element_y`)
+scroll an explorer item that is laid out outside the panel's visible area
+into view first, and only an explorer descendant: `expect element_y NAME MIN
+MAX` reports where a click on the element would land, which is how
+`tests/ui/store/19_explorer_scroll.scribo` checks that a toolbar button's
+rectangle does not move when the explorer is scrolled ([REDTEAM-016](REDTEAM-016-real-manuscript.md)).
+
 ### Running with the display asleep
 
 Creating a window needs an awake display. If the Mac's display is asleep, the app exits with `could not create a window`. Keep it awake for the run with:
@@ -418,6 +425,9 @@ tests/ui/store/18_manuscript_questions.scribo [--real]` asks the app
 questions about it. `--keep` leaves the disposable database and work
 directory for diagnosis, and `tools/services.sh testdb sql NAME` runs SQL
 from stdin against a test database.
+`tools/manuscript_baseline.sh --manuscript DEST --script
+tests/ui/store/19_explorer_scroll.scribo` runs the explorer scroll-into-view
+check on the 61 chapter files, where the chat list is laid out off screen.
 
 `tools/chat_hang_probe.c` (build it with the overlay in its header comment)
 drives a real `ChatSession` against a stand-in server that accepts the

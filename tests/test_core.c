@@ -511,6 +511,10 @@ static void test_text_cut(void)
     CHECK(text_cut("caf\xC3\xA9 aulait", 9) == 6); /* "café " is 6 bytes */
     /* The cut never exceeds n. */
     for (size_t n = 1; n < 40; n++) CHECK(text_cut("The quick brown fox. Jumps over\nthe lazy dog again", n) <= n);
+    /* A window with no character boundary (malformed UTF-8, or n inside the
+     * first character) cuts nothing: callers treat 0 as a failed unit. */
+    CHECK(text_cut("\x80\x80\x80\x80\x80\x80", 4) == 0);
+    CHECK(text_cut("\xF0\x9F\x90\x8B rest", 2) == 0);
 }
 
 int main(void)

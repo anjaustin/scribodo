@@ -219,12 +219,98 @@ static bool import_revisions(Db *db, const char *project_dir, const char *pid, R
     return ok;
 }
 
-/* The document files as they are on disk are the author's saved state. Each
- * gets a saved revision in the store: the newest imported snapshot when its
- * content is the file's, otherwise a new "import" revision dated by the
- * file's modification time. Without this, memory could not cover an
- * imported manuscript until every file was opened and saved again
- * (MEMORY-021: eight imported parts, none capturable). */
+/* A document file name as the explorer, the observer and the import see it:
+ * a plain basename with one of the document extensions. */
+static bool document_file_name(const char *name)
+{
+    if (!name || !name[0] || name[0] == '.' || strchr(name, '/') || strchr(name, '\\') || strstr(name, "..")) return false;
+    for (const unsigned char *c = (const unsigned char *)name; *c; c++)
+        if (*c < 0x20 || *c == 127) return false;
+    size_t n = strlen(name);
+    return n < 256 && ((n > 3 && !strcasecmp(name + n - 3, ".md")) || (n > 4 && !strcasecmp(name + n - 4, ".txt")) ||
+                       (n > 9 && !strcasecmp(name + n - 9, ".markdown")));
+}
+
+/* The document file as it is on disk is the author's saved state. It gets a
+ * saved revision in the store: the newest revision whose content is the
+ * file's, otherwise a new "import" revision dated by the file's modification
+ * time. Without this, memory could not cover an imported manuscript until
+ * every file was opened and saved again (MEMORY-021: eight imported parts,
+ * none capturable).
+ *
+ * A name that is not a document file, a file that is missing, a directory or
+ * anything else the app cannot read as text is skipped (true, not adopted):
+ * such a file is simply not covered; it must not hold the project's move
+ * into the store hostage (red-team 016). In an import (inside its
+ * transaction) both pointers follow the file. Outside one, the lazy repair
+ * of a project moved before this existed, the saved pointer is set only
+ * when none exists and the current pointer only when none exists, so an
+ * in-app save receipt or a newer recorded revision is never overridden. */
+bool sdb_saved_file_adopt(Db *db, const char *pid, const char *project_dir, const char *name, bool import, bool *adopted)
+{
+    if (adopted) *adopted = false;
+    if (!db || !pid || !pid[0] || !project_dir || !project_dir[0] || !document_file_name(name)) return false;
+    if (import != db_in_transaction(db)) return false;
+    char path[PATH_MAX + 300];
+    snprintf(path, sizeof(path), "%s/%s", project_dir, name);
+    char *text = NULL;
+    FileTextStatus st = file_text_read(path, &text);
+    if (st != FILE_TEXT_OK || !text) { free(text); return true; } /* missing, special, unreadable: not adopted */
+    struct stat sb;
+    double saved_at = stat(path, &sb) == 0 ? (double)sb.st_mtime : 0;
+    bool own = !import;
+    bool ok = !own || db_begin(db);
+    char did[40];
+    if (ok) ok = store_document_id_db(db, pid, name, true, did, sizeof(did));
+    DbRows r = {0};
+    const char *existing = NULL;
+    if (ok) {
+        ok = db_query(db, "SELECT id FROM revisions WHERE document_id = ? AND source_hash = SHA2(?,256) ORDER BY seq DESC LIMIT 1",
+                      (DbArg[2]){ DB_S(did), DB_S(text) }, 2, &r) && r.nrows <= 1;
+        if (ok && r.nrows == 1 && !db_cell_text(&r, 0, 0, &existing)) ok = false;
+    }
+    char id[40];
+    if (ok && existing) {
+        snprintf(id, sizeof(id), "%s", existing);
+    } else if (ok) {
+        /* The store's own id shape (r-YYYYMMDD-HHMMSS-16 hex), which the
+         * index validates, with the file's time as the stamp and a suffix
+         * derived from the project, the file and its content, so the same
+         * text gets the same id and different text never shares one. */
+        time_t stamp_t = saved_at > 0 ? (time_t)saved_at : time(NULL);
+        struct tm tmv;
+        localtime_r(&stamp_t, &tmv);
+        char stamp[32], key[800], content_hex[65];
+        strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tmv);
+        unsigned char dg[CC_SHA256_DIGEST_LENGTH];
+        CC_SHA256(text, (CC_LONG)strlen(text), dg);
+        for (size_t i = 0; i < sizeof(dg); i++) snprintf(content_hex + 2 * i, 3, "%02x", dg[i]);
+        snprintf(key, sizeof(key), "%s/%s/saved-file/%s", pid, name, content_hex);
+        CC_SHA256(key, (CC_LONG)strlen(key), dg);
+        snprintf(id, sizeof(id), "r-%s-%02x%02x%02x%02x%02x%02x%02x%02x", stamp, dg[0], dg[1], dg[2], dg[3], dg[4], dg[5], dg[6], dg[7]);
+        char hash[17];
+        sdb_content_hash16(text, hash);
+        DbArg a[7] = { DB_S(id), DB_S(did), DB_S(hash), DB_S(text), DB_S("import"), DB_S(""), DB_D(saved_at) };
+        ok = db_run(db, "INSERT IGNORE INTO revisions (id, document_id, hash, content, origin, note, created_at) VALUES (?,?,?,?,?,?,?)",
+                    a, 7, NULL);
+    }
+    db_rows_free(&r);
+    uint64_t changed = 0;
+    if (ok)
+        ok = import ? db_run(db, "UPDATE documents SET saved_revision_id = ?, current_revision_id = ? WHERE id = ?",
+                             (DbArg[3]){ DB_S(id), DB_S(id), DB_S(did) }, 3, &changed)
+                    : db_run(db, "UPDATE documents SET saved_revision_id = ?, current_revision_id = COALESCE(current_revision_id, ?)"
+                                 " WHERE id = ? AND saved_revision_id IS NULL",
+                             (DbArg[3]){ DB_S(id), DB_S(id), DB_S(did) }, 3, &changed);
+    if (own) {
+        if (ok) ok = db_commit(db);
+        if (!ok) db_rollback(db);
+    }
+    free(text);
+    if (ok && adopted) *adopted = changed == 1;
+    return ok;
+}
+
 static bool import_saved_files(Db *db, const char *project_dir, const char *pid)
 {
     DIR *d = opendir(project_dir);
@@ -235,54 +321,8 @@ static bool import_saved_files(Db *db, const char *project_dir, const char *pid)
         errno = 0;
         ent = readdir(d);
         if (!ent) { ok = errno == 0; break; }
-        size_t n = strlen(ent->d_name);
-        if (ent->d_name[0] == '.') continue;
-        if (!((n > 3 && !strcasecmp(ent->d_name + n - 3, ".md")) || (n > 4 && !strcasecmp(ent->d_name + n - 4, ".txt")) ||
-              (n > 9 && !strcasecmp(ent->d_name + n - 9, ".markdown")))) continue;
-        char path[PATH_MAX + 300];
-        snprintf(path, sizeof(path), "%s/%s", project_dir, ent->d_name);
-        char *text = NULL;
-        FileTextStatus st = file_text_read(path, &text);
-        if (st == FILE_TEXT_MISSING) continue; /* removed between the listing and now */
-        if (st != FILE_TEXT_OK || !text) { free(text); ok = false; break; }
-        struct stat sb;
-        double saved_at = stat(path, &sb) == 0 ? (double)sb.st_mtime : 0;
-        char did[40];
-        ok = store_document_id_db(db, pid, ent->d_name, true, did, sizeof(did));
-        DbRows r = {0};
-        const char *existing = NULL;
-        if (ok) {
-            ok = db_query(db, "SELECT id FROM revisions WHERE document_id = ? AND source_hash = SHA2(?,256) ORDER BY seq DESC LIMIT 1",
-                          (DbArg[2]){ DB_S(did), DB_S(text) }, 2, &r) && r.nrows <= 1;
-            if (ok && r.nrows == 1 && !db_cell_text(&r, 0, 0, &existing)) ok = false;
-        }
-        char id[40];
-        if (ok && existing) {
-            snprintf(id, sizeof(id), "%s", existing);
-        } else if (ok) {
-            /* The store's own id shape (r-YYYYMMDD-HHMMSS-16 hex), which the
-             * index validates, with the file's time as the stamp and a suffix
-             * derived from the project and file so a repeated import is a no-op. */
-            time_t stamp_t = saved_at > 0 ? (time_t)saved_at : time(NULL);
-            struct tm tmv;
-            localtime_r(&stamp_t, &tmv);
-            char stamp[32], key[700];
-            strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tmv);
-            snprintf(key, sizeof(key), "%s/%s/saved-file", pid, ent->d_name);
-            unsigned char dg[CC_SHA256_DIGEST_LENGTH];
-            CC_SHA256(key, (CC_LONG)strlen(key), dg);
-            snprintf(id, sizeof(id), "r-%s-%02x%02x%02x%02x%02x%02x%02x%02x", stamp, dg[0], dg[1], dg[2], dg[3], dg[4], dg[5], dg[6], dg[7]);
-            char hash[17];
-            sdb_content_hash16(text, hash);
-            DbArg a[7] = { DB_S(id), DB_S(did), DB_S(hash), DB_S(text), DB_S("import"), DB_S(""), DB_D(saved_at) };
-            ok = db_run(db, "INSERT IGNORE INTO revisions (id, document_id, hash, content, origin, note, created_at) VALUES (?,?,?,?,?,?,?)",
-                        a, 7, NULL);
-        }
-        db_rows_free(&r);
-        if (ok)
-            ok = db_run(db, "UPDATE documents SET saved_revision_id = ?, current_revision_id = ? WHERE id = ?",
-                        (DbArg[3]){ DB_S(id), DB_S(id), DB_S(did) }, 3, NULL);
-        free(text);
+        if (!document_file_name(ent->d_name)) continue;
+        ok = sdb_saved_file_adopt(db, pid, project_dir, ent->d_name, true, NULL);
     }
     if (closedir(d) != 0) ok = false;
     return ok;

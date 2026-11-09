@@ -23,6 +23,8 @@ void clay_render(Clay_RenderCommandArray commands, SFont *const *fonts);
 /* True only if the element was declared in the most recent layout. Use it
  * before trusting Clay_GetElementData(), which also returns stale boxes. */
 bool clay_element_current(Clay_ElementId id);
+/* True if `id` was declared inside `ancestor` in the most recent layout. */
+bool clay_element_within(Clay_ElementId ancestor, Clay_ElementId id);
 
 static inline Rectangle clay_to_rect(Clay_BoundingBox b)
 {

@@ -3342,14 +3342,19 @@ static Rectangle host_element(void *ctx, const char *name)
     size_t n = strlen(name), k = n;
     while (k > 0 && name[k - 1] >= '0' && name[k - 1] <= '9') k--;
     Clay_String s = { .isStaticallyAllocated = false, .length = (int32_t)k, .chars = name };
-    Rectangle r = element_rect_str(s, k < n ? (uint32_t)atoi(name + k) : 0, k < n);
+    bool indexed = k < n;
+    uint32_t index = indexed ? (uint32_t)atoi(name + k) : 0;
+    Rectangle r = element_rect_str(s, index, indexed);
     /* An explorer item laid out below or above the panel's visible area (a
      * project with sixty chapters puts the chat list off screen) is scrolled
      * into view, as a user would with the wheel, and its rectangle is
      * reported where it will be once the next layout applies the offset. The
-     * click itself lands on a later frame, so the two agree (MEMORY-021). */
+     * click itself lands on a later frame, so the two agree (MEMORY-021).
+     * Only the explorer's own descendants: a toolbar button shares the
+     * panel's columns but does not move with it (red-team 016). */
     Rectangle explorer = ELEMENT_RECT("Explorer");
-    if (r.width > 0 && explorer.width > 0 && r.x >= explorer.x && r.x < explorer.x + explorer.width &&
+    Clay_ElementId id = indexed ? Clay_GetElementIdWithIndex(s, index) : Clay_GetElementId(s);
+    if (r.width > 0 && explorer.width > 0 && clay_element_within(CLAY_ID("Explorer"), id) &&
         (r.y < explorer.y || r.y + r.height > explorer.y + explorer.height)) {
         Clay_ScrollContainerData sc = Clay_GetScrollContainerData(CLAY_ID("Explorer"));
         if (sc.found && sc.scrollPosition) {

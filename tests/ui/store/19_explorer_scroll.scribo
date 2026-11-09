@@ -1,0 +1,34 @@
+# Explorer scroll-into-view (red-team 016). A project with sixty-one chapter
+# documents lays the chat list out below the explorer's visible area. An
+# element lookup scrolls such an item into view (MEMORY-021); it must do so
+# only for the explorer's own descendants. The toolbar's Open button shares
+# the explorer's columns (x within 210 px) but does not move with it: with
+# the explorer scrolled, the lookup moved the explorer and reported the
+# button 44 px lower, so the click landed on a chapter in the explorer and
+# opened it instead of showing the folder dialog.
+# Run: tools/manuscript_baseline.sh --manuscript build/manuscripts/pride-and-prejudice \
+#        --script tests/ui/store/19_explorer_scroll.scribo
+wait 5
+dialog "$DIR/manuscript"
+click_element WelcomeOpen
+wait_status "now kept in the project store" 1800
+expect explorer_has "Manuscript chat"
+# The toolbar sits in the top 40 px before anything is scrolled.
+expect element_y OpenButton 0 40
+# Open the first chapter (4,510 code points; no other chapter is within 4,500..4,520).
+click_element DocItem0
+expect length 4500 4520
+# The chat item is off screen; its lookup scrolls the explorer so the click lands on it.
+click_element ChatItem0
+wait_history
+expect element_y ChatItem0 40 2000
+expect chat_count 64
+# The Open button is not an explorer descendant: its rectangle stays put and
+# the explorer is not scrolled by looking it up.
+expect element_y OpenButton 0 40
+expect element_y ChatItem0 40 2000
+# Its click reaches the button: the folder dialog opens (and is cancelled);
+# the first chapter is still the open document.
+dialog ""
+click_element OpenButton
+expect length 4500 4520

@@ -446,6 +446,12 @@ static void run_expect(Script *s, ScriptHost *h, Tokens *t)
         Rectangle r = h->element(h->ctx, t->tok[2]);
         ok = r.width >= strtof(t->tok[3], NULL) && r.width <= strtof(t->tok[4], NULL);
         snprintf(detail, sizeof(detail), "got %.1f", r.width);
+    } else if (!strcmp(what, "element_y") && t->n == 5 && h->element) {
+        /* Where a click on the element would land, after any scroll the lookup applied. */
+        Rectangle r = h->element(h->ctx, t->tok[2]);
+        float y = r.y + r.height / 2;
+        ok = r.width > 0 && y >= strtof(t->tok[3], NULL) && y <= strtof(t->tok[4], NULL);
+        snprintf(detail, sizeof(detail), "got %.1f", y);
     } else if (!strcmp(what, "chat_busy") && t->n == 3 && h->chat) {
         ok = chat_busy(h->chat) == yes(t->tok[2]);
     } else if (!strcmp(what, "dirty") && t->n == 3) {
