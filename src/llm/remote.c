@@ -191,7 +191,7 @@ bool remote_parse(const char *json, RemoteConfig *c, char *err, size_t errlen)
                 size_t bytes = strlen(k);
                 size_t len = strcspn(k, "\r\n");
                 if (!len || len >= sizeof(c->key)) ok = false;
-                for (size_t i = len; i < bytes; i++)
+                for (size_t i = len; ok && i < bytes; i++)
                     if (k[i] != '\r' && k[i] != '\n') ok = false;
                 if (ok) {
                     memcpy(c->key, k, len);

@@ -459,12 +459,38 @@ static void test_remote(void)
 }
 
 
+static void test_remote_key_line_boundaries(void)
+{
+    const struct { const char *key; bool valid; } cases[] = {
+        { "", false }, { "\r", false }, { "\n", false }, { "\r\n", false },
+        { "\n\r\n", false }, { "token", true }, { "token\n", true },
+        { "token\r\n", true }, { "token\r\n\n", true },
+        { "token\nsecond", false }, { "token\rx", false }, { "token \r\n", false }
+    };
+    for (size_t pass = 0; pass < 2; pass++) {
+        for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+            RemoteConfig c;
+            char err[200] = "";
+            size_t errlen = pass == 0 ? sizeof(err) : 0;
+            CHECK(remote_cfg(&c, "https://api.example.com/v1", cases[i].key, 0600, err, errlen) == cases[i].valid);
+            if (cases[i].valid) CHECK(!strcmp(c.key, "token"));
+            else {
+                bool zero = true;
+                for (size_t k = 0; k < sizeof(c.key); k++) if (c.key[k]) zero = false;
+                CHECK(zero);
+                if (errlen) CHECK(err[0]);
+            }
+        }
+    }
+}
+
 int main(void)
 {
     if (!test_state_fixture_init(g_dir, sizeof(g_dir), &g_store)) return 1;
     const TestCase tests[] = { { "remote_file_reads", test_remote_file_reads },
                               { "remote_json_boundaries", test_remote_json_boundaries },
                               { "remote_service_secret_aliases", test_remote_service_secret_aliases },
+                              { "remote_key_line_boundaries", test_remote_key_line_boundaries },
                               { "remote", test_remote } };
     int result = run_tests(tests, sizeof(tests) / sizeof(tests[0]));
     test_state_fixture_destroy(g_dir, g_store);

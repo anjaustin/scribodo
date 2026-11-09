@@ -289,7 +289,7 @@ $(MARIADB_LIB):
 	@mkdir -p $(dir $@)
 	$(CMAKE) -S third_party/mariadb-connector-c -B build/mariadb-cc -DCMAKE_BUILD_TYPE=Release \
 	  -DWITH_UNIT_TESTS=OFF -DWITH_SSL=OPENSSL -DOPENSSL_ROOT_DIR=$(OPENSSL_DIR) -DOPENSSL_USE_STATIC_LIBS=TRUE \
-	  -DCLIENT_PLUGIN_DIALOG=STATIC -DCLIENT_PLUGIN_AUTH_GSSAPI_CLIENT=OFF -DCLIENT_PLUGIN_REMOTE_IO=OFF \
+	  -DCLIENT_PLUGIN_DIALOG=STATIC -DCLIENT_PLUGIN_AUTH_GSSAPI_CLIENT=OFF \
 	  -DWITH_CURL=OFF -DWITH_EXTERNAL_ZLIB=ON > build/mariadb-cc.log
 	$(CMAKE) --build build/mariadb-cc --target mariadbclient -j8 >> build/mariadb-cc.log
 

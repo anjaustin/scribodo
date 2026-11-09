@@ -26,6 +26,14 @@ the clean shallow checkout's Connector/C and analyzer logs. It excludes compiled
 binaries and the shallow checkout itself. Archive SHA-256:
 `796386b993c464e353a5a650c99f3c6f8e918d5b2d3a97e7622c075c810715f3`.
 
+The hosted-CI iteration is preserved separately in
+`scribodo-evidence-2026-11-09-audit-ci.tar.gz` (87 files), with
+`manifest-2026-11-09-audit-ci.txt` and its `SHA256SUMS` entry. It includes the
+initial hosted analyzer failure, trusted-acceptance result, corrected-tree
+16-target rerun, refreshed mutation controls and fresh Connector/C build logs.
+It precedes the corrective push's hosted rerun. Archive SHA-256:
+`f4cdef24571a58d0d0ff1a1b71ef7ffe582e57c0345e2c372be6461e976828d5`.
+
 To consult a cited path, extract the archive into an empty folder and read the
 path relative to it. Stale `llama.sock` files inside a few run directories were
 not archivable and are not evidence.

@@ -182,3 +182,71 @@ shallow checkout; it does not claim a GitHub Actions run has completed.
 
 The run evidence is preserved in `scribodo-evidence-2026-11-09-audit.tar.gz`;
 see `docs/EVIDENCE.md` for the archive location, manifest and checksum.
+
+## Hosted-CI iteration after the first push
+
+The initial push of `69eee28` exposed another finding, so the local disposition
+above was not the end of the review. Hosted CI run `42690786517` passed build,
+unit, ASan/UBSan and TSan jobs, but the analyzer job failed with one warning at
+`src/llm/remote.c:195`: a potentially uninitialized byte in the API-key suffix
+loop. The analyzer-gate tests passed on that runner. Its trace used the
+`Xcode_16.4.app` SDK; local analysis with Apple Clang 21 had not reported this
+path. No checker was disabled and the failure gate was not weakened.
+
+### R6 — rejected API keys still entered suffix validation (P2, fixed; hosted rerun required)
+
+The trace continued into suffix validation after an empty key had already set
+`ok=false`. Made the loop conditional on `ok`, so rejection stops subsequent
+validation and no bytes are examined on that path. Existing accepted-key rules
+remain in force. A warning alone does not establish a reachable runtime
+uninitialized read; the correction makes the validation precondition explicit.
+
+Added a 12-case key-line matrix, run with both a normal error buffer and a
+zero-length one: empty/CR/LF-only keys, an ordinary key, permitted trailing line
+endings, a second key line, and invalid embedded/trailing characters. Rejected
+keys must leave the entire output credential buffer zeroed. The remote suite
+passes **149 checks, 0 failures**. CI now prints the analyzer version so future
+toolchain differences are measured rather than inferred.
+
+The initial pushed commit's trusted acceptance run `42690786966` passed its
+database integration and both UI suites. Recovery acceptance is schedule/manual
+only and was skipped on that push; it was covered by the local matrix above.
+
+Evidence: `build/redteam017-hosted-ci-failure.log`,
+`build/redteam017-hosted-ci-jobs.json`,
+`build/redteam017-trusted-ci-result.json` and
+`build/redteam017-remote-key-boundaries.log`. The correction's full local rerun
+is recorded in `build/redteam017-ci-fix-results.json` and the corresponding
+`build/redteam017-ci-fix-<target>.log` files; hosted confirmation follows the
+next push.
+
+### R7 — cold Connector/C configuration passed an unused option (P3, fixed)
+
+The same hosted log showed a CMake warning that `CLIENT_PLUGIN_REMOTE_IO` was
+unused. This pre-existing build option is not consulted when `WITH_CURL=OFF`:
+the pinned dependency's `plugins/io/CMakeLists.txt` registers `remote_io` only
+inside `IF (WITH_CURL)`. Removed the redundant option, retaining `WITH_CURL=OFF`.
+
+A fresh configure and `mariadbclient` build under
+`build/redteam017-mariadb-clean` completed with **0 CMake warnings and 0 compiler
+warnings**. The resulting cache explicitly records `WITH_CURL=OFF`. Evidence:
+`build/redteam017-mariadb-clean.log` and
+`build/redteam017-mariadb-clean-result.json`.
+
+### Verification of the hosted-CI corrections
+
+Repeated all 16 targets after the key-validation correction. Every target exited
+0, with 0 failures and 0 compiler/analyzer warnings, in **729.310 seconds** of
+sequential wall time. Updated totals: **93,641 C checks** for both `test` and
+`sanitize` (plus 11 Python tests each), **47,295 TSan checks**, and **149 remote
+suite checks**. All other counts match the earlier matrix; analysis remains
+**83 files, 0 findings**. No sanitizer diagnostics were reported.
+
+Repeated the mutation controls: **10 killed, 0 survived; both unchanged controls
+passed**. The cold Connector/C build separately verifies the cleaned-up CMake
+recipe, without relying on the existing shared-library build cache.
+
+The hosted analyzer result must still be confirmed after this corrective push;
+local Clang 21 passing is not substituted for that confirmation. Evidence:
+`build/redteam017-ci-fix-results.json`, `build/redteam017-ci-fix-*.log`, and
+`build/redteam017-ci-fix-mutations.log`.
