@@ -132,6 +132,11 @@ make run    # launch with assets/sample/sample.md
 ./build/scribodo path/to/chapter.md
 ```
 
+For a smaller first checkout, fetch only the pinned revisions with
+`git clone --recurse-submodules --shallow-submodules --depth 1 https://github.com/anjaustin/scribodo.git`.
+The full dependency history is not needed to build: `.git/modules` is about
+940 MB, mostly raylib and llama.cpp.
+
 On first launch the app checks the model file against its pinned hash (once), then starts `llama-server` in the background. The toolbar shows the model's status, which turns green when it's ready. The server listens only on a private Unix socket, uses a fresh API key each launch, and stops when the app quits.
 
 **The project store:** chats, notes, canon, findings, History and the observer's progress live in a local MariaDB (SOW §5), run in Docker. `tools/services.sh up` starts it (MariaDB 11.4 and Qdrant, localhost only, with generated credentials). The app starts it too if Docker is running.
@@ -256,6 +261,17 @@ in [`docs/TESTING.md`](docs/TESTING.md).
 | [raygui](https://github.com/raysan5/raygui) | 5.0 | zlib | Immediate-mode controls |
 | [Clay](https://github.com/nicbarker/clay) | 0.14 | zlib | Layout |
 | [stb_textedit](https://github.com/nothings/stb) | 1.14 | Public domain / MIT | Cursor, selection, and navigation logic |
+| [cJSON](https://github.com/DaveGamble/cJSON) | v1.7.19-6-g6d9f244 | MIT | JSON parsing and building |
+| [llama.cpp](https://github.com/ggml-org/llama.cpp) | b12111-5-g5851a8e50 | MIT | Local BF16 inference server (`llama-server`) |
+| [MariaDB Connector/C](https://github.com/mariadb-corporation/mariadb-connector-c) | 3.4.11 | LGPL-2.1 | MariaDB client, statically linked |
+
+The pinned inventory and container digests are verified by `make dependency-report`.
+The local services are MariaDB 11.4.13 (GPLv2) and Qdrant v1.20.0 (Apache-2.0),
+pinned by digest in `docker/compose.yml`. The LFM3-1.7B weights are under the
+LFM Open License v1.0, including its $10M commercial-revenue threshold; see
+[MODEL-001](docs/MODEL-001-lfm3-runtime.md#license-not-legal-advice). Because
+the MariaDB client is linked statically, a binary distribution must meet
+LGPL-2.1 relinking requirements (part of GAP-002).
 
 ## License
 

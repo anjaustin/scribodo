@@ -93,8 +93,8 @@ char *canon_reference_apply(const char *block, const char *request_json)
     cJSON *last = n > 0 ? cJSON_GetArrayItem(messages, n - 1) : NULL;
     cJSON *role = last ? cJSON_GetObjectItemCaseSensitive(last, "role") : NULL;
     cJSON *content = last ? cJSON_GetObjectItemCaseSensitive(last, "content") : NULL;
-    if (!cJSON_IsString(role) || !role->valuestring || strcmp(role->valuestring, "user") ||
-        !cJSON_IsString(content) || !content->valuestring) {
+    if (!role || !cJSON_IsString(role) || !role->valuestring || strcmp(role->valuestring, "user") ||
+        !content || !cJSON_IsString(content) || !content->valuestring) {
         cJSON_Delete(root);
         return NULL;
     }

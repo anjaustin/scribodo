@@ -11,6 +11,10 @@ expect files "$DIR/backups" "book-" 1
 dialog_latest "$DIR/backups"
 click_element RestoreItem
 wait_status "Restored as" 1800
+# The restored folder is a legacy-format copy: its move into the store also
+# runs on the import worker. Clicking before it finishes can be hit-tested
+# against the snapshot the import is about to replace, so wait for it.
+wait_status "now kept in the project store" 1800
 expect files "$DIR" "book (restored" 1
 expect explorer_has "Chapter One.md"
 expect explorer_has "remember the lighthouse"

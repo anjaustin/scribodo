@@ -429,7 +429,6 @@ static void rank_and_bound(RecallResult *r, size_t canon_count)
         for (size_t i = RECALL_CANON_ROWS_MAX; i < canon_count; i++) row_free(&r->rows[i]);
         memmove(r->rows + RECALL_CANON_ROWS_MAX, r->rows + canon_count, excerpts * sizeof(*r->rows));
         r->count = RECALL_CANON_ROWS_MAX + excerpts;
-        canon_count = RECALL_CANON_ROWS_MAX;
         note(r, "only the 32 best-matching canon entries are shown");
     }
     if (r->count > RECALL_ROWS_MAX) {

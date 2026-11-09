@@ -399,7 +399,7 @@ bool sdb_entity_detail(Db *db, const char *pid, const char *entity_id, EntityDet
     size_t n = ok ? l.nrows + m.nrows : 0;
     d->rows = ok && n ? calloc(n, sizeof(EntityDetailRow)) : NULL;
     if (n && !d->rows) ok = false;
-    for (size_t i = 0; ok && i < l.nrows; i++) {
+    for (size_t i = 0; ok && d->rows && i < l.nrows; i++) {
         const char *relation, *finding, *from_id, *from_name, *to_id, *to_name;
         ok = db_cell_text(&l, i, 0, &relation) && db_cell_text(&l, i, 1, &finding) &&
              db_cell_text(&l, i, 2, &from_id) && db_cell_text(&l, i, 3, &from_name) &&
@@ -417,7 +417,7 @@ bool sdb_entity_detail(Db *db, const char *pid, const char *entity_id, EntityDet
         snprintf(row->other_id, sizeof(row->other_id), "%s", outgoing ? to_id : from_id);
         utf8_clip(row->other_name, sizeof(row->other_name), outgoing ? to_name : from_name, SIZE_MAX);
     }
-    for (size_t i = 0; ok && i < m.nrows; i++) {
+    for (size_t i = 0; ok && d->rows && i < m.nrows; i++) {
         const char *finding, *text;
         ok = db_cell_text(&m, i, 0, &finding) && strlen(finding) < sizeof(((EntityDetailRow *)0)->finding_id) &&
              db_cell_text(&m, i, 1, &text);

@@ -92,7 +92,7 @@ static char *complete(ObserverModel *model, const char *system, const char *user
         cJSON *j = json_parse(r.body);
         cJSON *ch = j ? cJSON_GetArrayItem(cJSON_GetObjectItem(j, "choices"), 0) : NULL;
         cJSON *c = ch ? cJSON_GetObjectItem(cJSON_GetObjectItem(ch, "message"), "content") : NULL;
-        if (cJSON_IsString(c)) content = strdup(c->valuestring);
+        if (c && cJSON_IsString(c)) content = strdup(c->valuestring);
         cJSON_Delete(j);
     }
     http_result_free(&r);
@@ -148,8 +148,8 @@ bool observer_model_judge(ObserverModel *model, const char *canon, const char *s
         }
         cJSON *j = out ? json_parse(out) : NULL;
         cJSON *v = j ? cJSON_GetObjectItem(j, "verdict") : NULL, *c = j ? cJSON_GetObjectItem(j, "check") : NULL;
-        votes = cJSON_IsString(v) && !strcmp(v->valuestring, "conflict");
-        if (votes && pass == 0 && cJSON_IsString(c)) snprintf(check, checklen, "%s", c->valuestring);
+        votes = v && cJSON_IsString(v) && !strcmp(v->valuestring, "conflict");
+        if (votes && pass == 0 && c && cJSON_IsString(c)) snprintf(check, checklen, "%s", c->valuestring);
         cJSON_Delete(j);
         free(out);
         if (atomic_load(model->cancel)) return false;

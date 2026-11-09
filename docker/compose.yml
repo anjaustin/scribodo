@@ -20,6 +20,7 @@ services:
       MARIADB_PASSWORD_FILE: /run/secrets/db_password
       MARIADB_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
     secrets: [db_password, db_root_password]
+    security_opt: ["no-new-privileges:true"]
     ports:
       - "127.0.0.1:${SCRIBODO_DB_PORT:-33061}:3306"
     volumes:
@@ -38,6 +39,7 @@ services:
       - ${SCRIBODO_SECRETS:?run tools/services.sh}/qdrant.env
     environment:
       QDRANT__TELEMETRY_DISABLED: "true"
+    security_opt: ["no-new-privileges:true"]
     ports:
       - "127.0.0.1:${SCRIBODO_QDRANT_PORT:-6333}:6333"
     volumes:

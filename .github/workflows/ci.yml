@@ -37,6 +37,26 @@ jobs:
           ARCH_FLAGS: ""
         run: make test
 
+  analyze:
+    name: Clang static analyzer
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Check out pinned dependencies
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          brew install openssl@3
+          echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+
+      - name: Analyze
+        env:
+          ARCH_FLAGS: ""
+        run: make analyze
+
   sanitize:
     name: AddressSanitizer and UndefinedBehaviorSanitizer
     runs-on: macos-15

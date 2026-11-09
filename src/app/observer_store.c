@@ -448,8 +448,10 @@ bool observer_rules_import_files(const char *project, char out[17])
     FILE *f = fopen(path, "rb");
     if (!f) return errno == ENOENT;
     size_t n = fread(out, 1, 16, f);
-    int extra = fgetc(f);
-    bool ok = !ferror(f) && extra == EOF;
+    bool ok = !ferror(f);
+    /* Read one more byte only after a full, successful read. A short read
+     * already reached EOF or failed; a 17th byte is not a signature file. */
+    if (ok && n == 16) ok = fgetc(f) == EOF && !ferror(f);
     ok = fclose(f) == 0 && ok;
     out[n] = '\0';
     if (!ok || (n != 0 && n != 16)) return false;

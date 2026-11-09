@@ -1,6 +1,7 @@
 # Product readiness gaps
 
 **Recorded:** 2026-11-06
+**Re-reviewed:** 2026-11-09 against `af57a32`; no gap status changed.
 
 **Baseline:** `3e7add8`; the MVP workflows and their local/CI acceptance pass.
 These are remaining product-readiness/evidence gaps, not claims that tested

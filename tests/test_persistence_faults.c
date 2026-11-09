@@ -273,6 +273,36 @@ static void writer_faults(void)
     }
 }
 
+static void chat_unterminated_list_faults(void)
+{
+    const char *cases[] = {
+        "{\"type\":\"meta\",\"title\":\"No final newline\"}",
+        "{\"type\":\"meta\",\"title\":\"Observer\"}\n{\"type\":\"observer\",\"read\":false}"
+    };
+    char path[900];
+    snprintf(path, sizeof(path), "%s/.scribodo/chats/abcd.jsonl", project);
+    for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
+        FILE *f = fopen(path, "wb");
+        CHECK(f != NULL);
+        if (!f) return;
+        CHECK(fputs(cases[c], f) >= 0);
+        CHECK(fclose(f) == 0);
+        ChatSummary *chats = NULL;
+        size_t n = 0;
+        fault_alloc_after(-1);
+        CHECK(chat_store_list_checked(store, project, &chats, &n) && n == 1);
+        long count = fault_alloc_count();
+        free(chats);
+        for (long i = 0; i < count * 2; i++) {
+            allocation_case(i, count);
+            bool ok = chat_store_list_checked(store, project, &chats, &n);
+            fault_alloc_after(-1);
+            CHECK(!ok && !chats && n == 0);
+            free(chats);
+        }
+    }
+}
+
 int main(void)
 {
     char root[512];
@@ -293,7 +323,8 @@ int main(void)
                         { "chat_load_allocations", chat_load_faults },
                         { "chat_send_allocations", chat_send_faults },
                         { "window_shrink_allocations", window_shrink_faults },
-                         { "chat_allocations", chat_faults }, { "writer_allocations", writer_faults } };
+                          { "chat_allocations", chat_faults }, { "writer_allocations", writer_faults },
+                          { "chat_unterminated_list_allocations", chat_unterminated_list_faults } };
     int rc = run_tests(tests, sizeof(tests) / sizeof(tests[0]));
     test_state_fixture_destroy(root, store);
     return rc;

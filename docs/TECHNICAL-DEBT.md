@@ -4,8 +4,8 @@ This is the durable cross-session register for architectural and maintenance
 work. It records debt rather than individual defects. Update the status,
 evidence and session log when a remediation lands.
 
-**Last reviewed:** 2026-11-07
-**Baseline:** `4060369` (`Update sample chapter opening`)
+**Last reviewed:** 2026-11-09
+**Baseline:** `af57a32` (`REDTEAM-016: red-team the real-manuscript changes and remediate`)
 **Status:** pre-alpha; macOS on Apple Silicon is the MVP target
 
 ## Current product priority
@@ -270,6 +270,7 @@ enforced: direct pushes are permitted, and CI reports after the fact. See
 | Documentation drift | Done | Living guides no longer encode volatile source locations or assertion totals; dated red-team reports retain their point-in-time evidence. | Keep contracts current and reserve numeric evidence for dated reports. |
 | Weakly typed DB rows | Done | Production code has no direct indexed-cell reads; repository decoders validate shape, nullability, type and domain. Checked record/revision list failures propagate through `ProjectStore`; compatibility count wrappers remain source-compatible but have no production callers. | Require local decoders and checked routing for every new query. |
 | Manual dependency maintenance | Done | `make dependency-report` and a weekly workflow inventory submodules and images, verify immutable pins, and query OSV by vendored commit. | Review informational upstream updates and remediate any report failure. |
+| `main.c` composition-root size | Open (accepted for pre-alpha) | 2026-11-09 audit: `src/main.c` is 4,533 lines, 12.2% of `src/` (37,282 C/header lines). The P1 coordination split moved worker ownership out; what remains is the single-window composition root, layout builder and scripted-host adapters in one translation unit. | Split by pane/controller only when a feature next touches more than three ownership areas, or if the file exceeds 5,000 lines. Re-measure and update this row at each review; do not describe the P1 entry above as a size split. |
 
 ## Intentional pre-alpha tradeoffs
 

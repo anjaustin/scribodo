@@ -439,7 +439,7 @@ static void refresh_entities(App *app)
         (void)entity_backfill_job_start(&app->graph_job, app->project_dir);
     }
     app->nents = project_store_entity_list(app->store, app->project_dir, &app->ents);
-    for (size_t i = 0; i < app->nents && i < ENT_SHOW; i++) {
+    for (size_t i = 0; app->ents && i < app->nents && i < ENT_SHOW; i++) {
         char name[64];
         utf8_clip(name, sizeof(name), app->ents[i].name, 48);
         snprintf(app->ent_labels[i], sizeof(app->ent_labels[i]), "%s \xC2\xB7 %d", name, app->ents[i].mentions);
@@ -3995,7 +3995,6 @@ int main(int argc, char **argv)
                              record_view_dirty(app.record) && !save_note(&app);
             bool unsaved = editor_is_dirty(app.editor) || record_unsaved_canon(&app) || note_lost || unsaved_chat(&app) || memory_controls_pending(&app);
             if (!unsaved || (app.close_armed && GetTime() - app.close_armed_at < 5.0)) {
-                running = false;
                 closed_by_window = true;
                 break;
             }

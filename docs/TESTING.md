@@ -4,6 +4,7 @@
 |---|---|---|
 | `make test` | Unit and headless suites: core modules, real-filesystem file I/O, and the editor driven through raylib stand-ins (including a 200,000-operation fuzz run) | No |
 | `make sanitize` | The same suites under AddressSanitizer and UndefinedBehaviorSanitizer | No |
+| `make analyze` | The Clang static analyzer over every first-party source file; any finding fails the target | No |
 | `make uitest` | Scripted UI tests: the **real app**, real input handling, real rendering, with a fake model | Yes |
 | `make tsan` | ThreadSanitizer over the chat, observer, supervisor and storage code | No |
 | `make dbtest` | MariaDB/Qdrant integration in throwaway databases (`tools/services.sh up` first) | No |

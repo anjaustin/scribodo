@@ -3,6 +3,7 @@
 #   make            build the app (build/scribodo)
 #   make run        build and launch with the sample document
 #   make test       build and run unit tests
+#   make analyze    run the Clang static analyzer over src/ (fails on findings)
 #   make sanitize   run the tests under AddressSanitizer + UBSan
 #   make llama      build the pinned llama-server (third_party/llama.cpp)
 #   make model      download the pinned LFM3-1.7B BF16 GGUF (3.5 GB, SHA-256 checked)
@@ -91,7 +92,7 @@ TESTS += $(BUILD)/test_memory_document_cache $(BUILD)/test_memory_budget $(BUILD
 TESTS += $(BUILD)/test_http_deadlines $(BUILD)/test_db_deadlines $(BUILD)/test_memory_brief_model
 TESTS += $(BUILD)/test_http_poll_errno
 
-.PHONY: all run test uitest uitest-real sanitize tsan cstest dbtest uitest-db backuptest remotetest offlinetest dependency-report clean distclean llama model llmtest
+.PHONY: all run test analyze uitest uitest-real sanitize tsan cstest dbtest uitest-db backuptest remotetest offlinetest dependency-report clean distclean llama model llmtest
 
 all: $(APP)
 
@@ -441,6 +442,20 @@ uitest-real: $(APP) $(LLAMA_BIN)
 	  SCRIBODO_LLM=real SCRIBODO_SEED=42 SCRIBODO_SCRIPT=$$s SCRIBODO_SCRIPT_DIR=$$PWD/$$work SCRIBODO_SHOT_DIR=$$PWD/build/ui/$$name \
 	    $(WATCHDOG) 600 ui-$$name ./$(APP) 2>build/ui/$$name/stderr.log || fail=1; echo; \
 	done; exit $$fail
+
+# Static analysis over every first-party source file (the vendored amalgamations
+# are excluded). Any diagnostic fails the target; the log is kept under build/.
+ANALYZE      ?= clang
+ANALYZE_SRCS := $(shell find src -name '*.c' ! -name 'vendor_impl.c' ! -name 'json_vendor.c')
+analyze: $(MARIADB_LIB)
+	@mkdir -p $(BUILD)
+	@$(ANALYZE) --analyze $(CSTD) $(OPT) -g $(INCLUDES) \
+	  -Xanalyzer -analyzer-output=text $(ANALYZE_SRCS) 2> $(BUILD)/analyze.log; \
+	status=$$?; cat $(BUILD)/analyze.log; \
+	if [ $$status -ne 0 ] || [ -s $(BUILD)/analyze.log ]; then \
+	  echo "analyze: static analysis reported findings" >&2; exit 1; \
+	fi; \
+	echo "analyze: 0 warnings across $$(echo $(ANALYZE_SRCS) | wc -w | tr -d ' ') source files"
 
 SAN_FLAGS := -O1 -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined
 sanitize:

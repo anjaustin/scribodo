@@ -138,7 +138,7 @@ bool names_detect_cancel(LlmServer *server, const char *assistant_prev, const ch
         cJSON *j = json_parse(r.body);
         cJSON *ch = j ? cJSON_GetArrayItem(cJSON_GetObjectItem(j, "choices"), 0) : NULL;
         cJSON *c = ch ? cJSON_GetObjectItem(cJSON_GetObjectItem(ch, "message"), "content") : NULL;
-        cJSON *res = cJSON_IsString(c) ? json_parse(c->valuestring) : NULL;
+        cJSON *res = (c && cJSON_IsString(c)) ? json_parse(c->valuestring) : NULL;
         cJSON *a = cJSON_GetObjectItem(res, "author_name"), *s = cJSON_GetObjectItem(res, "assistant_name");
         /* Kept only if the author's own message contains it. */
         if (cJSON_IsString(a)) keep_if_present(a->valuestring, author_msg, out->author, sizeof(out->author));

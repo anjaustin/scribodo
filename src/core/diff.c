@@ -43,7 +43,10 @@ static uint64_t fnv(const char *s, size_t n)
 static Tok *tokenize(const char *s, size_t *count)
 {
     size_t n = strlen(s), cap = n / 3 + 8, k = 0;
-    Tok *t = malloc(cap * sizeof(Tok));
+    /* Zeroed: the empty input returns this block with count 0, and an
+     * uninitialized tail would make static analysis (and any future read)
+     * depend on undefined bytes. Tokens actually emitted are fully set. */
+    Tok *t = calloc(cap, sizeof(Tok));
     if (!t) return NULL;
     const unsigned char *u = (const unsigned char *)s;
     size_t i = 0;

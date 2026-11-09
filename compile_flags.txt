@@ -4,6 +4,8 @@
 -Ithird_party/raygui/src
 -Ithird_party/clay
 -Ithird_party/stb
+-Ithird_party/mariadb-connector-c/include
+-Ibuild/mariadb-cc/include
 -Wall
 -Wextra
 -Ithird_party/cJSON

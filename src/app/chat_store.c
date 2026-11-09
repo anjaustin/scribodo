@@ -243,26 +243,26 @@ bool chat_store_list_files_checked(const char *project_dir, ChatSummary **out, s
         {
             char *line = NULL;
             size_t cap_l = 0;
-            bool first = true;
+            bool first = true, lines_ok = true;
             while (getline(&line, &cap_l, f) > 0) { /* lines of any length */
                 if (first || strstr(line, "\"type\":\"title\"")) {
                     bool allocation_error;
                     cJSON *j = json_parse_checked(line, &allocation_error);
-                    if (allocation_error) { cJSON_Delete(j); read_ok = false; break; }
+                    if (allocation_error) { cJSON_Delete(j); lines_ok = false; break; }
                     cJSON *t = j ? cJSON_GetObjectItem(j, "title") : NULL;
-                    if (cJSON_IsString(t)) snprintf(c->title, sizeof(c->title), "%s", t->valuestring);
+                    if (t && cJSON_IsString(t)) snprintf(c->title, sizeof(c->title), "%s", t->valuestring);
                     cJSON_Delete(j);
                 } else if (strstr(line, "\"type\":\"observer\"")) { /* the latest one counts */
                     bool allocation_error;
                     cJSON *j = json_parse_checked(line, &allocation_error);
-                    if (allocation_error) { cJSON_Delete(j); read_ok = false; break; }
+                    if (allocation_error) { cJSON_Delete(j); lines_ok = false; break; }
                     cJSON *rd = j ? cJSON_GetObjectItem(j, "read") : NULL;
                     if (cJSON_IsBool(rd)) c->observer_ignore = !cJSON_IsTrue(rd);
                     cJSON_Delete(j);
                 }
                 first = false;
             }
-            bool lines_ok = feof(f) && !ferror(f);
+            lines_ok = lines_ok && feof(f) && !ferror(f);
             free(line);
             if (fclose(f) != 0) lines_ok = false;
             if (!lines_ok) { read_ok = false; break; }
