@@ -22,6 +22,7 @@ TRACE = re.compile(r'ANSWER_PIPELINE candidates=(\d+) hydrated=(\d+) scored=(\d+
                    r'rerank_ms=([0-9.]+) extract_ms=([0-9.]+) request_bytes=(\d+)(?: history_first=(\d+))?')
 SCORES = re.compile(r'ANSWER_PIPELINE_SCORES((?: [0-9a-f]{12}:[0-9.]+)*)')
 RECEIPT = re.compile(r'--- VERIFIED SOURCE \| (?:unit=([0-9a-f]+) \| document=([^|]+) \| score=([0-9.]+) \| status=(\w+)|none \| status=(\w+))')
+GATE = re.compile(r'--- ANSWER GATE \| verdict=(\w+) \| withheld=(\d) \| answer=(.*?) ---')
 SECOND = re.compile(r'--- VERIFIED SOURCE 2 \| unit=([0-9a-f]+) \| document=([^|]+) \| score=([0-9.]+) \| status=(\w+) ---\n(.*?)\n(?=---|\Z)', re.S)
 
 
@@ -93,6 +94,8 @@ def review(fixture, messages, units, traces):
                  {'unit_id': None, 'status': m[5] if m else None}
         first_part = receipt.split('--- VERIFIED SOURCE 2', 1)[0]
         span = first_part.split('---\n', 1)[1].strip() if '---\n' in first_part else ''
+        g = GATE.search(receipt)
+        gate = {'verdict': g[1], 'withheld': g[2] == '1', 'answer': g[3]} if g else None
         s2 = SECOND.search(receipt)
         second = {'unit_id': s2[1], 'document': s2[2].strip(), 'score': float(s2[3]), 'status': s2[4], 'span': s2[5].strip()} if s2 else None
         trace, scores = trace_for(q['seq'] + 1)
@@ -107,7 +110,7 @@ def review(fixture, messages, units, traces):
                                'candidate_rank': rank_of[prefix][0] if prefix in rank_of else None,
                                'candidate_score': rank_of[prefix][1] if prefix in rank_of else None,
                                'passage_in_span': d['passage'] in span or (bool(second) and d['passage'] in second['span'])})
-        sheet.append({'id': case['id'], 'kind': case['kind'], 'question': case['question'], 'chosen': chosen, 'span': span, 'second': second,
+        sheet.append({'id': case['id'], 'kind': case['kind'], 'question': case['question'], 'chosen': chosen, 'span': span, 'second': second, 'gate': gate,
                       'span_chars': len(span), 'designated': designated, 'trace': trace,
                       'reply_characters': len(reply.get('content') or ''), 'truncated': reply.get('truncated'),
                       'visible_reply': reply.get('content') or '', 'expected': case['expected'],
@@ -135,7 +138,7 @@ def main():
         t = c['trace']
         print(f"{c['id']:26s} chosen={c['chosen'].get('document')} status={c['chosen'].get('status')} score={c['chosen'].get('score')} "
               f"designated(chosen,rank,score,in_span)={des} span_chars={c['span_chars']} scored={t.get('scored')} "
-              f"rerank_ms={t.get('rerank_ms')} extract_ms={t.get('extract_ms')} history_first={t.get('history_first')} reply_chars={c['reply_characters']}")
+              f"rerank_ms={t.get('rerank_ms')} extract_ms={t.get('extract_ms')} history_first={t.get('history_first')} reply_chars={c['reply_characters']} gate={c.get('gate')}")
 
 
 if __name__ == '__main__':

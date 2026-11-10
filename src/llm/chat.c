@@ -31,6 +31,8 @@
 #define MAX_REPLY_TOKENS 1024
 #define EST_BYTES_PER_TOKEN 1.5 /* fallback only; real counts come from /tokenize */
 
+static void gate_clear(ChatSession *s);
+
 static const char *k_persona =
     "You are a creative writing partner, talking with the author. Help them brainstorm, develop scenes "
     "and characters, critique drafts, and write prose when asked. Match the author's language and tone. "
@@ -95,6 +97,15 @@ struct ChatSession {
     bool canon_reference; /* MEMORY-014 P1 experiment */
     RerankClient *rerank;   /* verified-answer pipeline experiment */
     bool answer_pipeline;
+    /* Answer-in-span gate state for the request in flight (pass 4): the
+     * question, the verified spans with their source names, and the author's
+     * earlier turns in the composer window. Worker-owned; freed after the gate. */
+    bool gate_armed;
+    char *gate_question;
+    char *gate_names[ANSWER_SPANS], *gate_spans[ANSWER_SPANS];
+    size_t gate_nspans;
+    char *gate_author[ANSWER_HISTORY_MESSAGES];
+    size_t gate_nauthor;
     MemoryBudget *prepare_budget; /* worker-owned, address-stable until preparation ends */
     ChatMessageDone on_done;
     void *on_done_ctx;
@@ -186,6 +197,7 @@ void chat_clear(ChatSession *s)
 void chat_destroy(ChatSession *s)
 {
     if (!s) return;
+    gate_clear(s);
     chat_clear(s);
     free(s->msgs);
     free(s->request);
@@ -783,8 +795,9 @@ char *chat_build_request_pipeline(const ChatMessage *msgs, size_t n, const ChatN
     /* Pass 3b: the verified block ahead of the history, inside the system
      * message after the composer instruction, instead of at the top of the
      * author's newest words. Diagnostic switch; measured against 3a. */
+    /* Pass 3b measured the system placement as the better shape; it is the default. */
     const char *placement = getenv("SCRIBODO_ANSWER_BLOCK");
-    bool block_in_system = placement && !strcmp(placement, "system");
+    bool block_in_system = !(placement && !strcmp(placement, "message"));
     char *system_extra = NULL;
     if (block_in_system) {
         size_t cap = strlen(answer_composer_instruction) + strlen(preface) + 4;
@@ -1183,6 +1196,27 @@ static bool build_in_worker(ChatSession *s)
             char *preface = answer_verified_block(&pipeline);
             char *rebuilt = preface ? chat_build_request_pipeline(history.messages, history.count, &names, slot_ctx, counter, s,
                                                                   &first_history, preface) : NULL;
+            /* Arm the answer-in-span gate for this turn: a question, its verified
+             * spans, and the author's earlier turns in the composer window. */
+            gate_clear(s);
+            if (rebuilt && answer_gate_applies(query)) {
+                s->gate_question = strdup(query);
+                const MemoryUnit *gate_units[ANSWER_SPANS] = { pipeline.has_top ? &pipeline.top : NULL, pipeline.has_second ? &pipeline.second : NULL };
+                const char *gate_text[ANSWER_SPANS] = { pipeline.has_top ? pipeline.span : NULL, pipeline.has_second ? pipeline.second_span : NULL };
+                for (size_t i = 0; i < ANSWER_SPANS; i++) {
+                    if (!gate_units[i] || !gate_text[i]) continue;
+                    const char *nm = gate_units[i]->kind == MEMORY_SOURCE_DOCUMENT && gate_units[i]->document_name[0] ? gate_units[i]->document_name : "an earlier note";
+                    s->gate_names[s->gate_nspans] = strdup(nm);
+                    s->gate_spans[s->gate_nspans] = strdup(gate_text[i]);
+                    if (s->gate_names[s->gate_nspans] && s->gate_spans[s->gate_nspans]) s->gate_nspans++;
+                }
+                for (size_t i = first_history; i + 1 < history.count && s->gate_nauthor < ANSWER_HISTORY_MESSAGES; i++)
+                    if (history.messages[i].role == CHAT_USER && !history.messages[i].error && history.messages[i].content) {
+                        s->gate_author[s->gate_nauthor] = strdup(history.messages[i].content);
+                        if (s->gate_author[s->gate_nauthor]) s->gate_nauthor++;
+                    }
+                s->gate_armed = s->gate_question != NULL;
+            }
             free(preface);
             free(req);
             req = rebuilt;
@@ -1389,6 +1423,68 @@ static void *fake_worker(void *arg)
     return NULL;
 }
 
+/* Free the answer-in-span gate state (worker thread or destroy). */
+static void gate_clear(ChatSession *s)
+{
+    free(s->gate_question); s->gate_question = NULL;
+    for (size_t i = 0; i < s->gate_nspans; i++) { free(s->gate_names[i]); free(s->gate_spans[i]); }
+    for (size_t i = 0; i < s->gate_nauthor; i++) free(s->gate_author[i]);
+    s->gate_nspans = s->gate_nauthor = 0;
+    s->gate_armed = false;
+}
+
+/* The answer-in-span gate: ask the model what answer the finished reply
+ * gives, decide in software whether that answer is inside a verified span or
+ * the author's own words, and replace a withheld answer with the abstention
+ * and the verified passages. The receipt and the trace record the verdict. */
+static void gate_apply(ChatSession *s)
+{
+    double t0 = memory_budget_now_ms();
+    pthread_mutex_lock(&s->mu);
+    char *content = s->msgs[s->target].content ? strdup(s->msgs[s->target].content) : NULL;
+    pthread_mutex_unlock(&s->mu);
+    char *visible = NULL;
+    if (content) llm_split_thinking(content, &visible, NULL);
+    char *answer = NULL;
+    const char *verdict = "unavailable";
+    bool parsed = false;
+    char *body = visible ? answer_claim_request(s->gate_question, visible) : NULL;
+    if (body && s->server) {
+        HttpResult r;
+        bool ok = http_request(llm_server_socket(s->server), "POST", "/v1/chat/completions", llm_server_key(s->server), body,
+                               NULL, NULL, &s->cancel, 60000, &r);
+        if (ok && r.status == 200 && r.body) answer_claim_parse(r.body, &answer, &parsed);
+        http_result_free(&r);
+    }
+    free(body);
+    if (parsed)
+        verdict = answer_gate(answer, s->gate_question, (const char *const *)s->gate_spans, s->gate_nspans,
+                              (const char *const *)s->gate_author, s->gate_nauthor);
+    bool withheld = !strcmp(verdict, "echoes_question") || !strcmp(verdict, "not_in_span");
+    char *replacement = withheld ? answer_withheld_reply((const char *const *)s->gate_names, (const char *const *)s->gate_spans, s->gate_nspans) : NULL;
+    pthread_mutex_lock(&s->mu);
+    ChatMessage *m = &s->msgs[s->target];
+    if (replacement) {
+        free(m->content);
+        m->content = replacement;
+        s->last_truncated = false;
+    }
+    size_t have = m->memory_sources ? strlen(m->memory_sources) : 0;
+    size_t extra = (answer ? strlen(answer) : 0) + 128;
+    char *receipt = realloc(m->memory_sources, have + extra);
+    if (receipt) {
+        snprintf(receipt + have, extra, "--- ANSWER GATE | verdict=%s | withheld=%d | answer=%s ---\n", verdict, withheld, answer ? answer : "");
+        m->memory_sources = receipt;
+    }
+    s->version++;
+    pthread_mutex_unlock(&s->mu);
+    const char *trace = getenv("SCRIBODO_MEMORY_TRACE");
+    if (trace && !strcmp(trace, "1"))
+        fprintf(stderr, "ANSWER_GATE verdict=%s withheld=%d parsed=%d spans=%zu author_turns=%zu ms=%.1f answer_bytes=%zu\n",
+                verdict, withheld, parsed, s->gate_nspans, s->gate_nauthor, memory_budget_now_ms() - t0, answer ? strlen(answer) : 0);
+    free(answer); free(visible); free(content);
+}
+
 static void *server_worker(void *arg)
 {
     ChatSession *s = arg;
@@ -1436,6 +1532,8 @@ static void *server_worker(void *arg)
     http_result_free(&r);
     free(c.raw);
     s->last_truncated = c.truncated;
+    if (!error && !cancelled && s->gate_armed) gate_apply(s);
+    gate_clear(s);
     finish(s, error, msg);
     return NULL;
 }

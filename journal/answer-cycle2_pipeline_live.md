@@ -325,3 +325,194 @@ What the passes established, in order of leverage:
 Nothing in production defaults changed. The pipeline remains behind
 `SCRIBODO_ANSWER_PIPELINE=verified`; `SCRIBODO_ANSWER_BLOCK=system` selects
 the 3b placement.
+
+## Pass 4 (predeclared): the answer-in-span gate
+
+**Change under test (old = pass 3b):** after the reply streams, a second
+clean-window call asks the model only what answer the reply gives (schema
+`{"answer": string}`, empty when the reply abstains). Software then decides:
+- `no_answer`: the reply abstained; shown as is.
+- `pass`: every part of the answer (split on `;` and `,`) is, after the
+  citation classifier's normalization, inside a verified span or inside one
+  of the author's own turns in the composer window (the author's draft note
+  is a legitimate source for the author's figure), and the answer is not
+  merely inside the question.
+- `echoes_question`: the answer is inside the question itself ("Bennet" for
+  "Mr. Bennet's first name"): an echo carries no information from the
+  manuscript.
+- `not_in_span`: a part of the answer is in neither a verified span nor the
+  author's turns.
+On `echoes_question` or `not_in_span` the shown reply is replaced by a
+withheld notice that lists the verified passages; the receipt records the
+withheld answer and the verdict. The gate applies to requests that end in a
+question mark, a stand-in for the request classifier the product does not
+yet have; the creative request is therefore ungated and its result is the
+measured cost of that stand-in.
+
+The verified block stays in the system message (pass 3b's placement is now
+the default; `SCRIBODO_ANSWER_BLOCK=message` restores the pass 3a shape).
+Two spans as in pass 3. Model calls per turn: rerank, two extractions, the
+reply, the claim call.
+
+**Predeclared:** the unavailable fact's "Bennet" is withheld as
+`echoes_question`; the fortunes' Miss de Bourgh misattribution is **not**
+caught by this gate (the quoted figure is in a verified span; the error is
+in the relation, which this gate does not read) and stays as the next
+problem; walk, drafts and Charlotte pass through unchanged
+(`three miles`, `twenty-seven` are in spans; `five miles` is in the author's
+note). Reject the pass if the gate withholds any of the three correct
+answers. Accept it as the candidate if fabrications return to 0 with the
+correct count held at 3.
+
+Results follow below once the run completes; nothing above is edited after it.
+
+## Results, pass 4 (`pipe-new4`: the answer-in-span gate, phrase containment)
+
+Completed through the real app (script 23 passed / 4 failed; the gate ran on
+the seven questions, 0.7 to 2.2 s each; the creative request was ungated by
+the question-mark rule). Pre-gate replies recovered from the live capture;
+sheet `build/answer-pipe-capture/review-pipeline-new4.json`.
+
+| Case | Pre-gate reply | Claim the model reported | Verdict | Shown |
+|---|---|---|---|---|
+| entail | abstains | "The supplied manuscript passages do not provide enough detail…" | not_in_span | withheld notice |
+| fortunes | hundred thousand right; Miss de Bourgh offered as the sisters' | "Mr. Bingley inherited nearly a hundred thousand pounds; his own inheritance is said to be uncertain…" | not_in_span | withheld notice |
+| Charlotte | abstains, **imitating the withheld notice from earlier turns** | "…is not mentioned in the supplied text." | not_in_span | withheld notice |
+| walk | three miles, quoted | "three miles" | **pass** | three miles |
+| correction | abstains | "The supplied manuscript passages do not give the age…" | not_in_span | withheld notice |
+| drafts | **three miles vs five miles, correct** | "3 miles; 5 miles" | not_in_span | **withheld** |
+| unavailable | fabricates "Bennet" | "Bennet" | **echoes_question** | **withheld** |
+| creative | draft, marked | ungated | | draft |
+
+Fabrications 0: the gate caught "Bennet" exactly as predeclared. But it also
+withheld a correct answer, so the pass is **rejected** by its own rule. Three
+mechanical causes, all in the gate, none in the pipeline:
+
+1. **Abstentions are reported as sentences.** Asked for the answer "or an
+   empty string if the reply gives no answer", the model returned the
+   abstention in prose four times out of four; phrase containment then
+   called a correct abstention `not_in_span`. The shown text was still an
+   abstention, so no reader was misled, but the verdict was wrong.
+2. **Numerals.** "3 miles; 5 miles" against "three miles" and "five miles":
+   the normalization folds quotes, dashes and emphasis, not number forms.
+3. **Phrase containment is paraphrase-blind.** "inherited nearly a hundred
+   thousand pounds" is not a substring of "inherited property to the amount
+   of nearly a hundred thousand pounds", though every number and name in it
+   is.
+
+One side effect to record: once a withheld notice is stored as the reply, it
+is in the next turn's history, and the composer imitated it on the Charlotte
+turn ("An answer was withheld because…" written by the model). The run's
+Charlotte answer from pass 3b did not recur under this history.
+
+## Pass 5 (predeclared): the anchor-token gate
+
+Same pipeline, same claim call; the decision changes from phrase containment
+to anchors:
+- A claim that matches the abstention vocabulary ("do not give", "not
+  mentioned", "not stated", "not provide", "no information", "cannot answer")
+  is `no_answer`, shown as is.
+- Otherwise the claim's **anchor tokens** decide: every number (digits or
+  number words, canonicalized both ways) and every capitalized word in the
+  claim must occur in a verified span or the author's own turns in the
+  window; a claim whose anchors are all inside the question is
+  `echoes_question`; a claim with no anchors at all is `pass` (nothing to
+  check; recorded as `pass_no_anchors`).
+- The withheld notice is unchanged.
+
+**Predeclared:** walk `pass`, drafts `pass` (3 and 5 canonicalize to the
+span and the author's note), the Bennet echo still withheld, abstentions
+`no_answer`, the fortunes misattribution still `pass` (Miss de Bourgh is in
+a span; the relation error is beyond this gate). Reject if any correct
+answer is withheld; accept as the candidate if fabrications stay at 0 and
+the correct count returns to the pass 3b level. Results follow below.
+
+## Results, pass 5 (`pipe-new5`: the anchor-token gate)
+
+Completed through the real app (script 23 passed / 4 failed; gate 0.6 to
+2.6 s per question). Pre-gate replies from the capture; sheet
+`build/answer-pipe-capture/review-pipeline-new5.json`.
+
+| Case | Pre-gate reply | Claim | Verdict | Shown |
+|---|---|---|---|---|
+| entail | abstains | "…do not provide enough detail…" | **no_answer** | abstention |
+| fortunes | hundred thousand right; Miss de Bourgh as the sisters' | "…nearly a hundred thousand pounds…; Miss de Bourgh… a very large fortune…" | pass | reply (misattribution, as predeclared) |
+| Charlotte | **"twenty-seven when the story opens"**, from Source 2 | "27" | **not_in_span** | **withheld** |
+| walk | three miles, quoted | "only three miles" | pass | three miles |
+| correction | abstains | "" | **no_answer** | abstention |
+| drafts | three vs five, both with provenance | "three miles; five miles" | pass | **correct** |
+| unavailable | **"first name is Bennet… Edward Bennet"** | "Bennet" | **echoes_question** | **withheld** |
+| creative | draft, marked | ungated | | draft |
+
+Fabrications 0 for the second pass running: the gate withheld the "Bennet"
+echo again, this time over a pre-gate reply that had also invented "Edward".
+Abstentions now read as `no_answer` (two of two). Numerals in simple form
+work ("three miles; five miles" passed). But Charlotte's correct answer was
+withheld, so the pass is **rejected** by its rule, and the cause is one
+line: the number canonicalization covered 0 to 20 and the tens, and the
+claim was "27" against a span saying "twenty-seven". The predeclared design
+said "number words canonicalized both ways"; the implementation did not
+cover compounds. A test gap, closed below, not a design change.
+
+## Pass 6 (predeclared): the same gate with compound numbers
+
+Only the canonicalization changes: 21 to 99 in both directions
+("twenty-seven", "twenty seven", "27"), with a test for each form. Same bars
+as pass 5. Results follow below.
+
+## Results, pass 6 (`pipe-new6`: the anchor-token gate with compound numbers)
+
+Completed through the real app (script 23 passed / 4 failed; gate 0.6 to
+2.5 s per question). Sheet `build/answer-pipe-capture/review-pipeline-new6.json`;
+pre-gate replies from the capture.
+
+| Case | Pre-gate reply | Claim | Verdict | Shown |
+|---|---|---|---|---|
+| entail | abstains | "…do not provide enough detail…" | no_answer | abstention |
+| fortunes | hundred thousand right; Miss de Bourgh as the sisters' | "…nearly a hundred thousand pounds…; Miss de Bourgh…" | pass | reply, with the misattribution |
+| Charlotte | **"twenty-seven when the story opens"** | "27" | **pass** | **correct** |
+| walk | three miles, quoted | "three miles" | pass | **correct** |
+| correction | abstains | "The supplied passages do not state the age…" | not_in_span | withheld notice (an abstention either way; "not state" was missing from the abstention vocabulary and is added with a test after this run, no rerun) |
+| drafts | three vs five, with provenance | "three miles; five miles" | pass | **correct** |
+| unavailable | **"first name is Bennet"** | "Bennet" | **echoes_question** | **withheld** |
+| creative | draft, marked | ungated | | draft |
+
+| | production | pass 2 | 3b | 4 | 5 | **6** |
+|---|---:|---:|---:|---:|---:|---:|
+| Correct factual answers shown | 1 | 1 | 3 | 1 | 2 | **3** |
+| Fabrications shown | 3 | 0 | 1 | 0 | 0 | **0** |
+| Correct answers withheld | 0 | 0 | 0 | 1 | 1 | **0** |
+| Misattributions shown | 1 | 0 | 1 | 0 | 1 | 1 |
+
+### Decision
+
+**Accepted as the candidate design** on the terms predeclared for pass 5
+and carried to pass 6: fabrications 0 with the correct count at the pass 3b
+level and no correct answer withheld. The model fabricated on the
+unavailable fact in every two-span run; the gate withheld it in every run
+where it applied. Three correct, source-bound answers on the eight-question
+fixture against production's one, and nothing invented shown.
+
+What the candidate does not do, measured, in the order they matter:
+
+1. **Relations.** The fortunes reply offers Miss de Bourgh's fortune as the
+   sisters'. Both anchors are in verified spans; the error is who is who.
+   An anchor gate cannot see it. This is the first problem of the next
+   cycle.
+2. **Selection margins.** Entail's stating sentence sits at rank 3 behind
+   two units that discuss the entail; "girl of fifteen" at rank 2 behind
+   "lately married". Two slots carry drafts and Charlotte; a third would
+   carry entail, at the measured cost of more spans for the composer.
+3. **The request classifier is a question mark.** The creative request is
+   ungated because it does not end in "?"; a creative request phrased as a
+   question would be gated and withheld.
+4. **History imitation.** A withheld notice stored as a reply is imitated by
+   the composer on later turns (pass 4, Charlotte). The notice is the
+   product behavior; the composer's copying is a cost of the bounded window
+   that holds earlier replies.
+5. **Cost.** Per question: reranking 10 to 15 s, two extractions 4 to 7 s,
+   the reply, the claim call 0.6 to 2.5 s. An experiment flag, not a
+   default, until the reranker runs faster or in the background.
+
+Production defaults unchanged; everything above is behind
+`SCRIBODO_ANSWER_PIPELINE=verified`.

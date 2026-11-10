@@ -56,6 +56,19 @@ char *answer_verified_block(const AnswerPipelineResult *r);
 char *answer_receipt(const AnswerPipelineResult *r);
 extern const char *const answer_composer_instruction;
 
+/* ---- the answer-in-span gate (pass 4) ---------------------------------- */
+/* Applies to requests that are questions: the stand-in for a request classifier. */
+bool answer_gate_applies(const char *question);
+char *answer_claim_request(const char *question, const char *reply);      /* owned JSON: what answer does the reply give */
+bool answer_claim_parse(const char *response_body, char **answer, bool *parsed);
+/* "pass" | "pass_no_anchors" | "no_answer" | "echoes_question" | "not_in_span". The claim's anchor tokens (numbers in
+ * digit or word form, capitalized words) must each occur in a verified span or one of the author's own turns; anchors
+ * all inside the question are an echo; an abstention in the claim's words is no answer (pass 5). */
+const char *answer_gate(const char *answer, const char *question, const char *const *spans, size_t nspans,
+                        const char *const *author_turns, size_t nturns);
+/* The reply shown instead of a withheld answer: the abstention and the verified passages. */
+char *answer_withheld_reply(const char *const *names, const char *const *spans, size_t nspans);
+
 /* ---- pure helpers, exposed for tests ----------------------------------- */
 /* Folds typographic quotes and dashes, drops Markdown emphasis, collapses
  * whitespace, lowercases ASCII: the citation classifier's normalization. */

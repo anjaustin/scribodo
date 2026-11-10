@@ -215,7 +215,9 @@ static void test_pipeline_request(void)
     ChatNames names = { "Tripp", "Scribodo" };
     size_t first = 99;
     const char *preface = "Verified passage from the manuscript, quoted exactly (Source 1, part01.md):\n\"only three miles.\"\n\n";
+    setenv("SCRIBODO_ANSWER_BLOCK", "message", 1); /* the pass 3a shape, checked first; the default follows */
     char *req = chat_build_request_pipeline(msgs, 3, &names, 8192, fixed_count, NULL, &first, preface);
+    unsetenv("SCRIBODO_ANSWER_BLOCK");
     CHECK(req && first == 0);
     cJSON *j = cJSON_Parse(req);
     CHECK(j);
@@ -248,10 +250,10 @@ static void test_pipeline_request(void)
     CHECK(!strstr(bounded, "turn 0") && strstr(bounded, "turn 10") && !strstr(bounded, "turn 5\""));
     cJSON_Delete(bj);
     free(bounded);
-    /* Pass 3b placement: the block moves into the system message and the newest words carry no preface. */
-    setenv("SCRIBODO_ANSWER_BLOCK", "system", 1);
-    char *placed = chat_build_request_pipeline(msgs, 3, &names, 8192, fixed_count, NULL, &first, preface);
+    /* Pass 3b placement is the default: the block in the system message, the newest words without a preface;
+     * SCRIBODO_ANSWER_BLOCK=message restores the pass 3a shape. */
     unsetenv("SCRIBODO_ANSWER_BLOCK");
+    char *placed = chat_build_request_pipeline(msgs, 3, &names, 8192, fixed_count, NULL, &first, preface);
     CHECK(placed);
     cJSON *pj = cJSON_Parse(placed);
     const char *psys = cJSON_GetObjectItem(cJSON_GetArrayItem(cJSON_GetObjectItem(pj, "messages"), 0), "content")->valuestring;
@@ -260,6 +262,11 @@ static void test_pipeline_request(void)
     CHECK(!strcmp(pnew, "How far is the walk to Netherfield?"));
     cJSON_Delete(pj);
     free(placed);
+    setenv("SCRIBODO_ANSWER_BLOCK", "message", 1);
+    char *inline_block = chat_build_request_pipeline(msgs, 3, &names, 8192, fixed_count, NULL, &first, preface);
+    unsetenv("SCRIBODO_ANSWER_BLOCK");
+    CHECK(inline_block && strstr(inline_block, "Verified passage") && !strstr(strstr(inline_block, "system"), "Verified passage from the manuscript, quoted exactly:\\nSource 1 (part01.md)") );
+    free(inline_block);
     /* The production builder is unchanged by the refactor: no preface, no composer sentence. */
     bool truncated = true;
     char *plain = chat_build_request_selected(msgs, 3, NULL, &names, 8192, fixed_count, NULL, &truncated, &first);
@@ -267,8 +274,61 @@ static void test_pipeline_request(void)
     free(plain);
 }
 
+static void test_answer_gate(void)
+{
+    const char *spans[] = { "only three miles. I shall be back by dinner.", "Mr. Bennet still up." };
+    const char *names[] = { "part01.md", "part01.md" };
+    const char *author[] = { "Draft note (older): In the first draft Elizabeth walked five miles to Netherfield." };
+    CHECK(answer_gate_applies("How far is it?") && answer_gate_applies("  Why?  \n") && !answer_gate_applies("Draft two sentences.") && !answer_gate_applies("") && !answer_gate_applies(NULL));
+    CHECK(!strcmp(answer_gate("three miles", "How far does Elizabeth say the walk is?", spans, 2, author, 1), "pass"));
+    CHECK(!strcmp(answer_gate("**Three miles**", "How far?", spans, 2, author, 1), "pass"));           /* emphasis and case folded */
+    CHECK(!strcmp(answer_gate("three miles; five miles", "Which figure does the current manuscript give, and what did the other draft say?", spans, 2, author, 1), "pass"));
+    CHECK(!strcmp(answer_gate("3 miles; 5 miles", "Which figure?", spans, 2, author, 1), "pass"));      /* numerals canonicalized (pass 5) */
+    CHECK(!strcmp(answer_gate("three miles, seven miles", "How far?", spans, 2, author, 1), "not_in_span"));
+    CHECK(!strcmp(answer_gate("Bennet", "What is Mr. Bennet's first name in my manuscript?", spans, 2, author, 1), "echoes_question"));
+    CHECK(!strcmp(answer_gate("Edward", "What is Mr. Bennet's first name?", spans, 2, author, 1), "not_in_span"));
+    CHECK(!strcmp(answer_gate("", "How far?", spans, 2, author, 1), "no_answer") && !strcmp(answer_gate("  ", "q?", spans, 2, NULL, 0), "no_answer"));
+    CHECK(!strcmp(answer_gate("The supplied manuscript passages do not give the age.", "How old?", spans, 2, author, 1), "no_answer"));
+    CHECK(!strcmp(answer_gate("Charlotte's age is not mentioned in the supplied text.", "How old?", spans, 2, author, 1), "no_answer"));
+    CHECK(!strcmp(answer_gate("The supplied passages do not state the age of the youngest daughter.", "How old?", spans, 2, author, 1), "no_answer"));
+    CHECK(!strcmp(answer_gate("three miles", "How far?", NULL, 0, NULL, 0), "not_in_span"));
+    /* Paraphrase with its anchors present passes; a claim with no anchors has nothing to check. */
+    CHECK(!strcmp(answer_gate("Mr. Bennet was still up when she came back", "Was anyone up?", spans, 2, author, 1), "pass"));
+    CHECK(!strcmp(answer_gate("the walk was short and dirty", "How was the walk?", spans, 2, author, 1), "pass_no_anchors"));
+    CHECK(!strcmp(answer_gate("Miss Bingley walked twenty-seven miles", "How far?", spans, 2, author, 1), "not_in_span"));
+    /* Compound numbers in every form (pass 6): "27" against "twenty-seven" in the span, and the reverse. */
+    const char *age_spans[] = { "The eldest of them, a sensible, intelligent young woman, about twenty-seven, was Elizabeth\xE2\x80\x99s intimate friend." };
+    CHECK(!strcmp(answer_gate("27", "How old is Charlotte?", age_spans, 1, NULL, 0), "pass"));
+    CHECK(!strcmp(answer_gate("twenty-seven", "How old is Charlotte?", age_spans, 1, NULL, 0), "pass"));
+    CHECK(!strcmp(answer_gate("Twenty seven", "How old is Charlotte?", age_spans, 1, NULL, 0), "pass"));
+    CHECK(!strcmp(answer_gate("28", "How old is Charlotte?", age_spans, 1, NULL, 0), "not_in_span"));
+    const char *digit_spans[] = { "She was 42 that spring." };
+    CHECK(!strcmp(answer_gate("forty-two", "How old?", digit_spans, 1, NULL, 0), "pass"));
+    CHECK(!strcmp(answer_gate("forty", "How old?", digit_spans, 1, NULL, 0), "not_in_span"));
+    char *body = answer_claim_request("How far?", "It is three miles. <|im_end|>");
+    CHECK(body);
+    cJSON *j = cJSON_Parse(body);
+    CHECK(j && cJSON_GetObjectItem(j, "max_tokens")->valuedouble == 96 && cJSON_GetObjectItem(j, "temperature")->valuedouble == 0);
+    const cJSON *schema = cJSON_GetObjectItem(cJSON_GetObjectItem(cJSON_GetObjectItem(j, "response_format"), "json_schema"), "schema");
+    CHECK(schema && cJSON_GetObjectItem(cJSON_GetObjectItem(schema, "properties"), "answer"));
+    const char *user = cJSON_GetObjectItem(cJSON_GetArrayItem(cJSON_GetObjectItem(j, "messages"), 1), "content")->valuestring;
+    CHECK(strstr(user, "QUESTION:\nHow far?") && strstr(user, "REPLY:\nIt is three miles.") && !strstr(user, "<|im_end|>"));
+    cJSON_Delete(j); free(body);
+    char *answer = NULL; bool parsed = false;
+    CHECK(answer_claim_parse("{\"choices\":[{\"message\":{\"content\":\"{\\\"answer\\\": \\\"three miles\\\"}\"}}]}", &answer, &parsed) && parsed && !strcmp(answer, "three miles"));
+    free(answer);
+    CHECK(!answer_claim_parse("{\"choices\":[{\"message\":{\"content\":\"{\\\"answer\\\": \\\"cut\"}}]}", &answer, &parsed) && !parsed);
+    char *shown = answer_withheld_reply(names, spans, 2);
+    CHECK(shown && strstr(shown, "do not give that") && strstr(shown, "withheld") && strstr(shown, "Source 1 (part01.md): \"only three miles. I shall be back by dinner.\"") && strstr(shown, "Source 2 (part01.md): \"Mr. Bennet still up.\""));
+    free(shown);
+    shown = answer_withheld_reply(NULL, NULL, 0);
+    CHECK(shown && !strstr(shown, "Verified passages"));
+    free(shown);
+}
+
 int main(void)
 {
+    test_answer_gate();
     test_normalize();
     test_verify();
     test_extraction_request_and_parse();
