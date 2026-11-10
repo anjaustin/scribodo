@@ -130,8 +130,11 @@ modify a database while any Scribodo process is running.
   fresh-window extraction call returns the stating sentence or none; software
   verifies each span against the unit before it is used; a composition call
   sees only verified spans. `test_answer_unit_extraction` (in `make test`) pins
-  the plan, the span verification, the composition input and the predeclared
-  reply checks without a model; see `journal/answer-cycle2_unit_extraction.md`.
+  the plan, the span verification (including the sentence-boundary prefix cut),
+  the factual/creative composer split, the embedder ranking math and the
+  predeclared reply checks without a model; see
+  `journal/answer-cycle2_unit_extraction.md` and `journal/answer-cycle2_ranked_span.md`
+  (`--rank`: verified spans scored by the production embedder, top 1 and 2 composed).
 
 - `test_recall` (in `make dbtest`) drives `recall_run` against real SQL in a
   throwaway database: displayed canon text is byte-equal to the current

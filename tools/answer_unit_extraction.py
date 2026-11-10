@@ -9,13 +9,17 @@ not in the unit is rejected, never shown. Stage 2 composes a reply from the
 verified spans only: no attachment preview, no packet scaffolding, no earlier
 assistant turns. The realistic arm uses exactly the units production retrieval
 delivered for each question; the added arm also supplies the designated unit
-where retrieval missed it, to separate reading from retrieval. No production
-prompt, selection policy, model or flag changes.
+where retrieval missed it, to separate reading from retrieval. With --rank, the
+verified spans are scored against the question by the production embedder
+(Qwen3-Embedding, production flags and query instruction) and the composer sees
+only the top one or two. No production prompt, selection policy, model or flag
+changes.
 """
 import argparse
 from contextlib import contextmanager
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 import shutil
@@ -29,6 +33,13 @@ from answer_boundary_bind import bind  # noqa: E402
 from answer_citation_binding import classify, normalize  # noqa: E402
 from answer_plumbing_arithmetic import backend_flags  # noqa: E402
 from memory_causal_parity import GGUF, GGUF_SHA, ROOT, sha  # noqa: E402
+
+EMBED_GGUF = Path.home() / 'Library/Application Support/Scribodo/models/Qwen3-Embedding-0.6B-f16.gguf'
+EMBED_SHA = '421a27e58d165478cc7acb984a688c2aa41404968b0203e7cd743ece44c54340'  # QWEN3_EMBED_SHA256 in src/llm/server.c
+# The production query instruction and input clip (src/llm/semantic.c, semantic.h).
+QUERY_INSTRUCTION = ('Instruct: Given a statement from a work of fiction, retrieve established facts about the same people, places '
+                     'or things\nQuery: ')
+SEM_MAX_INPUT_BYTES = 2000
 
 FIXTURE = ROOT / 'tests/fixtures/answer_boundary/questions.json'
 UNIT_ID = re.compile(r'--- SOURCE (\d+) \| [^\n]*?unit=([0-9a-f]{64})[^\n]*? ---\n(.*?)\n--- END SOURCE ---', re.S)
@@ -46,6 +57,9 @@ SCHEMAS = {
                    'properties': {'span': {'type': 'string', 'maxLength': 600}, 'answers': {'type': 'boolean'}}},
     'span_only': {'type': 'object', 'additionalProperties': False, 'required': ['span'],
                   'properties': {'span': {'type': 'string', 'maxLength': 600}}},
+    # Harness fix after run 3: no character cap; software cuts at a sentence boundary instead.
+    'span_uncapped': {'type': 'object', 'additionalProperties': False, 'required': ['span'],
+                      'properties': {'span': {'type': 'string'}}},
 }
 EXTRACT_TASK_SPAN_ONLY = ('If the passage states the answer to the question, copy the sentence or clause that states it exactly '
                           'as written. If it does not, set span to an empty string.')
@@ -53,6 +67,15 @@ COMPOSER = ("You answer the author's question using only the verified passages b
             "from the author's manuscript and labeled. When you cite, quote word for word and name the label. If the "
             "passages do not contain the answer, say that the supplied passages do not give it; do not guess. "
             "For a request for new writing, write it and mark it as new writing.")
+# Harness fix after run 3: the creative clause leaked "New writing:" onto factual abstentions, so the two tasks
+# get separate composers. Which one a case gets is decided by the fixture's kind, not by the model.
+FACTUAL_COMPOSER = ("You answer the author's question using only the verified passages below. Each passage is quoted "
+                    "exactly from the author's manuscript and labeled. When you cite, quote word for word and name the "
+                    "label. If the passages do not contain the answer, say that the supplied passages do not give it; "
+                    "do not guess.")
+CREATIVE_COMPOSER = ("You write new prose for the author on request. The verified passages below are quoted exactly from "
+                     "the author's manuscript, for context only. Write what is asked and mark it as new writing.")
+SENTENCE_END = re.compile(r'[.!?][”"’\']?(?=\s|$)')
 MIN_SPAN = 12
 
 ABSTAIN = re.compile(r"(do not|does not|don't|doesn't|did not|cannot|can't|not) (give|state|say|contain|include|mention|"
@@ -108,7 +131,7 @@ def extraction_request(question, unit, variant='answers_first'):
 def answered(parsed, variant='answers_first'):
     if not parsed:
         return False
-    return bool((parsed.get('span') or '').strip()) if variant == 'span_only' else bool(parsed.get('answers'))
+    return bool((parsed.get('span') or '').strip()) if variant in ('span_only', 'span_uncapped') else bool(parsed.get('answers'))
 
 
 def verify(parsed, unit, variant='answers_first'):
@@ -118,16 +141,53 @@ def verify(parsed, unit, variant='answers_first'):
     span = parsed.get('span') or ''
     if len(span.strip()) < MIN_SPAN:
         return None, 'too_short'
-    return (span, 'verified') if normalize(span) in normalize(unit['text']) else (None, 'rejected_not_in_unit')
+    if normalize(span) in normalize(unit['text']):
+        return span, 'verified'
+    prefix = sentence_prefix(span, unit['text'])
+    return (prefix, 'verified_prefix') if prefix else (None, 'rejected_not_in_unit')
 
 
-def compose_request(question, verified):
+def sentence_prefix(span, text):
+    """The longest prefix of `span` that ends at a sentence boundary and occurs in `text`, or None."""
+    target = normalize(text)
+    for m in reversed(list(SENTENCE_END.finditer(span))):
+        cut = span[:m.end()]
+        if len(cut.strip()) >= MIN_SPAN and normalize(cut) in target:
+            return cut
+    return None
+
+
+def compose_request(question, verified, creative=False, composer=None):
+    composer = composer or (CREATIVE_COMPOSER if creative else FACTUAL_COMPOSER)
     if verified:
         listing = '\n'.join(f'Source {i+1} ({label}): "{span}"' for i, (label, span) in enumerate(verified))
     else:
         listing = 'No verified passages.'
     user = f"QUESTION:\n{question}\n\nVERIFIED PASSAGES:\n{listing}"
-    return request([{'role': 'system', 'content': COMPOSER}, {'role': 'user', 'content': user}], None, None, 512)
+    return request([{'role': 'system', 'content': composer}, {'role': 'user', 'content': user}], None, None, 512)
+
+
+def clip_bytes(text, limit=SEM_MAX_INPUT_BYTES):
+    data = text.encode('utf-8')[:limit]
+    return data.decode('utf-8', errors='ignore')
+
+
+def embed(sock, texts, query):
+    """Production-shaped embedding request: instruction prefix on queries, 2,000-byte clip, L2 normalization."""
+    inputs = [(QUERY_INSTRUCTION if query else '') + clip_bytes(t) for t in texts]
+    response = call(sock, '/v1/embeddings', {'input': inputs})
+    rows = sorted(response['data'], key=lambda d: d['index'])
+    out = []
+    for row in rows:
+        v = row['embedding']; n = math.sqrt(sum(x * x for x in v)) or 1.0
+        out.append([x / n for x in v])
+    return out
+
+
+def rank(query_vector, span_vectors):
+    """Cosine scores (vectors already unit length), highest first, as (index, score)."""
+    scores = [(i, sum(a * b for a, b in zip(query_vector, v))) for i, v in enumerate(span_vectors)]
+    return sorted(scores, key=lambda s: (-s[1], s[0]))
 
 
 def synthetic_packet(verified):
@@ -211,11 +271,15 @@ def plan(fixture, review, units, capture):
     return cases
 
 
-def run(cases, units, generate, timeout, repeat_compose=True, variant='answers_first'):
+def run(cases, units, generate, timeout, repeat_compose=True, variant='answers_first', embed_sock=None, kinds=None):
+    """Extraction per unit, byte verification, then composition arms. With embed_sock, verified spans are ranked
+    by the production embedder and the composer also sees only the top one or two."""
+    kinds = kinds or {}
     record = []
     for case in cases:
-        entry = {'id': case['id'], 'units': [], 'compose': {}}
-        verified_realistic, verified_added = [], []
+        creative = kinds.get(case['id']) == 'creative_speculative'
+        entry = {'id': case['id'], 'creative_composer': creative, 'units': [], 'compose': {}, 'ranking': {}}
+        spans = []  # (label, span, unit_id, added)
         for n, uid in enumerate(case['delivered'] + case['added']):
             unit = units[uid]
             added = uid in case['added']
@@ -231,50 +295,79 @@ def run(cases, units, generate, timeout, repeat_compose=True, variant='answers_f
                                    'answers': answered(parsed, variant), 'status': status,
                                    'span': span, 'raw_span': (parsed or {}).get('span', '')[:600]})
             if span:
-                verified_added.append((label_of(unit), span))
-                if not added:
-                    verified_realistic.append((label_of(unit), span))
-        arms = [('compose', verified_realistic, False)]
-        if repeat_compose:
-            arms.append(('compose2', verified_realistic, False))
+                spans.append((label_of(unit), span, uid, added))
+        realistic = [sp for sp in spans if not sp[3]]
+        arms = [('compose', realistic, False)]
+        if repeat_compose and embed_sock is None:
+            arms.append(('compose2', realistic, False))
         if case['added']:
-            arms.append(('compose_added', verified_added, True))
+            arms.append(('compose_added', spans, True))
+        if embed_sock is not None and spans:
+            qv = embed(embed_sock, [case['question']], query=True)[0]
+            for scope, pool in (('', realistic), ('added_', spans)):
+                if not pool or (scope and not case['added']):
+                    continue
+                vectors = embed(embed_sock, [sp[1] for sp in pool], query=False)
+                order = rank(qv, vectors)
+                entry['ranking'][scope or 'realistic'] = [{'rank': r + 1, 'score': round(sc, 6), 'label': pool[i][0], 'unit_id': pool[i][2],
+                                                           'expected_answers': case['expected_answers'][pool[i][2]], 'span': pool[i][1][:120]}
+                                                          for r, (i, sc) in enumerate(order)]
+                for k in (1, 2):
+                    arms.append((f'compose_{scope}top{k}', [pool[i] for i, _ in order[:k]], bool(scope)))
+            if repeat_compose:
+                top1 = next((v for n, v, a in arms if n == 'compose_top1'), None)
+                if top1 is not None:
+                    arms.append(('compose2_top1', top1, False))
         for kind, verified, added in arms:
-            reply = generate(f"{kind}:{case['id']}", compose_request(case['question'], verified), timeout)
-            counts, details = classify(synthetic_packet(verified), reply, 25)
-            entry['compose'][kind] = {'verified_spans': len(verified), 'reply': reply, 'checks': check_reply(case['id'], reply, added),
-                                      'binding': counts, 'binding_details': details}
+            pairs = [(label, span) for label, span, *_ in verified]
+            reply = generate(f"{kind}:{case['id']}", compose_request(case['question'], pairs, creative), timeout)
+            counts, details = classify(synthetic_packet(pairs), reply, 25)
+            entry['compose'][kind] = {'verified_spans': len(pairs), 'reply': reply, 'checks': check_reply(case['id'], reply, added),
+                                      'binding': counts, 'binding_details': details,
+                                      'contains_expected_true_span': any(case['expected_answers'].get(v[2]) for v in verified)}
         record.append(entry)
     return record
 
 
 def summarize(record):
-    s = {'extract_calls': 0, 'answers_true': 0, 'verified': 0, 'rejected_not_in_unit': 0, 'too_short': 0,
+    s = {'extract_calls': 0, 'answers_true': 0, 'verified': 0, 'verified_prefix': 0, 'rejected_not_in_unit': 0, 'too_short': 0,
          'expected_true': 0, 'expected_true_verified': 0, 'expected_false': 0, 'expected_false_answered': 0,
-         'compose_pass': 0, 'compose_total': 0, 'compose_added_pass': 0, 'compose_added_total': 0,
-         'compose_repeat_identical': 0, 'compose_repeat_differs': 0, 'markers_in_composed': 0, 'binding': {}}
+         'expected_false_verified': 0, 'markers_in_composed': 0, 'new_writing_on_factual': 0, 'arms': {}, 'ranks_of_expected_true': {}}
     tot = {'pieces': 0, 'bound_to_cited_source': 0, 'in_other_source_than_cited': 0, 'only_in_attachment_preview': 0, 'in_no_supplied_text': 0}
+    repeats = {}
     for e in record:
         for u in e['units']:
             s['extract_calls'] += 1; s['answers_true'] += u['answers']
-            s[u['status']] = s.get(u['status'], 0) + (1 if u['status'] != 'none' else 0)
+            if u['status'] != 'none':
+                s[u['status']] += 1
+            ok = u['status'] in ('verified', 'verified_prefix')
             if u['expected_answers']:
-                s['expected_true'] += 1; s['expected_true_verified'] += u['status'] == 'verified'
+                s['expected_true'] += 1; s['expected_true_verified'] += ok
             else:
-                s['expected_false'] += 1; s['expected_false_answered'] += u['answers']
+                s['expected_false'] += 1; s['expected_false_answered'] += u['answers']; s['expected_false_verified'] += ok
         for kind, c in e['compose'].items():
-            if kind == 'compose2':
+            if kind.startswith('compose2'):
+                repeats[(e['id'], kind)] = c['reply']
                 continue
-            key = 'compose_added' if kind == 'compose_added' else 'compose'
-            s[key + '_total'] += 1; s[key + '_pass'] += c['checks']['pass']
+            arm = s['arms'].setdefault(kind, {'total': 0, 'pass': 0, 'with_expected_true_span': 0})
+            arm['total'] += 1; arm['pass'] += c['checks']['pass']; arm['with_expected_true_span'] += c.get('contains_expected_true_span', False)
             s['markers_in_composed'] += c['checks']['markers']
+            if not e.get('creative_composer') and 'New writing' in c['reply']:
+                s['new_writing_on_factual'] += 1
             for k in tot:
                 tot[k] += c['binding'][k]
-        if 'compose2' in e['compose']:
-            same = e['compose']['compose2']['reply'] == e['compose']['compose']['reply']
-            s['compose_repeat_identical' if same else 'compose_repeat_differs'] += 1
+        for scope, rows in e.get('ranking', {}).items():
+            s['ranks_of_expected_true'].setdefault(scope, []).extend(
+                {'case': e['id'], 'rank': r['rank'], 'of': len(rows), 'score': r['score']} for r in rows if r['expected_answers'])
+    s['compose_repeat_identical'] = sum(record_reply(record, cid, kind[len('compose2'):]) == reply for (cid, kind), reply in repeats.items())
+    s['compose_repeat_differs'] = len(repeats) - s['compose_repeat_identical']
     s['binding'] = tot
     return s
+
+
+def record_reply(record, case_id, suffix):
+    entry = next(e for e in record if e['id'] == case_id)
+    return entry['compose'].get('compose' + suffix, {}).get('reply')
 
 
 def main():
@@ -286,7 +379,9 @@ def main():
     parser.add_argument('--slot-tokens', type=int, default=8192)
     parser.add_argument('--timeout', type=int, default=600)
     parser.add_argument('--variant', choices=sorted(SCHEMAS), default='answers_first',
-                        help='extraction schema: boolean before the span (ux1), span before the boolean, or span only')
+                        help='extraction schema: boolean before the span (ux1), span before the boolean, span only (600-char cap), '
+                             'or span only uncapped (software sentence cut)')
+    parser.add_argument('--rank', action='store_true', help='also rank verified spans with the production embedder and compose from the top 1 and 2')
     args = parser.parse_args()
     fixture = json.loads(FIXTURE.read_text())
     review = json.loads(args.review.read_text())
@@ -294,19 +389,28 @@ def main():
         raise ValueError('Review sheet was produced from a different fixture')
     units = {u['unit_id']: u for u in json.loads((args.product / 'units.json').read_text())}
     cases = plan(fixture, review, units, args.capture)
+    kinds = {c['id']: c['kind'] for c in fixture['cases']}
     if sha(GGUF) != GGUF_SHA:
         raise ValueError('Pinned model mismatch')
+    if args.rank and sha(EMBED_GGUF) != EMBED_SHA:
+        raise ValueError('Pinned embedding model mismatch')
     args.output.mkdir(parents=True, mode=0o700, exist_ok=False)
     inputs = args.output / 'inputs'; inputs.mkdir()
     for source in (FIXTURE, args.review, args.product / 'units.json', Path(__file__)):
         shutil.copy2(source, inputs / source.name)
     (args.output / 'plan.json').write_text(json.dumps(cases, ensure_ascii=False, indent=2) + '\n')
-    with private_socket() as sock:
+    with private_socket() as sock, private_socket() as embed_sock:
         binary = ROOT / 'build/llama/bin/llama-server'
         command = [str(binary), '-m', str(GGUF), *backend_flags('metal_bf16'), '-fa', 'off', '--jinja',
                    '--reasoning-format', 'deepseek', '-np', '1', '-c', str(args.slot_tokens), '-b', '256', '-ub', '256',
                    '--cache-ram', '0', '--host', str(sock), '--no-webui', '--no-slots']
+        # The production embedding server flags (src/llm/server.c embed_argv and its config).
+        embed_command = [str(binary), '-m', str(EMBED_GGUF), '-ngl', '99', '-fa', 'off', '--embedding', '--pooling', 'last',
+                         '-np', '1', '-c', '2304', '-b', '2304', '-ub', '2304', '--cache-ram', '0', '--host', str(embed_sock),
+                         '--no-webui', '--no-slots']
         manifest = {'command': command, 'model_sha256': GGUF_SHA, 'binary_sha256': sha(binary),
+                    'embed_command': embed_command if args.rank else None, 'embed_model_sha256': EMBED_SHA if args.rank else None,
+                    'query_instruction': QUERY_INSTRUCTION if args.rank else None, 'composers': 'factual/creative split by fixture kind',
                     'inputs_sha256': {p.name: sha(p) for p in inputs.iterdir()}, 'plan_sha256': sha(args.output / 'plan.json'),
                     'extract_calls': sum(len(c['delivered']) + len(c['added']) for c in cases), 'variant': args.variant,
                     'slot_tokens': args.slot_tokens, 'generation_http_timeout_seconds': args.timeout,
@@ -315,7 +419,12 @@ def main():
                               'Not a production component and not a quality certification.'}
         (args.output / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
         with session(args.output, command, sock) as generate:
-            record = run(cases, units, generate, args.timeout, variant=args.variant)
+            if args.rank:
+                embed_dir = args.output / 'embed'; embed_dir.mkdir()
+                with session(embed_dir, embed_command, embed_sock):
+                    record = run(cases, units, generate, args.timeout, variant=args.variant, embed_sock=embed_sock, kinds=kinds)
+            else:
+                record = run(cases, units, generate, args.timeout, variant=args.variant, kinds=kinds)
             props = json.loads((args.output / 'props.json').read_text())
             if props['default_generation_settings']['n_ctx'] != args.slot_tokens or props['total_slots'] != 1:
                 raise RuntimeError('Actual slot mismatch')

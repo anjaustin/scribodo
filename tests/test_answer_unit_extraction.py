@@ -103,18 +103,47 @@ class UnitExtractionTests(unittest.TestCase):
         self.assertEqual(ux.check_reply('single_fact_charlotte_age', 'x --- END DOCUMENT ---', added=False)['markers'], 1)
 
     def test_summary_counts(self):
-        record = [{'id': 'single_fact_charlotte_age', 'units': [
+        bind0 = dict.fromkeys(('pieces', 'bound_to_cited_source', 'in_other_source_than_cited', 'only_in_attachment_preview', 'in_no_supplied_text'), 0)
+        record = [{'id': 'single_fact_charlotte_age', 'creative_composer': False, 'units': [
             {'expected_answers': True, 'answers': True, 'status': 'verified'},
             {'expected_answers': False, 'answers': True, 'status': 'rejected_not_in_unit'},
+            {'expected_answers': False, 'answers': True, 'status': 'verified_prefix'},
             {'expected_answers': False, 'answers': False, 'status': 'none'}],
-            'compose': {'compose': {'reply': 'r', 'checks': {'pass': True, 'markers': 0}, 'binding': dict.fromkeys(
-                ('pieces', 'bound_to_cited_source', 'in_other_source_than_cited', 'only_in_attachment_preview', 'in_no_supplied_text'), 0)},
-                        'compose2': {'reply': 'r2'}}}]
+            'compose': {'compose': {'reply': 'r', 'checks': {'pass': True, 'markers': 0}, 'binding': bind0, 'contains_expected_true_span': True},
+                        'compose_top1': {'reply': 'New writing: x', 'checks': {'pass': False, 'markers': 1}, 'binding': bind0, 'contains_expected_true_span': False},
+                        'compose2': {'reply': 'r2'}, 'compose2_top1': {'reply': 'New writing: x'}},
+            'ranking': {'realistic': [{'rank': 1, 'expected_answers': False, 'score': .9}, {'rank': 2, 'expected_answers': True, 'score': .8}]}}]
         s = ux.summarize(record)
-        self.assertEqual((s['extract_calls'], s['answers_true'], s['verified'], s['rejected_not_in_unit']), (3, 2, 1, 1))
-        self.assertEqual((s['expected_true_verified'], s['expected_false_answered']), (1, 1))
-        self.assertEqual((s['compose_pass'], s['compose_repeat_differs']), (1, 1))
+        self.assertEqual((s['extract_calls'], s['answers_true'], s['verified'], s['verified_prefix'], s['rejected_not_in_unit']), (4, 3, 1, 1, 1))
+        self.assertEqual((s['expected_true_verified'], s['expected_false_answered'], s['expected_false_verified']), (1, 2, 1))
+        self.assertEqual(s['arms']['compose'], {'total': 1, 'pass': 1, 'with_expected_true_span': 1})
+        self.assertEqual(s['arms']['compose_top1'], {'total': 1, 'pass': 0, 'with_expected_true_span': 0})
+        self.assertEqual((s['compose_repeat_identical'], s['compose_repeat_differs']), (1, 1))
+        self.assertEqual((s['markers_in_composed'], s['new_writing_on_factual']), (1, 1))
+        self.assertEqual(s['ranks_of_expected_true']['realistic'], [{'case': 'single_fact_charlotte_age', 'rank': 2, 'of': 2, 'score': .8}])
 
+    def test_uncapped_variant_and_sentence_prefix_verification(self):
+        unit = units()[A]
+        self.assertNotIn('maxLength', ux.SCHEMAS['span_uncapped']['properties']['span'])
+        self.assertTrue(ux.answered({'span': 'x'}, 'span_uncapped')); self.assertFalse(ux.answered({'span': ''}, 'span_uncapped'))
+        # A correct sentence followed by text that is not in the unit is cut back to the sentence.
+        span = TEXT_A + ' Charlotte Lucas is twenty-seven years old.'
+        got, status = ux.verify({'span': span}, unit, 'span_uncapped')
+        self.assertEqual((status, got), ('verified_prefix', TEXT_A))
+        # No sentence boundary inside the unit text: rejected, not partially accepted.
+        self.assertEqual(ux.verify({'span': 'nonsense that is long enough. ' + TEXT_A}, unit, 'span_uncapped')[1], 'rejected_not_in_unit')
+        self.assertIsNone(ux.sentence_prefix('short. no', unit['text']))
+
+    def test_composer_split_and_ranking_math(self):
+        factual = ux.compose_request('q', [('part01.md', 'about twenty-seven, was Elizabeth')])
+        creative = ux.compose_request('q', [('part01.md', 'about twenty-seven, was Elizabeth')], creative=True)
+        self.assertNotIn('new writing', factual['messages'][0]['content'])
+        self.assertIn('new writing', creative['messages'][0]['content'])
+        self.assertIn('do not guess', factual['messages'][0]['content'])
+        q = [1.0, 0.0]; spans = [[0.0, 1.0], [0.6, 0.8], [1.0, 0.0]]
+        self.assertEqual(ux.rank(q, spans), [(2, 1.0), (1, 0.6), (0, 0.0)])
+        self.assertEqual(len(ux.clip_bytes('é' * 2000).encode()), 2000)  # cut on a character boundary
+        self.assertTrue(ux.QUERY_INSTRUCTION.startswith('Instruct: ') and ux.QUERY_INSTRUCTION.endswith('Query: '))
 
 if __name__ == '__main__':
     unittest.main()
