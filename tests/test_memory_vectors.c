@@ -4,6 +4,7 @@
 #include "test_util.h"
 #include "core/json.h"
 #include "llm/memory_vectors.h"
+#include "llm/http.h"
 #include <CommonCrypto/CommonDigest.h>
 #include <arpa/inet.h>
 #include <limits.h>
@@ -439,6 +440,57 @@ static void allocation_prepare(int operation, Stub *stub, SemanticClient *client
     }
 }
 
+/* The sweeps assume one fixed allocation sequence per call. The HTTP decoder
+ * used to grow its body buffer per delivered piece, so the count depended on
+ * how the kernel segmented a response; a hosted run then never reached the
+ * injected position and the call succeeded (AUDIT-002). Content-Length bodies
+ * must allocate the same way whether they arrive whole, in KiB pieces or by byte. */
+static long decoder_allocations(const char *response, size_t len, size_t body_len, size_t piece)
+{
+    HttpDecoder d;
+    http_decoder_init(&d, NULL, NULL);
+    fault_alloc_after(-1);
+    bool fed = true;
+    for (size_t off = 0; off < len && fed; off += piece) {
+        size_t take = len - off < piece ? len - off : piece;
+        fed = http_decoder_feed(&d, response + off, take);
+    }
+    long calls = fault_alloc_count();
+    fault_alloc_after(-1);
+    CHECK(fed && d.done && d.status == 200 && d.body_len == body_len && d.body && d.body[0] == 'x');
+    http_decoder_free(&d);
+    return calls;
+}
+
+static void decoder_delivery(void)
+{
+    enum { BODY = 5000 };
+    char header[128];
+    int hlen = snprintf(header, sizeof(header), "HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", BODY);
+    size_t len = (size_t)hlen + BODY;
+    char *response = malloc(len);
+    CHECK(hlen > 0 && response);
+    if (!response) return;
+    memcpy(response, header, (size_t)hlen);
+    memset(response + hlen, 'x', BODY);
+    long whole = decoder_allocations(response, len, BODY, len);
+    long kib = decoder_allocations(response, len, BODY, 1024);
+    long bytes = decoder_allocations(response, len, BODY, 1);
+    if (whole != kib || whole != bytes)
+        fprintf(stderr, "decoder allocations: whole=%ld 1KiB=%ld bytewise=%ld\n", whole, kib, bytes);
+    CHECK(whole > 0 && whole == kib && whole == bytes);
+    free(response);
+    /* A declared length is not a promise: one byte behind a 64 MiB Content-Length
+     * must not reserve more than the presize bound (doubling may overshoot it). */
+    HttpDecoder d;
+    http_decoder_init(&d, NULL, NULL);
+    const char *lying = "HTTP/1.1 200 OK\r\nContent-Length: 67108864\r\n\r\nx";
+    CHECK(http_decoder_feed(&d, lying, strlen(lying)) && d.body_len == 1);
+    if (d.body_cap > (2u << 20)) fprintf(stderr, "decoder reserved %zu bytes for a one-byte body\n", d.body_cap);
+    CHECK(d.body_cap <= (2u << 20));
+    http_decoder_free(&d);
+}
+
 static void allocation_sweeps(Stub *stub, SemanticClient *client, const MemoryIndexLease *lease)
 {
     for (int operation = ALLOC_EXISTS; operation <= ALLOC_DROP; operation++) {
@@ -619,7 +671,9 @@ static void projection(void)
     CHECK(!memory_vectors_upsert(client, &document, why, sizeof(why)));
     /* Leave the remaining legacy projection checks with their one chat point. */
     pthread_mutex_lock(&stub.lock);
-    cJSON_Delete(stub.points[--stub.count]); stub.points[stub.count] = NULL;
+    /* An earlier failed upsert leaves no point to remove; do not index -1. */
+    CHECK(stub.count > 0);
+    if (stub.count > 0) { cJSON_Delete(stub.points[--stub.count]); stub.points[stub.count] = NULL; }
     pthread_mutex_unlock(&stub.lock);
     CHECK(!memory_vectors_search(client, &lease.scope, "query", 0, out, &count, why, sizeof(why)) && !count);
     CHECK(!memory_vectors_search(client, &lease.scope, "query", 33, out, &count, why, sizeof(why)) && !count);
@@ -689,6 +743,10 @@ static void projection(void)
 
 int main(void)
 {
-    const TestCase tests[] = { { "private memory vector projection", projection } };
+    const TestCase tests[] = { { "private memory vector projection", projection },
+#ifdef SCRIBODO_FAULT_ALLOC_H
+                               { "decoder allocations independent of delivery", decoder_delivery },
+#endif
+    };
     return run_tests(tests, sizeof(tests) / sizeof(tests[0]));
 }

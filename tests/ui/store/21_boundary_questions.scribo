@@ -1,0 +1,124 @@
+# Boundary questions (manifold cycle step 2): fresh source-bound cases written
+# before any model run; see tests/fixtures/answer_boundary/questions.json. Each
+# question is checked only for source delivery (memory_sources carries the
+# designated passage). Reply quality is reviewed afterwards against the fixture's
+# fields; the novel's answer vocabulary is never the pass oracle here.
+# Run: SCRIBODO_PRODUCT_SCRIPT=tests/ui/store/21_boundary_questions.scribo \
+#      python3 tools/answer_product_run.py <label> <live-capture app binary>
+# Real-manuscript questions (MEMORY-019 follow-up): a legacy project whose
+# documents are the eight parts of a real novel (tools/manuscript_import.py)
+# and whose chat is the fixture archive. All eight parts are attached to the
+# chat, memory is enabled, and the author asks questions whose answers are in
+# the parts. memory_sources checks reach inside the app (the answer-bearing
+# excerpt was supplied to the model); chat_last checks the reply carried it
+# (only meaningful with --real; the fake model echoes the prompt).
+# Run: tools/manuscript_baseline.sh --manuscript build/manuscripts/<name>/parts \
+#        --words 30000 --per-category 3 --script tests/ui/store/18_manuscript_questions.scribo [--real]
+wait 5
+dialog "$DIR/manuscript"
+click_element WelcomeOpen
+wait_status "now kept in the project store" 1800
+expect explorer_has "Manuscript chat"
+click_element ChatItem0
+wait_history
+# Attach every part (the menu lists the project's documents in explorer order).
+click_element AttachAdd
+click_element MenuItem0
+click_element AttachAdd
+click_element MenuItem1
+click_element AttachAdd
+click_element MenuItem2
+click_element AttachAdd
+click_element MenuItem3
+click_element AttachAdd
+click_element MenuItem4
+click_element AttachAdd
+click_element MenuItem5
+click_element AttachAdd
+click_element MenuItem6
+click_element AttachAdd
+click_element MenuItem7
+expect attached "part01.md,part02.md,part03.md,part04.md,part05.md,part06.md,part07.md,part08.md"
+# Memory over the chat and the eight attached parts.
+expect memory_enabled no
+measure_frames start
+right_click_element ChatItem0
+click_element MenuItem2
+wait_memory 402 36000
+wait_memory_documents 8 36000
+measure_frames stop
+expect memory_enabled yes
+wait_ready 36000
+# single_fact_entail (single_fact)
+click_element ChatInput
+type "In my manuscript, on whom is Mr. Bennet's estate entailed, and why is that unfortunate for his daughters?"
+key ENTER
+wait_chat 14400
+expect chat_busy no
+expect memory_sources "entailed, in default of heirs male, on a"
+
+# two_entities_fortunes (two_entities_different_values)
+click_element ChatInput
+type "What fortune do Mr. Bingley's sisters have, and what is Mr. Bingley's own inheritance said to be?"
+key ENTER
+wait_chat 14400
+expect chat_busy no
+expect memory_sources "had a fortune of twenty thousand pounds"
+expect memory_sources "nearly a hundred thousand pounds"
+
+# single_fact_charlotte_age (single_fact)
+click_element ChatInput
+type "About how old is Charlotte Lucas when the story opens?"
+key ENTER
+wait_chat 14400
+expect chat_busy no
+expect memory_sources "about twenty-seven"
+
+# single_fact_walk_distance (single_fact)
+click_element ChatInput
+type "How far does Elizabeth say the walk to Netherfield is when she sets out to see Jane?"
+key ENTER
+wait_chat 14400
+expect chat_busy no
+expect memory_sources "only three miles"
+
+# author_correction (explicit_author_correction)
+click_element ChatInput
+type "Note for later: Lydia, my youngest, is seventeen."
+key ENTER
+wait_chat 14400
+expect chat_busy no
+click_element ChatInput
+type "Earlier I told you Lydia is seventeen; I was wrong, the text says otherwise. How old is my youngest Bennet daughter?"
+key ENTER
+wait_chat 14400
+expect chat_busy no
+expect memory_sources "not sixteen"
+
+# contradictory_drafts (contradictory_dated_drafts)
+click_element ChatInput
+type "Draft note (older): In the first draft Elizabeth walked five miles to Netherfield."
+key ENTER
+wait_chat 14400
+expect chat_busy no
+click_element ChatInput
+type "My two drafts disagree about how many miles Elizabeth walks to Netherfield. Which figure does the current manuscript give, and what did the other draft say?"
+key ENTER
+wait_chat 14400
+expect chat_busy no
+expect memory_sources "only three miles"
+
+# unavailable_fact (unavailable_fact)
+click_element ChatInput
+type "What is Mr. Bennet's first name in my manuscript?"
+key ENTER
+wait_chat 14400
+expect chat_busy no
+
+# creative_request (creative_speculative)
+click_element ChatInput
+type "Draft two sentences, in Austen's register, of Mr. Bennet privately reflecting on the entail. Mark it as new writing."
+key ENTER
+wait_chat 14400
+expect chat_busy no
+expect memory_sources "entailed, in default of heirs male, on a"

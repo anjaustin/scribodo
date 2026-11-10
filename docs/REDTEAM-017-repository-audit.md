@@ -250,3 +250,12 @@ The hosted analyzer result must still be confirmed after this corrective push;
 local Clang 21 passing is not substituted for that confirmation. Evidence:
 `build/redteam017-ci-fix-results.json`, `build/redteam017-ci-fix-*.log`, and
 `build/redteam017-ci-fix-mutations.log`.
+
+### Hosted confirmation (recorded 2026-11-09 by AUDIT-002)
+
+The corrective push `278259c` ran hosted CI as run `42693799204`. Its Clang
+static analyzer job passed on the GitHub runner, which closes R6's pending
+hosted confirmation. The same run's build/unit and ASan/UBSan jobs failed in
+`tests/test_memory_vectors.c` (the private memory vector allocation sweep);
+that failure was not recorded at the time and is examined in
+[AUDIT-002](AUDIT-002-repository-audit.md).

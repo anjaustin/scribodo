@@ -351,6 +351,16 @@ static void show(char *out, size_t cap, const char *label, const char *v)
         else if (*p == '\t') { out[o++] = '\\'; out[o++] = 't'; }
         else out[o++] = *p;
     }
+    /* Never end on a split multibyte sequence: the report must stay valid UTF-8
+     * when a long value is cut. Walk back over continuation bytes to the lead
+     * byte and drop the character if its full length did not fit. */
+    size_t start = o;
+    while (start > 0 && ((unsigned char)out[start - 1] & 0xC0) == 0x80 && o - start < 3) start--;
+    if (start > 0 && ((unsigned char)out[start - 1] & 0xC0) == 0xC0) {
+        unsigned char lead = (unsigned char)out[--start];
+        size_t need = lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : 2;
+        if (o - start < need) o = start;
+    }
     snprintf(out + o, cap - o, "\"");
 }
 

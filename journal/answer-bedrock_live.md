@@ -303,3 +303,31 @@ the second request never ran. This is an incomplete control, not evidence of
 CPU answer quality or a production streaming timeout defect. Production HTTP
 refreshes its inactivity deadline when bytes arrive. No production defaults,
 CI configuration or pinned model were changed by these experiments.
+
+### Strict-CPU arm completed (pq2, 2026-11-09)
+
+`tools/answer_plumbing_contract.py --phase backend --timeout 3600` reran the
+abandoned pq1 control on the identical captured messages, seed 42, native
+sampling, `--device none --no-op-offload --no-kv-offload`, two 8K slots. Both
+requests completed (`build/pq2/`; comparison `build/pq2/compare-vs-pc1.json`).
+The arm ran concurrently with the Metal isolation run `build/ai1/`; wall times
+are not comparable to serial runs.
+
+| Question | Metal (pc1) | strict CPU (pq2) | common raw prefix |
+|---|---|---|---:|
+| Collins (q2) | stop, 370 tokens, wrong answer | **length**, 2,048 tokens, quotes the correct "has very lately given him a living" then wanders and is cut | 104 chars |
+| Middle name (q6) | length, 2,048 tokens, no abstention | stop, 320 tokens, **fabricates "Fitzwilliam" as the middle name** with a false quotation of the opening line | 131 chars |
+
+Reading: with temperature above zero the two backends sample different
+continuations after about a hundred characters, as expected from the measured
+logit differences; neither backend produces an acceptable complete reply on
+either question. The CPU arm's Collins reply reaches the right evidence and then
+fails to finish inside the native cap; its middle-name reply finishes quickly and
+invents a fact the packet does not contain. Quotation binding on the two CPU
+replies: 36 pieces, 15 bound to the cited source, 0 in another source, 21 in no
+supplied text (`tools/answer_citation_binding.py build/pq2`, label matching
+case-insensitive per REDTEAM-019). This closes the
+plumbing cycle's backend question as far as sampled complete replies can: a
+backend-only cause of the product's answer failures is not supported, the
+output cap remains a confirmed truncation factor, and the remaining failures are
+execution on supplied evidence. No production default, prompt or model changed.

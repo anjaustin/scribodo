@@ -64,7 +64,12 @@ def main():
     parser.add_argument('--messages', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--phase', choices=['contract', 'budget', 'thinking_budget', 'backend', 'remainder'], default='contract')
+    parser.add_argument('--timeout', type=int, help='HTTP wait per generation in seconds; default 180 for contract, 600 otherwise. '
+                        'The strict CPU arm measured 3.6 to 3.8 tokens/s (pq1, pq2) and needs more than 600 s for a 2048-token reply.')
     args = parser.parse_args()
+    if args.timeout is not None and not 1 <= args.timeout <= 7200:
+        parser.error('--timeout must be 1..7200')
+    timeout = args.timeout if args.timeout is not None else (180 if args.phase == 'contract' else 600)
     rows = {r['seq']: r for r in json.loads(args.messages.read_text())}
     tok = tokenizer(); arms = []; counts = {}
     indices = (6,) if args.phase in ('budget', 'remainder') else INDICES
@@ -111,11 +116,11 @@ def main():
                     'backend_helper_sha256': sha(ROOT / 'tools/answer_plumbing_arithmetic.py'),
                     'prompt_tokens': counts, 'slot_tokens': slot_tokens, 'slots': slots, 'indices': indices,
                     'phase': args.phase,
-                    'generation_http_timeout_seconds': 180 if args.phase == 'contract' else 600,
+                    'generation_http_timeout_seconds': timeout,
                     'max_new_tokens': {name: arm['max_tokens'] for name, arm in arms},
                     'limits': 'Same-message diagnostic controls. Native top_p/min_p and llama penalty scope retained; vendor_sampling means the three documented core fields only. Budget phase deliberately uses one 16K slot, not actual native 8K. Stochastic seed 42, not repeated-trial quality certification.'}
         (args.output / 'manifest.json').write_text(json.dumps(manifest, indent=2)+'\n')
-        run_server(args.output, command, sock, arms, timeout=180 if args.phase == 'contract' else 600)
+        run_server(args.output, command, sock, arms, timeout=timeout)
         props = json.loads((args.output / 'props.json').read_text())
         if props['default_generation_settings']['n_ctx'] != slot_tokens or props['total_slots'] != slots:
             raise RuntimeError('Actual slot mismatch')

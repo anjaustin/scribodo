@@ -56,6 +56,16 @@ modify a database while any Scribodo process is running.
   in `make test` sweeps one-shot and persistent allocation failures through chat
   and edit construction: any published request must equal the complete control,
   preserving the author's text, selected passage and attached context.
+- `test_memory_vectors_faults` in `make test` sweeps one-shot and persistent
+  allocation failures through every vector-store operation against a loopback
+  stub. Its sweeps assume one fixed allocation sequence per call, so the same
+  binary also checks that the HTTP decoder allocates identically whether a
+  Content-Length body arrives whole, in KiB pieces or byte by byte
+  (`decoder allocations independent of delivery`). A delivery-dependent count
+  made one hosted run skip an injected position; see
+  [AUDIT-002](AUDIT-002-repository-audit.md). One run opens about 11,700
+  loopback connections in under a second, which is most of the ephemeral port
+  range; keep that in mind before running it in a tight loop.
 - `python3 tools/test_product_memory_mutations.py` needs local test DB services,
   not models. It runs two controls and weakens four guards independently.
   Only assertion failures kill a mutant; crashes, timeouts and build failures
@@ -75,6 +85,41 @@ modify a database while any Scribodo process is running.
   must contain `transcript.json`; older captures are refused rather than silently
   borrowing a later run's questions. See
   [REDTEAM-018](REDTEAM-018-memory-contracts.md) for the measured failure controls.
+- Seven further Python tests run in `make test` (and therefore under `make
+  sanitize`) without models, services or a display. They pin the answer
+  diagnostics' instrumentation and control invariants: `test_answer_live_capture`
+  (request builders, persona, provider call and search/fusion code unchanged;
+  ambiguous anchors refused), `test_answer_live_audit`, `test_answer_live_ablation`,
+  `test_answer_live_parity`, `test_answer_manifold_probe`,
+  `test_answer_plumbing_arithmetic` and `test_answer_plumbing_contract`. The
+  tools they cover are diagnostic only and never change production prompts,
+  selection or models; see `journal/answer-bedrock_live.md` and
+  `journal/answer-manifold_synth.md`.
+- `test_answer_income_isolation` (in `make test`) pins the packet surgery of
+  `tools/answer_income_isolation.py`, manifold cycle step 1: exactly one admitted
+  source block is replaced by the designated original with its real locator,
+  history and numbering stay byte-identical, and mismatched documents or a
+  missing quoted block are refused. No models.
+- `test_answer_citation_binding` (in `make test`) covers
+  `tools/answer_citation_binding.py`, the deterministic quote-to-source check
+  used for the `quotation_spans` and `citation_binding` review fields: curly and
+  straight quotes pair independently, typographic variants and ellipses are
+  normalized, and each quoted piece is classified as bound to the cited source,
+  found in another source, found only in the attachment preview, or in no
+  supplied text. `tools/answer_boundary_bind.py` binds the fresh boundary
+  questions in `tests/fixtures/answer_boundary/questions.json` to exactly one
+  manuscript unit each; `tests/ui/store/21_boundary_questions.scribo` asks them
+  through the real app with source-delivery checks only.
+  `tools/answer_boundary_review.py` joins such a run's exported messages, units
+  and live capture into a review sheet whose mechanical columns (delivery,
+  truncation, lengths, quotation binding) are filled and whose judgment fields
+  are left for a human; see `journal/answer-cycle2_boundary.md`.
+  `test_answer_boundary_fixture` (in `make test`) checks the fixture covers the
+  six required kinds, that no question appears in the seven-question script, that
+  the generated UI script matches the fixture, and that the binder refuses
+  ambiguous or missing passages. `tools/answer_product_run.py` is the tracked
+  runner that drives a question script through a real-app binary and preserves
+  messages, units and the work copy before dropping the test database.
 
 - `test_recall` (in `make dbtest`) drives `recall_run` against real SQL in a
   throwaway database: displayed canon text is byte-equal to the current
@@ -455,6 +500,11 @@ from stdin against a test database.
 `tools/manuscript_baseline.sh --manuscript DEST --script
 tests/ui/store/19_explorer_scroll.scribo` runs the explorer scroll-into-view
 check on the 61 chapter files, where the chat list is laid out off screen.
+The same runner drives the two preparation probes from MEMORY-022:
+`tests/ui/store/19_manuscript_prepare.scribo` (indexing may still be warming)
+and `tests/ui/store/20_manuscript_ready_prepare.scribo` (complete-index gate).
+Both cancel generation after checking the as-of source packet; they
+establish preparation, not answer correctness.
 
 `tools/chat_hang_probe.c` (build it with the overlay in its header comment)
 drives a real `ChatSession` against a stand-in server that accepts the

@@ -246,7 +246,6 @@ def kl_full(ref_lp, cand_lp):
 
 def compare():
     ref = load_json("reference")
-    rows = []
     report = {"reference": ref["runtime"], "candidates": {}}
     for name in ("mlx", "llamacpp", "llamacpp_fa_on", "control_q4", "control_q8"):
         try:

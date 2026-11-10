@@ -9,7 +9,9 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Every push to main must keep its own verdict: direct pushes are not
+  # gated, so a cancelled run would leave a main commit unverified.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   test:

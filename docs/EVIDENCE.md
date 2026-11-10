@@ -34,6 +34,28 @@ initial hosted analyzer failure, trusted-acceptance result, corrected-tree
 It precedes the corrective push's hosted rerun. Archive SHA-256:
 `f4cdef24571a58d0d0ff1a1b71ef7ffe582e57c0345e2c372be6461e976828d5`.
 
+The AUDIT-002 evidence is in `scribodo-evidence-2026-11-09-audit002.tar.gz` in
+the same folder, with `manifest-2026-11-09-audit002.txt` and an entry in
+`SHA256SUMS`. It contains 80 files: the baseline and remediated 17-target matrix
+logs and results (`build/audit002-*.log`, `build/audit002-after-*.log`, both
+`results.json` files), the clean-rebuild log, the hosted-CI attempt records for
+`278259c`, the 40-run baseline log, the `TIME_WAIT` snapshot, and under
+`build/audit002-segment/` the generated test variants, the instrumented client
+copy and every run log including `before-fix.log` and `after-fix.log`. Compiled
+binaries and the `build/audit002-clean` build tree are excluded. Archive SHA-256:
+`fb20ec39da5ef058fd8545e6cfb6fa46d5ad1b23803d5de112d1c4f260cc89e3`.
+
+The answer-cycle and REDTEAM-019 evidence is in `scribodo-evidence-2026-11-09-cycle.tar.gz`
+in the same folder, with `manifest-2026-11-09-cycle.txt` and an entry in
+`SHA256SUMS`. It contains 154 files: the income isolation run (`build/ai1`), the
+strict-CPU arm (`build/pq2`), the boundary live capture and review
+(`build/answer-boundary-capture`), the boundary run's exported messages, units,
+work copy and logs (`build/product-memory-use/boundary-1`, frozen binary
+excluded), the fake-backend dry run, the quotation-binding and fixture-binding
+outputs, the REDTEAM-019 17-target matrix logs and results, and the generated
+mutation sources and logs under `build/redteam019-mutations/` (binaries excluded).
+Archive SHA-256: `b3e1f0b5ab008d5ae580b8f1c2d979dbecfdf73f6b852d995f966fffaeb5f575`.
+
 To consult a cited path, extract the archive into an empty folder and read the
 path relative to it. Stale `llama.sock` files inside a few run directories were
 not archivable and are not evidence.

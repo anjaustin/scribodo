@@ -21,6 +21,7 @@ enum { ST_HEADERS, ST_CHUNK_SIZE, ST_CHUNK_DATA, ST_CHUNK_CRLF, ST_BODY, ST_TRAI
 
 #define MAX_LINE (4u << 20)  /* one SSE line */
 #define MAX_BODY (64u << 20) /* whole-body responses (e.g. /tokenize of a novel) */
+#define PRESIZE_MAX (1u << 20) /* largest Content-Length reserved before its bytes arrive */
 
 static bool grow(char **buf, size_t *cap, size_t need)
 {
@@ -67,7 +68,16 @@ static bool body_bytes(HttpDecoder *d, const char *p, size_t n)
 {
     if (!d->on_line) {
         if (d->body_len + n > MAX_BODY) return false;
-        if (!grow(&d->body, &d->body_cap, d->body_len + n + 1)) return false;
+        /* Size a Content-Length body once, up to PRESIZE_MAX. Growing per
+         * delivered piece made the number of allocations depend on how the bytes
+         * arrived, so a fault sweep counted on one run could miss a position on
+         * the next. The bound keeps a server-declared length from reserving
+         * memory the body never fills; larger bodies grow as they arrive. */
+        size_t need = d->body_len + n + 1;
+        if (!d->chunked && d->content_length > 0 && (size_t)d->content_length < PRESIZE_MAX &&
+            (size_t)d->content_length + 1 > need)
+            need = (size_t)d->content_length + 1;
+        if (!grow(&d->body, &d->body_cap, need)) return false;
         memcpy(d->body + d->body_len, p, n);
         d->body_len += n;
         d->body[d->body_len] = '\0';

@@ -9,7 +9,6 @@ host checks are defense in depth and a surviving mutant there would be noise,
 not a gap. Needs the local services (tools/services.sh up) and a prior build
 of build/test_recall. Only files under build/recall-mutations change.
 """
-import os
 from pathlib import Path
 import subprocess
 
