@@ -37,6 +37,7 @@ typedef struct {
     int slots;              /* -np */
     int batch;              /* -b and -ub */
     bool embedding;         /* an embedding server (Qwen3-Embedding), not the chat model */
+    bool rerank;            /* the cross-encoder (Qwen3-Reranker), scored through /completion */
     /* Memory beyond the model file, measured from llama-server's own
      * breakdown (see llm_server_mem_need): */
     long long mem_fixed;    /* bytes, whatever the context */
@@ -51,6 +52,8 @@ void llm_server_default_config(LlmServerConfig *cfg, const char *app_dir);
 /* The embedding server: Qwen3-Embedding-0.6B (F16, Apache-2.0, 1,024
  * dimensions, pinned hash), its own socket and run folder, one slot. */
 void llm_server_embed_config(LlmServerConfig *cfg, const char *app_dir);
+/* The pinned BF16 reranker GGUF (SCRIBODO_RERANK_MODEL overrides the path); one 2K slot. */
+void llm_server_rerank_config(LlmServerConfig *cfg, const char *app_dir);
 
 LlmServer *llm_server_create(const LlmServerConfig *cfg);
 void llm_server_destroy(LlmServer *s); /* stops it first */

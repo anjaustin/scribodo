@@ -72,6 +72,7 @@ LLM_SRCS  := src/core/json.c src/llm/llm_text.c src/llm/http.c src/llm/server.c 
 LLM_SRCS += src/llm/context_planner.c src/llm/memory_tokens.c
 LLM_SRCS += src/llm/memory_budget.c src/llm/generative_gate.c src/llm/memory_brief.c
 LLM_SRCS += src/llm/canon_reference.c
+LLM_SRCS += src/llm/rerank.c src/llm/answer_pipeline.c
 LLM_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(LLM_SRCS)) $(BUILD)/third_party/cJSON/cJSON.o
 APP_SRCS  := src/main.c src/app/script.c src/app/chat_controller.c src/app/reviewed_edit_controller.c src/ui/font.c src/ui/clay_render.c src/ui/editor.c src/ui/input.c src/ui/recall_view.c \
              src/ui/chat_view.c src/ui/review_view.c src/ui/record_view.c src/ui/findings_view.c src/ui/prompt_view.c src/ui/menu_view.c src/ui/vendor_impl.c
@@ -88,6 +89,7 @@ TESTS += $(BUILD)/test_memory_job $(BUILD)/test_memory_tokens $(BUILD)/test_memo
 TESTS += $(BUILD)/test_memory_provenance
 TESTS += $(BUILD)/test_memory_saved_file
 TESTS += $(BUILD)/test_memory_document_capture
+TESTS += $(BUILD)/test_answer_pipeline
 TESTS += $(BUILD)/test_memory_document_cache $(BUILD)/test_memory_budget $(BUILD)/test_generative_gate
 TESTS += $(BUILD)/test_http_deadlines $(BUILD)/test_db_deadlines $(BUILD)/test_memory_brief_model
 TESTS += $(BUILD)/test_http_poll_errno
@@ -127,6 +129,9 @@ $(BUILD)/test_llm: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_state_fixture.o 
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
 
 $(BUILD)/test_remote: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_state_fixture.o $(BUILD)/tests/test_remote.o
+	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
+
+$(BUILD)/test_answer_pipeline: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_state_fixture.o $(BUILD)/tests/test_answer_pipeline.o
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
 
 $(BUILD)/test_components: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_state_fixture.o $(BUILD)/tests/test_components.o
@@ -267,6 +272,7 @@ test: $(TESTS)
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_ranker_instruction python3 tests/test_answer_ranker_instruction.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_live_delivery_compare python3 tests/test_answer_live_delivery_compare.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_rerank_arm python3 tests/test_answer_rerank_arm.py
+	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_pipeline_review python3 tests/test_answer_pipeline_review.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_income_isolation python3 tests/test_answer_income_isolation.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_citation_binding python3 tests/test_answer_citation_binding.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_boundary_fixture python3 tests/test_answer_boundary_fixture.py

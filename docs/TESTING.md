@@ -157,6 +157,19 @@ modify a database while any Scribodo process is running.
   and the reranker over the embedder's top 32. `test_answer_rerank_arm` (in
   `make test`) pins the overlap scoring, the model-card prompt, the pipeline
   shape and the reranker pin without torch; see `journal/answer-cycle2_rerank.md`.
+  `tools/answer_rerank_runtime.py` (also from the venv) scores a fixed pair
+  set through llama-server and the PyTorch reference for parity and speed
+  (`build/rr1`). `test_answer_pipeline` (in `make test`) covers the verified
+  pipeline's pure parts: normalization, byte verification with the sentence
+  cut, the extraction request and reply, the reranker prompt, request and
+  probability parsing, the fixture scorer, the verified block and receipt, and
+  the pipeline request builder beside the unchanged production builder; see
+  `journal/answer-cycle2_pipeline_live.md` and `docs/MODEL-002-qwen3-reranker.md`.
+  `tools/answer_pipeline_review.py` joins a pipeline live run's messages, units
+  and trace lines into a review sheet (chosen unit, designated units' candidate
+  ranks and scores, verified span, timings, composer window, reply);
+  `test_answer_pipeline_review` (in `make test`) pins the trace and receipt
+  parsing without a model.
 
 - `test_recall` (in `make dbtest`) drives `recall_run` against real SQL in a
   throwaway database: displayed canon text is byte-equal to the current

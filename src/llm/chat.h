@@ -47,6 +47,7 @@ typedef struct {
 
 struct StoreManager;
 struct SemanticClient;
+struct RerankClient;
 struct GenerativeGate;
 struct MemoryDocumentCache;
 
@@ -101,6 +102,10 @@ void chat_memory_attachments_changed(ChatSession *s);
 uint64_t chat_memory_attachment_version(ChatSession *s);
 bool chat_set_generative_gate(ChatSession *s, struct GenerativeGate *gate);
 bool chat_memory_set_document_cache(ChatSession *s, struct MemoryDocumentCache *cache);
+/* Verified-answer pipeline experiment (llm/answer_pipeline.h): with a reranker
+ * client and enabled, memory requests carry one byte-verified span instead of
+ * the retrieval packet and attachment previews. NULL client disables. */
+bool chat_answer_pipeline_configure(ChatSession *s, struct RerankClient *rerank, bool enabled);
 bool chat_memory_set_briefs_enabled(ChatSession *s, bool enabled);
 /* Experimental canon-aware chat (MEMORY-014 P1): supply the author's matching
  * committed canon as an exact, separate reference class. Idle-only; never
@@ -190,6 +195,10 @@ char *chat_build_request_ex(const ChatMessage *msgs, size_t n, const ChatContext
  * survived model-context trimming. */
 char *chat_build_request_selected(const ChatMessage *msgs, size_t n, const ChatContext *ctx, const ChatNames *names, int ctx_tokens,
                                   ChatTokenCount count, void *count_ctx, bool *doc_truncated, size_t *first_history);
+/* The pipeline's request: persona plus the composer instruction, no attached
+ * documents, `preface` (the verified block) before the author's newest words. */
+char *chat_build_request_pipeline(const ChatMessage *msgs, size_t n, const ChatNames *names, int ctx_tokens,
+                                  ChatTokenCount count, void *cctx, size_t *first_history, const char *preface);
 
 /* The request for an edit: an editor persona, the document as context, and
  * the instruction plus passage. No chat history (keeps a small model on

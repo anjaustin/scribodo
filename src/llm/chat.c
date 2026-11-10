@@ -18,6 +18,8 @@
 #include "llm/context_planner.h"
 #include "llm/memory_tokens.h"
 #include "llm/canon_reference.h"
+#include "llm/rerank.h"
+#include "llm/answer_pipeline.h"
 #include "app/store.h"
 #include "app/memory_documents.h"
 #include "llm/generative_gate.h"
@@ -91,6 +93,8 @@ struct ChatSession {
     bool memory_briefs;
     ChatMemoryPresentation memory_presentation;
     bool canon_reference; /* MEMORY-014 P1 experiment */
+    RerankClient *rerank;   /* verified-answer pipeline experiment */
+    bool answer_pipeline;
     MemoryBudget *prepare_budget; /* worker-owned, address-stable until preparation ends */
     ChatMessageDone on_done;
     void *on_done_ctx;
@@ -432,6 +436,14 @@ bool chat_set_canon_reference(ChatSession *s, bool enabled)
     return true;
 }
 
+bool chat_answer_pipeline_configure(ChatSession *s, RerankClient *rerank, bool enabled)
+{
+    if (!s || chat_busy(s)) return false;
+    s->rerank = enabled ? rerank : NULL;
+    s->answer_pipeline = enabled && rerank != NULL;
+    return true;
+}
+
 char *chat_pack_history_request(const char *request)
 {
     if (!request || strnlen(request, MEMORY_BASE_REQUEST_BYTES+1) > MEMORY_BASE_REQUEST_BYTES) return NULL;
@@ -570,8 +582,9 @@ char *chat_build_request_ex(const ChatMessage *msgs, size_t n, const ChatContext
     return chat_build_request_selected(msgs, n, ctx, names, ctx_tokens, count, cctx, doc_truncated, NULL);
 }
 
-char *chat_build_request_selected(const ChatMessage *msgs, size_t n, const ChatContext *ctx, const ChatNames *names, int ctx_tokens,
-                                  ChatTokenCount count, void *cctx, bool *doc_truncated, size_t *first_history)
+static char *build_request_core(const ChatMessage *msgs, size_t n, const ChatContext *ctx, const ChatNames *names, int ctx_tokens,
+                                ChatTokenCount count, void *cctx, bool *doc_truncated, size_t *first_history,
+                                const char *preface, const char *system_extra)
 {
     if (first_history) *first_history = n;
     if (doc_truncated) *doc_truncated = false;
@@ -648,9 +661,10 @@ char *chat_build_request_selected(const ChatMessage *msgs, size_t n, const ChatC
         snprintf(facts, sizeof(facts), "\n\nYou are %s. The author you're talking with is %s.", self, names->author);
     else
         snprintf(facts, sizeof(facts), "\n\nYou are %s.", self);
-    size_t syscap = strlen(k_persona) + strlen(facts) + 1;
+    const char *extra = system_extra ? system_extra : "";
+    size_t syscap = strlen(k_persona) + strlen(facts) + strlen(extra) + 1;
     char *sys = ok ? malloc(syscap) : NULL;
-    if (sys) snprintf(sys, syscap, "%s%s", k_persona, facts);
+    if (sys) snprintf(sys, syscap, "%s%s%s", k_persona, facts, extra);
     /* The attached documents go into the author's newest message, right
      * before their words: they are what the author is talking about, not
      * background (user testing: framed as background, the model asked the
@@ -689,7 +703,9 @@ char *chat_build_request_selected(const ChatMessage *msgs, size_t n, const ChatC
 
     /* Keep the newest messages that fit; never split a user/assistant pair
      * so the history always starts with a user turn. */
-    long used = count_tokens(count, cctx, sys) + (docblock ? count_tokens(count, cctx, docblock) : 0);
+    /* The verified block (pipeline) or the attached documents go before the newest author words. */
+    const char *prefix = preface ? preface : docblock;
+    long used = count_tokens(count, cctx, sys) + (prefix ? count_tokens(count, cctx, prefix) : 0);
     size_t first = n;
     while (first > 0) {
         if (msgs[first - 1].error) { first--; continue; }
@@ -721,10 +737,10 @@ char *chat_build_request_selected(const ChatMessage *msgs, size_t n, const ChatC
         char *clean = llm_neutralize(visible ? visible : msgs[i].content);
         free(visible);
         bool newest_user = msgs[i].role == CHAT_USER && i == n - 1;
-        if (newest_user && docblock && clean) {
-            char *with = malloc(strlen(docblock) + strlen(clean) + 1);
+        if (newest_user && prefix && clean) {
+            char *with = malloc(strlen(prefix) + strlen(clean) + 1);
             if (with) {
-                strcpy(with, docblock);
+                strcpy(with, prefix);
                 strcat(with, clean);
                 free(clean);
                 clean = with;
@@ -751,6 +767,29 @@ char *chat_build_request_selected(const ChatMessage *msgs, size_t n, const ChatC
         while (first < n && msgs[first].error) first++;
         *first_history = first;
     }
+    return out;
+}
+
+char *chat_build_request_selected(const ChatMessage *msgs, size_t n, const ChatContext *ctx, const ChatNames *names, int ctx_tokens,
+                                  ChatTokenCount count, void *cctx, bool *doc_truncated, size_t *first_history)
+{
+    return build_request_core(msgs, n, ctx, names, ctx_tokens, count, cctx, doc_truncated, first_history, NULL, NULL);
+}
+
+char *chat_build_request_pipeline(const ChatMessage *msgs, size_t n, const ChatNames *names, int ctx_tokens,
+                                  ChatTokenCount count, void *cctx, size_t *first_history, const char *preface)
+{
+    if (!preface) return NULL;
+    /* Bounded window: without the packet the token budget admits the whole
+     * conversation, and in pass 1 the composer answered about sixty fixture
+     * notes instead of the verified span. Pairs are never split: the window
+     * starts at a user turn. */
+    size_t start = n > ANSWER_HISTORY_MESSAGES ? n - ANSWER_HISTORY_MESSAGES : 0;
+    while (start < n && (msgs[start].error || msgs[start].role != CHAT_USER)) start++;
+    if (start >= n) start = n > 0 ? n - 1 : 0;
+    char *out = build_request_core(msgs + start, n - start, NULL, names, ctx_tokens, count, cctx, NULL, first_history, preface,
+                                   answer_composer_instruction);
+    if (out && first_history) *first_history += start;
     return out;
 }
 
@@ -1112,6 +1151,49 @@ static bool build_in_worker(ChatSession *s)
                 ? memory_documents_capture_cached_on_db(s->document_cache, db, s->memory_store, s->memory_project, &s->memory_identity,
                     attachment_names, nattachments, false, &budget.stop, budget.deadline_ms, &documents)
                 : !nattachments; /* no uncached manuscript hashing in foreground preparation */
+        /* Verified-answer pipeline (experiment): one byte-verified span from
+         * the cross-encoder's top unit replaces the packet and the previews.
+         * SQL runs inside the store budget; scoring and extraction have their
+         * own deadline. The plan path below is not taken. */
+        bool pipeline_done = false;
+        if (available && s->answer_pipeline && s->rerank) {
+            AnswerPipelineResult pipeline = {0};
+            MemoryScope pscope;
+            double pipeline_deadline = memory_budget_now_ms() + ANSWER_PIPELINE_BUDGET_MS;
+            if (memory_scope_get(db, project_id, s->memory_conversation, &pscope) && pscope.enabled)
+                answer_pipeline_run(db, s->memory_vectors, s->rerank, s->server, &pscope, &documents, query, before,
+                                    &s->cancel, pipeline_deadline, &pipeline);
+            char *preface = answer_verified_block(&pipeline);
+            char *rebuilt = preface ? chat_build_request_pipeline(history.messages, history.count, &names, slot_ctx, counter, s,
+                                                                  &first_history, preface) : NULL;
+            free(preface);
+            free(req);
+            req = rebuilt;
+            if (!req) snprintf(s->build_error, sizeof(s->build_error), "Verified pipeline could not build the request; nothing was sent.");
+            char *receipt = answer_receipt(&pipeline);
+            if (receipt) {
+                pthread_mutex_lock(&s->mu);
+                free(s->msgs[s->target].memory_sources);
+                s->msgs[s->target].memory_sources = receipt;
+                pthread_mutex_unlock(&s->mu);
+            }
+            snprintf(memory_notice, sizeof(memory_notice), "Verified pipeline: %zu candidates, %zu scored, top %.2f, %s. One exact span or none; not canon.",
+                     pipeline.candidates, pipeline.scored, pipeline.top_score, pipeline.status);
+            const char *ptrace = getenv("SCRIBODO_MEMORY_TRACE");
+            if (ptrace && !strcmp(ptrace, "1")) {
+                fprintf(stderr, "ANSWER_PIPELINE candidates=%zu hydrated=%zu scored=%zu failures=%zu top=%s score=%.4f status=%s rerank_ms=%.1f extract_ms=%.1f request_bytes=%zu history_first=%zu\n",
+                        pipeline.candidates, pipeline.hydrated, pipeline.scored, pipeline.score_failures,
+                        pipeline.has_top ? pipeline.top.id : "-", pipeline.top_score, pipeline.status, pipeline.rerank_ms,
+                        pipeline.extract_ms, req ? strlen(req) : 0, first_history);
+                fprintf(stderr, "ANSWER_PIPELINE_SCORES");
+                for (size_t i = 0; i < pipeline.scored && i < ANSWER_CANDIDATES; i++)
+                    fprintf(stderr, " %s:%.4f", pipeline.scored_ids[i], pipeline.scored_scores[i]);
+                fprintf(stderr, "\n");
+            }
+            answer_pipeline_result_free(&pipeline);
+            pipeline_done = true;
+            available = false;
+        }
         double recall_started = memory_budget_now_ms();
         available = available && s->request_attachment_epoch == chat_memory_attachment_version(s) &&
             memory_plan_build_with_documents(db, bounded_vectors, project_id, s->memory_conversation,
@@ -1171,14 +1253,14 @@ static bool build_in_worker(ChatSession *s)
             } else if (briefs_unavailable)
                 snprintf(memory_notice, sizeof(memory_notice), "Local memory: %zu validated original excerpts; T1 briefs unavailable. Partial recall; Sources are as-of this reply, not canon.", plan.count);
             else snprintf(memory_notice, sizeof(memory_notice), "Local memory: %zu excerpts, %zu generated T1 briefs; partial recall. Sources are as-of this reply, not canon.", plan.count, plan.brief_count);
-        } else snprintf(memory_notice, sizeof(memory_notice), "%s",
+        } else if (!pipeline_done) snprintf(memory_notice, sizeof(memory_notice), "%s",
             available && plan.readiness == MEMORY_DISABLED ? "Local memory disabled for this conversation; recent context only"
             : "Local memory warming, partial or unavailable: no older excerpts admitted; recent context only");
         /* Canon-aware chat (experiment): the author's matching committed canon
          * as its own reference class, placed before the evidence. The whole
          * request is recounted; if it does not fit, the block is dropped and
          * the author's request is never clipped. */
-        if (req && s->canon_reference && !atomic_load(&s->cancel)) {
+        if (req && s->canon_reference && !pipeline_done && !atomic_load(&s->cancel)) {
             size_t canon_count = 0;
             char *block = canon_reference_build(s->memory_store, s->memory_project, query, CANON_REFERENCE_ENTRIES,
                                                 CANON_REFERENCE_BYTES, &canon_count);

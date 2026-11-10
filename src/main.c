@@ -65,6 +65,7 @@
 #include "llm/observer.h"
 #include "llm/semantic.h"
 #include "llm/server.h"
+#include "llm/rerank.h"
 #include "ui/chat_view.h"
 #include "ui/clay_render.h"
 #include "ui/editor.h"
@@ -142,6 +143,9 @@ typedef struct {
     /* Model and chat */
     LlmServer *llm;
     LlmServer *embed;             /* the embedding model (semantic retrieval) */
+    LlmServer *rerank;            /* the cross-encoder (verified-answer pipeline experiment) */
+    RerankClient *rerank_client;
+    bool answer_pipeline;
     SemanticClient *semantic;
     MemoryJob *memory_job;
     MemoryDocumentCache *memory_document_cache;
@@ -3612,6 +3616,8 @@ static void app_destroy(App *app)
     entity_detail_free(&app->ent);
     llm_server_destroy(app->llm);
     llm_server_destroy(app->embed);
+    rerank_client_destroy(app->rerank_client);
+    llm_server_destroy(app->rerank);
     editor_destroy(app->editor);
     explorer_snapshot_destroy(&app->explorer);
     project_session_destroy(&app->session);
@@ -3720,17 +3726,22 @@ int main(int argc, char **argv)
         setenv("SCRIBODO_MODEL_SETTINGS", mp, 1);
     }
     model_settings_load(&app.model);
+    /* Verified-answer pipeline experiment: requires the memory experiment. */
+    const char *pipeline_flag = getenv("SCRIBODO_ANSWER_PIPELINE"), *memory_flag_early = getenv("SCRIBODO_MEMORY_EXPERIMENT");
+    app.answer_pipeline = pipeline_flag && !strcmp(pipeline_flag, "verified") && memory_flag_early && !strcmp(memory_flag_early, "1");
     const char *llm_mode = getenv("SCRIBODO_LLM");
     bool fake = (llm_mode && !strcmp(llm_mode, "fake")) || (script_path && !(llm_mode && !strcmp(llm_mode, "real")));
     if (!fake) {
-        LlmServerConfig cfg, ecfg;
+        LlmServerConfig cfg, ecfg, rcfg;
         llm_server_default_config(&cfg, GetApplicationDirectory());
         llm_server_embed_config(&ecfg, GetApplicationDirectory());
+        llm_server_rerank_config(&rcfg, GetApplicationDirectory());
         /* The author's context per conversation, as far as memory allows
-         * (both servers are about to start). */
+         * (the other servers are about to start). */
         const ModelSettingInfo *ci = model_setting_info(7);
-        MemFit fit = memfit_context(sysmem_available(), llm_server_mem_need(&ecfg, ecfg.ctx_total), &cfg, app.model.context,
-                                    (int)ci->min, (int)ci->step);
+        long long others = llm_server_mem_need(&ecfg, ecfg.ctx_total) +
+                           (app.answer_pipeline ? llm_server_mem_need(&rcfg, rcfg.ctx_total) : 0);
+        MemFit fit = memfit_context(sysmem_available(), others, &cfg, app.model.context, (int)ci->min, (int)ci->step);
         memfit_message(&fit, app.model.context, app.mem_msg, sizeof(app.mem_msg));
         if (app.mem_msg[0]) fprintf(stderr, "scribodo: %s\n", app.mem_msg);
         cfg.ctx_total = fit.slot_ctx * (cfg.slots > 0 ? cfg.slots : 1);
@@ -3739,12 +3750,21 @@ int main(int argc, char **argv)
         /* Embeddings for the semantic index (a second, small server). */
         app.embed = llm_server_create(&ecfg);
         if (app.embed) llm_server_start(app.embed);
-        if (!app.llm || !app.embed) {
+        if (app.answer_pipeline) {
+            app.rerank = llm_server_create(&rcfg);
+            if (app.rerank) llm_server_start(app.rerank);
+        }
+        if (!app.llm || !app.embed || (app.answer_pipeline && !app.rerank)) {
             fprintf(stderr, "scribodo: could not allocate the pinned local model supervisors (no fake fallback)\n");
             app_destroy(&app); return 1;
         }
     }
     app.semantic = semantic_client_create(app.store, app.embed);
+    if (app.answer_pipeline) {
+        /* With the fake backend there is no reranker server: a deterministic fixture scores instead. */
+        app.rerank_client = rerank_client_create(app.rerank);
+        if (!app.rerank_client) { app_destroy(&app); return 1; }
+    }
     const char *memory_flag = getenv("SCRIBODO_MEMORY_EXPERIMENT");
     app.memory_experiment = memory_flag && !strcmp(memory_flag, "1");
     const char *briefs_flag = getenv("SCRIBODO_MEMORY_BRIEFS");
@@ -3763,6 +3783,7 @@ int main(int argc, char **argv)
         chat_memory_set_document_cache(owned_chat, app.memory_document_cache);
         chat_set_generative_gate(owned_chat, app.generative_gate);
         chat_memory_set_briefs_enabled(owned_chat, app.memory_briefs_experiment);
+        chat_answer_pipeline_configure(owned_chat, app.rerank_client, app.answer_pipeline);
         const char *presentation = app.memory_experiment ? getenv("SCRIBODO_MEMORY_PRESENTATION") : NULL;
         if (presentation && !strcmp(presentation, "compact"))
             chat_memory_set_presentation(owned_chat, CHAT_MEMORY_COMPACT);
@@ -3910,6 +3931,7 @@ int main(int argc, char **argv)
 
         if (app.llm) llm_server_tick(app.llm);
         if (app.embed) llm_server_tick(app.embed);
+        if (app.rerank) llm_server_tick(app.rerank);
         /* While the store is wanted but offline, probe every 15 s; when it
          * answers, connect (on this thread), adopt the project, refresh. */
         if (app.store_wanted && !store_online(app.store) && !service_supervisor_busy(&app.services) && GetTime() >= app.store_next_probe) {

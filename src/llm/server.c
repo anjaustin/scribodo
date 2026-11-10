@@ -85,6 +85,35 @@ static bool mkdir_p(const char *path, mode_t mode)
 }
 
 #define QWEN3_EMBED_SHA256 "421a27e58d165478cc7acb984a688c2aa41404968b0203e7cd743ece44c54340"
+/* Qwen/Qwen3-Reranker-0.6B at e61197ed45024b0ed8a2d74b80b4d909f1255473, converted to BF16 with the pinned
+ * llama.cpp converter (journal/answer-cycle2_rerank.md, build/rr1 parity). */
+#define QWEN3_RERANK_SHA256 "5a6bf98df1ba7b7a957bbcfc14e74a73b4c314812c2224fe048ea942db4e53f1"
+
+void llm_server_rerank_config(LlmServerConfig *c, const char *app_dir)
+{
+    llm_server_default_config(c, app_dir);
+    const char *home = getenv("HOME");
+    const char *model = getenv("SCRIBODO_RERANK_MODEL");
+    if (model) snprintf(c->model_path, sizeof(c->model_path), "%s", model);
+    else snprintf(c->model_path, sizeof(c->model_path), "%s/Library/Application Support/Scribodo/models/Qwen3-Reranker-0.6B-bf16.gguf",
+                  home ? home : "");
+    snprintf(c->sha256, sizeof(c->sha256), "%s", QWEN3_RERANK_SHA256);
+    if (home) {
+        snprintf(c->run_dir, sizeof(c->run_dir), "%s/Library/Application Support/Scribodo/run-rerank", home);
+        snprintf(c->log_path, sizeof(c->log_path), "%s/Library/Logs/Scribodo/rerank-server.log", home);
+        snprintf(c->cache_path, sizeof(c->cache_path), "%s/Library/Application Support/Scribodo/rerank-verified.txt", home);
+    }
+    /* One pair per request: the model card prompt plus a 2,000-byte document
+     * is under 1K tokens; the slot is sized for the longest with headroom. */
+    c->ctx_total = 2048;
+    c->slots = 1;
+    c->batch = 2048;
+    c->embedding = false;
+    c->rerank = true;
+    c->mem_fixed = 1024LL * 1024 * 1024; /* 1.2 GB of weights plus the 2K slot; to be measured like the embedder */
+    c->mem_per_token = 0;
+}
+
 
 void llm_server_embed_config(LlmServerConfig *c, const char *app_dir)
 {
@@ -358,7 +387,13 @@ static bool spawn_server(LlmServer *s)
         "-ngl", "99", "-fa", "off", "--embedding", "--pooling", "last", "-np", np, "-c", ctx, "-b", batch, "-ub", batch,
         "--cache-ram", "0", "--no-webui", "--no-slots", NULL,
     };
-    char **argv = s->cfg.embedding ? embed_argv : chat_argv;
+    /* The reranker is scored, never sampled: no template, no reasoning format. */
+    char *rerank_argv[] = {
+        s->cfg.server_bin, "-m", s->cfg.model_path, "--host", s->sock, "--api-key-file", s->keyfile,
+        "-ngl", "99", "-fa", "off", "-ctk", "bf16", "-ctv", "bf16", "-np", np, "-c", ctx, "-b", batch, "-ub", batch,
+        "--cache-ram", "0", "--no-webui", "--no-slots", NULL,
+    };
+    char **argv = s->cfg.embedding ? embed_argv : s->cfg.rerank ? rerank_argv : chat_argv;
     posix_spawn_file_actions_t fa;
     posix_spawn_file_actions_init(&fa);
     posix_spawn_file_actions_addopen(&fa, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
@@ -402,7 +437,8 @@ static void *start_thread(void *arg)
     LlmServer *s = arg;
     if (!verify_model(s)) return NULL;
     if (atomic_load(&s->stopping)) return NULL;
-    set_state(s, LLM_STARTING, s->cfg.embedding ? "Loading Qwen3-Embedding\xE2\x80\xA6" : "Loading LFM3-1.7B (BF16)\xE2\x80\xA6");
+    set_state(s, LLM_STARTING, s->cfg.embedding ? "Loading Qwen3-Embedding\xE2\x80\xA6"
+                               : s->cfg.rerank ? "Loading Qwen3-Reranker\xE2\x80\xA6" : "Loading LFM3-1.7B (BF16)\xE2\x80\xA6");
     if (!spawn_server(s)) return NULL;
     double t0 = now_s();
     while (!atomic_load(&s->stopping)) {
@@ -413,7 +449,8 @@ static void *start_thread(void *arg)
         HttpResult r;
         if (http_request(s->sock, "GET", "/health", NULL, NULL, NULL, NULL, NULL, 1000, &r) && r.status == 200) {
             http_result_free(&r);
-            set_state(s, LLM_READY, s->cfg.embedding ? "Qwen3-Embedding \xC2\xB7 local" : "LFM3-1.7B \xC2\xB7 BF16 \xC2\xB7 local");
+            set_state(s, LLM_READY, s->cfg.embedding ? "Qwen3-Embedding \xC2\xB7 local"
+                                    : s->cfg.rerank ? "Qwen3-Reranker \xC2\xB7 BF16 \xC2\xB7 local" : "LFM3-1.7B \xC2\xB7 BF16 \xC2\xB7 local");
             s->ready_since = now_s();
             return NULL;
         }
