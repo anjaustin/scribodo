@@ -135,6 +135,11 @@ modify a database while any Scribodo process is running.
   predeclared reply checks without a model; see
   `journal/answer-cycle2_unit_extraction.md` and `journal/answer-cycle2_ranked_span.md`
   (`--rank`: verified spans scored by the production embedder, top 1 and 2 composed).
+  `tools/answer_ranker_instruction.py` re-ranks the frozen span pools and all
+  exported units under fixed query instructions on the production embedder, no
+  generative model; `test_answer_ranker_instruction` (in `make test`) pins the
+  pool reconstruction, rank metrics and the production instruction text; see
+  `journal/answer-cycle2_ranker_instruction.md`.
 
 - `test_recall` (in `make dbtest`) drives `recall_run` against real SQL in a
   throwaway database: displayed canon text is byte-equal to the current

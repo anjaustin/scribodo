@@ -172,9 +172,9 @@ def clip_bytes(text, limit=SEM_MAX_INPUT_BYTES):
     return data.decode('utf-8', errors='ignore')
 
 
-def embed(sock, texts, query):
+def embed(sock, texts, query, instruction=QUERY_INSTRUCTION):
     """Production-shaped embedding request: instruction prefix on queries, 2,000-byte clip, L2 normalization."""
-    inputs = [(QUERY_INSTRUCTION if query else '') + clip_bytes(t) for t in texts]
+    inputs = [(instruction if query else '') + clip_bytes(t) for t in texts]
     response = call(sock, '/v1/embeddings', {'input': inputs})
     rows = sorted(response['data'], key=lambda d: d['index'])
     out = []
