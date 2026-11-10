@@ -53,6 +53,18 @@ class LiveInstrumentationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             live.replace_once('anchor anchor', 'anchor', 'replacement')
 
+    def test_semantic_variant_only_changes_the_query_prefix(self):
+        semantic = (ROOT / 'src/llm/semantic.c').read_text()
+        self.assertEqual(live.instrument_semantic(semantic, 'production'), semantic)
+        variant = live.instrument_semantic(semantic, 'none')
+        self.assertIn('k_query_instruction = "";', variant)
+        self.assertNotIn('Given a statement from a work of fiction', variant)
+        # Everything but the anchor is byte-identical, so nothing else in the client moved.
+        self.assertEqual(variant.replace('static const char *k_query_instruction = "";  /* diagnostic variant: no query prefix */\n', ''),
+                         semantic.replace(live.QUERY_INSTRUCTION_ANCHOR, ''))
+        with self.assertRaises(ValueError):
+            live.instrument_semantic(semantic, 'question')
+
 
 if __name__ == '__main__':
     unittest.main()

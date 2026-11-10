@@ -152,29 +152,53 @@ static cJSON *live_candidates(const MemoryCandidate *list, size_t count)
     return replace_once(source, anchor, trace + '\n' + anchor)
 
 
+QUERY_INSTRUCTION_ANCHOR = '''static const char *k_query_instruction =
+    "Instruct: Given a statement from a work of fiction, retrieve established facts about the same people, places "
+    "or things\\nQuery: ";
+'''
+
+
+def instrument_semantic(source, instruction):
+    """A query-instruction variant of the embedding client for an old-versus-new live retrieval measurement.
+    'production' leaves the file untouched; 'none' empties the query prefix. The vector index fingerprint
+    includes the instruction, so a variant build indexes its own collection."""
+    if instruction == 'production':
+        return source
+    if instruction != 'none':
+        raise ValueError(f'Unknown query instruction variant: {instruction}')
+    return replace_once(source, QUERY_INSTRUCTION_ANCHOR, 'static const char *k_query_instruction = "";  /* diagnostic variant: no query prefix */\n')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--query-instruction', choices=['production', 'none'], default='production',
+                        help="embedding query prefix: the production string, or none (diagnostic variant)")
     args = parser.parse_args()
     out = args.output.resolve()
     out.mkdir(parents=True, mode=0o700, exist_ok=False)
     chat = (ROOT / 'src/llm/chat.c').read_text()
     planner = (ROOT / 'src/llm/context_planner.c').read_text()
+    semantic = (ROOT / 'src/llm/semantic.c').read_text()
     (out / 'chat.c').write_text(instrument_chat(chat))
     (out / 'context_planner.c').write_text(instrument_planner(planner))
+    generated = ['chat.c', 'context_planner.c']
+    if args.query_instruction != 'production':
+        (out / 'semantic.c').write_text(instrument_semantic(semantic, args.query_instruction))
+        generated.append('semantic.c')
     manifest = {'method': 'Live production-path diagnostic; real generation, no replay or alternative prompt',
                 'git_head': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
+                'query_instruction': args.query_instruction,
                 'source_sha256': {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
                                   for p in (ROOT / 'src').rglob('*') if p.suffix in ('.c', '.h', '.m')},
-                'generated_sha256': {name: hashlib.sha256((out / name).read_bytes()).hexdigest()
-                                     for name in ('chat.c', 'context_planner.c')},
+                'generated_sha256': {name: hashlib.sha256((out / name).read_bytes()).hexdigest() for name in generated},
                 'tool_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                 'limits': 'Observed SSE lines, not HTTP framing; trace I/O may affect timings; public fixture only'}
     (out / 'manifest.json').write_text(json.dumps(manifest, indent=2)+'\n')
     with (out / 'build.log').open('w') as log:
         subprocess.run(['make', 'all'], cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, check=True)
         objects = {}
-        for filename in ('chat.c', 'context_planner.c'):
+        for filename in generated:
             original = 'src/llm/'+filename
             target = 'build/src/llm/'+filename[:-2]+'.o'
             obj = out / (filename[:-2]+'.o')

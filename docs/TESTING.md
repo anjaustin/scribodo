@@ -140,6 +140,14 @@ modify a database while any Scribodo process is running.
   generative model; `test_answer_ranker_instruction` (in `make test`) pins the
   pool reconstruction, rank metrics and the production instruction text; see
   `journal/answer-cycle2_ranker_instruction.md`.
+  `tools/answer_live_capture.py --query-instruction none` builds the same
+  live-capture app with an empty embedding query prefix for an old-versus-new
+  run on the real retrieval path; `tools/answer_live_delivery_compare.py`
+  compares two such runs' source delivery per designated passage (semantic and
+  lexical candidate rank, admission, presence in the final request), matching
+  units across runs by content hash. `test_answer_live_delivery_compare` (in
+  `make test`) pins the matching and the sheet; see
+  `journal/answer-cycle2_live_instruction.md`.
 
 - `test_recall` (in `make dbtest`) drives `recall_run` against real SQL in a
   throwaway database: displayed canon text is byte-equal to the current
