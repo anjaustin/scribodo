@@ -63,7 +63,7 @@ class UnitExtractionTests(unittest.TestCase):
         self.assertEqual(ux.verify({'answers': True, 'span': 'Charlotte Lucas is twenty-seven years old.'}, unit)[1], 'rejected_not_in_unit')
         self.assertEqual(ux.verify({'answers': True, 'span': 'about'}, unit)[1], 'too_short')
         self.assertEqual(ux.verify({'answers': False, 'span': ''}, unit), (None, 'none'))
-        self.assertEqual(ux.verify(None, unit), (None, 'none'))
+        self.assertEqual(ux.verify(None, unit), (None, 'unparsed'))  # REDTEAM-020 R2
 
     def test_schema_variants_change_field_order_and_span_only_infers_the_boolean(self):
         unit = units()[A]
@@ -144,6 +144,27 @@ class UnitExtractionTests(unittest.TestCase):
         self.assertEqual(ux.rank(q, spans), [(2, 1.0), (1, 0.6), (0, 0.0)])
         self.assertEqual(len(ux.clip_bytes('é' * 2000).encode()), 2000)  # cut on a character boundary
         self.assertTrue(ux.QUERY_INSTRUCTION.startswith('Instruct: ') and ux.QUERY_INSTRUCTION.endswith('Query: '))
+    def test_checks_see_through_markdown_emphasis(self):
+        # REDTEAM-020 R1: the fabrication screen must catch a bolded name.
+        self.assertFalse(ux.check_reply('unavailable_fact', "Mr. Bennet's first name is **Bennet**.", added=False)['pass'])
+        self.assertEqual(ux.check_reply('unavailable_fact', "Mr. Bennet's first name is **Bennet**.", added=False)['must_not'], [False])
+        self.assertTrue(ux.check_reply('single_fact_charlotte_age', 'She is **twenty-seven**.', added=False)['pass'])
+
+    def test_unparseable_extraction_is_counted_as_unparsed_not_none(self):
+        # REDTEAM-020 R2: a reply cut by the token cap is not the model saying "none".
+        unit = units()[A]
+        self.assertEqual(ux.verify(None, unit, 'span_uncapped'), (None, 'unparsed'))
+        self.assertEqual(ux.verify({'span': ''}, unit, 'span_uncapped'), (None, 'none'))
+        record = [{'id': 'single_fact_charlotte_age', 'creative_composer': False, 'compose': {}, 'ranking': {},
+                   'units': [{'expected_answers': False, 'answers': False, 'status': 'unparsed'}]}]
+        s = ux.summarize(record)
+        self.assertEqual((s['unparsed'], s['answers_true'], s['expected_false_answered']), (1, 0, 0))
+
+    def test_plan_counts_match_the_plan(self):
+        cases = ux.plan(fixture(), self.review, units(), self.capture)
+        self.assertEqual(ux.plan_counts(cases), {'extract_calls': 4, 'extract_added_calls': 1, 'expected_true_units': 3,
+                                                 'expected_true_realistic': 2, 'expected_true_added': 1, 'cases_with_added_units': 1})
+
 
 if __name__ == '__main__':
     unittest.main()

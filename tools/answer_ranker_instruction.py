@@ -42,14 +42,27 @@ def pools_from_record(record):
     return pools
 
 
+def pool_counts(pools, designated):
+    """Predeclaration counts from the data, not by hand (REDTEAM-020 R4)."""
+    expected = {scope: sum(s[4] for case in pools.values() for s in case[scope]) for scope in ('realistic', 'added')}
+    return {'spans_realistic': sum(len(c['realistic']) for c in pools.values()), 'spans_added_pool': sum(len(c['added']) for c in pools.values()),
+            'expected_spans_realistic': expected['realistic'], 'expected_spans_added': expected['added'],
+            'expected_spans_total': expected['realistic'] + expected['added'],
+            'designated_units': sum(len(v) for v in designated.values()), 'cases_with_designated_units': sum(bool(v) for v in designated.values())}
+
+
 def ranked(query_vector, vectors, items):
     """Rows in rank order with the expected flag; `items` aligned with `vectors`."""
     return [{'rank': r + 1, 'score': round(score, 6), **items[i]} for r, (i, score) in enumerate(rank(query_vector, vectors))]
 
 
 def expected_ranks(rows):
+    """Rank, pool size, score and margin to the best non-expected row; margin is None when either score is None
+    (a pipeline row outside the reranked block carries no score)."""
+    others = [o['score'] for o in rows if not o['expected'] and o['score'] is not None]
+    best_other = max(others) if others else None
     return [{'rank': row['rank'], 'of': len(rows), 'score': row['score'], 'margin_to_best_other':
-             round(row['score'] - max((o['score'] for o in rows if not o['expected']), default=float('nan')), 6)}
+             None if row['score'] is None or best_other is None else round(row['score'] - best_other, 6)}
             for row in rows if row['expected']]
 
 
@@ -63,6 +76,7 @@ def main():
     parser.add_argument('--product', type=Path, required=True, help='product-memory-use/<label> with units.json')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--batch', type=int, default=4, help='units per embedding request')
+    parser.add_argument('--dry-run', action='store_true', help='print the pool sizes and expected-span counts without the embedder')
     args = parser.parse_args()
     fixture = json.loads(FIXTURE.read_text())
     questions = {c['id']: c['question'] for c in fixture['cases']}
@@ -71,6 +85,8 @@ def main():
     pools = pools_from_record(record)
     designated = {c['id']: {uid for uid, flag in c['expected_answers'].items() if flag}
                   for c in json.loads((args.record.parent / 'plan.json').read_text())}
+    if args.dry_run:
+        print(json.dumps(pool_counts(pools, designated), indent=2)); return
     if sha(EMBED_GGUF) != EMBED_SHA:
         raise ValueError('Pinned embedding model mismatch')
     args.output.mkdir(parents=True, mode=0o700, exist_ok=False)

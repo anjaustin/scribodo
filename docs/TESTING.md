@@ -148,6 +148,15 @@ modify a database while any Scribodo process is running.
   units across runs by content hash. `test_answer_live_delivery_compare` (in
   `make test`) pins the matching and the sheet; see
   `journal/answer-cycle2_live_instruction.md`.
+  The clean-review, extraction and ranker tools take `--dry-run`, which prints
+  the arm and expected counts from the data so a predeclaration copies them
+  rather than counting by hand (REDTEAM-020).
+  `tools/answer_rerank_arm.py` (run from `build/venv-causal`) ranks the
+  designated units and stating spans with four rankers: the production
+  embedder, content-word lexical overlap, Qwen3-Reranker-0.6B over all units,
+  and the reranker over the embedder's top 32. `test_answer_rerank_arm` (in
+  `make test`) pins the overlap scoring, the model-card prompt, the pipeline
+  shape and the reranker pin without torch; see `journal/answer-cycle2_rerank.md`.
 
 - `test_recall` (in `make dbtest`) drives `recall_run` against real SQL in a
   throwaway database: displayed canon text is byte-equal to the current

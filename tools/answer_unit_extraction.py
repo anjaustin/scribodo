@@ -135,7 +135,10 @@ def answered(parsed, variant='answers_first'):
 
 
 def verify(parsed, unit, variant='answers_first'):
-    """A span counts only when the model says the unit answers and the span is in the unit."""
+    """A span counts only when the model says the unit answers and the span is in the unit.
+    An unparseable reply (for example one cut by the token cap) is 'unparsed', never 'none' (REDTEAM-020 R2)."""
+    if parsed is None:
+        return None, 'unparsed'
     if not answered(parsed, variant):
         return None, 'none'
     span = parsed.get('span') or ''
@@ -196,10 +199,16 @@ def synthetic_packet(verified):
     return blocks + BOUNDARY
 
 
+def plain(reply):
+    """Markdown emphasis removed before any check: '**Bennet**' must read as 'Bennet' (REDTEAM-020 R1)."""
+    return reply.replace('*', '').replace('_', '')
+
+
 def check_reply(case_id, reply, added):
     table = CHECKS_ADDED if added else CHECKS
-    must = [bool(ABSTAIN.search(reply)) if p == 'ABSTAIN' else bool(re.search(p, reply, re.I)) for p in table[case_id]['must']]
-    must_not = [not re.search(p, reply) for p in table[case_id]['must_not']]
+    text = plain(reply)
+    must = [bool(ABSTAIN.search(text)) if p == 'ABSTAIN' else bool(re.search(p, text, re.I)) for p in table[case_id]['must']]
+    must_not = [not re.search(p, text) for p in table[case_id]['must_not']]
     return {'must': must, 'must_not': must_not, 'pass': all(must) and all(must_not), 'markers': len(MARKERS.findall(reply))}
 
 
@@ -331,7 +340,7 @@ def run(cases, units, generate, timeout, repeat_compose=True, variant='answers_f
 
 def summarize(record):
     s = {'extract_calls': 0, 'answers_true': 0, 'verified': 0, 'verified_prefix': 0, 'rejected_not_in_unit': 0, 'too_short': 0,
-         'expected_true': 0, 'expected_true_verified': 0, 'expected_false': 0, 'expected_false_answered': 0,
+         'unparsed': 0, 'expected_true': 0, 'expected_true_verified': 0, 'expected_false': 0, 'expected_false_answered': 0,
          'expected_false_verified': 0, 'markers_in_composed': 0, 'new_writing_on_factual': 0, 'arms': {}, 'ranks_of_expected_true': {}}
     tot = {'pieces': 0, 'bound_to_cited_source': 0, 'in_other_source_than_cited': 0, 'only_in_attachment_preview': 0, 'in_no_supplied_text': 0}
     repeats = {}
@@ -365,6 +374,16 @@ def summarize(record):
     return s
 
 
+def plan_counts(cases):
+    """The counts a predeclaration must copy, computed from the plan rather than by hand (REDTEAM-020 R4)."""
+    return {'extract_calls': sum(len(c['delivered']) + len(c['added']) for c in cases),
+            'extract_added_calls': sum(len(c['added']) for c in cases),
+            'expected_true_units': sum(sum(c['expected_answers'].values()) for c in cases),
+            'expected_true_realistic': sum(c['expected_answers'][u] for c in cases for u in c['delivered']),
+            'expected_true_added': sum(c['expected_answers'][u] for c in cases for u in c['added']),
+            'cases_with_added_units': sum(bool(c['added']) for c in cases)}
+
+
 def record_reply(record, case_id, suffix):
     entry = next(e for e in record if e['id'] == case_id)
     return entry['compose'].get('compose' + suffix, {}).get('reply')
@@ -382,6 +401,7 @@ def main():
                         help='extraction schema: boolean before the span (ux1), span before the boolean, span only (600-char cap), '
                              'or span only uncapped (software sentence cut)')
     parser.add_argument('--rank', action='store_true', help='also rank verified spans with the production embedder and compose from the top 1 and 2')
+    parser.add_argument('--dry-run', action='store_true', help='print the plan and predeclared counts without any model')
     args = parser.parse_args()
     fixture = json.loads(FIXTURE.read_text())
     review = json.loads(args.review.read_text())
@@ -390,6 +410,8 @@ def main():
     units = {u['unit_id']: u for u in json.loads((args.product / 'units.json').read_text())}
     cases = plan(fixture, review, units, args.capture)
     kinds = {c['id']: c['kind'] for c in fixture['cases']}
+    if args.dry_run:
+        print(json.dumps(plan_counts(cases), indent=2)); return
     if sha(GGUF) != GGUF_SHA:
         raise ValueError('Pinned model mismatch')
     if args.rank and sha(EMBED_GGUF) != EMBED_SHA:

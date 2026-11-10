@@ -165,3 +165,9 @@ short fact in one unit against a single short claim. That is the per-unit
 extraction shape ("which sentence answers; quote it or NONE"), which the next
 arm should measure directly on the same eight cases rather than inferring it
 from this one. Nothing in production changed.
+
+Addendum (REDTEAM-020 R3): the constant-answer baseline quoted above (13 of 16
+for "unsupported") was computed in the session, not by the tool. The tool now
+writes `constant_baselines` and `best_constant_claim_accepted` into
+`score.json`; `build/cr1/score.json` was re-scored from the saved responses and
+reports 14 accepted against a best constant of 13, as stated.

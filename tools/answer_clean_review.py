@@ -162,6 +162,10 @@ def score(results, oracle):
                                 'accepted': parsed['reply_verdict'] in truth['expected'], 'finish': finish,
                                 'prompt_tokens': (rows[name].get('usage') or {}).get('prompt_tokens')})
     spans = out['span']
+    # A reviewer must beat the best constant answer on the predeclared set (REDTEAM-020 R3).
+    expected = {name: set(t['expected']) for name, t in oracle.items() if name.startswith('claim:')}
+    out['constant_baselines'] = {verdict: sum(verdict in e for e in expected.values())
+                                 for verdict in ('supported', 'contradicted', 'unsupported')}
     out['summary'] = {
         'claim_accepted': sum(c['accepted'] for c in out['claim']), 'claim_total': len(out['claim']),
         'same_accepted': sum(c['accepted'] for c in out['same']), 'same_total': len(out['same']),
@@ -169,6 +173,7 @@ def score(results, oracle):
         'span_true_in_oracle': sum(s['verbatim'] for s in spans),
         'span_false_positive': sum(s['model'] and not s['verbatim'] for s in spans),
         'span_false_negative': sum(not s['model'] and s['verbatim'] for s in spans),
+        'best_constant_claim_accepted': max(out['constant_baselines'].values()) if expected else 0,
     }
     return out
 
@@ -182,6 +187,7 @@ def main():
     parser.add_argument('--slot-tokens', type=int, default=32768)
     parser.add_argument('--timeout', type=int, default=600)
     parser.add_argument('--score-only', action='store_true', help='re-score an existing output directory')
+    parser.add_argument('--dry-run', action='store_true', help='print arm counts and the predeclared expectations without any model')
     args = parser.parse_args()
     fixture = json.loads(FIXTURE.read_text())
     review = json.loads(args.review.read_text())
@@ -189,6 +195,12 @@ def main():
     if review['fixture_sha256'] != hashlib.sha256(FIXTURE.read_bytes()).hexdigest():
         raise ValueError('Review sheet was produced from a different fixture')
     arms, oracle = build_arms(fixture, review, units, args.capture)
+    if args.dry_run:
+        kinds = {k: sum(a.startswith(k + ':') for a, _ in arms) for k in ('claim', 'claim2', 'span', 'same')}
+        expected = {n: set(t['expected']) for n, t in oracle.items() if n.startswith('claim:')}
+        print(json.dumps({'arms': kinds, 'span_oracle_true': sum(t.get('verbatim', False) for n, t in oracle.items() if n.startswith('span:')),
+                          'constant_baselines': {v: sum(v in e for e in expected.values()) for v in ('supported', 'contradicted', 'unsupported')}}, indent=2))
+        return
     if args.score_only:
         results = json.loads((args.output / 'results.json').read_text())
         scored = score(results, json.loads((args.output / 'oracle.json').read_text()))

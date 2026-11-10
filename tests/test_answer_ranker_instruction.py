@@ -48,6 +48,12 @@ class RankerInstructionTests(unittest.TestCase):
         for name in ('production', 'question', 'qwen_default'):
             self.assertTrue(ri.INSTRUCTIONS[name].startswith('Instruct: ') and ri.INSTRUCTIONS[name].endswith('\nQuery: '), name)
 
+    def test_pool_counts_come_from_the_data(self):
+        pools = ri.pools_from_record(record())
+        counts = ri.pool_counts(pools, {'a': {'u1', 'u4'}, 'b': set()})
+        self.assertEqual(counts, {'spans_realistic': 3, 'spans_added_pool': 3, 'expected_spans_realistic': 1, 'expected_spans_added': 2,
+                                  'expected_spans_total': 3, 'designated_units': 2, 'cases_with_designated_units': 1})
+
 
 if __name__ == '__main__':
     unittest.main()

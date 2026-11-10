@@ -266,6 +266,7 @@ test: $(TESTS)
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_unit_extraction python3 tests/test_answer_unit_extraction.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_ranker_instruction python3 tests/test_answer_ranker_instruction.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_live_delivery_compare python3 tests/test_answer_live_delivery_compare.py
+	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_rerank_arm python3 tests/test_answer_rerank_arm.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_income_isolation python3 tests/test_answer_income_isolation.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_citation_binding python3 tests/test_answer_citation_binding.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_boundary_fixture python3 tests/test_answer_boundary_fixture.py

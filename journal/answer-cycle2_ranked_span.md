@@ -151,3 +151,10 @@ spans only; a deterministic ranker before the composer; one span, or one per
 asked-for value, not a packet; abstain in software when nothing verifies.
 The ranker's instruction and the two-value case are the next measurements.
 Nothing in production changed in this cycle.
+
+Addendum (REDTEAM-020 R2): the one extraction call that hit its 256-token cap
+was recorded as status `none` (model said the unit does not answer). It was an
+unparseable reply, not an answer. `build/ux4/record-rescored.json` re-derives
+every status from the saved responses under the corrected rule: one call moves
+from `none` to `unparsed`; no other status, rank or composition figure changes
+(answers 57 of 58, expected-true 9 of 9, expected-false verified 20).

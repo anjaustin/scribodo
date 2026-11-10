@@ -95,6 +95,13 @@ class CleanReviewTests(unittest.TestCase):
         self.assertEqual(s['summary']['same_accepted'], 1)
         self.assertEqual(s['unparsed'], 1)
 
+    def test_constant_baselines_are_reported_beside_the_reviewer(self):
+        # REDTEAM-020 R3: a reviewer that only matches the best constant answer has shown nothing.
+        _, oracle = cr.build_arms(fixture(), self.review, units(), self.capture)
+        s = cr.score([], oracle)
+        self.assertEqual(s['constant_baselines'], {'supported': 1, 'contradicted': 0, 'unsupported': 2})
+        self.assertEqual(s['summary']['best_constant_claim_accepted'], 2)
+
 
 if __name__ == '__main__':
     unittest.main()
