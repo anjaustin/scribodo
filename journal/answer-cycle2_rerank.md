@@ -141,3 +141,72 @@ ranks recomputed). The predeclared bars are unchanged and are read on the
 documents-only ranks as well as the all-units ranks. Expected if run 1's
 reading is right: the cross-encoder's documents-only ranks for the three
 misses fall inside the top 5.
+
+## Results, run 2 (`build/rk2/`, documents-only view added, 2026-11-10)
+
+Reproducibility: every all-units designated rank under every ranker is
+identical to run 1 (embedder 96 s, reranker scoring 2,012 s). Full rows in
+`build/rk2/unit-rows.json`.
+
+### Designated units among the 403 document units (chat units removed)
+
+| Case | Unit | embedder | lexical | cross | cross_top32 |
+|---|---|---:|---:|---:|---:|
+| single_fact_entail | entail | 2 | 3 | 3 | 3 |
+| two_entities_fortunes | hundred thousand | **1** | **1** | **1** | **1** |
+| two_entities_fortunes | twenty thousand | 3 | 40 | 7 | 5 |
+| single_fact_charlotte_age | twenty-seven | 3 | 23 | **1** | **1** |
+| single_fact_walk_distance | three miles | 25 | 10 | **1** | **1** |
+| author_correction | girl of fifteen | 4 | 30 | 2 | 2 |
+| author_correction | not sixteen | 70 | 123 | 4 | 70 |
+| contradictory_drafts | three miles | 18 | 93 | 3 | 2 |
+| creative_request | entail | 13 | 33 | 10 | 8 |
+
+| Ranker | First places (of 9) | Top 5 | Top 16 | MRR |
+|---|---:|---:|---:|---:|
+| embedder | 1 | 5 | 6 | 0.289 |
+| lexical | 1 | 2 | 3 | 0.176 |
+| cross | **3** | **7** | **9** | **0.518** |
+| cross_top32 | 3 | 7 | 8 | 0.519 |
+
+Against the predeclared bars: the three missed units go from 25, 18 and 70
+among document units to 1, 3 and 4 under the full cross-encoder. All three
+are inside the top 5, the bar for a production-pipeline candidate. The four
+current deliveries are kept (entail 3, hundred thousand 1, twenty thousand
+7, Charlotte 1; the planner admitted seven units per question in the live
+runs, so 7 is at the edge and is noted). The pipeline shape, cross-encoder
+over the embedder's top 32, reaches two of the three; "not sixteen" stays at
+70 because the embedder never surfaces it. The one place the cross-encoder
+is worse than the embedder is the twenty-thousand unit (3 to 7), where the
+question names two entities and the unit states one.
+
+Reading of the top-3 lists: for the walk question the cross-encoder's first
+document unit is the stating unit at P(yes) 0.993; for the drafts question
+two units about other walks score above it (0.958, 0.914 against 0.908); for
+the correction question a unit about Lydia's marriage outranks "not sixteen"
+(0.971 against 0.967). Margins are small where it fails, large where it
+succeeds.
+
+## Decision
+
+1. **The cross-encoder is the specialist.** It is the only ranker measured
+   that puts every designated unit in delivery range and the three misses in
+   the top 5, with the four current deliveries kept. Lexical overlap is
+   rejected as a mechanism and as a component.
+2. **Recall still caps the pipeline.** Reranking the embedder's top 32 cannot
+   reach a unit the embedder ranks 70th. A production design needs a wider
+   first stage (top 64 or the lexical union) or a cheaper reranker over more
+   candidates; the cost is 0.3 s per pair in float32 PyTorch, so 32 pairs is
+   about 10 s per question on this Mac, acceptable only off the foreground
+   path, and a llama.cpp or lower-precision runtime should be measured before
+   any design assumes it.
+3. **Rank units, not spans.** Every span ranker left the short spans last;
+   the cross-encoder found their units. Extraction follows ranking.
+4. **Chat units need hygiene before any ranker.** The session's own question
+   and earlier replies outrank every manuscript unit under every ranker.
+   That is already a listed item; this run quantifies it.
+
+Next measurement: the pipeline end to end on the live path, old against new,
+with the cross-encoder reranking a wider first stage, extraction from the top
+unit, byte verification and the one-span composer; and the runtime cost of
+the reranker under llama.cpp. Nothing in production changed in this arm.
