@@ -120,6 +120,12 @@ modify a database while any Scribodo process is running.
   ambiguous or missing passages. `tools/answer_product_run.py` is the tracked
   runner that drives a question script through a real-app binary and preserves
   messages, units and the work copy before dropping the test database.
+  `tools/answer_clean_review.py` reviews that run's visible replies with the
+  pinned model in a fresh window (one unit, question, reply; strict JSON schema,
+  temperature zero), with a same-window control and a per-quotation span arm
+  scored against a byte oracle; see `journal/answer-cycle2_clean_review.md`.
+  `test_answer_clean_review` (in `make test`) pins the arm construction, the
+  exported-unit check, the oracle and the scoring without a model.
 
 - `test_recall` (in `make dbtest`) drives `recall_run` against real SQL in a
   throwaway database: displayed canon text is byte-equal to the current
