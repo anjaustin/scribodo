@@ -509,11 +509,13 @@ tsan: $(MARIADB_LIB) $(BUILD)/tests/fault_alloc.o
 	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) $(CORE_SRCS) $(LLM_SRCS) src/core/json_vendor.c \
 	  tests/test_state_fixture.c tests/test_remote.c -o build/tsan/test_remote $(MARIADB_LIBS) -lpthread
 	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) $(CORE_SRCS) $(LLM_SRCS) src/core/json_vendor.c \
+	  tests/test_state_fixture.c tests/test_answer_pipeline.c -o build/tsan/test_answer_pipeline $(MARIADB_LIBS) -lpthread
+	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) $(CORE_SRCS) $(LLM_SRCS) src/core/json_vendor.c \
 	  src/app/chat_controller.c src/ui/chat_view.c src/ui/editor.c src/ui/input.c tests/raylib_stubs.c tests/test_chat_view.c \
 	  -o build/tsan/test_chat_view $(MARIADB_LIBS) -lpthread -lm
 	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) -include tests/fault_alloc.h $(SEMANTIC_FAULT_SRCS) \
 	  $(BUILD)/tests/fault_alloc.o -o build/tsan/test_semantic_faults $(MARIADB_LIBS) -lpthread
-	@set -e; for t in test_chat_history_job test_store_connections test_frame_metrics test_context_planner test_memory_job test_memory_tokens test_memory_document_cache test_memory_budget test_generative_gate test_http_deadlines test_db_deadlines test_memory_brief_model test_llm test_components test_remote test_chat_view test_semantic_faults; do \
+	@set -e; for t in test_chat_history_job test_store_connections test_frame_metrics test_context_planner test_memory_job test_memory_tokens test_memory_document_cache test_memory_budget test_generative_gate test_http_deadlines test_db_deadlines test_memory_brief_model test_llm test_components test_remote test_answer_pipeline test_chat_view test_semantic_faults; do \
 	  TSAN_OPTIONS=halt_on_error=1 $(WATCHDOG) 300 tsan-$$t ./build/tsan/$$t; echo; \
 	done
 

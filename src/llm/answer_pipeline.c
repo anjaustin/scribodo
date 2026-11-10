@@ -186,10 +186,10 @@ bool answer_extraction_parse(const char *response_body, char **span, bool *parse
     const cJSON *msg = first ? cJSON_GetObjectItemCaseSensitive(first, "message") : NULL;
     const cJSON *content = msg ? cJSON_GetObjectItemCaseSensitive(msg, "content") : NULL;
     bool ok = false;
-    if (cJSON_IsString(content)) {
+    if (content && cJSON_IsString(content)) { /* explicit: the analyzer does not see cJSON_IsString(NULL) as false (REDTEAM-021 R5) */
         cJSON *inner = cJSON_Parse(content->valuestring);
         const cJSON *s = inner ? cJSON_GetObjectItemCaseSensitive(inner, "span") : NULL;
-        if (cJSON_IsString(s)) {
+        if (s && cJSON_IsString(s)) {
             *span = strdup(s->valuestring);
             ok = *span != NULL;
             if (parsed) *parsed = ok;
@@ -227,22 +227,27 @@ bool answer_pipeline_run(Db *db, SemanticClient *vectors, RerankClient *rerank, 
     set_status(out, "none");
     if (!db || !vectors || !rerank || !chat_server || !scope || !query || !query[0] || before < 0) return false;
     out->attempted = true;
-    MemoryCandidate lexical[MEMORY_CANDIDATES] = {0}, semantic[MEMORY_CANDIDATES] = {0};
+    /* Heap, not the worker's stack: 64 units and 128 candidates are about
+     * 58 KB, more under the sanitizers (REDTEAM-021 R2). */
+    typedef struct { MemoryCandidate lexical[MEMORY_CANDIDATES], semantic[MEMORY_CANDIDATES], merged[ANSWER_CANDIDATES];
+                     MemoryUnit units[ANSWER_CANDIDATES]; } Work;
+    Work *w = calloc(1, sizeof(*w));
+    if (!w) { set_status(out, "extraction_failed"); return false; }
+    MemoryCandidate *lexical = w->lexical, *semantic = w->semantic, *merged = w->merged;
+    MemoryUnit *units = w->units;
     size_t nl = 0, ns = 0;
     char why[256];
     bool lex_ok = memory_lexical_candidates_with_documents_before(db, scope, documents, query, before, MEMORY_CANDIDATES, lexical, &nl);
     bool sem_ok = memory_vectors_search_with_documents_before(vectors, scope, documents, query, before, MEMORY_CANDIDATES, semantic, &ns, why, sizeof(why));
     if (!lex_ok) nl = 0;
     if (!sem_ok) ns = 0;
-    MemoryCandidate merged[ANSWER_CANDIDATES];
     size_t nm = 0;
     for (size_t i = 0; i < ns; i++) add_candidate(merged, &nm, &semantic[i]);
     for (size_t i = 0; i < nl; i++) add_candidate(merged, &nm, &lexical[i]);
     out->candidates = nm;
-    if (!nm) { set_status(out, "no_candidates"); return true; }
+    if (!nm) { set_status(out, "no_candidates"); free(w); return true; }
     /* All SQL first: hydration runs inside the store's short preparation
      * budget; scoring and extraction are HTTP only and take seconds. */
-    MemoryUnit units[ANSWER_CANDIDATES];
     size_t nu = 0;
     for (size_t i = 0; i < nm && !stopped(cancel, deadline_ms); i++) {
         MemoryUnit unit = {0};
@@ -259,10 +264,10 @@ bool answer_pipeline_run(Db *db, SemanticClient *vectors, RerankClient *rerank, 
         units[nu++] = unit;
     }
     out->hydrated = nu;
-    if (!nu) { set_status(out, "no_candidates"); return true; }
+    if (!nu) { set_status(out, "no_candidates"); free(w); return true; }
     if (!rerank_client_ready(rerank, cancel, deadline_ms)) {
         for (size_t i = 0; i < nu; i++) memory_unit_free(&units[i]);
-        set_status(out, "rerank_unavailable"); return true;
+        set_status(out, "rerank_unavailable"); free(w); return true;
     }
     double t0 = memory_budget_now_ms();
     for (size_t i = 0; i < nu; i++) {
@@ -287,6 +292,7 @@ bool answer_pipeline_run(Db *db, SemanticClient *vectors, RerankClient *rerank, 
         } else memory_unit_free(&units[i]);
     }
     out->rerank_ms = memory_budget_now_ms() - t0;
+    free(w);
     if (!out->has_top) {
         if (!strcmp(out->status, "none")) set_status(out, out->score_failures ? "rerank_unavailable" : "no_candidates");
         return true;

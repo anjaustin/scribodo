@@ -1160,9 +1160,13 @@ static bool build_in_worker(ChatSession *s)
             AnswerPipelineResult pipeline = {0};
             MemoryScope pscope;
             double pipeline_deadline = memory_budget_now_ms() + ANSWER_PIPELINE_BUDGET_MS;
-            if (memory_scope_get(db, project_id, s->memory_conversation, &pscope) && pscope.enabled)
-                answer_pipeline_run(db, s->memory_vectors, s->rerank, s->server, &pscope, &documents, query, before,
+            /* The vector search is bounded by the pipeline's own deadline and the
+             * session's cancel, not the 500 ms preparation budget (REDTEAM-021 R1). */
+            SemanticClient *pipeline_vectors = semantic_client_bounded(s->memory_vectors, &s->cancel, pipeline_deadline);
+            if (pipeline_vectors && memory_scope_get(db, project_id, s->memory_conversation, &pscope) && pscope.enabled)
+                answer_pipeline_run(db, pipeline_vectors, s->rerank, s->server, &pscope, &documents, query, before,
                                     &s->cancel, pipeline_deadline, &pipeline);
+            semantic_client_destroy(pipeline_vectors);
             char *preface = answer_verified_block(&pipeline);
             char *rebuilt = preface ? chat_build_request_pipeline(history.messages, history.count, &names, slot_ctx, counter, s,
                                                                   &first_history, preface) : NULL;

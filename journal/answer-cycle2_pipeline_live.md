@@ -216,3 +216,35 @@ What the two passes measured, in order of leverage:
 
 Nothing in production defaults changed; the pipeline remains behind
 `SCRIBODO_ANSWER_PIPELINE=verified`.
+
+## Pass 3 (predeclared): two verified spans, and the block ahead of history
+
+**Change under test (one at a time, old = pass 2):**
+- **3a, two spans.** The pipeline keeps the top two manuscript units by
+  reranker score, extracts from each, byte-verifies each, and the block lists
+  the verified spans as Source 1 and Source 2 in score order. A unit whose
+  span fails verification contributes nothing; the block says how many spans
+  verified. Decided from the pass 2 margins (0.0007, 0.003, 0.019 between
+  the chosen unit and the designated one) and from `ux4`, where two verified
+  spans composed safely and stitching appeared only at five.
+- **3b, block ahead of history.** Same as 3a, with the verified block placed
+  in the system message after the composer instruction instead of at the top
+  of the author's newest message, so it precedes the bounded history rather
+  than following it. Diagnostic switch `SCRIBODO_ANSWER_BLOCK=system`.
+
+**Runs:** `pipe-new3a`, `pipe-new3b`, same binary lineage, script, seed and
+fixture as passes 1 and 2; captures `build/answer-pipe-capture/{new3a,new3b}`;
+sheets from `tools/answer_pipeline_review.py` (which now reads up to two
+chosen units per receipt).
+
+**Predeclared:** the four current deliveries should come back with two spans
+(entail at rank 3 on pass 2 is the one at risk); the correction case should
+carry "girl of fifteen" (rank 2); drafts should carry three miles (rank 2);
+the fortunes should carry both values only if the twenty-thousand unit rises
+from rank 7, which two spans do not promise. Reject either pass on a
+fabrication or a guessed distance. Accept 3a as the candidate if the
+correct-answer count rises above pass 2's one without a fabrication; compare
+3b to 3a on the first question (the fixture-tail window) and on any case
+where the composer ignored a verified span in favor of history.
+
+Results follow below once both runs complete; nothing above is edited after it.

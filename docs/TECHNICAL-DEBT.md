@@ -41,6 +41,18 @@ first exhausts client ports within the window.
   connections per sweep. Measure the `TIME_WAIT` count after one run before and
   after; the number above is the baseline.
 
+## Open — the reranker server's memory figure is a placeholder
+
+**Registered:** 2026-11-10 (REDTEAM-021 R4). `llm_server_rerank_config` in
+`src/llm/server.c` sets `mem_fixed` to 1 GiB and `mem_per_token` to 0 without
+a measurement; the embedder's figures came from llama-server's own memory
+breakdown (MODEL-001). The context fit subtracts the figure when
+`SCRIBODO_ANSWER_PIPELINE=verified` is set, so an undercount could leave the
+chat model's context fit too optimistic on a 16 GB machine with all three
+servers running. Remediation: measure the reranker at `-c 2048 -b 2048` the
+way the embedder was measured and replace the constant; required before the
+pipeline is anything but an experiment flag.
+
 ## Accepted residual risks — persistence review and direct-push workflow
 
 **Recorded:** 2026-11-06
