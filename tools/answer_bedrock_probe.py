@@ -23,8 +23,8 @@ SHA = '39158a79f56edb85e0c4252ce6447b8d7883ef82ffedd02f0cda7c84da5e9f68'
 
 
 class UnixHTTP(http.client.HTTPConnection):
-    def __init__(self, path):
-        super().__init__('localhost', timeout=180)
+    def __init__(self, path, timeout=180):
+        super().__init__('localhost', timeout=timeout)
         self.path = str(path)
 
     def connect(self):
@@ -33,8 +33,8 @@ class UnixHTTP(http.client.HTTPConnection):
         self.sock.connect(self.path)
 
 
-def call(sock, endpoint, data=None):
-    connection = UnixHTTP(sock)
+def call(sock, endpoint, data=None, timeout=180):
+    connection = UnixHTTP(sock, timeout=timeout)
     try:
         connection.request('GET' if data is None else 'POST', endpoint,
                            body=None if data is None else json.dumps(data).encode(),
@@ -58,7 +58,7 @@ def private_socket():
         yield sock
 
 
-def run_server(output, command, sock, variants):
+def run_server(output, command, sock, variants, timeout=180):
     results = []
     with (output / 'server.log').open('w') as log:
         server = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
@@ -80,7 +80,7 @@ def run_server(output, command, sock, variants):
                 rendered = call(sock, '/apply-template', request)
                 (output / f'{name}-template.json').write_text(json.dumps(rendered, ensure_ascii=False, indent=2)+'\n')
                 start = time.monotonic()
-                response = call(sock, '/v1/chat/completions', request)
+                response = call(sock, '/v1/chat/completions', request, timeout=timeout)
                 (output / f'{name}-response.json').write_text(json.dumps(response, ensure_ascii=False, indent=2)+'\n')
                 choice = response['choices'][0]
                 row = {'arm': name, 'wall_seconds': time.monotonic()-start,

@@ -255,6 +255,13 @@ test: $(TESTS)
 	$(WATCHDOG) $(TEST_TIMEOUT) test_backup python3 tests/test_backup.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_frame_soak python3 tests/test_frame_soak.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_probes python3 tests/test_answer_probes.py
+	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_live_capture python3 tests/test_answer_live_capture.py
+	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_live_audit python3 tests/test_answer_live_audit.py
+	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_live_ablation python3 tests/test_answer_live_ablation.py
+	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_live_parity python3 tests/test_answer_live_parity.py
+	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_manifold_probe python3 tests/test_answer_manifold_probe.py
+	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_plumbing_arithmetic python3 tests/test_answer_plumbing_arithmetic.py
+	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_plumbing_contract python3 tests/test_answer_plumbing_contract.py
 
 # Verify pinned dependency inventory, upstream refs, container digests and OSV
 # advisories. The scheduled workflow publishes the same report as an artifact.
