@@ -11,6 +11,8 @@ LOG = """noise
 ANSWER_PIPELINE candidates=3 hydrated=3 scored=3 failures=0 top=aaaaaaaaaaaa1111 score=0.9900 status=verified rerank_ms=12.5 extract_ms=3.0 request_bytes=100 history_first=4
 ANSWER_PIPELINE_SCORES aaaaaaaaaaaa:0.9900 bbbbbbbbbbbb:0.5000 cccccccccccc:0.1000
 ANSWER_PIPELINE candidates=0 hydrated=0 scored=0 failures=0 top=- score=0.0000 status=no_candidates rerank_ms=0.0 extract_ms=0.0 request_bytes=90
+ANSWER_PIPELINE candidates=2 hydrated=2 scored=2 failures=0 top=aaaaaaaaaaaa1111 score=0.9000 status=verified second=bbbbbbbbbbbb2222 second_score=0.8000 second_status=none rerank_ms=1.0 extract_ms=2.0 request_bytes=80 history_first=1
+ANSWER_PIPELINE_SCORES aaaaaaaaaaaa:0.9000 bbbbbbbbbbbb:0.8000
 """
 UNITS = [{'unit_id': 'a' * 12 + '1111', 'document_name': 'part01.md', 'text': 'It was only three miles. More.'},
          {'unit_id': 'b' * 12 + '2222', 'document_name': 'part04.md', 'text': 'twenty-four miles'}]
@@ -21,7 +23,9 @@ CASE = {'id': 'single_fact_walk_distance', 'kind': 'single_fact', 'question': 'H
 class PipelineReviewTests(unittest.TestCase):
     def test_trace_parsing_pairs_lines_and_tolerates_missing_scores(self):
         traces = pr.parse_trace(LOG)
-        self.assertEqual(len(traces), 2)
+        self.assertEqual(len(traces), 3)
+        self.assertEqual((traces[2][0]['second'], traces[2][0]['second_score'], traces[2][0]['second_status']), ('b' * 12 + '2222', .8, 'none'))
+        self.assertIsNone(traces[0][0]['second'])
         self.assertEqual(traces[0][0]['scored'], 3); self.assertEqual(traces[0][0]['history_first'], 4)
         self.assertEqual(traces[0][1], [('a' * 12, .99), ('b' * 12, .5), ('c' * 12, .1)])
         self.assertEqual((traces[1][0]['status'], traces[1][1]), ('no_candidates', []))

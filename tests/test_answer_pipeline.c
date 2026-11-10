@@ -165,13 +165,27 @@ static void test_block_and_receipt(void)
 {
     AnswerPipelineResult r = result_with("only three miles. I shall be back by dinner.", "part01.md", 0.9928, "verified");
     char *block = answer_verified_block(&r);
-    CHECK(block && !strcmp(block, "Verified passage from the manuscript, quoted exactly (Source 1, part01.md):\n\"only three miles. I shall be back by dinner.\"\n\n"));
+    CHECK(block && !strcmp(block, "Verified passage from the manuscript, quoted exactly:\nSource 1 (part01.md): \"only three miles. I shall be back by dinner.\"\n\n"));
     char *receipt = answer_receipt(&r);
     CHECK(receipt && strstr(receipt, "unit=unit-abc") && strstr(receipt, "document=part01.md") && strstr(receipt, "status=verified"));
     CHECK(strstr(receipt, "only three miles. I shall be back by dinner.")); /* the UI script checks the passage here */
+    CHECK(!strstr(receipt, "VERIFIED SOURCE 2"));
+    free(block); free(receipt);
+    /* Two units: both spans listed in score order; a second unit without a verified span adds nothing to the block. */
+    r.has_second = true; r.second.kind = MEMORY_SOURCE_DOCUMENT; snprintf(r.second.id, sizeof(r.second.id), "unit-def");
+    snprintf(r.second.document_name, sizeof(r.second.document_name), "part02.md"); r.second.text = strdup(k_unit);
+    r.second_score = 0.91; snprintf(r.second_status, sizeof(r.second_status), "rejected_not_in_unit");
+    block = answer_verified_block(&r);
+    CHECK(block && !strcmp(block, "Verified passage from the manuscript, quoted exactly:\nSource 1 (part01.md): \"only three miles. I shall be back by dinner.\"\n\n"));
+    free(block);
+    r.second_span = strdup("I shall be back by dinner."); snprintf(r.second_status, sizeof(r.second_status), "verified");
+    block = answer_verified_block(&r);
+    CHECK(block && !strcmp(block, "Verified passages from the manuscript, quoted exactly, best match first:\nSource 1 (part01.md): \"only three miles. I shall be back by dinner.\"\nSource 2 (part02.md): \"I shall be back by dinner.\"\n\n"));
+    receipt = answer_receipt(&r);
+    CHECK(receipt && strstr(receipt, "VERIFIED SOURCE 2 | unit=unit-def | document=part02.md | score=0.9100 | status=verified") && strstr(receipt, "\nI shall be back by dinner.\n"));
     free(block); free(receipt);
     answer_pipeline_result_free(&r);
-    CHECK(!r.has_top && !r.span);
+    CHECK(!r.has_top && !r.span && !r.has_second && !r.second_span);
 
     AnswerPipelineResult none = result_with(NULL, "part01.md", 0.5, "rejected_not_in_unit");
     block = answer_verified_block(&none);
@@ -234,6 +248,18 @@ static void test_pipeline_request(void)
     CHECK(!strstr(bounded, "turn 0") && strstr(bounded, "turn 10") && !strstr(bounded, "turn 5\""));
     cJSON_Delete(bj);
     free(bounded);
+    /* Pass 3b placement: the block moves into the system message and the newest words carry no preface. */
+    setenv("SCRIBODO_ANSWER_BLOCK", "system", 1);
+    char *placed = chat_build_request_pipeline(msgs, 3, &names, 8192, fixed_count, NULL, &first, preface);
+    unsetenv("SCRIBODO_ANSWER_BLOCK");
+    CHECK(placed);
+    cJSON *pj = cJSON_Parse(placed);
+    const char *psys = cJSON_GetObjectItem(cJSON_GetArrayItem(cJSON_GetObjectItem(pj, "messages"), 0), "content")->valuestring;
+    const char *pnew = cJSON_GetObjectItem(cJSON_GetArrayItem(cJSON_GetObjectItem(pj, "messages"), 3), "content")->valuestring;
+    CHECK(strstr(psys, "do not guess") && strstr(psys, preface) && strstr(psys, "do not guess") < strstr(psys, preface));
+    CHECK(!strcmp(pnew, "How far is the walk to Netherfield?"));
+    cJSON_Delete(pj);
+    free(placed);
     /* The production builder is unchanged by the refactor: no preface, no composer sentence. */
     bool truncated = true;
     char *plain = chat_build_request_selected(msgs, 3, NULL, &names, 8192, fixed_count, NULL, &truncated, &first);

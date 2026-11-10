@@ -23,17 +23,23 @@
 #define ANSWER_MIN_SPAN 12u
 #define ANSWER_PIPELINE_BUDGET_MS 90000.0
 #define ANSWER_HISTORY_MESSAGES 6u /* the composer window: newest three pairs plus the verified block */
+#define ANSWER_SPANS 2u /* pass 3: the top two units each contribute one byte-verified span */
 
 typedef struct {
     bool attempted;
     size_t candidates, hydrated, scored, score_failures;
     bool has_top;
-    MemoryUnit top;      /* owned when has_top */
+    MemoryUnit top;      /* owned when has_top: the first chosen unit */
     double top_score;
-    char *raw_span;      /* owned model output, or NULL */
-    char *span;          /* owned verified span, or NULL */
+    char *raw_span;      /* owned model output for the first unit, or NULL */
+    char *span;          /* owned verified span from the first unit, or NULL */
     char status[48];     /* verified | verified_prefix | none | rejected_not_in_unit | too_short | unparsed |
                             no_candidates | rerank_unavailable | extraction_failed | canceled */
+    bool has_second;     /* the second-ranked unit, same fields (pass 3) */
+    MemoryUnit second;
+    double second_score;
+    char *second_raw_span, *second_span;
+    char second_status[48];
     double rerank_ms, extract_ms;
     char scored_ids[ANSWER_CANDIDATES][13]; /* diagnostic: every scored unit (id prefix) and its score, in scoring order */
     double scored_scores[ANSWER_CANDIDATES];

@@ -202,6 +202,36 @@ bool answer_extraction_parse(const char *response_body, char **span, bool *parse
 
 /* ---- the run ------------------------------------------------------------- */
 
+/* One extraction call for one unit: the model's raw span, the byte-verified
+ * span (or NULL) and the status name. */
+static void extract_one(LlmServer *chat_server, const char *query, const MemoryUnit *unit, atomic_bool *cancel,
+                        double deadline_ms, char **raw_out, char **span_out, char *status, size_t statuslen)
+{
+    *raw_out = NULL; *span_out = NULL;
+    char *body = answer_extraction_request(query, unit->text);
+    if (!body) { snprintf(status, statuslen, "extraction_failed"); return; }
+    HttpResult r;
+    bool ok = http_request_until(llm_server_socket(chat_server), "POST", "/v1/chat/completions", llm_server_key(chat_server),
+                                 body, NULL, NULL, cancel, EXTRACT_HTTP_TIMEOUT_MS, deadline_ms, &r);
+    free(body);
+    if (!ok || r.status != 200 || !r.body) {
+        double now = memory_budget_now_ms();
+        snprintf(status, statuslen, (cancel && atomic_load(cancel)) || now < 0 || now >= deadline_ms ? "canceled" : "extraction_failed");
+        http_result_free(&r);
+        return;
+    }
+    bool parsed = false;
+    char *raw = NULL;
+    answer_extraction_parse(r.body, &raw, &parsed);
+    http_result_free(&r);
+    *raw_out = raw;
+    if (!parsed) { snprintf(status, statuslen, "unparsed"); return; }
+    if (!raw || !trimmed_length(raw)) { snprintf(status, statuslen, "none"); return; }
+    const char *verdict = "none";
+    answer_verify_span(raw, unit->text, span_out, &verdict);
+    snprintf(status, statuslen, "%s", verdict);
+}
+
 static void set_status(AnswerPipelineResult *r, const char *s) { snprintf(r->status, sizeof(r->status), "%s", s); }
 
 static bool stopped(atomic_bool *cancel, double deadline_ms)
@@ -285,10 +315,17 @@ bool answer_pipeline_run(Db *db, SemanticClient *vectors, RerankClient *rerank, 
         }
         out->scored++;
         if (!out->has_top || score > out->top_score) {
-            if (out->has_top) memory_unit_free(&out->top);
+            /* The old first becomes the second. */
+            if (out->has_second) memory_unit_free(&out->second);
+            if (out->has_top) { out->second = out->top; out->second_score = out->top_score; out->has_second = true; }
             out->top = units[i];
             out->top_score = score;
             out->has_top = true;
+        } else if (!out->has_second || score > out->second_score) {
+            if (out->has_second) memory_unit_free(&out->second);
+            out->second = units[i];
+            out->second_score = score;
+            out->has_second = true;
         } else memory_unit_free(&units[i]);
     }
     out->rerank_ms = memory_budget_now_ms() - t0;
@@ -299,30 +336,12 @@ bool answer_pipeline_run(Db *db, SemanticClient *vectors, RerankClient *rerank, 
     }
     if (stopped(cancel, deadline_ms)) { set_status(out, "canceled"); return true; }
     t0 = memory_budget_now_ms();
-    char *body = answer_extraction_request(query, out->top.text);
-    if (!body) { set_status(out, "extraction_failed"); return true; }
-    HttpResult r;
-    bool ok = http_request_until(llm_server_socket(chat_server), "POST", "/v1/chat/completions", llm_server_key(chat_server),
-                                 body, NULL, NULL, cancel, EXTRACT_HTTP_TIMEOUT_MS, deadline_ms, &r);
-    free(body);
+    extract_one(chat_server, query, &out->top, cancel, deadline_ms, &out->raw_span, &out->span, out->status, sizeof(out->status));
+    if (out->has_second && !stopped(cancel, deadline_ms))
+        extract_one(chat_server, query, &out->second, cancel, deadline_ms, &out->second_raw_span, &out->second_span,
+                    out->second_status, sizeof(out->second_status));
+    else if (out->has_second) snprintf(out->second_status, sizeof(out->second_status), "canceled");
     out->extract_ms = memory_budget_now_ms() - t0;
-    if (!ok || r.status != 200 || !r.body) {
-        set_status(out, stopped(cancel, deadline_ms) ? "canceled" : "extraction_failed");
-        http_result_free(&r);
-        return true;
-    }
-    bool parsed = false;
-    char *raw = NULL;
-    answer_extraction_parse(r.body, &raw, &parsed);
-    http_result_free(&r);
-    out->raw_span = raw;
-    if (!parsed) { set_status(out, "unparsed"); return true; }
-    if (!raw || !trimmed_length(raw)) { set_status(out, "none"); return true; }
-    const char *status = "none";
-    char *verified = NULL;
-    answer_verify_span(raw, out->top.text, &verified, &status);
-    out->span = verified;
-    set_status(out, status);
     return true;
 }
 
@@ -330,8 +349,11 @@ void answer_pipeline_result_free(AnswerPipelineResult *r)
 {
     if (!r) return;
     if (r->has_top) memory_unit_free(&r->top);
+    if (r->has_second) memory_unit_free(&r->second);
     free(r->raw_span);
     free(r->span);
+    free(r->second_raw_span);
+    free(r->second_span);
     memset(r, 0, sizeof(*r));
 }
 
@@ -341,21 +363,37 @@ static const char *source_name(const MemoryUnit *u)
     return u->role == CHAT_ASSISTANT ? "an earlier reply" : "an earlier note";
 }
 
+static char *clean_name(const MemoryUnit *u)
+{
+    char *name = llm_neutralize(source_name(u));
+    if (name) for (char *c = name; *c; c++) if (*c == '"' || *c == '\n' || *c == '\r') *c = ' ';
+    return name;
+}
+
 char *answer_verified_block(const AnswerPipelineResult *r)
 {
     if (!r) return NULL;
-    if (!r->span || !r->has_top)
-        return strdup("No verified passage was found in the manuscript for this request.\n\n");
-    char *name = llm_neutralize(source_name(&r->top));
-    char *span = llm_neutralize(r->span);
-    char *out = NULL;
-    if (name && span) {
-        for (char *c = name; *c; c++) if (*c == '"' || *c == '\n' || *c == '\r') *c = ' ';
-        size_t cap = strlen(name) + strlen(span) + 128;
-        out = malloc(cap);
-        if (out) snprintf(out, cap, "Verified passage from the manuscript, quoted exactly (Source 1, %s):\n\"%s\"\n\n", name, span);
+    const MemoryUnit *units[ANSWER_SPANS] = { r->has_top ? &r->top : NULL, r->has_second ? &r->second : NULL };
+    const char *spans[ANSWER_SPANS] = { r->has_top ? r->span : NULL, r->has_second ? r->second_span : NULL };
+    size_t n = 0;
+    for (size_t i = 0; i < ANSWER_SPANS; i++) if (units[i] && spans[i]) n++;
+    if (!n) return strdup("No verified passage was found in the manuscript for this request.\n\n");
+    size_t cap = 160;
+    for (size_t i = 0; i < ANSWER_SPANS; i++) if (units[i] && spans[i]) cap += strlen(spans[i]) + 320;
+    char *out = malloc(cap);
+    if (!out) return NULL;
+    size_t k = (size_t)snprintf(out, cap, n == 1 ? "Verified passage from the manuscript, quoted exactly:\n"
+                                                 : "Verified passages from the manuscript, quoted exactly, best match first:\n");
+    size_t label = 0;
+    for (size_t i = 0; i < ANSWER_SPANS && k < cap; i++) {
+        if (!units[i] || !spans[i]) continue;
+        char *name = clean_name(units[i]);
+        char *span = llm_neutralize(spans[i]);
+        if (name && span) k += (size_t)snprintf(out + k, cap - k, "Source %zu (%s): \"%s\"\n", ++label, name, span);
+        else { free(name); free(span); free(out); return NULL; }
+        free(name); free(span);
     }
-    free(name); free(span);
+    if (k < cap) snprintf(out + k, cap - k, "\n");
     return out;
 }
 
@@ -363,12 +401,17 @@ char *answer_receipt(const AnswerPipelineResult *r)
 {
     if (!r) return NULL;
     size_t cap = 512 + (r->span ? strlen(r->span) : 0);
+    cap += r->second_span ? strlen(r->second_span) + 512 : 512;
     char *out = malloc(cap);
     if (!out) return NULL;
+    size_t k;
     if (r->has_top)
-        snprintf(out, cap, "--- VERIFIED SOURCE | unit=%s | document=%s | score=%.4f | status=%s | candidates=%zu scored=%zu ---\n%s\n",
-                 r->top.id, source_name(&r->top), r->top_score, r->status, r->candidates, r->scored, r->span ? r->span : "");
+        k = (size_t)snprintf(out, cap, "--- VERIFIED SOURCE | unit=%s | document=%s | score=%.4f | status=%s | candidates=%zu scored=%zu ---\n%s\n",
+                             r->top.id, source_name(&r->top), r->top_score, r->status, r->candidates, r->scored, r->span ? r->span : "");
     else
-        snprintf(out, cap, "--- VERIFIED SOURCE | none | status=%s | candidates=%zu scored=%zu ---\n", r->status, r->candidates, r->scored);
+        k = (size_t)snprintf(out, cap, "--- VERIFIED SOURCE | none | status=%s | candidates=%zu scored=%zu ---\n", r->status, r->candidates, r->scored);
+    if (r->has_second && k < cap)
+        snprintf(out + k, cap - k, "--- VERIFIED SOURCE 2 | unit=%s | document=%s | score=%.4f | status=%s ---\n%s\n",
+                 r->second.id, source_name(&r->second), r->second_score, r->second_status, r->second_span ? r->second_span : "");
     return out;
 }

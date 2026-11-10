@@ -248,3 +248,80 @@ correct-answer count rises above pass 2's one without a fabrication; compare
 where the composer ignored a verified span in favor of history.
 
 Results follow below once both runs complete; nothing above is edited after it.
+
+## Results, pass 3 (`pipe-new3a` two spans; `pipe-new3b` two spans with the block in the system message)
+
+Both completed through the real app (420 s each; script 23 passed / 4
+failed, the same four source-delivery expectations as every run; databases
+dropped). Selection is identical in 3a and 3b, as it must be: the same
+binary, seed and candidates. Reranking 10.2 and 12.6 s mean, extraction 4.7
+and 4.9 s mean per question (two calls now). Sheets
+`build/answer-pipe-capture/review-pipeline-new3{a,b}.json`; the review tool
+reads the second unit from the receipt and the trace.
+
+### Selection with two units
+
+| Case | First (score) | Second (score) | Designated carried |
+|---|---|---|---|
+| single_fact_entail | complaint, part02 (0.9992) | "I cannot bear… the entail", part03 (0.9986, prefix) | no: the stating sentence is rank 3 |
+| two_entities_fortunes | hundred thousand (0.9964) | Miss de Bourgh's fortune, part02 (0.65) | one of two; the sisters' unit stays rank 7 |
+| single_fact_charlotte_age | twenty-seven unit (0.357) | "at the age of twenty-seven", part03 (0.18): Charlotte's own reflection | **both relevant** |
+| single_fact_walk_distance | "only three miles" (0.9927) | "walked three miles… in such dirty weather" (0.99) | both relevant |
+| author_correction | "lately married" (0.969) | "Lydia, my love, though you are the youngest" (prefix) | no: "girl of fifteen" was not among this run's top two |
+| contradictory_drafts | Meryton distance (0.912) | **"only three miles. I shall be back by dinner."** (0.909) | **yes, as second** |
+| unavailable_fact | "What is his name?" (0.885, prefix) | "Mr. Bennet still up." (0.54) | nothing relevant exists; two verbatim fragments verified anyway |
+| creative_request | part03 entail (0.996) | part02 entail complaint (prefix) | relevant for a draft |
+
+### Composition, three passes side by side
+
+| Case | pass 2 (one span) | 3a (two spans, block in message) | 3b (two spans, block in system) |
+|---|---|---|---|
+| entail | weather confusion | weather confusion | **honest abstention**: "surrounding context… cut off; cannot confirm" |
+| fortunes | hundred thousand; "does not mention the sisters" | hundred thousand; **Miss de Bourgh offered as the sisters' fortune** | same misattribution |
+| Charlotte | abstains | abstains ("need a birth date") | **"twenty-seven when the story opens"**, from Source 2, the first correct Charlotte answer in six runs |
+| walk | **three miles** | **three miles** | **three miles** |
+| correction | abstains | abstains; identifies Lydia as the youngest | abstains; identifies Lydia as the youngest |
+| drafts | "gives no mileage" | **three miles vs five miles**, both with provenance | **three miles vs five miles** |
+| unavailable | abstains | **"first name: Bennet"** | **"first name is Bennet"** |
+| creative | draft, marked | draft, marked | draft, marked |
+
+| | production | pass 2 | 3a | 3b |
+|---|---:|---:|---:|---:|
+| Correct factual answers | 1 | 1 | 2 | **3** |
+| Fabrications | 3 | 0 | 1 | 1 |
+| Misattributions | 1 | 0 | 1 | 1 |
+
+### Decision on the predeclared terms
+
+Both passes are **rejected** by the rule written before the run: a
+fabrication on the unavailable fact. The second span did it. With one
+verbatim but irrelevant fragment ("What is his name?") the composer
+abstained on pass 2; with two ("Mr. Bennet still up." added, score 0.54) it
+answered "Bennet". Verification guarantees the words exist in the
+manuscript; it says nothing about whether they bear on the question, and
+two fragments gave the model enough to infer a first name from a surname.
+The fortunes misattribution is the same mechanism: a verified second span
+about Miss de Bourgh, offered as the sisters' fortune.
+
+What the passes established, in order of leverage:
+
+1. **The block belongs ahead of history.** 3b against 3a, selection
+   identical: the first-question confusion is gone and Charlotte is answered
+   from the second span. The system-message placement is the better
+   request shape and carries no cost measured here.
+2. **Two spans raise recall and remove the abstention safety.** 1 → 3
+   correct, 0 → 1 fabrications, 0 → 1 misattributions. The composer uses
+   every span it is given; relevance has to be decided before it sees them.
+3. **The reranker's score does not separate relevant from irrelevant spans.**
+   Charlotte's correct units scored 0.357 and 0.18; the unavailable fact's
+   irrelevant fragments 0.885 and 0.54. No threshold on this score keeps the
+   right ones and drops the wrong ones. The relevance gate is still the open
+   problem, and it is a software problem: a verified span answers the
+   question only if the composed answer can be found inside it, which is a
+   check the pipeline can make on the reply before it is shown.
+4. Entail (rank 3) and the sisters' unit (rank 7) are outside two slots;
+   "not sixteen" outside 64 candidates.
+
+Nothing in production defaults changed. The pipeline remains behind
+`SCRIBODO_ANSWER_PIPELINE=verified`; `SCRIBODO_ANSWER_BLOCK=system` selects
+the 3b placement.

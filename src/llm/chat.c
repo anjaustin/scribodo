@@ -780,6 +780,18 @@ char *chat_build_request_pipeline(const ChatMessage *msgs, size_t n, const ChatN
                                   ChatTokenCount count, void *cctx, size_t *first_history, const char *preface)
 {
     if (!preface) return NULL;
+    /* Pass 3b: the verified block ahead of the history, inside the system
+     * message after the composer instruction, instead of at the top of the
+     * author's newest words. Diagnostic switch; measured against 3a. */
+    const char *placement = getenv("SCRIBODO_ANSWER_BLOCK");
+    bool block_in_system = placement && !strcmp(placement, "system");
+    char *system_extra = NULL;
+    if (block_in_system) {
+        size_t cap = strlen(answer_composer_instruction) + strlen(preface) + 4;
+        system_extra = malloc(cap);
+        if (!system_extra) return NULL;
+        snprintf(system_extra, cap, "%s\n\n%s", answer_composer_instruction, preface);
+    }
     /* Bounded window: without the packet the token budget admits the whole
      * conversation, and in pass 1 the composer answered about sixty fixture
      * notes instead of the verified span. Pairs are never split: the window
@@ -787,8 +799,9 @@ char *chat_build_request_pipeline(const ChatMessage *msgs, size_t n, const ChatN
     size_t start = n > ANSWER_HISTORY_MESSAGES ? n - ANSWER_HISTORY_MESSAGES : 0;
     while (start < n && (msgs[start].error || msgs[start].role != CHAT_USER)) start++;
     if (start >= n) start = n > 0 ? n - 1 : 0;
-    char *out = build_request_core(msgs + start, n - start, NULL, names, ctx_tokens, count, cctx, NULL, first_history, preface,
-                                   answer_composer_instruction);
+    char *out = build_request_core(msgs + start, n - start, NULL, names, ctx_tokens, count, cctx, NULL, first_history,
+                                   block_in_system ? "" : preface, block_in_system ? system_extra : answer_composer_instruction);
+    free(system_extra);
     if (out && first_history) *first_history += start;
     return out;
 }
@@ -1181,14 +1194,16 @@ static bool build_in_worker(ChatSession *s)
                 s->msgs[s->target].memory_sources = receipt;
                 pthread_mutex_unlock(&s->mu);
             }
-            snprintf(memory_notice, sizeof(memory_notice), "Verified pipeline: %zu candidates, %zu scored, top %.2f, %s. One exact span or none; not canon.",
-                     pipeline.candidates, pipeline.scored, pipeline.top_score, pipeline.status);
+            snprintf(memory_notice, sizeof(memory_notice), "Verified pipeline: %zu candidates, %zu scored, top %.2f %s, second %.2f %s. Exact spans or none; not canon.",
+                     pipeline.candidates, pipeline.scored, pipeline.top_score, pipeline.status, pipeline.second_score,
+                     pipeline.has_second ? pipeline.second_status : "-");
             const char *ptrace = getenv("SCRIBODO_MEMORY_TRACE");
             if (ptrace && !strcmp(ptrace, "1")) {
-                fprintf(stderr, "ANSWER_PIPELINE candidates=%zu hydrated=%zu scored=%zu failures=%zu top=%s score=%.4f status=%s rerank_ms=%.1f extract_ms=%.1f request_bytes=%zu history_first=%zu\n",
+                fprintf(stderr, "ANSWER_PIPELINE candidates=%zu hydrated=%zu scored=%zu failures=%zu top=%s score=%.4f status=%s second=%s second_score=%.4f second_status=%s rerank_ms=%.1f extract_ms=%.1f request_bytes=%zu history_first=%zu\n",
                         pipeline.candidates, pipeline.hydrated, pipeline.scored, pipeline.score_failures,
-                        pipeline.has_top ? pipeline.top.id : "-", pipeline.top_score, pipeline.status, pipeline.rerank_ms,
-                        pipeline.extract_ms, req ? strlen(req) : 0, first_history);
+                        pipeline.has_top ? pipeline.top.id : "-", pipeline.top_score, pipeline.status,
+                        pipeline.has_second ? pipeline.second.id : "-", pipeline.second_score, pipeline.has_second ? pipeline.second_status : "-",
+                        pipeline.rerank_ms, pipeline.extract_ms, req ? strlen(req) : 0, first_history);
                 fprintf(stderr, "ANSWER_PIPELINE_SCORES");
                 for (size_t i = 0; i < pipeline.scored && i < ANSWER_CANDIDATES; i++)
                     fprintf(stderr, " %s:%.4f", pipeline.scored_ids[i], pipeline.scored_scores[i]);
