@@ -126,6 +126,12 @@ modify a database while any Scribodo process is running.
   scored against a byte oracle; see `journal/answer-cycle2_clean_review.md`.
   `test_answer_clean_review` (in `make test`) pins the arm construction, the
   exported-unit check, the oracle and the scoring without a model.
+  `tools/answer_unit_extraction.py` is the two-stage arm: per delivered unit, a
+  fresh-window extraction call returns the stating sentence or none; software
+  verifies each span against the unit before it is used; a composition call
+  sees only verified spans. `test_answer_unit_extraction` (in `make test`) pins
+  the plan, the span verification, the composition input and the predeclared
+  reply checks without a model; see `journal/answer-cycle2_unit_extraction.md`.
 
 - `test_recall` (in `make dbtest`) drives `recall_run` against real SQL in a
   throwaway database: displayed canon text is byte-equal to the current
