@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include "app/memory_index_text.h"
+#include "core/experiments.h"
 #include "test_util.h"
 
 static char g_path[256];
@@ -34,6 +35,7 @@ static const char *RESOLVED = "Bingley’s sisters were rather handsome; had a f
 static void test_off_by_default(void)
 {
     unsetenv("SCRIBODO_INDEX_TEXT_FILE");
+    experiments_reload();
     memory_index_text_disable();
     CHECK(!memory_index_text_enabled());
     CHECK(memory_index_text_for(ORIGINAL) == NULL);

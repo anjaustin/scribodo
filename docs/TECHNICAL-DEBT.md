@@ -54,15 +54,16 @@ five such axes for at least 24 reachable combinations; live runs exercise two.
   `SCRIBODO_ANSWER_BLOCK`, `SCRIBODO_MEMORY_TRACE`, `SCRIBODO_MEMORY_EXCERPTS`,
   `SCRIBODO_MEMORY_SMALL_UNITS`, `SCRIBODO_SEM_DEBUG`) are read once by that
   module; the per-ingest-step read in `memory_document_store.c` is gone;
-  `SCRIBODO_ANSWER_BLOCK` is in the README table. Measured in
-  `journal/answer-cycle4_flags.md`. Remaining: the four flags `main.c` reads
-  and pushes through `ChatSession` setters (`SCRIBODO_ANSWER_PIPELINE`,
-  `SCRIBODO_MEMORY_EXPERIMENT`, `SCRIBODO_MEMORY_BRIEFS`,
-  `SCRIBODO_MEMORY_PRESENTATION`), already read once but not in the table;
-  `SCRIBODO_INDEX_TEXT_FILE` and its own table in `memory_index_text.c`; and
-  migration 015's column, to be decided (permanent with an in-app resolver, or
-  dropped) when the index-layer question in `journal/answer-cycle3_coref.md`
-  is decided.
+  `SCRIBODO_ANSWER_BLOCK` is in the README table. Later the same day the four
+  `main.c` flags (`SCRIBODO_ANSWER_PIPELINE`, `SCRIBODO_MEMORY_EXPERIMENT`,
+  `SCRIBODO_MEMORY_BRIEFS`, `SCRIBODO_MEMORY_PRESENTATION`) and
+  `SCRIBODO_INDEX_TEXT_FILE` joined the table: every experiment flag the
+  product reads is one of its eleven fields. Both steps measured byte-identical
+  on a live run (`journal/answer-cycle4_flags.md`). Remaining: migration 015's
+  column, to be decided (permanent with an in-app resolver, or dropped) when
+  the index-layer question in `journal/answer-cycle3_coref.md` is decided.
+  The flag-lifecycle part of this entry is otherwise done; the entry stays
+  open for the column.
 
 ## Open — answer receipts and trace lines are an unversioned contract (P2)
 

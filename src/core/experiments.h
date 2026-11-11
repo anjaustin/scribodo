@@ -21,6 +21,12 @@ typedef struct {
     bool memory_excerpts;         /* SCRIBODO_MEMORY_EXCERPTS=1: the query-window excerpt variant (MEMORY-022: failed its gate) */
     bool memory_small_units;      /* SCRIBODO_MEMORY_SMALL_UNITS=1: 128-token document units, 16-unit packet (MEMORY-022: not promoted) */
     bool semantic_debug;          /* SCRIBODO_SEM_DEBUG set: failed Qdrant calls logged to stderr */
+    bool memory_experiment;       /* SCRIBODO_MEMORY_EXPERIMENT=1: local memory (MEMORY-003 onward); every memory flag below needs it */
+    bool memory_briefs;           /* SCRIBODO_MEMORY_BRIEFS=1: generated source-linked briefs, T1 (MEMORY-009: gated, default off) */
+    bool answer_pipeline;         /* SCRIBODO_ANSWER_PIPELINE=verified: the verified-answer pipeline (journal/answer-cycle2_pipeline_live.md, pass 6) */
+    bool memory_presentation_compact; /* SCRIBODO_MEMORY_PRESENTATION=compact: archived presentation (MEMORY-011: failed, kept for the harness) */
+    bool memory_presentation_episode; /* SCRIBODO_MEMORY_PRESENTATION=episode: archived presentation (MEMORY-011: failed, kept for the harness) */
+    char index_text_file[1024];   /* SCRIBODO_INDEX_TEXT_FILE: resolved index text beside the original unit text (journal/answer-cycle3_coref.md); "" = off */
 } Experiments;
 
 const Experiments *experiments(void);

@@ -22,7 +22,14 @@ static void read_environment(void)
         .memory_excerpts = flag_is("SCRIBODO_MEMORY_EXCERPTS", "1"),
         .memory_small_units = flag_is("SCRIBODO_MEMORY_SMALL_UNITS", "1"),
         .semantic_debug = getenv("SCRIBODO_SEM_DEBUG") != NULL,
+        .memory_experiment = flag_is("SCRIBODO_MEMORY_EXPERIMENT", "1"),
+        .memory_briefs = flag_is("SCRIBODO_MEMORY_BRIEFS", "1"),
+        .answer_pipeline = flag_is("SCRIBODO_ANSWER_PIPELINE", "verified"),
+        .memory_presentation_compact = flag_is("SCRIBODO_MEMORY_PRESENTATION", "compact"),
+        .memory_presentation_episode = flag_is("SCRIBODO_MEMORY_PRESENTATION", "episode"),
     };
+    const char *index_text = getenv("SCRIBODO_INDEX_TEXT_FILE");
+    if (index_text && index_text[0] && strlen(index_text) < sizeof(e.index_text_file)) strcpy(e.index_text_file, index_text);
     g_experiments = e;
 }
 

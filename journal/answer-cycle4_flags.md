@@ -79,11 +79,39 @@ diagnostics; `make tsan` 48,511 checks, 0 failures, 0 diagnostics
 under `build/product-memory-use/mars-pipe5` and `build/window/capture-mars-flags`;
 archived with the next evidence tarball.
 
+## Second step: the table is complete
+
+The four flags `main.c` read and pushed through `ChatSession` setters
+(`SCRIBODO_ANSWER_PIPELINE`, `SCRIBODO_MEMORY_EXPERIMENT`,
+`SCRIBODO_MEMORY_BRIEFS`, `SCRIBODO_MEMORY_PRESENTATION`) and
+`SCRIBODO_INDEX_TEXT_FILE` (read inside `memory_index_text.c`'s own once-init)
+are fields of the same table; `main.c` and `memory_index_text.c` read it.
+The combination rules stay at the use site (the pipeline needs the memory
+experiment; a presentation needs it too), so behaviour is unchanged by
+construction and measured the same way: instrumented build
+`build/answer-live-flags2`, run `mars-pipe6` (325 s) against `mars-pipe5`,
+same environment.
+
+| | mars-pipe5 | mars-pipe6 |
+|---|---|---|
+| Composer requests (`request-0..9.json`) | 10 | **10 of 10 byte-identical** |
+| Composer replies (`content-0..9.txt`) | 10 | **10 of 10 byte-identical** |
+| Trace lines under `SCRIBODO_MEMORY_TRACE=1` | 37 | 37 |
+
+Every experiment flag the product reads is now one of eleven fields in
+`src/core/experiments.h`, each with its variable, record and measured default
+beside it. The remaining `getenv("SCRIBODO_...")` sites in `src/` (36) are
+service, model, secret and script-host configuration, which the module's
+header says stay where they are read. `test_core` covers all eleven fields
+(read once, exact values only, reload, the path copied, an empty path off).
+
+Gates: `make test` 95,847 checks, 0 failures; `make dbtest` 18,000, 0;
+`make analyze` 0 warnings across 87 files; `make sanitize` 0 diagnostics;
+`make tsan` 48,511, 0, 0 diagnostics (`build/window/flags2-gates-*.log`).
+
 ## What remains of the register entry
 
-Listed in TECHNICAL-DEBT under the entry's status: the four flags `main.c`
-reads and pushes through `ChatSession` setters (already read once, not yet in
-the table), `SCRIBODO_INDEX_TEXT_FILE` with its own once-table, and the
-decision on migration 015's column. The next step of the same kind is to
-move the `main.c` four into the table, with the same byte-identity
-measurement; the column decision waits on the index-layer decision.
+Migration 015's column (`memory_units.index_text`), to be decided when the
+index-layer question in `journal/answer-cycle3_coref.md` is decided: permanent
+with an in-app resolver, or dropped. The register entry's flag list is now
+the header file.

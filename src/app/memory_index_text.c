@@ -1,5 +1,6 @@
 /* See memory_index_text.h. */
 #include "app/memory_index_text.h"
+#include "core/experiments.h"
 
 #include <CommonCrypto/CommonDigest.h>
 #include <pthread.h>
@@ -175,8 +176,8 @@ bool memory_index_text_load(const char *path, char *err, size_t errlen)
 
 static void init_once(void)
 {
-    const char *path = getenv("SCRIBODO_INDEX_TEXT_FILE");
-    if (!path || !path[0]) return;
+    const char *path = experiments()->index_text_file;
+    if (!path[0]) return;
     pthread_mutex_lock(&g_mu);
     bool loaded = g_table.enabled; /* a test loaded a table before the first use */
     pthread_mutex_unlock(&g_mu);

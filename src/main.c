@@ -26,6 +26,7 @@
 #include <string.h>
 
 #include "clay.h"
+#include "core/experiments.h"
 #include "raygui.h"
 #include "raylib.h"
 #include "rlgl.h"
@@ -3727,8 +3728,7 @@ int main(int argc, char **argv)
     }
     model_settings_load(&app.model);
     /* Verified-answer pipeline experiment: requires the memory experiment. */
-    const char *pipeline_flag = getenv("SCRIBODO_ANSWER_PIPELINE"), *memory_flag_early = getenv("SCRIBODO_MEMORY_EXPERIMENT");
-    app.answer_pipeline = pipeline_flag && !strcmp(pipeline_flag, "verified") && memory_flag_early && !strcmp(memory_flag_early, "1");
+    app.answer_pipeline = experiments()->answer_pipeline && experiments()->memory_experiment;
     const char *llm_mode = getenv("SCRIBODO_LLM");
     bool fake = (llm_mode && !strcmp(llm_mode, "fake")) || (script_path && !(llm_mode && !strcmp(llm_mode, "real")));
     if (!fake) {
@@ -3765,10 +3765,8 @@ int main(int argc, char **argv)
         app.rerank_client = rerank_client_create(app.rerank);
         if (!app.rerank_client) { app_destroy(&app); return 1; }
     }
-    const char *memory_flag = getenv("SCRIBODO_MEMORY_EXPERIMENT");
-    app.memory_experiment = memory_flag && !strcmp(memory_flag, "1");
-    const char *briefs_flag = getenv("SCRIBODO_MEMORY_BRIEFS");
-    app.memory_briefs_experiment = app.memory_experiment && briefs_flag && !strcmp(briefs_flag, "1");
+    app.memory_experiment = experiments()->memory_experiment;
+    app.memory_briefs_experiment = app.memory_experiment && experiments()->memory_briefs;
     if (app.memory_experiment) {
         app.memory_document_cache = memory_document_cache_create();
         app.generative_gate = generative_gate_create();
@@ -3784,10 +3782,9 @@ int main(int argc, char **argv)
         chat_set_generative_gate(owned_chat, app.generative_gate);
         chat_memory_set_briefs_enabled(owned_chat, app.memory_briefs_experiment);
         chat_answer_pipeline_configure(owned_chat, app.rerank_client, app.answer_pipeline);
-        const char *presentation = app.memory_experiment ? getenv("SCRIBODO_MEMORY_PRESENTATION") : NULL;
-        if (presentation && !strcmp(presentation, "compact"))
+        if (app.memory_experiment && experiments()->memory_presentation_compact)
             chat_memory_set_presentation(owned_chat, CHAT_MEMORY_COMPACT);
-        else if (presentation && !strcmp(presentation, "episode"))
+        else if (app.memory_experiment && experiments()->memory_presentation_episode)
             chat_memory_set_presentation(owned_chat, CHAT_MEMORY_EPISODE);
     }
     name_detection_job_set_server(&app.names_job, app.llm);
