@@ -194,45 +194,115 @@ prefix ("1. The supplied text…"). The claim reader cannot attribute a
 reply's values to the question's parts; the gate cannot be made per-part
 on this model.
 
+## Arm 4: the embedder can tell the difference (`build/qe1`, `build/ad1`, `build/ad2`)
+
+Asked whether Qdrant's view distinguishes the two fortunes, a scratch
+measurement embedded the 403 document units and the question's parts with
+the production embedder and instruction (`build/qe1/report.json`):
+
+| Query | sisters' unit | Bingley's unit | Miss de Bourgh unit |
+|---|---:|---:|---:|
+| whole question | 3 | 1 | 42 |
+| "What fortune do Mr. Bingley's sisters have?" | **1** | 2 | 54 |
+| "what is Mr. Bingley's own inheritance said to be?" | 3 | **1** | 64 |
+
+The reranker lifted Miss de Bourgh's unit from 42nd to 2nd; the embedder
+never had it near the top. The closed routes above are closed for the
+cross-encoder, not for retrieval.
+
+**The admission arm** (`tools/answer_admission_arm.py`, test
+`tests/test_answer_admission_arm.py`) then gave each tool a job: parts
+with their context sentence; a pool per part admitted by the embedder
+alone or the embedder plus lexical overlap (content-word share, a stand-in
+for production lexical retrieval) at sizes 8, 16 and 32; ordering by the
+reranker, by the embedder, or by reciprocal rank fusion of both (the
+conventional constant 60, not tuned); and the two slots assigned as a
+maximum-score matching over parts and distinct units. Scored as designated
+units in slots over the seven cases with designated units (8 units).
+Today's shape (whole question, embedder 32 plus lexical 32, reranker,
+greedy top two) reproduces the pass 6 selection exactly, Bingley plus Miss
+de Bourgh. Deterministic: `ad1` and `ad2` agree on every shared variant.
+
+| Variant (pool 32) | slots with a designated unit | of 8 |
+|---|---:|---:|
+| today: whole, embedder+lexical, reranker, greedy | 4 | |
+| parts, embedder only, reranker, matching | 4 | fortunes 1 |
+| parts, embedder+lexical, reranker, matching | **5** | entail gained; fortunes 1 |
+| parts, embedder only or +lexical, embedder order, matching | 2 | fortunes 2, nothing else |
+| parts, embedder only or +lexical, rank fusion, matching | 3 | fortunes 2; walk, drafts, entail lost |
+
+Pools of 8 and 16 lose walk and drafts outright (their stating units sit
+25th and 18th for the embedder) and never change fortunes.
+
+The disagreement, from the persisted scores (`ad2/results.json`):
+
+| Part | stating unit, embedder rank | reranker rank | reranker top five spread |
+|---|---:|---:|---|
+| sisters' fortune | **1** | 5 | 0.9858 to 0.9700; "Mr. Bingley was good-looking… His sisters were fine women" at 0.9814 |
+| walk | 25 | **1** | 0.9927 then 0.9141 |
+| drafts, current figure | 18 | **1** | 0.9668 then 0.9621 |
+| entail, why unfortunate | 34 | **1** | 0.9877 then 0.9608 |
+
+The two rankers are each right where the other is wrong, and no admission
+size separates the cases: the walk unit needs a pool of at least 25 and
+"His sisters were fine women" enters the sisters' pool at 8. Fusion trades
+three cases for one. A margin rule ("defer to the embedder when the
+reranker's top is not decisive") would fit these seven cases and is not
+proposed on seven cases.
+
+**What the arm does establish:** context parts plus matching, with the
+reranker ordering a pool of 32, is strictly better than today's selection
+(5 of 8 against 4, every other case unchanged) and costs nothing the
+measurements can see except one more reranking per extra part. That is
+the one change this cycle recommends to the candidate design; the sisters'
+fortune is not fixed by it.
+
 ## Conclusion of the cycle
 
-Every software route to the relation error was measured and is closed on
-the MVP machine with the pinned models:
+Every software route to the relation error was measured. Selection cannot
+be made right for the sisters' part without making three other cases wrong,
+with the pinned models on the MVP machine:
 
 | Route | Measured | Result |
 |---|---|---|
 | Rerank per question part | arm 1, `qp1` | sisters' unit 7 to 5; never a slot |
-| Context-prefixed parts | arm 1, `qp2` | fixes drafts (19 to 1) and entail (3 to 1); sisters unchanged; adopted for nothing yet, worth carrying if parts are ever used |
+| Context-prefixed parts | arm 1, `qp2`; arm 4 | fixes drafts (19 to 1) and entail (3 to 1); sisters unchanged; **recommended with matching** |
 | Named-entity admission filter | arm 1, model-free | "Bingley" in 41 of 55 candidates; ranks unchanged |
 | Sentence windows, width 3 and 6 | arm 2, `wr2`, `wr3` | sisters' window 18 and 11; drafts loses first place |
 | Larger reranker | 16 GB machine | 8 GB in BF16 beside the chat model; not possible here |
 | Subject-and-value co-occurrence gate | pass 6 spans | withholds all three correct answers |
 | Per-part claim gate | arm 3, `pcl1` | the model never isolates the sisters' part; invents the attribution once |
+| Embedder admission, embedder order | arm 4, `ad2` | fortunes right; walk, drafts, Charlotte lost |
+| Embedder admission, reranker order, matching | arm 4, `ad2` | 5 of 8; fortunes unchanged |
+| Rank fusion | arm 4, `ad2` | fortunes right; walk, drafts, entail lost |
 
-What is true of the candidate design after this cycle: the two spans it
-hands the composer are byte-verified quotations with their sources shown,
-so the misattributed value appears in the reply under "From Source 2
-(part02.md)" with Miss de Bourgh named in the quotation; the relation is
-the composer's, and nothing in the pipeline can check a relation. The
-error class is: a question asks for one entity's attribute, the manuscript
-states it with a pronoun subject six sentences from the name, and another
-passage states the same attribute of a better-named entity. Pass 2 (one
-span) answered this case correctly by saying the passage does not mention
-the sisters, and lost two other correct answers for it (journal cycle 2,
-pass 2 versus 3b); that trade is already measured.
+The error class is: a question asks for one entity's attribute, the
+manuscript states it with a pronoun subject six sentences from the name,
+and other passages name the entity without stating the attribute. The
+embedder sees whose attribute it is; the cross-encoder sees who is named.
+Pass 2 (one span) answered this case correctly by saying the passage does
+not mention the sisters, and lost two other correct answers for it (journal
+cycle 2); that trade is already measured.
 
-Options that remain are not software measurements but decisions:
+What the candidate design shows for this case: two byte-verified
+quotations with their sources named, so the misattributed value appears
+under "From Source 2 (part02.md)" with Miss de Bourgh in the quotation. The
+relation is the composer's, and nothing in the pipeline can check a
+relation.
 
-1. Keep the candidate as it is, with this error class recorded as a known
-   limit, the provenance visible, and the fixture case kept as a permanent
-   regression probe.
+Decisions that remain:
+
+1. Adopt context parts with matching in the pipeline (5 of 8 against 4),
+   measured live before it ships; keep this error class recorded as a
+   known limit with the fixture case as a permanent regression probe.
 2. For a multi-part factual question, show the verified quotations only
    and withhold the composed prose: nothing invented can be shown, at the
    cost of the drafts answer, which was correct and composed.
-3. A different model in the claim and extraction roles (the remote adapter
-   exists; the P0 is local).
+3. A different model in the reranker, claim or extraction roles (the
+   remote adapter exists; the P0 is local).
 
 Tooling of this cycle (`tools/answer_question_parts.py`,
-`tools/answer_window_rerank.py`, `tools/answer_part_claims.py`, their
-tests, outputs `build/qp1`, `qp2`, `wr2`, `wr3`, `pcl1`) is committed so
-the measurements can be rerun; no production component changed.
+`tools/answer_window_rerank.py`, `tools/answer_part_claims.py`,
+`tools/answer_admission_arm.py`, their tests, outputs `build/qp1`, `qp2`,
+`wr2`, `wr3`, `pcl1`, `qe1`, `ad1`, `ad2`) is committed so the
+measurements can be rerun; no production component changed.

@@ -185,7 +185,12 @@ modify a database while any Scribodo process is running.
   pre-gate replies recorded by the pipeline live captures;
   `test_answer_part_claims` (in `make test`) pins the single arm's strings to
   the C claim call and the software analysis (numbers, names) without a
-  model. See `journal/answer-cycle3_relation.md`.
+  model. `tools/answer_admission_arm.py` (embedder, then reranker, both
+  pinned) scores per-part pools admitted by the embedder with or without
+  lexical overlap, ordered by the reranker, the embedder or rank fusion,
+  with the two slots assigned as a matching, against today's selection;
+  `test_answer_admission_arm` (in `make test`) pins the parts, pools,
+  matching and fusion without a model. See `journal/answer-cycle3_relation.md`.
 
 - `test_recall` (in `make dbtest`) drives `recall_run` against real SQL in a
   throwaway database: displayed canon text is byte-equal to the current
