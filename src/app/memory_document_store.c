@@ -1,5 +1,6 @@
 #define _DARWIN_C_SOURCE
 #include "memory_documents.h"
+#include "core/experiments.h"
 #include "memory_index_text.h"
 #include "core/text_cut.h"
 #include <limits.h>
@@ -241,8 +242,7 @@ bool memory_document_ingest_step(Db *db, const MemoryScope *s, const MemoryDocum
             db_rows_free(&rows);
         }
         if (ok) {
-            const char *small = getenv("SCRIBODO_MEMORY_SMALL_UNITS");
-            size_t token_limit = small && !strcmp(small, "1") ? MEMORY_DOCUMENT_SMALL_UNIT_TOKENS : MEMORY_UNIT_TOKENS;
+            size_t token_limit = experiments()->memory_small_units ? MEMORY_DOCUMENT_SMALL_UNIT_TOKENS : MEMORY_UNIT_TOKENS;
             tokens = count(text, context);
             if (db_in_transaction(db)) return false;
             while (tokens > (long)token_limit && n) {

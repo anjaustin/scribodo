@@ -8,6 +8,7 @@
 #include "../src/core/undo.h"
 #include "../src/core/utf8.h"
 #include "../src/core/wrap.h"
+#include "../src/core/experiments.h"
 #include "../src/core/recall_terms.h"
 #include "../src/core/text_cut.h"
 #include "../src/app/frame_view_model.h"
@@ -119,6 +120,28 @@ static void test_utf8_clip(void)
     char big[16];
     CHECK(utf8_clip(big, sizeof(big), s, 9) == 6);                                   /* inside 😀 */
     CHECK(utf8_clip(big, sizeof(big), s, 10) == 10 && !strcmp(big, s));
+}
+
+static void test_experiments_read_once_and_reload(void)
+{
+    /* The experiment flags are one table read once from the environment; tests re-read it explicitly. */
+    unsetenv("SCRIBODO_ANSWER_PARTS"); unsetenv("SCRIBODO_ANSWER_BLOCK"); unsetenv("SCRIBODO_MEMORY_TRACE");
+    unsetenv("SCRIBODO_MEMORY_EXCERPTS"); unsetenv("SCRIBODO_MEMORY_SMALL_UNITS"); unsetenv("SCRIBODO_SEM_DEBUG");
+    experiments_reload();
+    const Experiments *e = experiments();
+    CHECK(!e->answer_parts && !e->answer_block_in_message && !e->memory_trace && !e->memory_excerpts && !e->memory_small_units && !e->semantic_debug);
+    setenv("SCRIBODO_ANSWER_PARTS", "1", 1); setenv("SCRIBODO_ANSWER_BLOCK", "message", 1); setenv("SCRIBODO_MEMORY_TRACE", "1", 1);
+    setenv("SCRIBODO_MEMORY_EXCERPTS", "1", 1); setenv("SCRIBODO_MEMORY_SMALL_UNITS", "1", 1); setenv("SCRIBODO_SEM_DEBUG", "", 1);
+    CHECK(!experiments()->answer_parts); /* read once: the environment changed, the table did not */
+    experiments_reload();
+    e = experiments();
+    CHECK(e->answer_parts && e->answer_block_in_message && e->memory_trace && e->memory_excerpts && e->memory_small_units && e->semantic_debug);
+    setenv("SCRIBODO_ANSWER_PARTS", "0", 1); setenv("SCRIBODO_ANSWER_BLOCK", "system", 1); setenv("SCRIBODO_MEMORY_TRACE", "yes", 1);
+    experiments_reload();
+    CHECK(!experiments()->answer_parts && !experiments()->answer_block_in_message && !experiments()->memory_trace); /* only the exact values count */
+    unsetenv("SCRIBODO_ANSWER_PARTS"); unsetenv("SCRIBODO_ANSWER_BLOCK"); unsetenv("SCRIBODO_MEMORY_TRACE");
+    unsetenv("SCRIBODO_MEMORY_EXCERPTS"); unsetenv("SCRIBODO_MEMORY_SMALL_UNITS"); unsetenv("SCRIBODO_SEM_DEBUG");
+    experiments_reload();
 }
 
 static void test_gap_buffer_random(void)
@@ -532,6 +555,7 @@ int main(void)
         { "recall_terms", test_recall_terms },
         { "text_cut", test_text_cut },
         { "utf8_clip", test_utf8_clip },
+{ "experiments_read_once_and_reload", test_experiments_read_once_and_reload },
         { "utf8_basic", test_utf8_basic },
         { "utf8_invalid", test_utf8_invalid },
         { "utf8_simd_matches_scalar", test_utf8_simd_matches_scalar },

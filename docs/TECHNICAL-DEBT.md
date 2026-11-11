@@ -41,15 +41,28 @@ and `answer_pipeline.c:934` record the chosen default) and remain compiled in;
 `SCRIBODO_ANSWER_BLOCK` is documented nowhere. `build_in_worker` composes
 five such axes for at least 24 reachable combinations; live runs exercise two.
 
-- **Rule from here:** every experiment flag, and every schema column added for
-  one, gets a line in this entry with its journal, its default, and what
-  retires it. A flag whose experiment has concluded is removed in the commit
-  that records the conclusion.
-- **Remediation:** retire `SCRIBODO_ANSWER_BLOCK` and `SCRIBODO_ANSWER_PARTS`;
-  read the remaining flags once into a configuration struct built in `main.c`
-  and passed down, so no store, planner or pipeline code calls `getenv`; decide
-  migration 015's column (permanent with an in-app resolver, or dropped) when
-  the index-layer question in `journal/answer-cycle3_coref.md` is decided.
+- **Rule from here:** every experiment flag is a field of `Experiments` in
+  `src/core/experiments.h`, with its variable, its journal and its measured
+  default in the comment beside it; a flag that is not there does not exist,
+  and no store, planner or pipeline code calls `getenv` for one. Every schema
+  column added for an experiment gets a line in this entry. A concluded
+  experiment's code stays in the tree flag-gated (MEMORY-015 §5, delete
+  nothing, only archive); retiring it means moving it into the harness, never
+  deleting it from the product without that move.
+- **Status 2026-11-11:** the six flags read inside the store, planner,
+  pipeline, chat and semantic modules (`SCRIBODO_ANSWER_PARTS`,
+  `SCRIBODO_ANSWER_BLOCK`, `SCRIBODO_MEMORY_TRACE`, `SCRIBODO_MEMORY_EXCERPTS`,
+  `SCRIBODO_MEMORY_SMALL_UNITS`, `SCRIBODO_SEM_DEBUG`) are read once by that
+  module; the per-ingest-step read in `memory_document_store.c` is gone;
+  `SCRIBODO_ANSWER_BLOCK` is in the README table. Measured in
+  `journal/answer-cycle4_flags.md`. Remaining: the four flags `main.c` reads
+  and pushes through `ChatSession` setters (`SCRIBODO_ANSWER_PIPELINE`,
+  `SCRIBODO_MEMORY_EXPERIMENT`, `SCRIBODO_MEMORY_BRIEFS`,
+  `SCRIBODO_MEMORY_PRESENTATION`), already read once but not in the table;
+  `SCRIBODO_INDEX_TEXT_FILE` and its own table in `memory_index_text.c`; and
+  migration 015's column, to be decided (permanent with an in-app resolver, or
+  dropped) when the index-layer question in `journal/answer-cycle3_coref.md`
+  is decided.
 
 ## Open — answer receipts and trace lines are an unversioned contract (P2)
 

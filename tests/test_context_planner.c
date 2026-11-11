@@ -2,6 +2,7 @@
  * doubles below do not purport to test SQL eligibility or ANN recall quality. */
 #define _POSIX_C_SOURCE 200809L
 #include "llm/context_planner.h"
+#include "core/experiments.h"
 #include "llm/llm_text.h"
 #include "llm/memory_vectors.h"
 #include "core/json.h"
@@ -346,7 +347,7 @@ static void test_document_excerpts(void)
     const char *previous = getenv("SCRIBODO_MEMORY_EXCERPTS");
     char *saved_flag = previous ? strdup(previous) : NULL;
     assert(!previous || saved_flag);
-    assert(setenv("SCRIBODO_MEMORY_EXCERPTS", "1", 1) == 0);
+    assert(setenv("SCRIBODO_MEMORY_EXCERPTS", "1", 1) == 0); experiments_reload();
     Fixture f; document_setup(&f); f.document_units = true;
     char document[MEMORY_UNIT_BYTES + 1] = "";
     for (unsigned i = 0; i < 14; i++) strcat(document, "A long unrelated paragraph describes the furniture and the weather. ");
@@ -419,8 +420,8 @@ static void test_document_excerpts(void)
     assert(memory_plan_apply(&p, "{\"messages\":[{\"role\":\"user\",\"content\":\"KEEP\"}]}", true, 1, NULL, NULL, &request));
     assert(!p.count && !strstr(request, "Rivera"));
     free(request); memory_plan_free(&p);
-    if (saved_flag) { assert(setenv("SCRIBODO_MEMORY_EXCERPTS", saved_flag, 1) == 0); free(saved_flag); }
-    else assert(unsetenv("SCRIBODO_MEMORY_EXCERPTS") == 0);
+    if (saved_flag) { assert(setenv("SCRIBODO_MEMORY_EXCERPTS", saved_flag, 1) == 0); experiments_reload(); free(saved_flag); }
+    else { assert(unsetenv("SCRIBODO_MEMORY_EXCERPTS") == 0); experiments_reload(); }
     if (!previous) {
         assert(memory_plan_recall(&o, "p-test", "test-chat", "How old is Dr. Rivera?", 0, false, NULL, &p));
         assert(p.count && !p.excerpt_count[0]);

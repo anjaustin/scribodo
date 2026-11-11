@@ -1,5 +1,6 @@
 #define _DARWIN_C_SOURCE
 #include "app/memory_documents.h"
+#include "core/experiments.h"
 #include "test_util.h"
 #include <stdlib.h>
 #include <string.h>
@@ -661,7 +662,7 @@ static void default_and_experimental_unit_limits(void)
     run("UPDATE documents SET saved_revision_id='unit-policy' WHERE id='d'");
     capture("d", "unit-policy");
     for (unsigned small = 0; small < 2; small++) {
-        CHECK((small ? setenv("SCRIBODO_MEMORY_SMALL_UNITS", "1", 1) : unsetenv("SCRIBODO_MEMORY_SMALL_UNITS")) == 0);
+        CHECK((small ? setenv("SCRIBODO_MEMORY_SMALL_UNITS", "1", 1) : unsetenv("SCRIBODO_MEMORY_SMALL_UNITS")) == 0); experiments_reload();
         CHECK(memory_scope_set(db, "p", "c", true, &scope));
         CHECK(memory_scope_rebuild(db, "p", "c", &scope));
         unsigned steps = 0;
@@ -680,7 +681,7 @@ static void default_and_experimental_unit_limits(void)
 
 int main(void)
 {
-    CHECK(setenv("SCRIBODO_MEMORY_SMALL_UNITS", "1", 1) == 0);
+    CHECK(setenv("SCRIBODO_MEMORY_SMALL_UNITS", "1", 1) == 0); experiments_reload();
     char name[64], cmd[256], error[512] = "";
     snprintf(name, sizeof(name), "scribodo_test_documents_%ld", (long)getpid());
     snprintf(cmd, sizeof(cmd), "tools/services.sh testdb create %s", name);

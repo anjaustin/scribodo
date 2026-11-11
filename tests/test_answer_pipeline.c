@@ -3,6 +3,7 @@
  * the fixture scorer, the verified block and receipt) and the pipeline request
  * builder. No models, no services, no network. */
 #include "llm/answer_pipeline.h"
+#include "core/experiments.h"
 #include "llm/chat.h"
 #include "llm/chat_history.h"
 #include "llm/rerank.h"
@@ -217,9 +218,9 @@ static void test_pipeline_request(void)
     ChatNames names = { "Tripp", "Scribodo" };
     size_t first = 99;
     const char *preface = "Verified passage from the manuscript, quoted exactly (Source 1, part01.md):\n\"only three miles.\"\n\n";
-    setenv("SCRIBODO_ANSWER_BLOCK", "message", 1); /* the pass 3a shape, checked first; the default follows */
+    setenv("SCRIBODO_ANSWER_BLOCK", "message", 1); experiments_reload(); /* the pass 3a shape, checked first; the default follows */
     char *req = chat_build_request_pipeline(msgs, 3, &names, 8192, fixed_count, NULL, &first, preface);
-    unsetenv("SCRIBODO_ANSWER_BLOCK");
+    unsetenv("SCRIBODO_ANSWER_BLOCK"); experiments_reload();
     CHECK(req && first == 0);
     cJSON *j = cJSON_Parse(req);
     CHECK(j);
@@ -295,7 +296,7 @@ static void test_pipeline_request(void)
     free(bounded);
     /* Pass 3b placement is the default: the block in the system message, the newest words without a preface;
      * SCRIBODO_ANSWER_BLOCK=message restores the pass 3a shape. */
-    unsetenv("SCRIBODO_ANSWER_BLOCK");
+    unsetenv("SCRIBODO_ANSWER_BLOCK"); experiments_reload();
     char *placed = chat_build_request_pipeline(msgs, 3, &names, 8192, fixed_count, NULL, &first, preface);
     CHECK(placed);
     cJSON *pj = cJSON_Parse(placed);
@@ -305,9 +306,9 @@ static void test_pipeline_request(void)
     CHECK(!strcmp(pnew, "How far is the walk to Netherfield?"));
     cJSON_Delete(pj);
     free(placed);
-    setenv("SCRIBODO_ANSWER_BLOCK", "message", 1);
+    setenv("SCRIBODO_ANSWER_BLOCK", "message", 1); experiments_reload();
     char *inline_block = chat_build_request_pipeline(msgs, 3, &names, 8192, fixed_count, NULL, &first, preface);
-    unsetenv("SCRIBODO_ANSWER_BLOCK");
+    unsetenv("SCRIBODO_ANSWER_BLOCK"); experiments_reload();
     CHECK(inline_block && strstr(inline_block, "Verified passage") && !strstr(strstr(inline_block, "system"), "Verified passage from the manuscript, quoted exactly:\\nSource 1 (part01.md)") );
     free(inline_block);
     /* The production builder is unchanged by the refactor: no preface, no composer sentence. */

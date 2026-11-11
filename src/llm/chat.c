@@ -1,5 +1,6 @@
 #define _DARWIN_C_SOURCE
 #include "chat.h"
+#include "core/experiments.h"
 #include "chat_history.h"
 #include "remote.h"
 
@@ -797,8 +798,7 @@ char *chat_build_request_pipeline(const ChatMessage *msgs, size_t n, const ChatN
      * message after the composer instruction, instead of at the top of the
      * author's newest words. Diagnostic switch; measured against 3a. */
     /* Pass 3b measured the system placement as the better shape; it is the default. */
-    const char *placement = getenv("SCRIBODO_ANSWER_BLOCK");
-    bool block_in_system = !(placement && !strcmp(placement, "message"));
+    bool block_in_system = !experiments()->answer_block_in_message;
     char *system_extra = NULL;
     if (block_in_system) {
         size_t cap = strlen(answer_composer_instruction) + strlen(preface) + 4;
@@ -1250,8 +1250,7 @@ static bool build_in_worker(ChatSession *s)
             snprintf(memory_notice, sizeof(memory_notice), "Verified pipeline: %zu candidates, %zu scored, top %.2f %s, second %.2f %s. Exact spans or none; not canon.",
                      pipeline.candidates, pipeline.scored, pipeline.top_score, pipeline.status, pipeline.second_score,
                      pipeline.has_second ? pipeline.second_status : "-");
-            const char *ptrace = getenv("SCRIBODO_MEMORY_TRACE");
-            if (ptrace && !strcmp(ptrace, "1")) {
+            if (experiments()->memory_trace) {
                 fprintf(stderr, "ANSWER_PIPELINE candidates=%zu hydrated=%zu scored=%zu failures=%zu top=%s score=%.4f status=%s second=%s second_score=%.4f second_status=%s parts=%zu top_part=%zu second_part=%zu rerank_ms=%.1f extract_ms=%.1f request_bytes=%zu history_first=%zu\n",
                         pipeline.candidates, pipeline.hydrated, pipeline.scored, pipeline.score_failures,
                         pipeline.has_top ? pipeline.top.id : "-", pipeline.top_score, pipeline.status,
@@ -1352,8 +1351,7 @@ static bool build_in_worker(ChatSession *s)
             } else free(with_canon);
             free(block);
         }
-        const char *trace = getenv("SCRIBODO_MEMORY_TRACE");
-        if (trace && !strcmp(trace, "1")) {
+        if (experiments()->memory_trace) {
             double prepared_at = memory_budget_now_ms();
             fprintf(stderr, "MEMORY_PREPARE base_ms=%.3f setup_ms=%.3f recall_ms=%.3f admission_ms=%.3f total_ms=%.3f history_messages=%zu history_bytes=%zu history_first=%zu reserved_tokens=%d request_bytes=%zu available=%d readiness=%d documents=%zu recalled=%zu retained=%zu packet_prepared=%d expired=%d notice=%s\n",
                 base_finished - preparation_started, recall_started - base_finished, recall_finished - recall_started,
@@ -1514,8 +1512,7 @@ static void gate_apply(ChatSession *s)
     }
     s->version++;
     pthread_mutex_unlock(&s->mu);
-    const char *trace = getenv("SCRIBODO_MEMORY_TRACE");
-    if (trace && !strcmp(trace, "1"))
+    if (experiments()->memory_trace)
         fprintf(stderr, "ANSWER_GATE verdict=%s withheld=%d parsed=%d spans=%zu author_turns=%zu ms=%.1f answer_bytes=%zu quotations=%zu misquoted=%d\n",
                 verdict, withheld, parsed, s->gate_nspans, s->gate_nauthor, memory_budget_now_ms() - t0, answer ? strlen(answer) : 0,
                 quotations, misquoted != NULL);

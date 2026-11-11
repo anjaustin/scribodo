@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "llm/context_planner.h"
+#include "core/experiments.h"
 #include "llm/memory_vectors.h"
 #include "llm/llm_text.h"
 #include "core/utf8.h"
@@ -565,10 +566,8 @@ bool memory_plan_recall(const MemoryRecallOps *ops, const char *project, const c
     bool hydration_ok = true;
     /* The query-window experiment did not pass its real-manuscript gate.
      * Retain it for reproducibility, never silently replace complete units. */
-    const char *excerpt_flag = getenv("SCRIBODO_MEMORY_EXCERPTS");
-    bool use_excerpts = excerpt_flag && !strcmp(excerpt_flag, "1");
-    const char *small_flag = getenv("SCRIBODO_MEMORY_SMALL_UNITS");
-    bool small_units = small_flag && !strcmp(small_flag, "1");
+    bool use_excerpts = experiments()->memory_excerpts;
+    bool small_units = experiments()->memory_small_units;
     size_t unit_limit = plan.documents.count && (use_excerpts || small_units) ? MEMORY_PLAN_UNITS : MEMORY_PLAN_CHAT_UNITS;
     for (size_t i = 0; i < nr && plan.count < unit_limit && !stopped(cancel); i++) {
         MemoryUnit unit = {0};

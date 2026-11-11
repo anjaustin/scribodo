@@ -643,6 +643,14 @@ cited paths to the dated tarballs.
 
 ## Test-harness environment variables
 
+The experiment flags the product itself reads (`SCRIBODO_ANSWER_PARTS`,
+`SCRIBODO_ANSWER_BLOCK`, `SCRIBODO_MEMORY_TRACE`, `SCRIBODO_MEMORY_EXCERPTS`,
+`SCRIBODO_MEMORY_SMALL_UNITS`, `SCRIBODO_SEM_DEBUG`) are one table read once
+from the environment, `src/core/experiments.h`; a test that sets one of them
+calls `experiments_reload()` afterwards, as `test_answer_pipeline`,
+`test_context_planner` and `test_memory_documents` do. The README's table
+documents each flag's effect and record.
+
 These exist for the scripted suites and debugging. Operator-facing variables
 are listed in the README.
 

@@ -1,5 +1,6 @@
 #define _DARWIN_C_SOURCE
 #include "llm/answer_pipeline.h"
+#include "core/experiments.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -964,8 +965,7 @@ bool answer_pipeline_run(Db *db, SemanticClient *vectors, RerankClient *rerank, 
      * context sentence (cycle 3, arm 4: the bare part "Which figure does the
      * current manuscript give?" scores nothing; with its first sentence it is
      * first). */
-    const char *split = getenv("SCRIBODO_ANSWER_PARTS");
-    if (split && !strcmp(split, "1")) out->nparts = answer_question_parts(query, out->parts);
+    if (experiments()->answer_parts) out->nparts = answer_question_parts(query, out->parts);
     else {
         /* Default: one pool for the whole request (pass 6). Measured live, the split filled a part's slot with the
          * best irrelevant passage when that part's answer was not in the manuscript (pass 7, drafts "ten miles"). */

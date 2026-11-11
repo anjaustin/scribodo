@@ -1,5 +1,6 @@
 #define _DARWIN_C_SOURCE
 #include "semantic.h"
+#include "core/experiments.h"
 #include "memory_vectors.h"
 #include "app/memory_index_text.h"
 
@@ -90,7 +91,7 @@ static bool qdrant(SemanticClient *client, const char *method, const char *path,
     HttpResult r;
     bool ok = semantic_http(client, client->qport, method, path, client->qkey, js, 15000, &r) && r.status >= 200 &&
               r.status < 300;
-    if (!ok && getenv("SCRIBODO_SEM_DEBUG"))
+    if (!ok && experiments()->semantic_debug)
         fprintf(stderr, "qdrant %s %s -> %d %s %.300s\n", method, path, r.status, r.error, r.body ? r.body : "");
     if (ok && out && r.body) *out = json_parse(r.body);
     http_result_free(&r);
