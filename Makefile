@@ -138,6 +138,10 @@ $(BUILD)/test_answer_pipeline: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_stat
 $(BUILD)/test_memory_index_text: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_state_fixture.o $(BUILD)/tests/test_memory_index_text.o
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
 
+# Diagnostic: the anchor gate over recorded claims (tools/answer_gate_replay.py).
+$(BUILD)/answer_gate_replay: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tools/answer_gate_replay.o
+	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
+
 $(BUILD)/test_components: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_state_fixture.o $(BUILD)/tests/test_components.o
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
 
@@ -282,6 +286,7 @@ test: $(TESTS)
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_part_claims python3 tests/test_answer_part_claims.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_admission_arm python3 tests/test_answer_admission_arm.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_coref_arm python3 tests/test_answer_coref_arm.py
+	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_gate_replay python3 tests/test_answer_gate_replay.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_income_isolation python3 tests/test_answer_income_isolation.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_citation_binding python3 tests/test_answer_citation_binding.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_boundary_fixture python3 tests/test_answer_boundary_fixture.py

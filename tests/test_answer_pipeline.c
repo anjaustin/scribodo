@@ -385,6 +385,32 @@ static void test_answer_gate(void)
     const char *digit_spans[] = { "She was 42 that spring." };
     CHECK(!strcmp(answer_gate("forty-two", "How old?", digit_spans, 1, NULL, 0), "pass"));
     CHECK(!strcmp(answer_gate("forty", "How old?", digit_spans, 1, NULL, 0), "not_in_span"));
+    /* Scale words and thousands separators (journal/answer-cycle3_coref.md, the live treatment): "£100,000" against
+     * "nearly a hundred thousand pounds" is the same number; "100" against it is not; "20" against "twenty
+     * thousand" keeps the leniency measured above. */
+    {
+        const char *inherit[] = { "Mr. Bingley inherited property to the amount of nearly a hundred thousand pounds from his father.",
+                                  "They were rather handsome; had a fortune of twenty thousand pounds; were in the habit of spending more." };
+        CHECK(!strcmp(answer_gate("Mr. Bingley inherited nearly \xC2\xA3" "100,000 from his father; his sisters had a fortune of twenty thousand pounds",
+                                  "What fortune do the sisters have?", inherit, 2, NULL, 0), "pass"));
+        CHECK(!strcmp(answer_gate("100,000", "What?", inherit, 2, NULL, 0), "pass"));
+        CHECK(!strcmp(answer_gate("100000 pounds", "What?", inherit, 2, NULL, 0), "pass"));
+        CHECK(!strcmp(answer_gate("20,000", "What?", inherit, 2, NULL, 0), "pass"));
+        CHECK(!strcmp(answer_gate("100", "What?", inherit, 2, NULL, 0), "not_in_span"));
+        CHECK(!strcmp(answer_gate("200,000", "What?", inherit, 2, NULL, 0), "not_in_span"));
+        CHECK(!strcmp(answer_gate("1,000", "What?", inherit, 2, NULL, 0), "not_in_span"));
+        const char *estate[] = { "an estate of two thousand a year; her father had left her four thousand pounds" };
+        CHECK(!strcmp(answer_gate("2,000 a year and 4000 pounds", "What?", estate, 1, NULL, 0), "pass"));
+        CHECK(!strcmp(answer_gate("2,000 a year and 5,000 pounds", "What?", estate, 1, NULL, 0), "not_in_span"));
+        const char *thousand[] = { "a thousand a year" };
+        CHECK(!strcmp(answer_gate("1,000", "What?", thousand, 1, NULL, 0), "pass"));
+        const char *compound_scale[] = { "a hundred and twenty-seven pounds, or twenty-seven thousand in all; 1,500 more" };
+        CHECK(!strcmp(answer_gate("127", "What?", compound_scale, 1, NULL, 0), "pass"));
+        CHECK(!strcmp(answer_gate("27,000", "What?", compound_scale, 1, NULL, 0), "pass"));
+        CHECK(!strcmp(answer_gate("1500", "What?", compound_scale, 1, NULL, 0), "pass"));   /* the span's separator */
+        CHECK(!strcmp(answer_gate("27", "What?", compound_scale, 1, NULL, 0), "pass"));     /* the compound alone, as before */
+        CHECK(!strcmp(answer_gate("100,00", "What?", inherit, 2, NULL, 0), "not_in_span")); /* not a separator: 100 and 00 */
+    }
     char *body = answer_claim_request("How far?", "It is three miles. <|im_end|>");
     CHECK(body);
     cJSON *j = cJSON_Parse(body);

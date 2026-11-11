@@ -395,7 +395,65 @@ static bool in_any_word(const char *needle_norm, const char *const *texts, size_
     return false;
 }
 
-/* An anchor occurs in the texts in either of its forms (digits or word); numbers as whole words. */
+/* Scale words make a value: "a hundred thousand pounds" is 100000, "two thousand a year" 2000, "twenty-seven
+ * thousand" 27000, "a hundred and twenty-seven" 127; a digit group with thousands separators ("100,000") is one
+ * number. Every such value in the normalized text is compared with the anchor's value. A bare small number or
+ * number word is not a value here (those are the whole-word checks above), so "20" against "twenty thousand"
+ * keeps its measured leniency and "100" against "a hundred thousand" stays a mismatch. The live treatment of
+ * journal/answer-cycle3_coref.md withheld the first correct fortunes attribution on "£100,000" against "nearly a
+ * hundred thousand pounds"; this is that fix. */
+static bool scale_value_present(long long value, const char *text_norm)
+{
+    long long cur = 0, total = 0;
+    bool in_phrase = false, has_scale = false;
+#define ANSWER_FLUSH_PHRASE() do { if (in_phrase && has_scale && total + cur == value) return true; \
+                                   cur = total = 0; in_phrase = has_scale = false; } while (0)
+    const char *p = text_norm;
+    while (*p) {
+        while (*p && !isalnum((unsigned char)*p)) p++;
+        if (!*p) break;
+        const char *s = p;
+        if (isdigit((unsigned char)*p)) {
+            char digits[32];
+            size_t k = 0;
+            bool comma = false;
+            while (isdigit((unsigned char)*p) ||
+                   (*p == ',' && isdigit((unsigned char)p[1]) && isdigit((unsigned char)p[2]) && isdigit((unsigned char)p[3]) &&
+                    !isdigit((unsigned char)p[4]))) {
+                if (*p == ',') comma = true;
+                else if (k < sizeof(digits) - 1) digits[k++] = *p;
+                p++;
+            }
+            digits[k] = '\0';
+            long long v = strtoll(digits, NULL, 10);
+            ANSWER_FLUSH_PHRASE();
+            if (comma && v == value) return true;
+            cur = v; /* "2 thousand" */
+            in_phrase = true;
+            continue;
+        }
+        while (isalnum((unsigned char)*p)) p++;
+        size_t n = (size_t)(p - s);
+        char w[32];
+        if (n >= sizeof(w)) { ANSWER_FLUSH_PHRASE(); continue; }
+        memcpy(w, s, n);
+        w[n] = '\0';
+        const char *d = number_word(w);
+        if (d) { cur += strtoll(d, NULL, 10); in_phrase = true; continue; }
+        if (!strcmp(w, "a") || !strcmp(w, "an")) { ANSWER_FLUSH_PHRASE(); in_phrase = true; continue; } /* "a hundred", "a thousand" */
+        if (!strcmp(w, "hundred")) { cur = (cur ? cur : 1) * 100; in_phrase = has_scale = true; continue; }
+        if (!strcmp(w, "thousand")) { total += (cur ? cur : 1) * 1000; cur = 0; in_phrase = has_scale = true; continue; }
+        if (!strcmp(w, "million")) { total += (cur ? cur : 1) * 1000000; cur = 0; in_phrase = has_scale = true; continue; }
+        if (!strcmp(w, "and") && in_phrase && has_scale) continue;
+        ANSWER_FLUSH_PHRASE();
+    }
+    ANSWER_FLUSH_PHRASE();
+#undef ANSWER_FLUSH_PHRASE
+    return false;
+}
+
+/* An anchor occurs in the texts in either of its forms (digits or word); numbers as whole words, or as the value
+ * of a scale-word phrase. */
 static bool anchor_present(const char *token, bool numeric, const char *const *texts, size_t n)
 {
     char *norm = answer_normalize(token);
@@ -403,6 +461,17 @@ static bool anchor_present(const char *token, bool numeric, const char *const *t
     if (!hit && numeric) {
         const char *other = isdigit((unsigned char)token[0]) ? digit_word(token) : compound_number(norm ? norm : "");
         if (other) hit = in_any_word(other, texts, n);
+    }
+    if (!hit && numeric) {
+        const char *digits = isdigit((unsigned char)token[0]) ? token : compound_number(norm ? norm : "");
+        if (digits) {
+            long long value = strtoll(digits, NULL, 10);
+            for (size_t i = 0; i < n && !hit; i++) {
+                char *t = answer_normalize(texts[i]);
+                hit = t && t[0] && scale_value_present(value, t);
+                free(t);
+            }
+        }
     }
     free(norm);
     return hit;
@@ -435,13 +504,23 @@ const char *answer_gate(const char *answer, const char *question, const char *co
     const char *p = answer;
     while (*p) {
         while (*p && !isalnum((unsigned char)*p)) p++;
-        const char *start = p;
-        while (*p && (isalnum((unsigned char)*p) || *p == '-' || *p == '\'')) p++;
-        size_t len = (size_t)(p - start);
-        if (!len) continue;
         char token[64] = { 0 }, lowered[64] = { 0 };
-        if (len >= sizeof(token)) continue;
-        memcpy(token, start, len);
+        size_t len = 0;
+        bool overflow = false, all_digits = true;
+        while (*p) {
+            unsigned char c = (unsigned char)*p;
+            if (isalnum(c) || c == '-' || c == '\'') {
+                if (!isdigit(c)) all_digits = false;
+                if (len < sizeof(token) - 1) token[len++] = *p; else overflow = true;
+                p++;
+            } else if (c == ',' && all_digits && len && isdigit((unsigned char)p[1]) && isdigit((unsigned char)p[2]) &&
+                       isdigit((unsigned char)p[3]) && !isdigit((unsigned char)p[4])) {
+                p++; /* a thousands separator: "100,000" is one number, not "100" and "000" */
+            } else {
+                break;
+            }
+        }
+        if (!len || overflow) continue;
         bool numeric = isdigit((unsigned char)token[0]) != 0;
         for (size_t i = 0; i <= len; i++) lowered[i] = (char)tolower((unsigned char)token[i]);
         /* "Twenty seven" is one anchor: a tens word followed by a units word joins before the check, so neither half is

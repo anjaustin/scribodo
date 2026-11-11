@@ -209,6 +209,13 @@ modify a database while any Scribodo process is running.
   duplicates, missing file) without touching a loaded table; `test_db_core`
   (in `make dbtest`) carries migration 015. The live measurement is the
   second half of `journal/answer-cycle3_coref.md`.
+  `tools/answer_gate_replay.py` with `build/answer_gate_replay` (the gate's
+  own C code over the same objects as the app; no model) replays the anchor
+  gate over every claim the live runs recorded (the review sheets' claim
+  answers, questions, verified spans and the fixture's author turns) and sets
+  the current verdict beside the recorded one; a gate change is measured this
+  way, and against the committed gate's binary, before it ships.
+  `test_answer_gate_replay` (in `make test`) pins the claim extraction.
 
 - `test_recall` (in `make dbtest`) drives `recall_run` against real SQL in a
   throwaway database: displayed canon text is byte-equal to the current

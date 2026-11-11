@@ -320,3 +320,107 @@ MariaDB full-text, no stand-in anywhere.
    sidecar is an experiment input: the app cannot produce it, and whether an
    ingestion-time resolver (today Python and torch) becomes an app
    dependency is a product decision, not a measurement.
+
+## The gate's number forms, and the treatment rerun (`pipe-coref2`)
+
+**Date:** 2026-11-10, after the live pass above. Decision 1 of that pass.
+
+### The change
+
+`answer_gate` in `src/llm/answer_pipeline.c`; tests in `test_answer_pipeline`
+(162 to 177 checks). `make test`, `make analyze`, `make sanitize` and
+`make tsan` clean.
+
+- The claim tokenizer read "£100,000" as the anchors "100" and "000": a
+  comma ends an alphanumeric run. A digit run now absorbs thousands
+  separators (a comma followed by exactly three digits), so the anchor is
+  100000. The currency sign was never an anchor.
+- A digit anchor over 99 had no word form, so no span in words could
+  satisfy it. A numeric anchor is now also matched by value against the
+  number phrases of the normalized span that contain a scale word: "a
+  hundred thousand pounds" is 100000, "two thousand a year" 2000,
+  "twenty-seven thousand" 27000, "a hundred and twenty-seven" 127; a digit
+  group with separators in the span ("1,500") is a value too. A bare small
+  number or number word is not a value here, so "100" against "a hundred
+  thousand" stays a mismatch and "20" against "twenty thousand" keeps the
+  leniency measured in cycle 2. Pinned: the live claim itself, "100,000",
+  "100000 pounds", "20,000" pass against the two fortunes spans; "100",
+  "200,000", "1,000" do not; "100,00" is not a separator.
+
+### Measured on the recorded claims before it shipped
+
+`tools/answer_gate_replay.py` with `build/answer_gate_replay`, the gate's
+own C code over the app's objects, replays every claim the live runs
+recorded: 37 gated claims across passes 4 to 7 and the two coreference
+runs, each with its question, its two verified spans and the fixture's
+author turns. Against the committed gate's binary, built from the same
+tree with only this file at HEAD, **this change flips exactly one
+verdict**: the coref1 fortunes claim, `not_in_span` to `pass`. Against
+the verdicts recorded at the time, 8 of 37 differ, all 7 others being
+passes 4 to 6 recorded before the abstention vocabulary, numeral
+canonicalization and compound-number fixes that have since shipped
+(`build/gate-replay-numbers.json`, `build/gate-replay-head.json`).
+
+### The rerun
+
+Same recipe as `pipe-coref1`: a capture binary from this tree
+(`build/answer-live-coref2`), the boundary script, the verified pipeline,
+the FCoref all-pronoun sidecar; the only source difference is the gate.
+Selection was byte-identical to `pipe-coref1` in every case: the same
+units, scores, slots and spans (the reranker runs at temperature 0 over
+fixed text). Sheet `build/answer-pipe-capture/review-pipeline-coref2.json`.
+
+| Case | coref1 shown | coref2 shown |
+|---|---|---|
+| entail | "his sons", gate pass_no_anchors | identical reply, byte for byte: the same window, the same swap |
+| fortunes | withheld on "£100,000" | **shown and right**: "Mr. Bingley's own inheritance: nearly £100,000"; "His sisters: twenty thousand pounds". The first correct attribution of both values in any live run. One unsupported aside ("unfinished inheritance") and a hedge that "they" refers to the sisters "in standard Austen context" |
+| Charlotte | abstention | abstention, now as an explicit claim; same two spans |
+| walk | abstention | **"only three miles", correct** |
+| correction | abstention | **"fifteen"**, from the verified "Lydia was a stout, well-grown girl of fifteen": source-bound and true of the manuscript, not the fixture's designated "not sixteen"; the earlier note is dropped, in an imitated apology ("You're right, I apologize for the mix-up") |
+| drafts | correct | correct |
+| unavailable | abstained | abstained; nothing invented |
+| creative | draft, marked | draft, marked |
+
+| | pass 6 | coref1 | coref2 |
+|---|---:|---:|---:|
+| Correct factual answers shown | 3 | 1 | **4** |
+| Wrong statements shown | 1 | 1 | 1 |
+| Correct answers withheld by the gate | 0 | 1 | 0 |
+| Abstentions with the designated unit in a slot | 0 | 2 | 1 |
+| Fabrications shown | 0 | 0 | 0 |
+
+Wall time 574 s against 445 s, reranking 13 to 22 s per question against
+10 to 15 s, with the same binary shape and the same units; not attributed
+to the change (the gate runs in microseconds) and not explained.
+
+### What this establishes
+
+1. **The gate fix did what the replay said and nothing else.** Fortunes is
+   shown and right; every other verdict on recorded claims is unchanged.
+2. **The walk and correction gains are not the gate's.** Their claims were
+   in-span in both runs; in coref1 the composer abstained and in coref2 it
+   answered, on identical spans. The composer window holds the newest three
+   pairs, and the fortunes reply, now an answer rather than a withheld
+   notice, sits in the window of the three questions that follow it
+   (Charlotte, walk, correction). So these moves are plausibly downstream
+   of the fix through the window, and they are also the variance pass 7
+   recorded; one run cannot say which. Repeats remain decision 3.
+3. **The remaining wrong statement is the composer's, byte for byte
+   reproducible.** Entail's "sons" for "daughters" came out identical in
+   both runs: same window, same output. It is not noise; it is what this
+   model does with that window, and the anchor gate has no anchor for it.
+   Decision 2 (quotation integrity) is now the first open item.
+4. **Four correct of seven factual cases is the pipeline's best shown
+   count**, on the same fixture that production answered once and pass 6
+   three times, with nothing invented and nothing correct withheld.
+
+### Decisions that remain
+
+1. Quotation integrity (decision 2 above): a software check that every
+   quoted string in a reply is a substring of a verified span, measured
+   against every recorded reply before it ships. The entail reply is the
+   fixture case.
+2. Repeated runs of control and treatment to bound composer variance.
+3. The unsupported aside in the fortunes reply ("unfinished") and the
+   imitated apology in the correction reply are faithful-use costs the
+   anchor gate does not see; recorded, not yet measured as a class.
