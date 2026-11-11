@@ -213,5 +213,84 @@ checks, 0 failures, 0 diagnostics (`build/mars/gates-*.log`).
 
 ## The verified pipeline with the gate change, live (`mars-pipe1`)
 
-Pending: the rerun waits for an unlocked console (one launch failed on the
-lock); appended here when it has run.
+Same recipe, capture build `build/answer-live-mars1` (the gate change and
+nothing else), 307 s, 634 units. Review sheet
+`build/answer-pipe-capture/review-pipeline-mars1.json`.
+
+**Selection is byte-identical to `mars-pipe0`**: every designated rank and
+score the same, the same two source-delivery checks failing (Kantos Kan at
+rank 7; the correction's designated part03 unit at rank 4 with part04's
+equivalent statement in slot 2). The extracted claims are identical too, so
+the gate change can be read on its own: the old gate replayed on this run's
+claims withholds the same two, the new gate passes them, and nothing else
+moves (`build/mars/replay-{before,after}-mars1.json`).
+
+| Case | Reply | Outcome |
+|---|---|---|
+| sak leap | identical to pipe0 | **correct, shown** |
+| hordes | identical | **correct, shown** |
+| Kantos Kan | abstains | abstention, evidence not delivered |
+| Thark arrival | identical | **correct, shown** |
+| author correction | shown: quotes "I, the daughter of Mors Kajak, son of Tardos Mors", then writes "i.e., her father is Tardos Mors and her mother is Mors Kajak (who is presumably a title or rank)", then "So according to this passage, she is **not** the daughter of Tardos Mors; she is the **daughter of Mors Kajak**" | **shown with a wrong clause**: the conclusion is right and sourced; the intermediate sentence misreads the apposition and contradicts the conclusion. Counted as a wrong statement shown. |
+| contradictory drafts | "Current manuscript: 20 radium pumps. Older draft: 10 radium pumps." with the span and the author's note each quoted | **correct, shown** |
+| unavailable | states no verified passage names the horse; asks for the excerpt | correct abstention |
+| creative | two sentences, marked as new writing | done |
+
+Tally: 4 correct shown, 1 wrong statement shown (inside a reply whose final
+answer is right), 0 withheld, 1 abstention for missing evidence, 1 correct
+abstention, 0 fabrications.
+
+Two things this run records that the first did not:
+
+1. **What the false anchor had been hiding.** In `mars-pipe0` the correction
+   reply was withheld for "NOT"; its claim was right. In this run the same
+   claim passes and the author sees the reply, which carries a misreading of
+   "daughter of X, son of Y" alongside the right conclusion. The old gate's
+   catch was never of that misreading: the claim extractor had already
+   reduced the reply to a correct sentence, and the gate reads the claim, not
+   the reply. The anchor gate cannot see a wrong relation between two names
+   that are both in the span. That is the "use" wall of MEMORY-012 and the
+   relation question of cycle 3 again, now on the output side: faithful use
+   is not a property the anchor gate measures, only names and numbers.
+2. **The abstention sentence is copied forward within a run.** The correction
+   reply opens with "The supplied manuscript passages do not give that
+   detail. However, ..." although nothing was withheld in this run: the
+   composer is echoing its own earlier abstention at Kantos Kan, three turns
+   back in its window. Pass 4 called this history imitation of the *notice*;
+   it is imitation of any earlier refusal in the window, including the
+   composer's own. The reply still answers after the echo, so no answer was
+   lost here, but the first sentence an author reads is false.
+
+### Across the two novels at this tree
+
+| | first novel, last run (`coref3`) | held-out novel, old gate (`mars-pipe0`) | held-out novel, new gate (`mars-pipe1`) |
+|---|---:|---:|---:|
+| Correct answers shown | 1 | 3 | 4 |
+| Wrong statements shown | 0 | 0 | 1 |
+| Correct answers withheld | 0 | 2 | 0 |
+| Wrong replies withheld | 3 | 0 | 0 |
+| Abstentions on missing evidence | 0 | 1 | 1 |
+| Fabrications shown | 0 | 0 | 0 |
+
+### Decisions that remain
+
+1. **Window construction**, unchanged as the first item: the echo above is
+   the same mechanism as the notice imitation, and the measurement is the
+   same (replay a run's order with earlier refusals carried as a neutral
+   marker or omitted).
+2. **A relation check on the reply**, not the claim: the one wrong statement
+   shown on either novel at this tree is a relation between two sourced names.
+   Whether a deterministic check can hold "daughter of X" to the span without
+   a model is an open question; the quotation check is the model for how such
+   a check would sit beside the gate.
+3. **The next held-out set** includes pronoun-subject attribute questions and
+   relation questions by construction, so both failure classes are measured
+   on a book the pipeline has not seen; this fixture now holds out selection
+   only.
+4. **The Kantos Kan unit** is the sisters' failure on a second book: six units
+   naming the entity outscore the one that states the attribute, by 0.006.
+   The index layer does not address it (the stating sentence already names
+   him). It is a reranker saturation case and belongs with MODEL-002.
+
+Evidence for this cycle is archived per [EVIDENCE](../docs/EVIDENCE.md)
+(`scribodo-evidence-2026-11-11-mars.tar.gz`).

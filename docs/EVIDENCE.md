@@ -81,3 +81,18 @@ the AUDIT-003 matrix logs, results and the remediated `dbtest` log
 (`build/audit003`). Instrumented binaries and objects are excluded (31 files).
 Archive SHA-256:
 `25668b343d4e8aac3ca6c30a49dcd6b46a1c6a7994e4de62dc0b8883acb8333e`.
+
+The second manuscript's evidence (answer cycle 4, `journal/answer-cycle4_mars.md`)
+is in `scribodo-evidence-2026-11-11-mars.tar.gz` in the same folder, with
+`manifest-2026-11-11-mars.txt` and an entry in `SHA256SUMS`. It contains 630
+files: the imported novel with its Gutenberg source and checksum
+(`build/manuscripts/a-princess-of-mars`), the two reach runs at the same tree
+(`build/memory-reach/runs/scribodo_test_reach_63447_*` for the second novel and
+`..._63867_*` for the first novel's control), the two live runs' exported
+messages, units, manifests, logs and work copies (`build/product-memory-use/mars-pipe0`
+and `mars-pipe1`), the live-capture requests, streams and outcomes, the gate
+replays before and after the capitalisation change, the gate logs and the
+review sheets (`build/answer-pipe-capture/review-pipeline-mars{0,1}.json`), and
+the instrumented builds' generated sources and build logs. Frozen binaries and
+objects are excluded (6 files). Archive SHA-256:
+`d2a305e62be15201e316c6c1d32e866a2d34d1f7c42277d49e9569e2b2ccbed8`.
