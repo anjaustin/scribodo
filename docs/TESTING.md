@@ -109,15 +109,24 @@ modify a database while any Scribodo process is running.
   supplied text. `tools/answer_boundary_bind.py` binds the fresh boundary
   questions in `tests/fixtures/answer_boundary/questions.json` to exactly one
   manuscript unit each; `tests/ui/store/21_boundary_questions.scribo` asks them
-  through the real app with source-delivery checks only.
+  through the real app with source-delivery checks only. A second, held-out
+  fixture over *A Princess of Mars*,
+  `tests/fixtures/answer_boundary/princess-of-mars.json`, has its own script
+  `22_mars_boundary_questions.scribo`; both scripts are generated from their
+  fixtures by `tools/answer_boundary_script.py FIXTURE SCRIPT` (`--check`
+  compares without writing). The bind, review and gate-replay tools read the
+  fixture named by `SCRIBODO_BOUNDARY_FIXTURE` (default the first), and
+  `tools/answer_product_run.py` attaches the parts directory named by
+  `SCRIBODO_MANUSCRIPT` (default the first novel's); see
+  `journal/answer-cycle4_mars.md` for the held-out rule.
   `tools/answer_boundary_review.py` joins such a run's exported messages, units
   and live capture into a review sheet whose mechanical columns (delivery,
   truncation, lengths, quotation binding) are filled and whose judgment fields
   are left for a human; see `journal/answer-cycle2_boundary.md`.
   `test_answer_boundary_fixture` (in `make test`) checks the fixture covers the
-  six required kinds, that no question appears in the seven-question script, that
-  the generated UI script matches the fixture, and that the binder refuses
-  ambiguous or missing passages. `tools/answer_product_run.py` is the tracked
+  six required kinds, that no question appears in the seven-question script or
+  in the other fixture, that each generated UI script matches its fixture, and
+  that the binder refuses ambiguous or missing passages. `tools/answer_product_run.py` is the tracked
   runner that drives a question script through a real-app binary and preserves
   messages, units and the work copy before dropping the test database.
   `tools/answer_clean_review.py` reviews that run's visible replies with the
@@ -595,7 +604,8 @@ A real manuscript goes through the same harnesses (MEMORY-021):
 Gutenberg text into chapter files and eight attachable parts;
 `tools/memory_reach_eval.sh --manuscript DEST/parts --manuscript-tasks KEYS.json`
 measures selection reach against hand-written answer keys
-(`tests/fixtures/memory_reach/pride-and-prejudice-tasks.json`);
+(`tests/fixtures/memory_reach/pride-and-prejudice-tasks.json`, and the held-out
+`a-princess-of-mars-tasks.json` for the second novel);
 `tools/manuscript_baseline.sh --manuscript DEST/parts --script
 tests/ui/store/18_manuscript_questions.scribo [--real]` asks the app
 questions about it. `--keep` leaves the disposable database and work

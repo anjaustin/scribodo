@@ -2,6 +2,7 @@
 
 **Recorded:** 2026-11-06
 **Re-reviewed:** 2026-11-09 against `af57a32`; no gap status changed.
+**Re-prioritised:** 2026-11-11 by the author after [LANDSCAPE](LANDSCAPE.md): every remaining gap is P0. The order below is the working order, not a ranking of importance.
 
 **Baseline:** `3e7add8`; the MVP workflows and their local/CI acceptance pass.
 These are remaining product-readiness/evidence gaps, not claims that tested
@@ -11,13 +12,50 @@ features are absent. Keep the original numbering for future follow-up.
 
 | ID | Gap | Priority | Status |
 |---|---|---|---|
-| GAP-001 | Broad AI usefulness and accuracy evaluation | Backlog | Deferred while GAP-003 is the focus |
-| GAP-002 | Turnkey installation and release distribution | Backlog | Deferred while GAP-003 is the focus |
-| GAP-003 | Whole-manuscript scale and sustained-use evidence | **P0** | Implementation underway; bounded-history foundation first |
-| GAP-004 | Deterministic crash/recovery interruption coverage | Backlog | Deferred while GAP-003 is the focus |
-| GAP-005 | Real macOS input, accessibility and author usability | Backlog | Deferred while GAP-003 is the focus |
+| GAP-001 | Broad AI usefulness and accuracy evaluation | **P0** (2026-11-11) | Started: a second, held-out manuscript (A Princess of Mars) with questions written before any run; see the 2026-11-11 section |
+| GAP-002 | Turnkey installation and release distribution | **P0** (2026-11-11) | Not started |
+| GAP-003 | Whole-manuscript scale and sustained-use evidence | **P0** | Implementation underway; bounded-history foundation first; memory contract in MEMORY-015 |
+| GAP-004 | Deterministic crash/recovery interruption coverage | **P0** (2026-11-11) | Not started; AUDIT-003 F1 (a non-idempotent migration) is the first concrete case for the matrix |
+| GAP-005 | Real macOS input, accessibility and author usability | **P0** (2026-11-11) | Not started |
 
-The user selected **#3 as P0**. Memory/context design is a workstream within
+The user selected **#3 as P0** on 2026-11-06 and made the remaining four P0 on
+2026-11-11.
+
+## Working order from 2026-11-11
+
+Every gap is P0; this is the order the records argue for, each item with the
+measurement that closes it. Items run one at a time unless marked otherwise.
+
+1. **Faithful use: window construction** (LANDSCAPE row 13). A withheld notice
+   stored as the assistant's turn is imitated on later turns. Carry it as a
+   neutral marker or omit it from the composer's history, and replay the
+   `pipe-coref3` question order with and without it. Closes when the Charlotte
+   and walk turns stop declining on good evidence.
+2. **Generalisation: the second manuscript** (GAP-001, LANDSCAPE rows 12 and
+   20). *A Princess of Mars*, imported, with 8 boundary cases and 15 reach
+   tasks written before any run. Run reach and the verified pipeline once at
+   the current build and record the numbers beside the first novel's. Never
+   tune against this fixture; a third novel becomes the held-out set if this
+   one is ever used for tuning.
+3. **Experiment flags and columns** (TECHNICAL-DEBT P1). Retire the two
+   decided flags, read the rest once in `main.c`, decide migration 015's
+   column. Runs alongside 1 and 2 because every further experiment adds to it.
+4. **GAP-004 crash points.** Deterministic kill points around journal writes,
+   commits, marker replacement, archival cleanup and migration receipts;
+   disk-full and read-only cases. Closes with the transition/failure matrix.
+5. **GAP-003 budgets and soak.** Workload sizes and budgets agreed, then the
+   soak, restart and repeatability runs on the M4; the single MEMORY-019
+   baseline becomes a series.
+6. **GAP-001 beyond selection.** Observer precision and recall by finding type
+   on both novels; author-rated usefulness on complete sessions.
+7. **GAP-002 distribution.** Signed app, guided model and service setup,
+   upgrade and uninstall, proven on a clean Mac.
+8. **GAP-005 real input and accessibility.** The IME, dead-key, layout,
+   clipboard and VoiceOver matrix and a small author pilot.
+
+Items 7 and 8 come last because they package and polish what items 1 to 6
+make true; shipping them earlier would ship the current composer variance
+to an author. Memory/context design is a workstream within
 GAP-003; it does not replace editor, database, indexing and long-session
 performance measurements. The other four remain explicit follow-up work.
 

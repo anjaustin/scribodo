@@ -7,10 +7,11 @@ silently use a different original than the one declared before testing.
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-FIXTURE = ROOT / 'tests/fixtures/answer_boundary/questions.json'
+FIXTURE = ROOT / os.environ.get('SCRIBODO_BOUNDARY_FIXTURE', 'tests/fixtures/answer_boundary/questions.json')  # a second manuscript's fixture by environment
 
 
 def bind(fixture, units):

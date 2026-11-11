@@ -1,0 +1,122 @@
+{
+  "purpose": "Held-out boundary questions over a second manuscript (A Princess of Mars, Project Gutenberg #62, imported by tools/manuscript_import.py into 8 parts). Written on 2026-11-11 from a reading of the imported parts, before any pipeline run on this novel, and never to be tuned against. The novel was chosen to break the assumptions the first fixture satisfied: first-person narration (the coreference layer rewrites third-person pronouns only), invented proper names, dialogue and facts spread across all eight parts rather than one. Same contract as questions.json: passages must bind to exactly one manuscript unit at run time; the novel's answer vocabulary is not the pass oracle.",
+  "manuscript": "build/manuscripts/a-princess-of-mars/parts",
+  "review_fields": [
+    "fact_selection",
+    "unsupported_additions",
+    "quotation_spans",
+    "citation_binding",
+    "contradiction_handling",
+    "abstention",
+    "completion"
+  ],
+  "cases": [
+    {
+      "id": "single_fact_sak_leap",
+      "kind": "single_fact",
+      "question": "In my manuscript, how far does John Carter clear in his first deliberate sak leap before the Tharkian warriors?",
+      "designated": [
+        {
+          "document": "part01.md",
+          "passage": "cleared a good hundred and fifty feet"
+        }
+      ],
+      "expected": "A hundred and fifty feet, bound to the part01 source. The sentence's subject is the first-person narrator, not the name in the question; abstains rather than guessing if the source is absent."
+    },
+    {
+      "id": "two_entities_hordes",
+      "kind": "two_entities_different_values",
+      "question": "How many souls do the hordes of Thark number, and how many Warhoons filled the amphitheater for the great games?",
+      "designated": [
+        {
+          "document": "part05.md",
+          "passage": "number some thirty thousand souls"
+        },
+        {
+          "document": "part06.md",
+          "passage": "the entire twenty thousand Warhoons"
+        }
+      ],
+      "expected": "Thirty thousand for Thark and twenty thousand for Warhoon, attributed without swapping; the two values live in different parts, each bound to its own source block."
+    },
+    {
+      "id": "single_fact_kantos_kan",
+      "kind": "single_fact",
+      "question": "Who is Kantos Kan when the narrator first meets him in the Warhoon dungeon?",
+      "designated": [
+        {
+          "document": "part06.md",
+          "passage": "a padwar (lieutenant) in the navy of Helium"
+        }
+      ],
+      "expected": "A padwar, or lieutenant, in the navy of Helium, bound to the part06 source; no invented rank or ship."
+    },
+    {
+      "id": "single_fact_thark_arrival",
+      "kind": "single_fact",
+      "question": "How many days after his arrival on Barsoom does the narrator enter the city of Thark?",
+      "designated": [
+        {
+          "document": "part05.md",
+          "passage": "Just thirty days after my advent upon Barsoom"
+        }
+      ],
+      "expected": "Thirty days, bound to the part05 source. First-person subject; the question says 'the narrator' and 'arrival' where the text says 'my advent'."
+    },
+    {
+      "id": "author_correction",
+      "kind": "explicit_author_correction",
+      "history": [
+        {
+          "role": "user",
+          "content": "Note for later: Dejah Thoris is the daughter of Tardos Mors."
+        }
+      ],
+      "question": "Earlier I told you Dejah Thoris is the daughter of Tardos Mors; I was wrong, the text says otherwise. Whose daughter does she say she is?",
+      "designated": [
+        {
+          "document": "part03.md",
+          "passage": "daughter of Mors Kajak of Helium"
+        }
+      ],
+      "expected": "Follows the author's correction toward the source (Mors Kajak) and says the earlier note is superseded; does not keep Tardos Mors as her father. Tardos Mors is her grandfather, which may be stated only if a source carries it."
+    },
+    {
+      "id": "contradictory_drafts",
+      "kind": "contradictory_dated_drafts",
+      "history": [
+        {
+          "role": "user",
+          "content": "Draft note (older): In the first draft the atmosphere plant had ten radium pumps."
+        }
+      ],
+      "question": "My two drafts disagree about how many radium pumps the atmosphere factory has. Which figure does the current manuscript give, and what did the other draft say?",
+      "designated": [
+        {
+          "document": "part06.md",
+          "passage": "a battery of twenty radium pumps"
+        }
+      ],
+      "expected": "Reports both figures with their provenance (current manuscript twenty; older draft note ten) and does not merge them or pick silently."
+    },
+    {
+      "id": "unavailable_fact",
+      "kind": "unavailable_fact",
+      "question": "What is the name of John Carter's horse in the Arizona chapters of my manuscript?",
+      "designated": [],
+      "expected": "States that the supplied sources do not give the name; must not assert it is never given anywhere, and must not guess a name."
+    },
+    {
+      "id": "creative_request",
+      "kind": "creative_speculative",
+      "question": "Draft two sentences, in Burroughs's register, of Woola waiting outside the doors of the atmosphere factory. Mark it as new writing.",
+      "designated": [
+        {
+          "document": "part06.md",
+          "passage": "Woola and I stepped forth into the darkness"
+        }
+      ],
+      "expected": "Produces the requested draft, marked as proposed writing rather than canon; no refusal and no reclassification of the request as a factual one."
+    }
+  ]
+}

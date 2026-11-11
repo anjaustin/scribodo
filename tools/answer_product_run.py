@@ -4,6 +4,7 @@
 Usage: python3 tools/answer_product_run.py <label> <app-binary>
   SCRIBODO_PRODUCT_SCRIPT       UI script (default tests/ui/store/18_manuscript_questions.scribo)
   SCRIBODO_ANSWER_LIVE_CAPTURE  private 0700 directory for a live-capture app build (optional)
+  SCRIBODO_MANUSCRIPT           parts directory of the imported novel (default build/manuscripts/pride-and-prejudice/parts)
 
 Writes build/product-memory-use/<label>/ with the frozen binary, manifest, app log,
 exported messages (and source units when capturing), a copy of the work directory,
@@ -30,10 +31,11 @@ frozen = destination / 'scribodo'
 shutil.copy2(executable, frozen)
 frozen.chmod(0o500)
 script = root / os.environ.get('SCRIBODO_PRODUCT_SCRIPT', 'tests/ui/store/18_manuscript_questions.scribo')
+manuscript = os.environ.get('SCRIBODO_MANUSCRIPT', 'build/manuscripts/pride-and-prejudice/parts')
 manifest = {'label': label, 'executable': str(executable),
             'binary_sha256': hashlib.sha256(executable.read_bytes()).hexdigest(),
             'script_sha256': hashlib.sha256(script.read_bytes()).hexdigest(),
-            'seed': 42, 'words': 30000, 'per_category': 3,
+            'seed': 42, 'words': 30000, 'per_category': 3, 'manuscript': manuscript,
             'source_sha256': {str(p): hashlib.sha256(p.read_bytes()).hexdigest()
                               for p in (root / 'src').rglob('*') if p.suffix in ('.c', '.h')}}
 if label.endswith('before'):
@@ -53,7 +55,7 @@ started = time.monotonic()
 with (destination / 'app.log').open('w') as log:
     result = subprocess.run(['tools/manuscript_baseline.sh', '--keep', '--real', '--words', '30000',
                              '--context', '16384',
-                             '--per-category', '3', '--manuscript', 'build/manuscripts/pride-and-prejudice/parts',
+                             '--per-category', '3', '--manuscript', manuscript,
                              '--script', str(script.relative_to(root))], env=environment,
                             stdout=log, stderr=subprocess.STDOUT)
 output = (destination / 'app.log').read_text(errors='replace')  # the UI log may cut a multibyte status line

@@ -12,12 +12,13 @@ then the counts; writes the full table to --output.
 import argparse
 import glob
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-FIXTURE = ROOT / 'tests/fixtures/answer_boundary/questions.json'
+FIXTURE = ROOT / os.environ.get('SCRIBODO_BOUNDARY_FIXTURE', 'tests/fixtures/answer_boundary/questions.json')  # a second manuscript's fixture by environment
 
 
 def items_from_sheet(sheet, fixture_cases, run):

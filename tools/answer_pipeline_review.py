@@ -12,11 +12,12 @@ reply for reading. Judgment fields are left to the human review.
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-FIXTURE = ROOT / 'tests/fixtures/answer_boundary/questions.json'
+FIXTURE = ROOT / os.environ.get('SCRIBODO_BOUNDARY_FIXTURE', 'tests/fixtures/answer_boundary/questions.json')  # a second manuscript's fixture by environment
 TRACE = re.compile(r'ANSWER_PIPELINE candidates=(\d+) hydrated=(\d+) scored=(\d+) failures=(\d+) top=(\S+) score=([0-9.]+) status=(\w+) '
                    r'(?:second=(\S+) second_score=([0-9.]+) second_status=(\S+) )?'
                    r'(?:parts=(\d+) top_part=(\d+) second_part=(\d+) )?'

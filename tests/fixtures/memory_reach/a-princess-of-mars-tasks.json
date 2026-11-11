@@ -1,0 +1,96 @@
+{
+  "manuscript": "A Princess of Mars (Project Gutenberg #62), imported by tools/manuscript_import.py into 8 parts",
+  "note": "hand-written document_fact tasks over real prose, written 2026-11-11 before any run on this novel and spread over all eight parts; each required text was checked against the part files; answers are the words a correct reply must carry",
+  "tasks": [
+    {
+      "question": "Who was John Carter's partner in prospecting, and where was he from?",
+      "answers": ["Powell"],
+      "required_document": "part01.md",
+      "required_document_text": "I spent nearly a year prospecting in company with another Confederate officer, Captain James K. Powell of Richmond."
+    },
+    {
+      "question": "What is the theoretic effective radius of the green Martians' rifle?",
+      "answers": ["three hundred miles"],
+      "required_document": "part01.md",
+      "required_document_text": "The theoretic effective radius of this rifle is three hundred miles"
+    },
+    {
+      "question": "How tall was the first green Martian warrior John Carter saw, and what would he have weighed on Earth?",
+      "answers": ["fifteen feet", "four hundred pounds"],
+      "required_document": "part01.md",
+      "required_document_text": "was fully fifteen feet in height and, on Earth, would have weighed some four hundred pounds."
+    },
+    {
+      "question": "How far from Mars is its nearer moon said to be?",
+      "answers": ["five thousand miles"],
+      "required_document": "part02.md",
+      "required_document_text": "the nearer moon being but about five thousand miles distant"
+    },
+    {
+      "question": "About how many eggs does each adult green Martian female bring forth each year?",
+      "answers": ["thirteen"],
+      "required_document": "part02.md",
+      "required_document_text": "Each adult Martian female brings forth about thirteen eggs each year"
+    },
+    {
+      "question": "What is the name and title of the principal chieftain of the community that captured John Carter?",
+      "answers": ["Lorquas Ptomel"],
+      "required_document": "part02.md",
+      "required_document_text": "Lorquas Ptomel, Jed; jed being his title."
+    },
+    {
+      "question": "How does the red prisoner answer when Lorquas Ptomel asks her name?",
+      "answers": ["Mors Kajak"],
+      "required_document": "part03.md",
+      "required_document_text": "“Dejah Thoris, daughter of Mors Kajak of Helium.”"
+    },
+    {
+      "question": "What was the ancient name of the dead city where the Tharks were camped?",
+      "answers": ["Korad"],
+      "required_document": "part03.md",
+      "required_document_text": "a center of commerce and culture known as Korad"
+    },
+    {
+      "question": "What name do some of the warriors give John Carter, combined from the surnames of the chieftains he killed?",
+      "answers": ["Dotar Sojat"],
+      "required_document": "part04.md",
+      "required_document_text": "some of the warriors addressed me as Dotar Sojat"
+    },
+    {
+      "question": "Who does Sola reveal her father to be?",
+      "answers": ["Tars Tarkas"],
+      "required_document": "part04.md",
+      "required_document_text": "My father’s name is Tars Tarkas."
+    },
+    {
+      "question": "According to Sola, how far south of Thark is the great waterway that leads to Helium?",
+      "answers": ["fifty miles"],
+      "required_document": "part05.md",
+      "required_document_text": "The great waterway which leads to Helium is but fifty miles to the south"
+    },
+    {
+      "question": "For how many years had the old keeper watched the pumps of the atmosphere plant?",
+      "answers": ["eight hundred years"],
+      "required_document": "part06.md",
+      "required_document_text": "For eight hundred years, he told me, he had watched these pumps"
+    },
+    {
+      "question": "What appointment does Than Kosis give John Carter after he defends the jeddak's cousin?",
+      "answers": ["padwar of The Guards"],
+      "required_document": "part06.md",
+      "required_document_text": "You are therefore appointed a padwar of The Guards and will be quartered in my palace hereafter."
+    },
+    {
+      "question": "How long was John Carter's first spell of guard duty behind the tapestries to last before he was relieved?",
+      "answers": ["four hours"],
+      "required_document": "part07.md",
+      "required_document_text": "I would be relieved after a period of four hours."
+    },
+    {
+      "question": "How many battleships sailed from Zodanga for Helium, and how many green warriors did they carry?",
+      "answers": ["two hundred and fifty", "one hundred thousand"],
+      "required_document": "part08.md",
+      "required_document_text": "a fleet of two hundred and fifty battleships, carrying nearly one hundred thousand green warriors"
+    }
+  ]
+}
