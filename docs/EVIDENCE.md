@@ -67,3 +67,17 @@ Rules:
   dated tarball here rather than rewriting an existing one.
 - The archive folder is outside the repository and is never committed. It is
   covered by ordinary machine backups, not by project backups.
+
+The answer cycle 3 and AUDIT-003 evidence is in
+`scribodo-evidence-2026-11-11-audit003.tar.gz` in the same folder, with
+`manifest-2026-11-11-audit003.txt` and an entry in `SHA256SUMS`. It contains
+774 files: the offline coreference arms (`build/cr1`, `build/cr2`), the seven
+pass runs of the verified pipeline (`build/answer-live-pipeline` to
+`-pipeline7`), the three coreference treatment runs and their control
+(`build/answer-live-coref`, `-coref2`, `-coref3`), the pipeline review outputs
+(`build/answer-pipe-capture`), the gate replay sheets (`build/gate-replay-*.json`),
+the REDTEAM-021 mutation sources and logs (`build/redteam021-mutations`), and
+the AUDIT-003 matrix logs, results and the remediated `dbtest` log
+(`build/audit003`). Instrumented binaries and objects are excluded (31 files).
+Archive SHA-256:
+`25668b343d4e8aac3ca6c30a49dcd6b46a1c6a7994e4de62dc0b8883acb8333e`.

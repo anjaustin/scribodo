@@ -4,8 +4,8 @@ This is the durable cross-session register for architectural and maintenance
 work. It records debt rather than individual defects. Update the status,
 evidence and session log when a remediation lands.
 
-**Last reviewed:** 2026-11-09
-**Baseline:** `6c243d5` (`Add live-path and manifold diagnostics for answer reliability`); see [AUDIT-002](AUDIT-002-repository-audit.md)
+**Last reviewed:** 2026-11-11
+**Baseline:** `bd23f8b` (`Quotation integrity check; treatment rerun shows zero wrong statements shown`); see [AUDIT-003](AUDIT-003-repository-audit.md), and [AUDIT-002](AUDIT-002-repository-audit.md) before it
 **Status:** pre-alpha; macOS on Apple Silicon is the MVP target
 
 ## Current product priority
@@ -21,6 +21,98 @@ as deferred follow-ups; completed architectural debt below is historical.
 - **In progress** — a migration seam exists and further call sites remain.
 - **Blocked** — the next step needs infrastructure or a decision.
 - **Done** — acceptance criteria are met; retain the entry as history.
+
+## Open — experiment flags and columns have no lifecycle (P1)
+
+**Recorded:** 2026-11-11 (AUDIT-003 F3). **Status:** Open.
+
+Thirty-five `SCRIBODO_*` variables are read in `src/`. Nine are memory or
+answer experiments, parsed ad hoc at the point of use in six files:
+`SCRIBODO_ANSWER_PIPELINE`, `SCRIBODO_ANSWER_PARTS`, `SCRIBODO_ANSWER_BLOCK`,
+`SCRIBODO_MEMORY_EXPERIMENT`, `SCRIBODO_MEMORY_PRESENTATION`,
+`SCRIBODO_MEMORY_BRIEFS`, `SCRIBODO_MEMORY_EXCERPTS`,
+`SCRIBODO_MEMORY_SMALL_UNITS` (read in both `context_planner.c` and, per
+ingest step, in `memory_document_store.c:244`) and `SCRIBODO_INDEX_TEXT_FILE`
+(a process-global table in `memory_index_text.c`, and migration 015's
+`memory_units.index_text` column, carried by every unit hydrator and by the
+embedder and reranker). Two flags are experiments already decided
+(`SCRIBODO_ANSWER_BLOCK`, `SCRIBODO_ANSWER_PARTS`; comments at `chat.c:797`
+and `answer_pipeline.c:934` record the chosen default) and remain compiled in;
+`SCRIBODO_ANSWER_BLOCK` is documented nowhere. `build_in_worker` composes
+five such axes for at least 24 reachable combinations; live runs exercise two.
+
+- **Rule from here:** every experiment flag, and every schema column added for
+  one, gets a line in this entry with its journal, its default, and what
+  retires it. A flag whose experiment has concluded is removed in the commit
+  that records the conclusion.
+- **Remediation:** retire `SCRIBODO_ANSWER_BLOCK` and `SCRIBODO_ANSWER_PARTS`;
+  read the remaining flags once into a configuration struct built in `main.c`
+  and passed down, so no store, planner or pipeline code calls `getenv`; decide
+  migration 015's column (permanent with an in-app resolver, or dropped) when
+  the index-layer question in `journal/answer-cycle3_coref.md` is decided.
+
+## Open — answer receipts and trace lines are an unversioned contract (P2)
+
+**Recorded:** 2026-11-11 (AUDIT-003 F4). **Status:** Open.
+
+The pipeline writes `--- VERIFIED SOURCE ... ---`, `--- ANSWER GATE | ... ---`
+and `--- ANSWER QUOTES | ... ---` into the stored reply
+(`answer_pipeline.c:1097`, `chat.c:1492`) and `ANSWER_PIPELINE`,
+`ANSWER_PIPELINE_SCORES`, `ANSWER_GATE` and `MEMORY_PREPARE` lines to stderr;
+`tools/answer_pipeline_review.py:20-30` parses them with six regular
+expressions. No document defines the markers; no test covers the round trip;
+the receipts persist in `messages.memory_sources`, bounded at 16 KiB by the
+store, and nothing asserts a receipt stays under it. Remediation: one header
+comment that is the contract, one C test that writes each marker and one
+Python test that parses the same fixture, and a bound check where the receipt
+is appended.
+
+## Open — worker monoliths and the compiled-in script host (P2)
+
+**Recorded:** 2026-11-11 (AUDIT-003 F5). **Status:** Open.
+
+`build_in_worker` (`src/llm/chat.c:1082-1389`) is 308 lines with about 176
+decision points and no unit test of its orchestration (`chat_answer_pipeline_configure`
+has no test caller; `answer_pipeline_run` has no C test). `run_job`
+(`observer.c:534-818`, 285 lines) and `observer_job_find`
+(`observer_job.c:184-417`, 234 lines) have the same shape although the
+"Observer monolith" row below is Done. `src/app/script.c` (`run_line` 288,
+`run_expect` 198) is the UI test interpreter, compiled into the product binary
+(`Makefile:78`) with 17 `host_*` adapters and 24 script-conditional sites in
+`main.c` and no `#if`. Remediation: split `build_in_worker` at its existing
+section comments into functions with a shared context struct, each unit-tested
+with the fake backend; decide whether the script host stays in the product
+binary (then list it under intentional tradeoffs) or moves behind a build flag.
+
+## Open — unarchived evidence and undeclared experiment environments (P2)
+
+**Recorded:** 2026-11-11 (AUDIT-003 F6). **Status:** Partly remediated.
+
+Journals since 2026-11-09 cite about 60 `build/` entries that no archive in
+[EVIDENCE](EVIDENCE.md) held; the pass-6 design and the coreference decision
+rest on them. Archived by AUDIT-003. The experiment Python has no declared
+environment: no requirements file, project file or lock; two virtualenvs under
+`build/` (`venv-coref` 1.1 GB, `venv-causal` 797 MB) with versions recorded
+only in journal prose and run manifests, deleted by `make distclean`.
+`tools/answer_gate_replay.c` has a Makefile rule but no phony target depends
+on it. Remediation: archive at every dated report, not at audits; a lock file
+per environment under `tools/` with the Makefile target that creates it; a
+`tools` target that builds every tool binary.
+
+## Open — duplication that raises the cost of the next change (P2 and P3)
+
+**Recorded:** 2026-11-11 (AUDIT-003 F8). **Status:** Open; remediate when touched.
+
+| Duplication | Evidence | When touched |
+|---|---|---|
+| Atomic file write | Seven hand-rolled copies (`observer_store.c:164,468`, `recent.c:203`, `store_import.c:658`, `store.c:419`, `revisions.c:53`, `core/doc_io.c:304`); parent `fsync` in three, `EINTR` loop in one; `profile.c:61` and `model_settings.c:119` use a fixed `.tmp` name | One writer in `src/core`, with the `fsync` and `EINTR` behaviour of the strictest copy |
+| Unit size | `MEMORY_UNIT_BYTES 2000u` plus about 15 literal `2000`/`2003`/`2004` across `memory_store.c`, `memory_document_store.c`, `recall.c`, `db.c:755`, `semantic.c:744,777`, `rerank.c:16`, `memory_brief.c:323`; the window arithmetic duplicated between the chat and document ingesters; `slot_ctx - MAX_REPLY_TOKENS - 256` five times in `chat.c` | Use the name; one window function |
+| Model requests | Chat-completion bodies built in five files with timeout literals of 15, 30, 60, 120 and 180 s; `http.c:332` substitutes 30 s for a non-positive timeout silently; one connection per request at 14 call sites | One request builder; connection reuse (see the loopback entry) |
+| Headers | `store.h` (28 exports) included by 37 files; `chat.h` (50 exports, 10 for tests) by 16 across `ui/`, `app/` and `main.c`; `memory_store.h` includes `llm/chat.h` for one enum | Move `ChatRole` to `core`; split `chat.h` test exports |
+| Layout and shell | All 31 `CLAY(` sites in `main.c`; `App` has 143 fields with four anonymous unions aliasing extracted controllers back to flat names; Escape handled at seven sites; the arm-then-confirm idiom copied three times; 76 colour literals in ten files, no theme header | Next new view: give it its own layout function and a theme header first |
+| Tools | 35 `tools/answer_*.py` (5,290 lines): `ROOT = Path(__file__).resolve().parents[1]` 43 times, 13 `sys.path.insert` sibling imports, four AST-identical helpers; 11 without tests, 7 referenced by one journal or doc only | A `tools/lib` module; retire scripts whose journal is closed |
+| Makefile | 44 per-binary link rules, 18 hand-written TSan compile lines, a 25-line Python test list; zero drift today | Pattern rules when the next test is added |
+| Dead exports | `chat_set_canon_reference` has no caller (so `canon_reference.c` and `chat.c:1322-1335` are unreachable in the product); `revisions_list_files`, `import_job_running_for`, `renames_resolve` have none; `import_job.c` has no test | Remove or test |
 
 ## Open — loopback connection volume in the vector fault sweep
 
@@ -101,7 +193,11 @@ not establish universal correctness or remove the limitations above.
 
 ## P1 — Storage policy leaks across layers
 
-**Status:** Done
+**Status:** Done; two regressions recorded 2026-11-11 (AUDIT-003 F2):
+`memory_job.c:427,451` and `memory_documents.c:90,206` call `store_mode()`
+from ordinary memory-domain workflows written after this entry closed, and
+`store_backends.h:3` still describes that as allowed. Route them through
+`ProjectStore` when next touched and delete the sentence.
 **Why now:** each structured feature otherwise repeats file/database/paused
 dispatch and teaches UI/domain code about persistence topology.
 
@@ -165,6 +261,10 @@ and shutdown ambiguity.
 - [x] Introduce project/session and Explorer snapshot ownership.
 - [x] Extract chat and reviewed-edit controllers.
 - [x] Separate a read-only frame view model from layout construction.
+      (2026-11-11: what landed is `FrameViewModel`, a frame string arena that
+      fixes string lifetime; `build_layout` still reads `App` fields directly,
+      103 reads over about 25 fields. The box records the lifetime fix, not a
+      state separation.)
 - [x] Establish one `app_destroy()` path for full and partial initialization.
 
 ### Acceptance criteria
@@ -172,7 +272,9 @@ and shutdown ambiguity.
 - Background workers own their inputs/results and expose explicit start, poll,
   cancel/join or destroy semantics.
 - `main.c` is a composition root and event loop rather than the implementation
-  of every workflow.
+  of every workflow. (Not met as of 2026-11-11: `finish_prompt`, `send_chat`,
+  `open_source` and five other workflow bodies remain in the file; see the
+  size row in the P2 backlog.)
 - Clay-referenced strings retain valid frame lifetime and Explorer hit-testing
   remains snapshot-stable.
 
@@ -189,6 +291,12 @@ order, limiting parallel tests and future independent application instances.
   timestamp overrides and verification caches.
 - Semantic and recent persistence are owned services.
 - Revision and finding serialization uses per-project advisory locks.
+- Regression (2026-11-11, AUDIT-003 F2): `src/app/memory_index_text.c:21-27`
+  holds a process-global table (`static` struct, mutex, `pthread_once_t`)
+  initialised from `SCRIBODO_INDEX_TEXT_FILE` on first use and calling
+  `abort()` on a bad file. It is the one file-scope mutable static under
+  `src/app/` besides `store.c`'s documented thread-local. Its fate follows the
+  experiment-flag entry above.
 
 ### Migration plan
 
@@ -296,12 +404,12 @@ enforced: direct pushes are permitted, and CI reports after the fact. See
 
 | Debt | Status | Evidence | Next action |
 |---|---|---|---|
-| Observer monolith | Done | Text analysis, deterministic/model backends and job discovery/state pruning are separate modules; `observer.c` retains candidate application plus worker synchronization, cancellation and generations. | Keep worker ownership cohesive unless a narrower interface emerges. |
+| Observer monolith | Done; size re-measured 2026-11-11 | Text analysis, deterministic/model backends and job discovery/state pruning are separate modules; `observer.c` retains candidate application plus worker synchronization, cancellation and generations. `run_job` is 285 lines and `observer_job_find` 234; see the worker-monolith entry above. | Keep worker ownership cohesive unless a narrower interface emerges. |
 | Test monoliths | Done | Pure observer/DB suites, stateful components and remote/network behavior run independently; shared fixtures own temporary roots and stores, and database core/migrations are a separately registered suite. | Add future subsystem tests to the narrowest existing binary. |
 | Documentation drift | Done | Living guides no longer encode volatile source locations or assertion totals; dated red-team reports retain their point-in-time evidence. | Keep contracts current and reserve numeric evidence for dated reports. |
-| Weakly typed DB rows | Done | Production code has no direct indexed-cell reads; repository decoders validate shape, nullability, type and domain. Checked record/revision list failures propagate through `ProjectStore`; compatibility count wrappers remain source-compatible but have no production callers. | Require local decoders and checked routing for every new query. |
+| Weakly typed DB rows | Regressed (2026-11-11) | Repository decoders validate shape, nullability, type and domain, and checked record/revision list failures propagate through `ProjectStore`. One violator: `src/app/memory_gc.c:254-256` reads `db_cell(&r, 0, 4/5/6)` raw into `snprintf` with no column check (added 2026-11-07; harmless today because the columns are `NOT NULL`). The chat family keeps a count-returning `chat_list` in the ops table (`project_store.c:41`) and `project_store_chat_list_checked` bypasses the table with a backend ternary. No Makefile or CI check forbids `db_cell(` outside `db.c`. | Convert the three reads to `db_cell_text`; add a grep gate to `make analyze` allowing `db_cell(` only in `db.[ch]`; finish the chat checked-list routing when next touched. |
 | Manual dependency maintenance | Done | `make dependency-report` and a weekly workflow inventory submodules and images, verify immutable pins, and query OSV by vendored commit. | Review informational upstream updates and remediate any report failure. |
-| `main.c` composition-root size | Open (accepted for pre-alpha) | 2026-11-09 re-measure (AUDIT-002): `src/main.c` is 4,533 lines, 12.1% of `src/` (37,573 C/header lines; the file is unchanged since REDTEAM-017, the denominator grew by 292 lines). The P1 coordination split moved worker ownership out; what remains is the single-window composition root, layout builder and scripted-host adapters in one translation unit. | Split by pane/controller only when a feature next touches more than three ownership areas, or if the file exceeds 5,000 lines. Re-measure and update this row at each review; do not describe the P1 entry above as a size split. |
+| `main.c` composition-root size | Open (accepted for pre-alpha) | 2026-11-11 re-measure (AUDIT-003): `src/main.c` is 4,555 lines, 11.5% of `src/` (39,781 C/header lines); +22 since AUDIT-002 and +763 (20%) since the P1 entry closed on 2026-11-05. The P1 coordination split moved worker ownership out; what remains is the single-window composition root, layout builder (all 31 `CLAY(` sites), scripted-host adapters, and the workflow bodies `finish_prompt` (178 lines), `send_chat` (121), `open_source` (77), `host_element` (76), `draw_empty` (74), `attached_text` (74), `finding_action` (70) and `import_documents` (63). Adding the recall view cost the file 150 lines (`7407807`). | Split by pane/controller only when a feature next touches more than three ownership areas, or if the file exceeds 5,000 lines. Re-measure and update this row at each review; do not describe the P1 entry above as a size split. |
 
 ## Intentional pre-alpha tradeoffs
 
@@ -732,3 +840,29 @@ UI/store paths and full-history compatibility consumers remain debt.
 - A second pass reproduced stopped-reply flags being lost by both persistence
   backends. Migration 008 and file/DB/import/export/source/window round trips now
   preserve them; unrecoverable historical flags default false.
+
+### 2026-11-11 — AUDIT-003 technical-debt audit
+
+- Ran the full 17-target matrix on the unchanged tree at `bd23f8b`. Sixteen
+  targets passed; `make dbtest` failed three checks in the migration test
+  because migration 015 lacked `IF NOT EXISTS`, so the receipt-loss replay
+  could not re-apply it. The commit that added the migration recorded `dbtest`
+  as passing; it was not. Fixed in the same form as migrations 010 to 013 and
+  re-run. Recorded as a fidelity finding: a gate result in prose must come from
+  the gate's exit status, with the log kept.
+- Re-checked every standing claim against the tree. Four no longer hold and
+  are amended in place: raw `db_cell` reads in `memory_gc.c`, `store_mode()`
+  in memory-domain code, a new process-global table in `memory_index_text.c`,
+  and the `main.c` frame view model box, which recorded a string-lifetime fix
+  rather than the separation it names.
+- Added five entries: experiment flags and columns without a lifecycle (P1),
+  the receipt and trace marker contract, worker monoliths and the compiled-in
+  script host, unarchived evidence and undeclared Python environments, and a
+  duplication table to work through when each area is next touched.
+- Measured the shape of the cycle's growth: 11,246 lines added since
+  AUDIT-002, 19% product code, 49% experiment tooling and tests, 32% prose;
+  58 lines removed. Hosted CI last saw `5fcf979`; four commits are unpushed
+  with no hosted verdict. The local branch `fix/persistence-audit-redteam` is
+  patch-equivalent to the merged `938e51b` and can be deleted.
+- Archived the cycle's cited evidence and the audit logs; see
+  [EVIDENCE](EVIDENCE.md).
