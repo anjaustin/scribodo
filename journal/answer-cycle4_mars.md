@@ -109,7 +109,109 @@ stands as the finding:
 
 ## The verified pipeline, live (`mars-pipe0`)
 
-Pending. The run needs the app to open a window; the console was locked when
-it was launched (twice, exit 3 within two seconds, "could not create a
-window"). A waiter launches it when the console unlocks; the results are
-appended here when it has run.
+Same recipe as the first novel's runs (`SCRIBODO_ANSWER_PIPELINE=verified`,
+seed 42, the 30K fixture chat with the eight parts attached, real LFM3,
+embedder and reranker), driven by `22_mars_boundary_questions.scribo` through
+`tools/answer_product_run.py` with the live-capture build
+`build/answer-live-mars`. Two launches failed in two seconds with "could not
+create a window" while the console was locked; the run itself took 312 s once
+the console was unlocked, with no change to anything else. 629 units; 25 of
+27 script checks passed; the two failures are source-delivery checks,
+discussed below. Review sheet `build/answer-pipe-capture/review-pipeline-mars0.json`.
+
+### Selection
+
+| Case | Designated unit rank (score) | In a slot | Note |
+|---|---|---|---|
+| sak leap (first-person subject) | 2 (0.981) | yes, slot 2 | top was a part07 unit at 0.989 |
+| hordes (two parts) | 1 (0.998) and 2 (0.984) | both | |
+| Kantos Kan | **7** (0.991) | no | top 0.997, second 0.997: six units naming Kantos Kan outscored the one that says what he is |
+| Thark arrival (first-person subject) | 1 (0.999) | yes | |
+| author correction | 4 (0.952) | no | slot 2 held part04's "I, the daughter of Mors Kajak, son of Tardos Mors", which states the same fact |
+| contradictory drafts | 1 (0.946) | yes | |
+| creative | 1 (0.969) | yes | |
+
+Six of seven designated units reached a slot or had an equivalent statement
+in one; the Kantos Kan unit is the one real selection miss, and it is the
+first novel's sisters' failure in a new form: the question names the entity,
+several passages name him, and the one that states the attribute ranks under
+them with scores separated by 0.006. The index layer was not on in this run.
+Both first-person-subject cases were selected and answered: the lexical and
+semantic channels and the reranker do not need the subject named when the
+question's content words are in the sentence.
+
+### Replies
+
+| Case | Reply | Gate | Outcome |
+|---|---|---|---|
+| sak leap | "I cleared a good hundred and fifty feet;" quoted, 150 feet | pass | **correct, shown** |
+| hordes | both sentences quoted with their parts | pass | **correct, shown** |
+| Kantos Kan | "The supplied manuscript passages do not contain that detail." | no_answer | abstained; the evidence was not delivered (selection) |
+| Thark arrival | quoted; "Thirty days after his arrival on Barsoom" | pass | **correct, shown** |
+| author correction | "She is the daughter of Mors Kajak (and son of Tardos Mors); i.e., she is NOT the daughter of Tardos Mors." | not_in_span | **correct, withheld** |
+| contradictory drafts | "Current manuscript: twenty radium pumps; earlier draft: ten radium pumps." | not_in_span | **correct, withheld** |
+| unavailable (horse's name) | states the passages do not give it; an aside about the burros, sourced | no_answer | correct abstention |
+| creative | two sentences, marked as new writing | none | done |
+
+Tally: 3 correct shown, 0 wrong shown, 2 correct withheld, 1 abstention for
+missing evidence, 1 correct abstention, 0 fabrications. Against the first
+novel's last treatment run (1 correct, 0 wrong, 3 wrong withheld, 2
+abstentions on good evidence), the composer did better on the held-out book,
+and nothing wrong reached the author on either.
+
+### Why the gate withheld two correct answers
+
+Replaying the two claims through the gate binary with their spans and author
+turns, one token at a time (`build/mars/replay-*.json`):
+
+- **"Current manuscript: twenty radium pumps; earlier draft: ten radium
+  pumps."** Every number is sourced ("twenty" in the span, "ten" in the
+  author's draft note, which the gate had: `author_turns=2`). The failing
+  anchor is **"Current"**: a sentence-initial capitalised word, which the gate
+  counted as a name anchor by design ("errs toward checking more"), absent
+  from the spans and the author's earlier turns. The author's *question*
+  contains "current manuscript"; the gate searched the question only for the
+  echo check, never as a source for a sentence-initial word.
+- **"She is the daughter of Mors Kajak (and son of Tardos Mors); i.e., she is
+  NOT the daughter of Tardos Mors."** Every name is in span 2. The failing
+  anchor is **"NOT"**: an all-capitals word written for emphasis, read as a
+  name because it is capitalised.
+
+Both are the same defect: capitalisation taken for a name. Neither appeared on
+the first novel because its composer never wrote "Current ..." with a correct
+figure or an emphatic capital in a correct claim. This is a software fix, and
+it is chosen because of this run, so the record says so: **this fixture is no
+longer held out for the gate.** It remains held out for selection, which the
+change does not touch.
+
+The change (`answer_gate` in `src/llm/answer_pipeline.c`): a sentence-initial
+capitalised word that the question itself contains is a *soft* anchor, which
+still counts toward the echo check but cannot fail the span check alone; an
+all-capitals word of two or more letters whose lowercase form is a
+closed-class English word ("not", "no", "never", "only", "all", "is", ...) is
+emphasis, not an anchor. Names at the start of a sentence that the question
+does not contain, and all-capitals words outside that list (acronyms), are
+checked as before. Ten new checks in `test_answer_pipeline` (198 in all);
+"Bennet" to "What is Mr. Bennet's first name?" still reads `echoes_question`.
+
+Measured on every recorded claim, both novels (56 first-novel claims in
+thirteen sheets, 7 Mars claims), old gate against new, same inputs:
+
+| Claim | Old | New | Net effect on what the author sees |
+|---|---|---|---|
+| mars0 author correction | not_in_span | pass | a correct answer is shown |
+| mars0 contradictory drafts | not_in_span | pass | a correct answer is shown |
+| coref3 contradictory drafts ("Current manuscript: none; older draft: five miles") | not_in_span | pass | none: that reply was also caught by the quotation check at run time (`misquoted` recorded) and stays withheld |
+
+No other verdict moved. The one first-novel flip is a wrong claim the old
+gate had caught by accident, through the same false anchor; the quotation
+check catches it on its own ground.
+
+Gates on the change: `make test` 95,823 checks, 0 failures; `make analyze` 0
+warnings across 86 files; `make sanitize` 0 diagnostics; `make tsan` 48,498
+checks, 0 failures, 0 diagnostics (`build/mars/gates-*.log`).
+
+## The verified pipeline with the gate change, live (`mars-pipe1`)
+
+Pending: the rerun waits for an unlocked console (one launch failed on the
+lock); appended here when it has run.

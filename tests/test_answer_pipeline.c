@@ -398,6 +398,26 @@ static void test_answer_gate(void)
         CHECK(!strcmp(answer_gate("20,000", "What?", inherit, 2, NULL, 0), "pass"));
         CHECK(!strcmp(answer_gate("100", "What?", inherit, 2, NULL, 0), "not_in_span"));
         CHECK(!strcmp(answer_gate("200,000", "What?", inherit, 2, NULL, 0), "not_in_span"));
+        /* Capitalisation that is not a name (journal/answer-cycle4_mars.md, the second manuscript's first live run):
+         * a sentence-initial word the question contains, and an all-capitals closed-class word written for emphasis.
+         * A name at the start of a sentence stays an anchor unless the question names it, and an answer that only
+         * echoes the question is still an echo. */
+        const char *pumps[] = { "He led me to an inner chamber where I beheld a battery of twenty radium pumps.",
+                                "In his mind was the decision to inspect the radium pumps." };
+        const char *draft[] = { "Draft note (older): In the first draft the atmosphere plant had ten radium pumps." };
+        const char *drafts_q = "My two drafts disagree about how many radium pumps the atmosphere factory has. Which figure does the current manuscript give, and what did the other draft say?";
+        CHECK(!strcmp(answer_gate("Current manuscript: twenty radium pumps; earlier draft: ten radium pumps.", drafts_q, pumps, 2, draft, 1), "pass"));
+        CHECK(!strcmp(answer_gate("Current manuscript: twenty radium pumps; earlier draft: ten radium pumps.", drafts_q, pumps, 2, NULL, 0), "not_in_span")); /* "ten" still needs its source */
+        CHECK(!strcmp(answer_gate("Latest manuscript: twenty radium pumps.", drafts_q, pumps, 2, draft, 1), "not_in_span")); /* a sentence-initial word the question lacks is still checked */
+        const char *parent[] = { "I, the daughter of Mors Kajak, son of Tardos Mors, have listened without anger," };
+        const char *parent_q = "Earlier I told you Dejah Thoris is the daughter of Tardos Mors; I was wrong. Whose daughter does she say she is?";
+        CHECK(!strcmp(answer_gate("She is the daughter of Mors Kajak (and son of Tardos Mors); i.e., she is NOT the daughter of Tardos Mors.", parent_q, parent, 1, NULL, 0), "pass"));
+        CHECK(!strcmp(answer_gate("She is NOT the daughter of Tardos Mors; she is the daughter of Mors Kajak.", parent_q, parent, 1, NULL, 0), "pass"));
+        CHECK(!strcmp(answer_gate("She is the daughter of NASA.", parent_q, parent, 1, NULL, 0), "not_in_span"));         /* all-capitals outside the closed class stays an anchor */
+        CHECK(!strcmp(answer_gate("Sola is the daughter of Mors Kajak.", parent_q, parent, 1, NULL, 0), "not_in_span"));  /* a sentence-initial name the question lacks */
+        CHECK(!strcmp(answer_gate("Tardos Mors", parent_q, parent, 1, NULL, 0), "echoes_question")); /* every anchor is in the question */
+        CHECK(!strcmp(answer_gate("Mors Kajak, son of Tardos Mors", "Whose daughter is she?", parent, 1, NULL, 0), "pass"));
+        CHECK(!strcmp(answer_gate("Bennet", "What is Mr. Bennet's first name?", parent, 1, NULL, 0), "echoes_question")); /* a soft anchor still echoes */
         CHECK(!strcmp(answer_gate("1,000", "What?", inherit, 2, NULL, 0), "not_in_span"));
         const char *estate[] = { "an estate of two thousand a year; her father had left her four thousand pounds" };
         CHECK(!strcmp(answer_gate("2,000 a year and 4000 pounds", "What?", estate, 1, NULL, 0), "pass"));

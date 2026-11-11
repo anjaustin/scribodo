@@ -452,6 +452,23 @@ static bool scale_value_present(long long value, const char *text_norm)
     return false;
 }
 
+/* An all-capitals token of two or more letters whose lowercase form is a closed-class English word: emphasis, not a
+ * name. Acronyms and all-capitals names are not in the list and stay anchors. */
+static bool emphasis_word(const char *token, const char *lowered, size_t len)
+{
+    if (len < 2) return false;
+    for (size_t i = 0; i < len; i++)
+        if (!isupper((unsigned char)token[i])) return false;
+    static const char *const words[] = { "not", "no", "never", "none", "nothing", "yes", "only", "all", "any", "both", "each",
+                                         "every", "some", "most", "more", "less", "very", "same", "other", "also", "still",
+                                         "then", "than", "that", "this", "these", "those", "there", "here", "it", "he", "she",
+                                         "they", "we", "you", "is", "are", "was", "were", "be", "been", "do", "does", "did",
+                                         "the", "and", "or", "but", "if", "so", "too", "always", "exactly", "precisely" };
+    for (size_t i = 0; i < sizeof(words) / sizeof(words[0]); i++)
+        if (!strcmp(lowered, words[i])) return true;
+    return false;
+}
+
 /* An anchor occurs in the texts in either of its forms (digits or word); numbers as whole words, or as the value
  * of a scale-word phrase. */
 static bool anchor_present(const char *token, bool numeric, const char *const *texts, size_t n)
@@ -504,6 +521,16 @@ const char *answer_gate(const char *answer, const char *question, const char *co
     const char *p = answer;
     while (*p) {
         while (*p && !isalnum((unsigned char)*p)) p++;
+        /* Sentence-initial: the first token, or the first after a sentence mark
+         * or an opening quotation mark. Capitalisation there says nothing. */
+        bool sentence_initial = p == answer;
+        for (const char *b = p; !sentence_initial && b > answer;) {
+            unsigned char c = (unsigned char)*--b;
+            if (c == ' ' || c == '\n' || c == '\t' || c == '*' || c == '(' || c == '[') continue;
+            if (c == '.' || c == ';' || c == ':' || c == '?' || c == '!' || c == '"' || c == '\'' || c == '-') sentence_initial = true;
+            else if (c == 0x9c || c == 0x98 || c == 0x94 || c == 0x93) sentence_initial = true; /* last byte of “ ‘ — – */
+            break;
+        }
         char token[64] = { 0 }, lowered[64] = { 0 };
         size_t len = 0;
         bool overflow = false, all_digits = true;
@@ -544,9 +571,20 @@ const char *answer_gate(const char *answer, const char *question, const char *co
         }
         if (!numeric && compound_number(lowered)) numeric = true;
         bool capitalized = isupper((unsigned char)token[0]) != 0;
+        /* Two capitalisations that are not names (measured on the second
+         * manuscript, journal/answer-cycle4_mars.md): a sentence-initial word
+         * the author's own question contains ("Current manuscript: ..." for a
+         * question about the current manuscript), and an all-capitals
+         * closed-class word written for emphasis ("she is NOT the daughter").
+         * Names at the start of a sentence stay anchors unless the question
+         * names them too; all-capitals words outside the closed class stay
+         * anchors. */
+        if (capitalized && !numeric && emphasis_word(token, lowered, len)) continue;
+        bool soft = capitalized && !numeric && sentence_initial && anchor_present(token, false, qtexts, 1);
         if (!numeric && !capitalized) continue;
         any_anchor = true;
-        bool in_source = anchor_present(token, numeric, spans, nspans) || anchor_present(token, numeric, author_turns, nturns);
+        /* A soft anchor still counts toward echoing the question but cannot fail the span check on its own. */
+        bool in_source = soft || anchor_present(token, numeric, spans, nspans) || anchor_present(token, numeric, author_turns, nturns);
         if (!in_source) { verdict = "not_in_span"; break; }
         if (!anchor_present(token, numeric, qtexts, 1)) all_in_question = false;
     }
