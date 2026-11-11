@@ -193,6 +193,14 @@ modify a database while any Scribodo process is running.
   with the two slots assigned as a matching, against today's selection;
   `test_answer_admission_arm` (in `make test`) pins the parts, pools,
   matching and fusion without a model. See `journal/answer-cycle3_relation.md`.
+  `tools/answer_coref_arm.py` (fastcoref FCoref or LingMess with spaCy in
+  `build/venv-coref`, then the admission arm on the derived units) rewrites
+  third-person pronouns in the document units of a live run to their
+  clusters' names at ingestion granularity and measures today's selection on
+  the resolved text against the original; `test_answer_coref_arm` (in
+  `make test`) pins the chunking, the name vocabulary, the representative
+  choice, the nesting, the possessive forms, the two densities and the edit
+  application without a model. See `journal/answer-cycle3_coref.md`.
 
 - `test_recall` (in `make dbtest`) drives `recall_run` against real SQL in a
   throwaway database: displayed canon text is byte-equal to the current
