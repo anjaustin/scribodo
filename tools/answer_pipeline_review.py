@@ -25,6 +25,7 @@ TRACE = re.compile(r'ANSWER_PIPELINE candidates=(\d+) hydrated=(\d+) scored=(\d+
 SCORES = re.compile(r'ANSWER_PIPELINE_SCORES(?: part=(\d+))?((?: [0-9a-f]{12}:[0-9.]+)*)')
 RECEIPT = re.compile(r'--- VERIFIED SOURCE \| (?:unit=([0-9a-f]+) \| document=([^|]+) \| score=([0-9.]+) \| status=(\w+)|none \| status=(\w+))')
 GATE = re.compile(r'--- ANSWER GATE \| verdict=(\w+) \| withheld=(\d) \| answer=(.*?) ---')
+QUOTES = re.compile(r'--- ANSWER QUOTES \| checked=(\d+) \| misquoted=(.*?) ---')
 SECOND = re.compile(r'--- VERIFIED SOURCE 2 \| unit=([0-9a-f]+) \| document=([^|]+) \| score=([0-9.]+) \| status=(\w+)(?: \| part=(\d+))? ---\n(.*?)\n(?=---|\Z)', re.S)
 PART = re.compile(r'\| part=(\d+) \|')
 
@@ -102,6 +103,10 @@ def review(fixture, messages, units, traces):
         span = first_part.split('---\n', 1)[1].strip() if '---\n' in first_part else ''
         g = GATE.search(receipt)
         gate = {'verdict': g[1], 'withheld': g[2] == '1', 'answer': g[3]} if g else None
+        qm = QUOTES.search(receipt)
+        if gate is not None and qm:
+            gate['quotations'] = int(qm[1])
+            gate['misquoted'] = qm[2] or None
         s2 = SECOND.search(receipt)
         second = {'unit_id': s2[1], 'document': s2[2].strip(), 'score': float(s2[3]), 'status': s2[4],
                   'part': int(s2[5]) if s2[5] else None, 'span': s2[6].strip()} if s2 else None

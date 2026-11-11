@@ -22,10 +22,19 @@ class GateReplayTests(unittest.TestCase):
         self.assertEqual(len(items), 2)  # the ungated creative case is skipped
         item, record = items[0]
         self.assertEqual(item, {'answer': 'three miles; five miles', 'question': 'Which figure?',
-                                'spans': ['only three miles.', 'He inquired how far Netherfield was.'], 'turns': ['Draft note: five miles.']})
-        self.assertEqual(record, {'run': 'run1', 'case': 'contradictory_drafts', 'recorded': 'pass', 'answer': 'three miles; five miles'})
+                                'spans': ['only three miles.', 'He inquired how far Netherfield was.'], 'turns': ['Draft note: five miles.'], 'reply': ''})
+        self.assertEqual(record, {'run': 'run1', 'case': 'contradictory_drafts', 'recorded': 'pass', 'answer': 'three miles; five miles',
+                                  'recorded_withheld': None})
         item, record = items[1]
         self.assertEqual((item['spans'], item['turns'], record['recorded']), (['What is his name?'], [], 'echoes_question'))
+
+    def test_a_gated_reply_without_a_claim_is_still_checked_for_quotations(self):
+        sheet = {'cases': [{'id': 'single_fact_walk_distance', 'question': 'How far?', 'span': 'only three miles', 'second': None,
+                            'gate': {'verdict': 'no_answer', 'withheld': False, 'answer': ''}, 'visible_reply': 'It says "only three miles".'}]}
+        items = gr.items_from_sheet(sheet, {}, 'run2')
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0][0]['reply'], 'It says "only three miles".')
+        self.assertEqual(items[0][1]['answer'], '')
 
 
 if __name__ == '__main__':

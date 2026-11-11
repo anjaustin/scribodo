@@ -424,3 +424,108 @@ to the change (the gate runs in microseconds) and not explained.
 3. The unsupported aside in the fortunes reply ("unfinished") and the
    imitated apology in the correction reply are faithful-use costs the
    anchor gate does not see; recorded, not yet measured as a class.
+
+## Quotation integrity, and the treatment rerun (`pipe-coref3`)
+
+**Date:** 2026-11-10, after the gate rerun above. Decision 1 of that pass.
+
+### The check
+
+`answer_quotations` in `src/llm/answer_pipeline.c`, applied in `gate_apply`
+beside the claim gate; tests in `test_answer_pipeline` (177 to 188 checks);
+`make test`, `make analyze`, `make sanitize` and `make tsan` clean.
+Every quotation in the composed reply, the text between a pair of double
+quotes (straight or curly, each closing on its own kind) or a markdown
+blockquote line, is cut at ellipses and newlines into pieces; each piece is
+normalized the gate's way (case, hyphens, emphasis marks and quote styles
+folded, surrounding punctuation dropped) and must be a substring of a
+verified span, one of the author's turns or the question. A piece shorter
+than the minimum span is a mention, not a quotation; an unterminated mark is
+a slip. A failing piece withholds the reply, with its own reason ("because
+it quotes words the verified passages do not contain"), and the receipt
+(`--- ANSWER QUOTES | checked=N | misquoted=... ---`) and the trace record
+what was checked and what failed. The review tool reads the marker.
+
+### Measured on the recorded replies before it shipped
+
+The replay harness runs the check over every recorded gated reply: 49
+replies across passes 4 to 7 and the three coreference runs, 85 quotation
+pieces. **Two fail, both the entail reply with "daughters" rewritten as
+"sons", in coref1 and coref2.** No faithful quotation is refused: emphasis
+inside quotes, ellipses, blockquotes, trailing punctuation and the withheld
+notice's own verbatim spans all pass. A first draft tripped once, on pass
+4's drafts notice, whose straight-quoted span holds the novel's curly
+dialogue; the pairing rule (a quotation closes on its own kind of mark) came
+from that case and is pinned.
+
+### The rerun
+
+Same recipe, capture binary `build/answer-live-coref3`, the FCoref sidecar;
+selection byte-identical to coref1 and coref2 for the third time. Sheet
+`build/answer-pipe-capture/review-pipeline-coref3.json`.
+
+| Case | coref2 shown | coref3 shown |
+|---|---|---|
+| entail | "his sons" | **withheld**: the composer's reply was byte-identical again, and the check named the piece |
+| fortunes | shown and right | **withheld**, rightly: this run's reply attributed the sisters' fortune to "the Bennet family" and quoted the previous turn's entail span; the claim gate (not_in_span) and the check both refused it |
+| Charlotte | abstention | abstention, in the notice's words |
+| walk | correct | abstention in the notice's words, although the claim was "only three miles" and the gate passed: the composed reply itself declined |
+| correction | "fifteen" | "fifteen", source-bound |
+| drafts | correct | **withheld**, rightly: "current manuscript: none; older draft: five miles" with the composer's own commentary inside quotation marks |
+| unavailable | abstained | abstained |
+| creative | draft | draft, marked |
+
+| | pass 6 | coref1 | coref2 | coref3 |
+|---|---:|---:|---:|---:|
+| Correct factual answers shown | 3 | 1 | 4 | 1 |
+| Wrong statements shown | 1 | 1 | 1 | **0** |
+| Wrong replies withheld | 0 | 0 | 0 | 3 |
+| Correct answers withheld | 0 | 1 | 0 | 0 |
+| Abstentions with the designated unit in a slot | 0 | 2 | 1 | 2 |
+| Fabrications shown | 0 | 0 | 0 | 0 |
+
+Wall time 503 s.
+
+### What this establishes
+
+1. **The check works and costs nothing it should not.** It withheld the one
+   reproducible wrong statement and two further wrong replies that the
+   anchor gate alone would have shown (one) or withheld (one), and it has
+   refused no faithful quotation in 85 recorded pieces plus this run's 18.
+   Zero wrong statements shown is the first such result on this fixture.
+2. **The composer's output is not stable across runs with identical
+   evidence, and the instability has a measured driver.** Four runs, same
+   selection: a withheld notice stored as the assistant's turn is imitated
+   by the composer on the turns that follow it. Non-withheld replies that
+   open with the notice's exact first sentence (I), beside the withheld
+   turns (W), in question order:
+
+   | run | entail | fortunes | Charlotte | walk | correction | drafts | unavailable |
+   |---|---|---|---|---|---|---|---|
+   | coref0 | – | – | – | – | – | – | W |
+   | coref1 | – | W | I | I | – | – | – |
+   | coref2 | – | – | – | – | – | – | – |
+   | coref3 | W | W | I | I | – | W | – |
+
+   Every run with a notice before the Charlotte and walk turns has both of
+   them imitating it; the run without has neither, and walk is correct
+   there. Pass 4 recorded this as "history imitation" and called the
+   notice the product behaviour; it is now the dominant cost of
+   withholding. The more the gates withhold, the more notices enter the
+   composer window, and the more later answers decline on good evidence.
+3. **The fortunes case was right once in three runs** on identical spans.
+   The attribution the index layer made selectable is one the composer
+   gives when its window is clean and loses when the window holds a
+   notice. That is the "use" wall of MEMORY-015 with a mechanism attached.
+
+### Decisions that remain
+
+1. **The composer window's treatment of withheld turns.** The notice is
+   the product's visible reply and must stay so; it need not be the
+   composer's history. A withheld assistant turn carried into the window
+   as a short neutral marker, or omitted, is a software change to window
+   construction with a direct measurement: coref3's question order replayed
+   with and without it. This is the first open item.
+2. Repeated runs to bound the remaining variance once the window is fixed.
+3. Whether an ingestion-time resolver becomes an app dependency, so the
+   index layer can leave its flag.

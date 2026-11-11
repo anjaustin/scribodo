@@ -559,17 +559,129 @@ const char *answer_gate(const char *answer, const char *question, const char *co
 
 char *answer_withheld_reply(const char *const *names, const char *const *spans, size_t nspans)
 {
-    static const char k_head[] = "The supplied manuscript passages do not give that. An answer was withheld because it is not "
-                                 "stated in the verified passages.";
-    size_t cap = sizeof(k_head) + 64;
+    return answer_withheld_reply_reason(names, spans, nspans, "it is not stated in the verified passages");
+}
+
+char *answer_withheld_reply_reason(const char *const *names, const char *const *spans, size_t nspans, const char *reason)
+{
+    static const char k_head[] = "The supplied manuscript passages do not give that. An answer was withheld because %s.";
+    if (!reason) reason = "it is not stated in the verified passages";
+    size_t cap = sizeof(k_head) + strlen(reason) + 64;
     for (size_t i = 0; i < nspans; i++) cap += strlen(spans[i]) + strlen(names[i]) + 64;
     char *out = malloc(cap);
     if (!out) return NULL;
-    size_t k = (size_t)snprintf(out, cap, "%s", k_head);
+    size_t k = (size_t)snprintf(out, cap, k_head, reason);
     if (nspans) k += (size_t)snprintf(out + k, cap - k, "\n\nVerified passages:");
     for (size_t i = 0; i < nspans && k < cap; i++)
         k += (size_t)snprintf(out + k, cap - k, "\nSource %zu (%s): \"%s\"", i + 1, names[i], spans[i]);
     return out;
+}
+
+/* ---- quotation integrity --------------------------------------------- */
+
+/* The normalized piece with surrounding punctuation and spaces dropped; empty when nothing alphanumeric remains. */
+static char *quotation_core(const char *piece, size_t len)
+{
+    char *raw = malloc(len + 1);
+    if (!raw) return NULL;
+    memcpy(raw, piece, len);
+    raw[len] = '\0';
+    char *norm = answer_normalize(raw);
+    free(raw);
+    if (!norm) return NULL;
+    char *b = norm, *e = norm + strlen(norm);
+    while (*b && !isalnum((unsigned char)*b)) b++;
+    while (e > b && !isalnum((unsigned char)e[-1])) e--;
+    *e = '\0';
+    if (b != norm) memmove(norm, b, (size_t)(e - b) + 1);
+    return norm;
+}
+
+static bool quotation_in_texts(const char *core, char *const *norms, size_t n)
+{
+    for (size_t i = 0; i < n; i++) if (norms[i] && strstr(norms[i], core)) return true;
+    return false;
+}
+
+/* One quotation (the text between its marks or one blockquote line), cut at ellipses and newlines into pieces. */
+static bool quotation_pieces(const char *text, size_t len, char *const *norms, size_t n, size_t *checked, char **misquoted)
+{
+    const char *p = text, *end = text + len;
+    while (p < end) {
+        const char *q = p;
+        while (q < end) {
+            if (*q == '\n') break;
+            if (q + 3 <= end && !strncmp(q, "...", 3)) break;
+            if (q + 3 <= end && (unsigned char)q[0] == 0xE2 && (unsigned char)q[1] == 0x80 && (unsigned char)q[2] == 0xA6) break; /* U+2026 */
+            q++;
+        }
+        char *core = quotation_core(p, (size_t)(q - p));
+        if (!core) return false;
+        if (strlen(core) >= ANSWER_MIN_SPAN) {
+            (*checked)++;
+            if (!quotation_in_texts(core, norms, n)) {
+                if (misquoted && !*misquoted) *misquoted = core;
+                else free(core);
+                return true;
+            }
+        }
+        free(core);
+        if (q >= end) break;
+        p = q + (*q == '\n' ? 1 : 3);
+    }
+    return true;
+}
+
+size_t answer_quotations(const char *reply, const char *const *spans, size_t nspans, const char *const *author_turns,
+                         size_t nturns, const char *question, char **misquoted)
+{
+    if (misquoted) *misquoted = NULL;
+    if (!reply) return 0;
+    size_t n = nspans + nturns + 1;
+    char **norms = calloc(n, sizeof(*norms));
+    if (!norms) return 0;
+    size_t k = 0;
+    for (size_t i = 0; i < nspans; i++) norms[k++] = answer_normalize(spans[i]);
+    for (size_t i = 0; i < nturns; i++) norms[k++] = answer_normalize(author_turns[i]);
+    norms[k++] = answer_normalize(question ? question : "");
+    size_t checked = 0;
+    const char *p = reply;
+    bool line_start = true;
+    while (*p) {
+        if (line_start) {
+            const char *q = p;
+            while (*q == ' ' || *q == '\t') q++;
+            if (*q == '>') {
+                q++;
+                while (*q == ' ') q++;
+                const char *e = q;
+                while (*e && *e != '\n') e++;
+                if (!quotation_pieces(q, (size_t)(e - q), norms, n, &checked, misquoted) || (misquoted && *misquoted)) break;
+                p = *e ? e + 1 : e;
+                continue;
+            }
+            line_start = false;
+        }
+        bool straight = *p == '"';
+        bool curly = (unsigned char)p[0] == 0xE2 && (unsigned char)p[1] == 0x80 && (unsigned char)p[2] == 0x9C;
+        if (straight || curly) {
+            /* A quotation closes with its own kind of mark: a span quoted in straight marks may itself hold the
+             * novel's curly dialogue quotes, and those belong inside it. */
+            const char *s = p + (straight ? 1 : 3), *e = s;
+            if (straight) while (*e && *e != '"') e++;
+            else while (*e && !((unsigned char)e[0] == 0xE2 && (unsigned char)e[1] == 0x80 && (unsigned char)e[2] == 0x9D)) e++;
+            if (!*e) break; /* unterminated: not a quotation */
+            if (!quotation_pieces(s, (size_t)(e - s), norms, n, &checked, misquoted) || (misquoted && *misquoted)) break;
+            p = e + (straight ? 1 : 3);
+            line_start = false;
+            continue;
+        }
+        if (*p == '\n') line_start = true;
+        p++;
+    }
+    for (size_t i = 0; i < n; i++) free(norms[i]);
+    free(norms);
+    return checked;
 }
 
 /* ---- question parts and slot assignment (cycle 3) ----------------------- */

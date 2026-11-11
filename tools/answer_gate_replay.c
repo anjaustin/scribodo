@@ -1,6 +1,8 @@
-/* Diagnostic: the production anchor gate (answer_gate) over recorded claims.
- * stdin: a JSON array of {"answer", "question", "spans": [...], "turns": [...]}.
- * stdout: one JSON line per item, {"verdict": "..."}. No model; the gate's own
+/* Diagnostic: the production anchor gate (answer_gate) over recorded claims,
+ * and the quotation check (answer_quotations) over the recorded reply when
+ * the item carries one.
+ * stdin: a JSON array of {"answer", "question", "spans": [...], "turns": [...], "reply"?}.
+ * stdout: one JSON line per item, {"verdict", "quotations"?, "misquoted"?}. No model; the gate's own
  * code, linked from the same objects as the app. Driven by
  * tools/answer_gate_replay.py. */
 #include <stdio.h>
@@ -50,9 +52,20 @@ int main(void)
         const char *spans[8], *turns[8];
         size_t nspans = strings(item, "spans", spans, 8), nturns = strings(item, "turns", turns, 8);
         const char *verdict = answer_gate(str(item, "answer"), str(item, "question"), spans, nspans, turns, nturns);
-        char *out = cJSON_PrintUnformatted(cJSON_CreateString(verdict)); /* a JSON string literal */
-        printf("{\"verdict\":%s}\n", out ? out : "\"\"");
+        cJSON *row = cJSON_CreateObject();
+        cJSON_AddStringToObject(row, "verdict", verdict);
+        const char *reply = str(item, "reply");
+        if (reply) {
+            char *misquoted = NULL;
+            size_t checked = answer_quotations(reply, spans, nspans, turns, nturns, str(item, "question"), &misquoted);
+            cJSON_AddNumberToObject(row, "quotations", (double)checked);
+            if (misquoted) cJSON_AddStringToObject(row, "misquoted", misquoted); else cJSON_AddNullToObject(row, "misquoted");
+            free(misquoted);
+        }
+        char *out = cJSON_PrintUnformatted(row);
+        printf("%s\n", out ? out : "{}");
         free(out);
+        cJSON_Delete(row);
     }
     cJSON_Delete(root);
     return 0;

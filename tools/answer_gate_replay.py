@@ -25,12 +25,14 @@ def items_from_sheet(sheet, fixture_cases, run):
     out = []
     for case in sheet['cases']:
         gate = case.get('gate') or {}
-        if not gate.get('answer'):
+        reply = case.get('visible_reply') or ''
+        if not gate.get('answer') and not (gate and reply):
             continue
         spans = [s for s in (case.get('span'), (case.get('second') or {}).get('span')) if s]
         turns = [h['content'] for h in fixture_cases.get(case['id'], {}).get('history', []) if h.get('role') == 'user']
-        item = {'answer': gate['answer'], 'question': case['question'], 'spans': spans, 'turns': turns}
-        out.append((item, {'run': run, 'case': case['id'], 'recorded': gate.get('verdict'), 'answer': gate['answer']}))
+        item = {'answer': gate.get('answer') or '', 'question': case['question'], 'spans': spans, 'turns': turns, 'reply': reply}
+        out.append((item, {'run': run, 'case': case['id'], 'recorded': gate.get('verdict'), 'answer': gate.get('answer') or '',
+                           'recorded_withheld': gate.get('withheld')}))
     return out
 
 
@@ -48,24 +50,33 @@ def main():
             items.append(item)
             records.append(record)
     result = subprocess.run([str(args.binary)], input=json.dumps(items), text=True, capture_output=True, check=True)
-    verdicts = [json.loads(line)['verdict'] for line in result.stdout.splitlines() if line.strip()]
-    if len(verdicts) != len(records):
-        sys.exit(f'{len(verdicts)} verdicts for {len(records)} claims')
+    rows = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+    if len(rows) != len(records):
+        sys.exit(f'{len(rows)} results for {len(records)} claims')
     changed = 0
-    for record, verdict in zip(records, verdicts):
-        record['current'] = verdict
-        record['changed'] = verdict != record['recorded']
+    claims = [(record, row) for record, row in zip(records, rows) if record['answer']]
+    for record, row in zip(records, rows):
+        record['current'] = row['verdict']
+        record['quotations'] = row.get('quotations')
+        record['misquoted'] = row.get('misquoted')
+        record['changed'] = bool(record['answer']) and row['verdict'] != record['recorded']
         changed += record['changed']
         if record['changed']:
-            print(f"{record['run']:14s} {record['case']:28s} {record['recorded']:>14s} -> {verdict:<14s} {record['answer'][:90]!r}")
+            print(f"{record['run']:14s} {record['case']:28s} {str(record['recorded']):>14s} -> {row['verdict']:<14s} {record['answer'][:90]!r}")
     counts = {}
-    for record in records:
+    for record, _ in claims:
         counts[(record['recorded'], record['current'])] = counts.get((record['recorded'], record['current']), 0) + 1
-    print(f'\n{len(records)} recorded claims, {changed} verdicts changed')
+    print(f'\n{len(claims)} recorded claims, {changed} verdicts changed')
     for (recorded, current), n in sorted(counts.items(), key=lambda kv: -kv[1]):
-        print(f'  {recorded:>14s} -> {current:<14s} {n}')
+        print(f'  {str(recorded):>14s} -> {current:<14s} {n}')
+    quoted = [r for r in records if r.get('quotations') is not None]
+    flagged = [r for r in quoted if r.get('misquoted')]
+    print(f"\n{len(quoted)} recorded replies, {sum(r['quotations'] for r in quoted)} quotation pieces checked, "
+          f"{len(flagged)} replies with a quotation the spans do not contain:")
+    for r in flagged:
+        print(f"  {r['run']:14s} {r['case']:28s} recorded_withheld={r['recorded_withheld']} piece={r['misquoted'][:110]!r}")
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps({'claims': records, 'changed': changed}, ensure_ascii=False, indent=1) + '\n')
+    args.output.write_text(json.dumps({'claims': records, 'changed': changed, 'misquoted_replies': len(flagged)}, ensure_ascii=False, indent=1) + '\n')
 
 
 if __name__ == '__main__':

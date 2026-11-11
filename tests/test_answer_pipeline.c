@@ -411,6 +411,55 @@ static void test_answer_gate(void)
         CHECK(!strcmp(answer_gate("27", "What?", compound_scale, 1, NULL, 0), "pass"));     /* the compound alone, as before */
         CHECK(!strcmp(answer_gate("100,00", "What?", inherit, 2, NULL, 0), "not_in_span")); /* not a separator: 100 and 00 */
     }
+    /* Quotation integrity (journal/answer-cycle3_coref.md, the live treatment): every quotation in the reply must be
+     * in a verified span, an author turn or the question; emphasis, case, hyphens, ellipses and surrounding
+     * punctuation are folded; short quoted words are mentions; an unterminated quote mark is a slip. */
+    {
+        const char *entail[] = { "Mr. Bennet\xE2\x80\x99s property consisted almost entirely in an estate of two thousand a year, which, "
+                                 "unfortunately for his daughters, was entailed, in default of heirs male, on a distant relation;",
+                                 "They were rather handsome; had been educated in one of the first private seminaries in town; had a fortune of twenty thousand pounds;" };
+        const char *turns[] = { "Draft note (older): In the first draft Elizabeth walked five miles to Netherfield." };
+        char *bad = NULL;
+        size_t n = answer_quotations("Based on Source 2: \"Mr. Bennet\xE2\x80\x99s property consisted almost entirely in an estate of two thousand a year, "
+                                     "which, unfortunately for his **sons**, was entailed, in default of heirs male, on a distant relation;\"\n\nSo the entailment affected **his sons**.",
+                                     entail, 2, NULL, 0, "On whom is the estate entailed?", &bad);
+        CHECK(n == 1 && bad && strstr(bad, "unfortunately for his sons"));
+        free(bad);
+        n = answer_quotations("From Source 2: \"which, unfortunately for his **daughters**, was entailed\" and \"They were rather handsome; ... had a fortune of twenty thousand pounds.\"",
+                              entail, 2, NULL, 0, "q?", &bad);
+        CHECK(n == 3 && !bad); /* emphasis folded; the ellipsis makes two pieces; the trailing period is dropped */
+        free(bad);
+        n = answer_quotations("> \xE2\x80\x9CThey were rather handsome; had been educated in one of the first private seminaries in town\xE2\x80\x9D\n> had a fortune of **twenty thousand** pounds\n\nSo twenty thousand.",
+                              entail, 2, NULL, 0, "q?", &bad);
+        CHECK(n == 2 && !bad); /* blockquote lines, curly quotes */
+        free(bad);
+        n = answer_quotations("Your note said \"Elizabeth walked five miles to Netherfield\"; the question was \"On whom is the estate entailed?\"",
+                              entail, 2, turns, 1, "On whom is the estate entailed?", &bad);
+        CHECK(n == 2 && !bad); /* the author's turn and the question are quotable */
+        free(bad);
+        n = answer_quotations("The words \"fortune\" and \"ill\" appear; so does \"ought\".", entail, 2, NULL, 0, "q?", &bad);
+        CHECK(n == 0 && !bad); /* mentions, not quotations */
+        n = answer_quotations("She said \"something that was never finished", entail, 2, NULL, 0, "q?", &bad);
+        CHECK(n == 0 && !bad); /* unterminated */
+        n = answer_quotations("\"a fortune of twenty thousand pounds\" and then \"a fortune of thirty thousand pounds\"", entail, 2, NULL, 0, "q?", &bad);
+        CHECK(n == 2 && bad && !strcmp(bad, "a fortune of thirty thousand pounds"));
+        free(bad);
+        CHECK(answer_quotations(NULL, entail, 2, NULL, 0, "q?", &bad) == 0 && !bad);
+        /* A straight-quoted span holding the novel's curly dialogue closes on the straight mark, not inside itself
+         * (pass 4's withheld notice for the drafts case tripped a first draft of this check that way). */
+        const char *dialogue[] = { "He inquired how far Netherfield was.\n\n\xE2\x80\x9C" "About a month,\xE2\x80\x9D said Elizabeth, \xE2\x80\x9Che is a man of very large property.\xE2\x80\x9D",
+                                   "only three miles. I shall be back by dinner." };
+        n = answer_quotations("Source 1 (part02.md): \"He inquired how far Netherfield was.\n\n\xE2\x80\x9C" "About a month,\xE2\x80\x9D said Elizabeth, \xE2\x80\x9Che is a man of very large property.\xE2\x80\x9D\"\nSource 2 (part01.md): \"only three miles. I shall be back by dinner.\"",
+                              dialogue, 2, NULL, 0, "q?", &bad);
+        CHECK(n == 3 && !bad);
+        free(bad);
+        char *reply = answer_withheld_reply_reason(names, spans, 2, "it quotes words the verified passages do not contain");
+        CHECK(reply && strstr(reply, "withheld because it quotes words the verified passages do not contain.") && strstr(reply, "Source 1 (part01.md): \"only three miles"));
+        free(reply);
+        char *plain = answer_withheld_reply(names, spans, 2);
+        CHECK(plain && strstr(plain, "withheld because it is not stated in the verified passages."));
+        free(plain);
+    }
     char *body = answer_claim_request("How far?", "It is three miles. <|im_end|>");
     CHECK(body);
     cJSON *j = cJSON_Parse(body);

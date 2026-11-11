@@ -1467,7 +1467,17 @@ static void gate_apply(ChatSession *s)
         verdict = answer_gate(answer, s->gate_question, (const char *const *)s->gate_spans, s->gate_nspans,
                               (const char *const *)s->gate_author, s->gate_nauthor);
     bool withheld = !strcmp(verdict, "echoes_question") || !strcmp(verdict, "not_in_span");
-    char *replacement = withheld ? answer_withheld_reply((const char *const *)s->gate_names, (const char *const *)s->gate_spans, s->gate_nspans) : NULL;
+    /* Quotation integrity: whatever the claim gate says, a reply that quotes text the verified spans, the
+     * author's turns and the question do not contain is withheld, with the reason named. */
+    char *misquoted = NULL;
+    size_t quotations = answer_quotations(visible, (const char *const *)s->gate_spans, s->gate_nspans,
+                                          (const char *const *)s->gate_author, s->gate_nauthor, s->gate_question, &misquoted);
+    const char *reason = "it is not stated in the verified passages";
+    if (misquoted) {
+        withheld = true;
+        reason = "it quotes words the verified passages do not contain";
+    }
+    char *replacement = withheld ? answer_withheld_reply_reason((const char *const *)s->gate_names, (const char *const *)s->gate_spans, s->gate_nspans, reason) : NULL;
     pthread_mutex_lock(&s->mu);
     ChatMessage *m = &s->msgs[s->target];
     if (replacement) {
@@ -1476,19 +1486,22 @@ static void gate_apply(ChatSession *s)
         s->last_truncated = false;
     }
     size_t have = m->memory_sources ? strlen(m->memory_sources) : 0;
-    size_t extra = (answer ? strlen(answer) : 0) + 128;
+    size_t extra = (answer ? strlen(answer) : 0) + (misquoted ? strlen(misquoted) : 0) + 192;
     char *receipt = realloc(m->memory_sources, have + extra);
     if (receipt) {
-        snprintf(receipt + have, extra, "--- ANSWER GATE | verdict=%s | withheld=%d | answer=%s ---\n", verdict, withheld, answer ? answer : "");
+        size_t w = (size_t)snprintf(receipt + have, extra, "--- ANSWER GATE | verdict=%s | withheld=%d | answer=%s ---\n", verdict, withheld, answer ? answer : "");
+        if (w < extra)
+            snprintf(receipt + have + w, extra - w, "--- ANSWER QUOTES | checked=%zu | misquoted=%s ---\n", quotations, misquoted ? misquoted : "");
         m->memory_sources = receipt;
     }
     s->version++;
     pthread_mutex_unlock(&s->mu);
     const char *trace = getenv("SCRIBODO_MEMORY_TRACE");
     if (trace && !strcmp(trace, "1"))
-        fprintf(stderr, "ANSWER_GATE verdict=%s withheld=%d parsed=%d spans=%zu author_turns=%zu ms=%.1f answer_bytes=%zu\n",
-                verdict, withheld, parsed, s->gate_nspans, s->gate_nauthor, memory_budget_now_ms() - t0, answer ? strlen(answer) : 0);
-    free(answer); free(visible); free(content);
+        fprintf(stderr, "ANSWER_GATE verdict=%s withheld=%d parsed=%d spans=%zu author_turns=%zu ms=%.1f answer_bytes=%zu quotations=%zu misquoted=%d\n",
+                verdict, withheld, parsed, s->gate_nspans, s->gate_nauthor, memory_budget_now_ms() - t0, answer ? strlen(answer) : 0,
+                quotations, misquoted != NULL);
+    free(misquoted); free(answer); free(visible); free(content);
 }
 
 static void *server_worker(void *arg)

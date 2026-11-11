@@ -74,8 +74,22 @@ bool answer_claim_parse(const char *response_body, char **answer, bool *parsed);
  * all inside the question are an echo; an abstention in the claim's words is no answer (pass 5). */
 const char *answer_gate(const char *answer, const char *question, const char *const *spans, size_t nspans,
                         const char *const *author_turns, size_t nturns);
-/* The reply shown instead of a withheld answer: the abstention and the verified passages. */
+/* The reply shown instead of a withheld answer: the abstention and the verified passages. `reason` is the clause
+ * after "An answer was withheld because"; the two-argument form is the gate's. */
 char *answer_withheld_reply(const char *const *names, const char *const *spans, size_t nspans);
+char *answer_withheld_reply_reason(const char *const *names, const char *const *spans, size_t nspans, const char *reason);
+
+/* ---- quotation integrity (cycle 3, the coreference live pass) ------------ */
+/* Every quotation in the composed reply must be text the author can verify: a substring of a verified span, of
+ * one of the author's own turns, or of the question, under the gate's normalization (case, hyphens, emphasis
+ * marks and quote styles folded, surrounding punctuation dropped). A quotation is the text between a pair of
+ * double quotes (straight or curly) or a markdown blockquote line; an ellipsis splits it into pieces checked
+ * separately; a piece shorter than ANSWER_MIN_SPAN is a mention, not a quotation, and is not checked; an
+ * unterminated quote mark is a slip, not a quotation. Returns the number of pieces checked; `*misquoted` gets the
+ * first failing piece (owned) or NULL. The live treatment of journal/answer-cycle3_coref.md showed a reply that
+ * quoted a verified span with "daughters" rewritten as "sons" and asserted the swap; this is that check. */
+size_t answer_quotations(const char *reply, const char *const *spans, size_t nspans, const char *const *author_turns,
+                         size_t nturns, const char *question, char **misquoted);
 
 /* ---- question parts and slot assignment (cycle 3) ----------------------- */
 /* The request's question sentences, each conjunction-joined wh-part on its own ("..., and why ..." starts a new

@@ -216,6 +216,14 @@ modify a database while any Scribodo process is running.
   the current verdict beside the recorded one; a gate change is measured this
   way, and against the committed gate's binary, before it ships.
   `test_answer_gate_replay` (in `make test`) pins the claim extraction.
+  The same replay runs the quotation check (`answer_quotations`: every
+  quotation in a composed reply must be a substring of a verified span, an
+  author turn or the question under the gate's normalization) over every
+  recorded reply and lists the pieces the spans do not contain;
+  `test_answer_pipeline` pins the extraction (straight and curly pairs that
+  close on their own kind, blockquote lines, ellipsis and newline pieces,
+  emphasis and punctuation folding, mentions under the minimum span length,
+  unterminated marks) and the withheld reply's reason.
 
 - `test_recall` (in `make dbtest`) drives `recall_run` against real SQL in a
   throwaway database: displayed canon text is byte-equal to the current
