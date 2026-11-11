@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "cJSON.h"
 #include "llm/http.h"
@@ -330,14 +331,78 @@ static const char *compound_number(const char *w)
     return NULL;
 }
 
-/* An anchor occurs in the texts in either of its forms (digits or word). */
+/* A whole-word occurrence of `needle` in normalized `text`: no letter or digit on either side. Number anchors need
+ * this; "ten" inside "often" or "7" inside "27" is not the number. */
+static bool contains_word(const char *text_norm, const char *needle)
+{
+    size_t n = strlen(needle);
+    for (const char *p = strstr(text_norm, needle); p; p = strstr(p + 1, needle)) {
+        bool left = p == text_norm || !isalnum((unsigned char)p[-1]);
+        bool right = !isalnum((unsigned char)p[n]);
+        if (left && right) return true;
+    }
+    return false;
+}
+
+static bool tens_word(const char *w, size_t n)
+{
+    static const char *const k[] = { "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety" };
+    for (size_t i = 0; i < 8; i++) if (strlen(k[i]) == n && !strncmp(w, k[i], n)) return true;
+    return false;
+}
+
+static bool units_word(const char *w, size_t n)
+{
+    static const char *const k[] = { "one", "two", "three", "four", "five", "six", "seven", "eight", "nine" };
+    for (size_t i = 0; i < 9; i++) if (strlen(k[i]) == n && !strncmp(w, k[i], n)) return true;
+    return false;
+}
+
+/* A whole-word number in normalized text that is not part of a compound: "seven" in "twenty seven" (the
+ * normalized "twenty-seven") is not 7, and "twenty" there is not 20. Scale words ("twenty thousand") are left
+ * alone: "20" against "twenty thousand" is a question of magnitude the span check cannot settle. */
+static bool contains_number_word(const char *text_norm, const char *needle)
+{
+    size_t n = strlen(needle);
+    for (const char *p = strstr(text_norm, needle); p; p = strstr(p + 1, needle)) {
+        if (!(p == text_norm || !isalnum((unsigned char)p[-1])) || isalnum((unsigned char)p[n])) continue;
+        /* The previous word. */
+        const char *e = p;
+        while (e > text_norm && !isalnum((unsigned char)e[-1])) e--;
+        const char *b = e;
+        while (b > text_norm && isalnum((unsigned char)b[-1])) b--;
+        if (e > b && tens_word(b, (size_t)(e - b))) continue;
+        /* The next word. */
+        const char *q = p + n;
+        while (*q && !isalnum((unsigned char)*q)) q++;
+        const char *qe = q;
+        while (isalnum((unsigned char)*qe)) qe++;
+        if (qe > q && units_word(q, (size_t)(qe - q))) continue;
+        return true;
+    }
+    return false;
+}
+
+static bool in_any_word(const char *needle_norm, const char *const *texts, size_t n)
+{
+    bool word_form = isalpha((unsigned char)needle_norm[0]) != 0;
+    for (size_t i = 0; i < n; i++) {
+        char *t = answer_normalize(texts[i]);
+        bool hit = t && t[0] && (word_form ? contains_number_word(t, needle_norm) : contains_word(t, needle_norm));
+        free(t);
+        if (hit) return true;
+    }
+    return false;
+}
+
+/* An anchor occurs in the texts in either of its forms (digits or word); numbers as whole words. */
 static bool anchor_present(const char *token, bool numeric, const char *const *texts, size_t n)
 {
     char *norm = answer_normalize(token);
-    bool hit = norm && norm[0] && in_any(norm, texts, n);
+    bool hit = norm && norm[0] && (numeric ? in_any_word(norm, texts, n) : in_any(norm, texts, n));
     if (!hit && numeric) {
         const char *other = isdigit((unsigned char)token[0]) ? digit_word(token) : compound_number(norm ? norm : "");
-        if (other) hit = in_any(other, texts, n);
+        if (other) hit = in_any_word(other, texts, n);
     }
     free(norm);
     return hit;
@@ -379,6 +444,25 @@ const char *answer_gate(const char *answer, const char *question, const char *co
         memcpy(token, start, len);
         bool numeric = isdigit((unsigned char)token[0]) != 0;
         for (size_t i = 0; i <= len; i++) lowered[i] = (char)tolower((unsigned char)token[i]);
+        /* "Twenty seven" is one anchor: a tens word followed by a units word joins before the check, so neither half is
+         * tested alone against the span's "twenty-seven". */
+        if (!numeric && tens_word(lowered, len)) {
+            const char *q = p;
+            while (*q == ' ') q++;
+            const char *qe = q;
+            while (isalpha((unsigned char)*qe)) qe++;
+            size_t ul = (size_t)(qe - q);
+            char unit[16] = { 0 };
+            if (ul && ul < sizeof(unit)) {
+                for (size_t i = 0; i < ul; i++) unit[i] = (char)tolower((unsigned char)q[i]);
+                if (units_word(unit, ul) && len + 1 + ul < sizeof(token)) {
+                    token[len] = ' '; memcpy(token + len + 1, q, ul);
+                    lowered[len] = ' '; memcpy(lowered + len + 1, unit, ul);
+                    len += 1 + ul; token[len] = lowered[len] = 0;
+                    p = qe;
+                }
+            }
+        }
         if (!numeric && compound_number(lowered)) numeric = true;
         bool capitalized = isupper((unsigned char)token[0]) != 0;
         if (!numeric && !capitalized) continue;
@@ -407,6 +491,178 @@ char *answer_withheld_reply(const char *const *names, const char *const *spans, 
     for (size_t i = 0; i < nspans && k < cap; i++)
         k += (size_t)snprintf(out + k, cap - k, "\nSource %zu (%s): \"%s\"", i + 1, names[i], spans[i]);
     return out;
+}
+
+/* ---- question parts and slot assignment (cycle 3) ----------------------- */
+
+static bool word_char(char c) { return isalnum((unsigned char)c) || c == '_'; }
+static bool space_char(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v'; }
+
+/* The period at `dot` ends an honorific ("Mr. Bennet"), not a sentence. */
+static bool honorific_period(const char *start, const char *dot)
+{
+    static const char *const k[] = { "Mr", "Mrs", "Ms", "Dr", "St" };
+    for (size_t i = 0; i < sizeof(k) / sizeof(k[0]); i++) {
+        size_t n = strlen(k[i]);
+        if ((size_t)(dot - start) < n || strncmp(dot - n, k[i], n)) continue;
+        if ((size_t)(dot - start) == n || !word_char(*(dot - n - 1))) return true;
+    }
+    return false;
+}
+
+static char *trimmed_copy(const char *s, size_t n)
+{
+    while (n && space_char(s[0])) { s++; n--; }
+    while (n && space_char(s[n - 1])) n--;
+    char *out = malloc(n + 1);
+    if (!out) return NULL;
+    memcpy(out, s, n); out[n] = 0;
+    return out;
+}
+
+/* Sentences of the request: a terminator (. ? !) followed by whitespace ends one, except an honorific's period. */
+static size_t sentences(const char *q, char **out, size_t cap)
+{
+    size_t n = 0;
+    const char *start = q;
+    for (const char *p = q; *p; p++) {
+        if ((*p == '.' || *p == '?' || *p == '!') && space_char(p[1]) && !(*p == '.' && honorific_period(q, p))) {
+            char *s = trimmed_copy(start, (size_t)(p + 1 - start));
+            if (s && s[0] && n < cap) out[n++] = s; else free(s);
+            start = p + 1;
+        }
+    }
+    char *s = trimmed_copy(start, strlen(start));
+    if (s && s[0] && n < cap) out[n++] = s; else free(s);
+    return n;
+}
+
+/* The start of a new question part inside a sentence: optional , or ;, whitespace, and/or/but, whitespace, a
+ * wh-word at a word boundary. Returns the wh-word's position, with *cut where the previous part ends; NULL if none. */
+static const char *conjunction(const char *s, const char **cut)
+{
+    static const char *const conj[] = { "and", "or", "but" };
+    static const char *const wh[] = { "what", "which", "why", "who", "whom", "whose", "how", "when", "where" };
+    for (const char *p = s; *p; p++) {
+        const char *k = p;
+        if (*k == ',' || *k == ';') k++;
+        if (!space_char(*k)) continue;
+        while (space_char(*k)) k++;
+        bool joined = false;
+        for (size_t i = 0; i < sizeof(conj) / sizeof(conj[0]) && !joined; i++) {
+            size_t n = strlen(conj[i]);
+            if (!strncasecmp(k, conj[i], n) && space_char(k[n])) { k += n; joined = true; }
+        }
+        if (!joined) continue;
+        while (space_char(*k)) k++;
+        for (size_t i = 0; i < sizeof(wh) / sizeof(wh[0]); i++) {
+            size_t n = strlen(wh[i]);
+            if (!strncasecmp(k, wh[i], n) && !word_char(k[n])) { *cut = p; return k; }
+        }
+    }
+    return NULL;
+}
+
+/* One part: trimmed, trailing "?", "," and ";" removed, then one "?" appended. NULL when nothing remains. */
+static char *piece(const char *s, size_t n)
+{
+    char *t = trimmed_copy(s, n);
+    if (!t) return NULL;
+    size_t len = strlen(t);
+    while (len && (t[len - 1] == '?' || t[len - 1] == ',' || t[len - 1] == ';')) t[--len] = 0;
+    while (len && space_char(t[len - 1])) t[--len] = 0;
+    if (!len) { free(t); return NULL; }
+    char *out = malloc(len + 2);
+    if (out) { memcpy(out, t, len); out[len] = '?'; out[len + 1] = 0; }
+    free(t);
+    return out;
+}
+
+size_t answer_question_parts(const char *question, char *parts[ANSWER_SPANS])
+{
+    for (size_t i = 0; i < ANSWER_SPANS; i++) parts[i] = NULL;
+    if (!question) return 0;
+    char *sent[64];
+    size_t ns = sentences(question, sent, sizeof(sent) / sizeof(sent[0]));
+    size_t asked = 0, ctx_len = 0;
+    for (size_t i = 0; i < ns; i++) {
+        size_t n = strlen(sent[i]);
+        if (sent[i][n - 1] == '?') asked++; else ctx_len += n + 1;
+    }
+    size_t np = 0;
+    char *context = NULL;
+    if (asked && ctx_len && (context = malloc(ctx_len + 1))) {
+        size_t k = 0;
+        for (size_t i = 0; i < ns; i++) {
+            size_t n = strlen(sent[i]);
+            if (sent[i][n - 1] == '?') continue;
+            if (k) context[k++] = ' ';
+            memcpy(context + k, sent[i], n); k += n;
+        }
+        context[k] = 0;
+    }
+    for (size_t i = 0; asked && i < ns && np < ANSWER_SPANS; i++) {
+        size_t n = strlen(sent[i]);
+        if (sent[i][n - 1] != '?') continue;
+        const char *s = sent[i];
+        while (np < ANSWER_SPANS) {
+            const char *cut = NULL, *next = conjunction(s, &cut);
+            char *part = piece(s, next ? (size_t)(cut - s) : strlen(s));
+            if (part && context) {
+                size_t cl = strlen(context), pl = strlen(part);
+                char *with = malloc(cl + 1 + pl + 1);
+                if (with) { memcpy(with, context, cl); with[cl] = ' '; memcpy(with + cl + 1, part, pl + 1); free(part); part = with; }
+            }
+            if (part) parts[np++] = part;
+            if (!next) break;
+            s = next;
+        }
+    }
+    free(context);
+    for (size_t i = 0; i < ns; i++) free(sent[i]);
+    if (!np) {
+        /* No question sentence (a drafting request), or question sentences that reduce to nothing: one part, the
+         * request itself. */
+        char *whole = trimmed_copy(question, strlen(question));
+        if (!whole || !whole[0]) { free(whole); return 0; }
+        parts[0] = whole;
+        np = 1;
+    }
+    return np;
+}
+
+bool answer_assign_slots(const double *s0, const double *s1, size_t n, size_t slot[ANSWER_SPANS], size_t slot_part[ANSWER_SPANS])
+{
+    for (size_t k = 0; k < ANSWER_SPANS; k++) { slot[k] = SIZE_MAX; slot_part[k] = 0; }
+    if (!s0 || !n) return false;
+    if (s1) {
+        double best = -1;
+        size_t b0 = SIZE_MAX, b1 = SIZE_MAX;
+        for (size_t i = 0; i < n; i++) {
+            if (s0[i] < 0) continue;
+            for (size_t j = 0; j < n; j++) {
+                if (j == i || s1[j] < 0) continue;
+                if (b0 == SIZE_MAX || s0[i] + s1[j] > best) { best = s0[i] + s1[j]; b0 = i; b1 = j; }
+            }
+        }
+        if (b0 != SIZE_MAX) { slot[0] = b0; slot[1] = b1; slot_part[0] = 0; slot_part[1] = 1; return true; }
+    }
+    /* One part, or one of two pools empty: the two highest of the pool that has units (today's rule). */
+    const double *s = s0;
+    size_t part = 0;
+    bool any = false;
+    for (size_t i = 0; i < n && !any; i++) any = s0[i] >= 0;
+    if (!any) { if (!s1) return false; s = s1; part = 1; }
+    for (size_t k = 0; k < ANSWER_SPANS; k++) {
+        size_t b = SIZE_MAX;
+        for (size_t i = 0; i < n; i++) {
+            if (s[i] < 0 || (k && i == slot[0])) continue;
+            if (b == SIZE_MAX || s[i] > s[b]) b = i;
+        }
+        if (b == SIZE_MAX) break;
+        slot[k] = b; slot_part[k] = part;
+    }
+    return slot[0] != SIZE_MAX;
 }
 
 /* ---- the run ------------------------------------------------------------- */
@@ -466,41 +722,65 @@ bool answer_pipeline_run(Db *db, SemanticClient *vectors, RerankClient *rerank, 
     set_status(out, "none");
     if (!db || !vectors || !rerank || !chat_server || !scope || !query || !query[0] || before < 0) return false;
     out->attempted = true;
-    /* Heap, not the worker's stack: 64 units and 128 candidates are about
-     * 58 KB, more under the sanitizers (REDTEAM-021 R2). */
-    typedef struct { MemoryCandidate lexical[MEMORY_CANDIDATES], semantic[MEMORY_CANDIDATES], merged[ANSWER_CANDIDATES];
-                     MemoryUnit units[ANSWER_CANDIDATES]; } Work;
+    /* Heap, not the worker's stack: up to 128 units and their candidate lists
+     * are well over 100 KB, more under the sanitizers (REDTEAM-021 R2). */
+    typedef struct { MemoryCandidate lexical[MEMORY_CANDIDATES], semantic[MEMORY_CANDIDATES], merged[ANSWER_SPANS][ANSWER_CANDIDATES];
+                     size_t nm[ANSWER_SPANS];
+                     MemoryUnit units[ANSWER_SCORED_MAX];
+                     bool in_pool[ANSWER_SPANS][ANSWER_SCORED_MAX];
+                     double scores[ANSWER_SPANS][ANSWER_SCORED_MAX]; } Work;
     Work *w = calloc(1, sizeof(*w));
     if (!w) { set_status(out, "extraction_failed"); return false; }
-    MemoryCandidate *lexical = w->lexical, *semantic = w->semantic, *merged = w->merged;
-    MemoryUnit *units = w->units;
-    size_t nl = 0, ns = 0;
+    /* One candidate pool per question part, each part carrying the request's
+     * context sentence (cycle 3, arm 4: the bare part "Which figure does the
+     * current manuscript give?" scores nothing; with its first sentence it is
+     * first). */
+    const char *split = getenv("SCRIBODO_ANSWER_PARTS");
+    if (split && !strcmp(split, "1")) out->nparts = answer_question_parts(query, out->parts);
+    else {
+        /* Default: one pool for the whole request (pass 6). Measured live, the split filled a part's slot with the
+         * best irrelevant passage when that part's answer was not in the manuscript (pass 7, drafts "ten miles"). */
+        out->parts[0] = strdup(query);
+        out->nparts = out->parts[0] ? 1 : 0;
+    }
+    if (!out->nparts) { set_status(out, "extraction_failed"); free(w); return false; }
     char why[256];
-    bool lex_ok = memory_lexical_candidates_with_documents_before(db, scope, documents, query, before, MEMORY_CANDIDATES, lexical, &nl);
-    bool sem_ok = memory_vectors_search_with_documents_before(vectors, scope, documents, query, before, MEMORY_CANDIDATES, semantic, &ns, why, sizeof(why));
-    if (!lex_ok) nl = 0;
-    if (!sem_ok) ns = 0;
-    size_t nm = 0;
-    for (size_t i = 0; i < ns; i++) add_candidate(merged, &nm, &semantic[i]);
-    for (size_t i = 0; i < nl; i++) add_candidate(merged, &nm, &lexical[i]);
-    out->candidates = nm;
-    if (!nm) { set_status(out, "no_candidates"); free(w); return true; }
+    for (size_t p = 0; p < out->nparts; p++) {
+        size_t nl = 0, ns = 0;
+        bool lex_ok = memory_lexical_candidates_with_documents_before(db, scope, documents, out->parts[p], before, MEMORY_CANDIDATES, w->lexical, &nl);
+        bool sem_ok = memory_vectors_search_with_documents_before(vectors, scope, documents, out->parts[p], before, MEMORY_CANDIDATES, w->semantic, &ns, why, sizeof(why));
+        if (!lex_ok) nl = 0;
+        if (!sem_ok) ns = 0;
+        for (size_t i = 0; i < ns; i++) add_candidate(w->merged[p], &w->nm[p], &w->semantic[i]);
+        for (size_t i = 0; i < nl; i++) add_candidate(w->merged[p], &w->nm[p], &w->lexical[i]);
+        out->candidates += w->nm[p];
+    }
+    if (!out->candidates) { set_status(out, "no_candidates"); free(w); return true; }
     /* All SQL first: hydration runs inside the store's short preparation
-     * budget; scoring and extraction are HTTP only and take seconds. */
+     * budget; scoring and extraction are HTTP only and take seconds. A unit in
+     * two pools is hydrated once. */
+    MemoryUnit *units = w->units;
     size_t nu = 0;
-    for (size_t i = 0; i < nm && !stopped(cancel, deadline_ms); i++) {
-        MemoryUnit unit = {0};
-        bool found = false;
-        /* Manuscript units only: a chat unit chosen as the verified passage is
-         * the conversation citing itself (pass 1 selected the session's own
-         * question at 0.96 and the reply fabricated from it). The author's
-         * notes reach the model as history, not as evidence. */
-        if (!memory_candidate_hydrate_with_documents(db, scope, documents, &merged[i], &unit, &found) || !found ||
-            !unit.text || !unit.text_bytes || unit.kind != MEMORY_SOURCE_DOCUMENT) {
-            memory_unit_free(&unit);
-            continue;
+    for (size_t p = 0; p < out->nparts; p++) {
+        for (size_t i = 0; i < w->nm[p] && !stopped(cancel, deadline_ms); i++) {
+            size_t u = nu;
+            for (size_t j = 0; j < nu; j++) if (!strcmp(units[j].id, w->merged[p][i].unit_id)) { u = j; break; }
+            if (u == nu) {
+                MemoryUnit unit = {0};
+                bool found = false;
+                /* Manuscript units only: a chat unit chosen as the verified passage is
+                 * the conversation citing itself (pass 1 selected the session's own
+                 * question at 0.96 and the reply fabricated from it). The author's
+                 * notes reach the model as history, not as evidence. */
+                if (nu >= ANSWER_SCORED_MAX || !memory_candidate_hydrate_with_documents(db, scope, documents, &w->merged[p][i], &unit, &found) ||
+                    !found || !unit.text || !unit.text_bytes || unit.kind != MEMORY_SOURCE_DOCUMENT) {
+                    memory_unit_free(&unit);
+                    continue;
+                }
+                units[nu++] = unit;
+            }
+            w->in_pool[p][u] = true;
         }
-        units[nu++] = unit;
     }
     out->hydrated = nu;
     if (!nu) { set_status(out, "no_candidates"); free(w); return true; }
@@ -508,36 +788,39 @@ bool answer_pipeline_run(Db *db, SemanticClient *vectors, RerankClient *rerank, 
         for (size_t i = 0; i < nu; i++) memory_unit_free(&units[i]);
         set_status(out, "rerank_unavailable"); free(w); return true;
     }
+    for (size_t p = 0; p < ANSWER_SPANS; p++) for (size_t u = 0; u < ANSWER_SCORED_MAX; u++) w->scores[p][u] = -1;
     double t0 = memory_budget_now_ms();
-    for (size_t i = 0; i < nu; i++) {
-        if (stopped(cancel, deadline_ms)) { set_status(out, "canceled"); for (; i < nu; i++) memory_unit_free(&units[i]); break; }
-        double score = 0;
-        char err[128];
-        if (!rerank_score(rerank, query, units[i].text, cancel, deadline_ms, &score, err, sizeof(err))) {
-            out->score_failures++;
-            memory_unit_free(&units[i]);
-            continue;
+    bool canceled = false;
+    for (size_t p = 0; p < out->nparts && !canceled; p++) {
+        for (size_t u = 0; u < nu; u++) {
+            if (!w->in_pool[p][u]) continue;
+            if (stopped(cancel, deadline_ms)) { canceled = true; break; }
+            double score = 0;
+            char err[128];
+            if (!rerank_score(rerank, out->parts[p], units[u].text, cancel, deadline_ms, &score, err, sizeof(err))) {
+                out->score_failures++;
+                continue;
+            }
+            w->scores[p][u] = score;
+            if (out->scored < ANSWER_SCORED_MAX) {
+                snprintf(out->scored_ids[out->scored], sizeof(out->scored_ids[0]), "%.12s", units[u].id);
+                out->scored_scores[out->scored] = score;
+                out->scored_part[out->scored] = (unsigned char)p;
+            }
+            out->scored++;
         }
-        if (out->scored < ANSWER_CANDIDATES) {
-            snprintf(out->scored_ids[out->scored], sizeof(out->scored_ids[0]), "%.12s", units[i].id);
-            out->scored_scores[out->scored] = score;
-        }
-        out->scored++;
-        if (!out->has_top || score > out->top_score) {
-            /* The old first becomes the second. */
-            if (out->has_second) memory_unit_free(&out->second);
-            if (out->has_top) { out->second = out->top; out->second_score = out->top_score; out->has_second = true; }
-            out->top = units[i];
-            out->top_score = score;
-            out->has_top = true;
-        } else if (!out->has_second || score > out->second_score) {
-            if (out->has_second) memory_unit_free(&out->second);
-            out->second = units[i];
-            out->second_score = score;
-            out->has_second = true;
-        } else memory_unit_free(&units[i]);
     }
     out->rerank_ms = memory_budget_now_ms() - t0;
+    if (canceled) set_status(out, "canceled");
+    size_t slot[ANSWER_SPANS], slot_part[ANSWER_SPANS];
+    if (answer_assign_slots(w->scores[0], out->nparts > 1 ? w->scores[1] : NULL, nu, slot, slot_part)) {
+        out->top = units[slot[0]]; out->top_score = w->scores[slot_part[0]][slot[0]]; out->top_part = slot_part[0]; out->has_top = true;
+        if (slot[1] != SIZE_MAX) {
+            out->second = units[slot[1]]; out->second_score = w->scores[slot_part[1]][slot[1]]; out->second_part = slot_part[1]; out->has_second = true;
+        }
+    }
+    for (size_t u = 0; u < nu; u++)
+        if (!(out->has_top && u == slot[0]) && !(out->has_second && u == slot[1])) memory_unit_free(&units[u]);
     free(w);
     if (!out->has_top) {
         if (!strcmp(out->status, "none")) set_status(out, out->score_failures ? "rerank_unavailable" : "no_candidates");
@@ -545,9 +828,9 @@ bool answer_pipeline_run(Db *db, SemanticClient *vectors, RerankClient *rerank, 
     }
     if (stopped(cancel, deadline_ms)) { set_status(out, "canceled"); return true; }
     t0 = memory_budget_now_ms();
-    extract_one(chat_server, query, &out->top, cancel, deadline_ms, &out->raw_span, &out->span, out->status, sizeof(out->status));
+    extract_one(chat_server, out->parts[out->top_part], &out->top, cancel, deadline_ms, &out->raw_span, &out->span, out->status, sizeof(out->status));
     if (out->has_second && !stopped(cancel, deadline_ms))
-        extract_one(chat_server, query, &out->second, cancel, deadline_ms, &out->second_raw_span, &out->second_span,
+        extract_one(chat_server, out->parts[out->second_part], &out->second, cancel, deadline_ms, &out->second_raw_span, &out->second_span,
                     out->second_status, sizeof(out->second_status));
     else if (out->has_second) snprintf(out->second_status, sizeof(out->second_status), "canceled");
     out->extract_ms = memory_budget_now_ms() - t0;
@@ -563,6 +846,7 @@ void answer_pipeline_result_free(AnswerPipelineResult *r)
     free(r->span);
     free(r->second_raw_span);
     free(r->second_span);
+    for (size_t i = 0; i < ANSWER_SPANS; i++) free(r->parts[i]);
     memset(r, 0, sizeof(*r));
 }
 
@@ -615,12 +899,12 @@ char *answer_receipt(const AnswerPipelineResult *r)
     if (!out) return NULL;
     size_t k;
     if (r->has_top)
-        k = (size_t)snprintf(out, cap, "--- VERIFIED SOURCE | unit=%s | document=%s | score=%.4f | status=%s | candidates=%zu scored=%zu ---\n%s\n",
-                             r->top.id, source_name(&r->top), r->top_score, r->status, r->candidates, r->scored, r->span ? r->span : "");
+        k = (size_t)snprintf(out, cap, "--- VERIFIED SOURCE | unit=%s | document=%s | score=%.4f | status=%s | part=%zu | candidates=%zu scored=%zu ---\n%s\n",
+                             r->top.id, source_name(&r->top), r->top_score, r->status, r->top_part + 1, r->candidates, r->scored, r->span ? r->span : "");
     else
         k = (size_t)snprintf(out, cap, "--- VERIFIED SOURCE | none | status=%s | candidates=%zu scored=%zu ---\n", r->status, r->candidates, r->scored);
     if (r->has_second && k < cap)
-        snprintf(out + k, cap - k, "--- VERIFIED SOURCE 2 | unit=%s | document=%s | score=%.4f | status=%s ---\n%s\n",
-                 r->second.id, source_name(&r->second), r->second_score, r->second_status, r->second_span ? r->second_span : "");
+        snprintf(out + k, cap - k, "--- VERIFIED SOURCE 2 | unit=%s | document=%s | score=%.4f | status=%s | part=%zu ---\n%s\n",
+                 r->second.id, source_name(&r->second), r->second_score, r->second_status, r->second_part + 1, r->second_span ? r->second_span : "");
     return out;
 }

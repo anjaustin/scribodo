@@ -9,6 +9,7 @@
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -274,6 +275,70 @@ static void test_pipeline_request(void)
     free(plain);
 }
 
+static void test_question_parts(void)
+{
+    char *parts[ANSWER_SPANS];
+    /* The fixture questions, the same expectations as tests/test_answer_question_parts.py. */
+    CHECK(answer_question_parts("What fortune do Mr. Bingley's sisters have, and what is Mr. Bingley's own inheritance said to be?", parts) == 2);
+    CHECK(!strcmp(parts[0], "What fortune do Mr. Bingley's sisters have?"));
+    CHECK(!strcmp(parts[1], "what is Mr. Bingley's own inheritance said to be?"));
+    free(parts[0]); free(parts[1]);
+    CHECK(answer_question_parts("In my manuscript, on whom is Mr. Bennet's estate entailed, and why is that unfortunate for his daughters?", parts) == 2);
+    CHECK(!strcmp(parts[0], "In my manuscript, on whom is Mr. Bennet's estate entailed?")); /* the honorific's period is not a sentence end */
+    CHECK(!strcmp(parts[1], "why is that unfortunate for his daughters?"));
+    free(parts[0]); free(parts[1]);
+    /* Context sentences are prefixed to every part. */
+    CHECK(answer_question_parts("My two drafts disagree about how many miles Elizabeth walks to Netherfield. Which figure does the current manuscript give, and what did the other draft say?", parts) == 2);
+    CHECK(!strcmp(parts[0], "My two drafts disagree about how many miles Elizabeth walks to Netherfield. Which figure does the current manuscript give?"));
+    CHECK(!strcmp(parts[1], "My two drafts disagree about how many miles Elizabeth walks to Netherfield. what did the other draft say?"));
+    free(parts[0]); free(parts[1]);
+    CHECK(answer_question_parts("Earlier I told you Lydia is seventeen; I was wrong, the text says otherwise. How old is my youngest Bennet daughter?", parts) == 1);
+    CHECK(!strcmp(parts[0], "Earlier I told you Lydia is seventeen; I was wrong, the text says otherwise. How old is my youngest Bennet daughter?"));
+    free(parts[0]);
+    CHECK(answer_question_parts("About how old is Charlotte Lucas when the story opens?", parts) == 1);
+    CHECK(!strcmp(parts[0], "About how old is Charlotte Lucas when the story opens?")); free(parts[0]);
+    /* A conjunction without a wh-word does not split; a question mark alone is not a part. */
+    CHECK(answer_question_parts("Does Jane walk and ride to Netherfield?", parts) == 1);
+    CHECK(!strcmp(parts[0], "Does Jane walk and ride to Netherfield?")); free(parts[0]);
+    CHECK(answer_question_parts("Where does Mrs. Bennet go? Why?", parts) == 2);
+    CHECK(!strcmp(parts[0], "Where does Mrs. Bennet go?") && !strcmp(parts[1], "Why?")); free(parts[0]); free(parts[1]);
+    /* No question sentence: one part, the request trimmed. */
+    CHECK(answer_question_parts("  Draft two sentences, in Austen's register, of Mr. Bennet privately reflecting on the entail. Mark it as new writing. ", parts) == 1);
+    CHECK(!strcmp(parts[0], "Draft two sentences, in Austen's register, of Mr. Bennet privately reflecting on the entail. Mark it as new writing.")); free(parts[0]);
+    /* Three wh-parts: the third is beyond the slots and dropped. */
+    CHECK(answer_question_parts("Who goes, and why, and when does she return?", parts) == 2);
+    CHECK(!strcmp(parts[0], "Who goes?") && !strcmp(parts[1], "why?")); free(parts[0]); free(parts[1]);
+    CHECK(answer_question_parts("?", parts) == 1 && !strcmp(parts[0], "?")); free(parts[0]);
+    CHECK(answer_question_parts("", parts) == 0 && parts[0] == NULL);
+    CHECK(answer_question_parts(NULL, parts) == 0);
+}
+
+static void test_assign_slots(void)
+{
+    size_t slot[ANSWER_SPANS], part[ANSWER_SPANS];
+    /* Two parts: part 1 scores unit 0 (Bingley) 0.98 and unit 1 (sisters) 0.97; part 2 scores unit 0 0.99 and unit 3 0.74.
+     * The greedy first choice would give part 1 unit 0; the matching gives sisters plus Bingley. */
+    double s0[4] = { .98, .97, .5, -1 }, s1[4] = { .99, -1, -1, .74 };
+    CHECK(answer_assign_slots(s0, s1, 4, slot, part) && slot[0] == 1 && slot[1] == 0 && part[0] == 0 && part[1] == 1);
+    /* One part: the two highest of its pool. */
+    double one[3] = { .2, .9, .5 };
+    CHECK(answer_assign_slots(one, NULL, 3, slot, part) && slot[0] == 1 && slot[1] == 2 && part[0] == 0 && part[1] == 0);
+    double single[3] = { -1, .9, -1 };
+    CHECK(answer_assign_slots(single, NULL, 3, slot, part) && slot[0] == 1 && slot[1] == SIZE_MAX);
+    /* Two parts, one empty pool: the other pool's two highest, both answering that part. */
+    double empty[3] = { -1, -1, -1 };
+    CHECK(answer_assign_slots(empty, one, 3, slot, part) && slot[0] == 1 && slot[1] == 2 && part[0] == 1 && part[1] == 1);
+    CHECK(answer_assign_slots(one, empty, 3, slot, part) && slot[0] == 1 && slot[1] == 2 && part[0] == 0 && part[1] == 0);
+    /* Two parts whose pools hold the same single unit: no distinct pair; the unit answers part 1 alone. */
+    double same0[2] = { -1, .8 }, same1[2] = { -1, .9 };
+    CHECK(answer_assign_slots(same0, same1, 2, slot, part) && slot[0] == 1 && slot[1] == SIZE_MAX && part[0] == 0);
+    /* Ties go to the lower index, as the Python arm does. */
+    double tie0[2] = { .5, .5 }, tie1[2] = { .5, .5 };
+    CHECK(answer_assign_slots(tie0, tie1, 2, slot, part) && slot[0] == 0 && slot[1] == 1);
+    CHECK(!answer_assign_slots(empty, NULL, 3, slot, part) && slot[0] == SIZE_MAX);
+    CHECK(!answer_assign_slots(NULL, NULL, 0, slot, part));
+}
+
 static void test_answer_gate(void)
 {
     const char *spans[] = { "only three miles. I shall be back by dinner.", "Mr. Bennet still up." };
@@ -282,6 +347,21 @@ static void test_answer_gate(void)
     CHECK(answer_gate_applies("How far is it?") && answer_gate_applies("  Why?  \n") && !answer_gate_applies("Draft two sentences.") && !answer_gate_applies("") && !answer_gate_applies(NULL));
     CHECK(!strcmp(answer_gate("three miles", "How far does Elizabeth say the walk is?", spans, 2, author, 1), "pass"));
     CHECK(!strcmp(answer_gate("**Three miles**", "How far?", spans, 2, author, 1), "pass"));           /* emphasis and case folded */
+    {   /* Numbers are whole words: "ten" inside "often" and "7" inside "27" do not support an answer (pass 7 check). */
+        const char *often[1] = { "They often walked to Meryton; she was twenty-seven." };
+        CHECK(!strcmp(answer_gate("ten miles", "How far?", often, 1, NULL, 0), "not_in_span"));
+        CHECK(!strcmp(answer_gate("7", "How old?", often, 1, NULL, 0), "not_in_span"));
+        CHECK(!strcmp(answer_gate("27", "How old?", often, 1, NULL, 0), "pass"));
+        CHECK(!strcmp(answer_gate("twenty-seven", "How old?", often, 1, NULL, 0), "pass"));
+        CHECK(!strcmp(answer_gate("twenty", "How old?", often, 1, NULL, 0), "not_in_span")); /* the tens word of a compound is not 20 */
+        CHECK(!strcmp(answer_gate("20", "How old?", often, 1, NULL, 0), "not_in_span"));
+        const char *tenner[1] = { "it was ten miles round" };
+        CHECK(!strcmp(answer_gate("10 miles", "How far?", tenner, 1, NULL, 0), "pass"));
+        const char *fortune[1] = { "had a fortune of twenty thousand pounds; three or four times a week" };
+        CHECK(!strcmp(answer_gate("20 thousand", "What fortune?", fortune, 1, NULL, 0), "pass")); /* scale words are left alone */
+        CHECK(!strcmp(answer_gate("three", "How often?", fortune, 1, NULL, 0), "pass"));
+        CHECK(!strcmp(answer_gate("4", "How often?", fortune, 1, NULL, 0), "pass"));
+    }
     CHECK(!strcmp(answer_gate("three miles; five miles", "Which figure does the current manuscript give, and what did the other draft say?", spans, 2, author, 1), "pass"));
     CHECK(!strcmp(answer_gate("3 miles; 5 miles", "Which figure?", spans, 2, author, 1), "pass"));      /* numerals canonicalized (pass 5) */
     CHECK(!strcmp(answer_gate("three miles, seven miles", "How far?", spans, 2, author, 1), "not_in_span"));
@@ -328,6 +408,8 @@ static void test_answer_gate(void)
 
 int main(void)
 {
+    test_question_parts();
+    test_assign_slots();
     test_answer_gate();
     test_normalize();
     test_verify();

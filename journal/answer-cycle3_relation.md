@@ -306,3 +306,55 @@ Tooling of this cycle (`tools/answer_question_parts.py`,
 `tools/answer_admission_arm.py`, their tests, outputs `build/qp1`, `qp2`,
 `wr2`, `wr3`, `pcl1`, `qe1`, `ad1`, `ad2`) is committed so the
 measurements can be rerun; no production component changed.
+
+## Pass 7: context parts with matching, measured live (`pipe-new7`)
+
+Commit-pending change: `answer_question_parts` (the splitter, ported from
+the Python arm with the same tests), `answer_assign_slots` (the matching),
+one candidate pool per part in `answer_pipeline_run`, the part index in the
+receipt and trace, review tool updated. Run through the real app on the
+eight boundary cases with `SCRIBODO_ANSWER_PIPELINE=verified`, same binary
+shape as pass 6 (a first attempt drove the default UI script by mistake;
+kept as `pipe-new7-script18`: 25 of 28 script expectations, a two-part
+question handled with two pools, no errors). Sheet
+`build/answer-pipe-capture/review-pipeline-new7.json`.
+
+| Case | Pass 6 shown | Pass 7 shown | What moved |
+|---|---|---|---|
+| entail | abstention | abstention | live retrieval for part 2 never brought the stating unit into its pool; the offline gain was the lexical stand-in's |
+| fortunes | hundred thousand right; Miss de Bourgh as the sisters' | hundred thousand right; Miss de Bourgh "his cousin" | as the arm predicted: part 1's slot is the de Bourgh unit (0.9815), the sisters' unit fifth |
+| Charlotte | **27, correct** | abstains | identical spans and scores (0.3569, 0.1815); the composer read the same evidence differently with a different history window |
+| walk | three miles | three miles | |
+| correction | abstention | abstention | |
+| drafts | **three vs five, correct** | **"ten miles" as the current figure** | part 2 ("what did the other draft say?") has no manuscript answer; the matching filled its slot with the best irrelevant passage, "it was ten miles round" (0.9793), and the composer used it |
+| unavailable | withheld | withheld | |
+| creative | draft | draft | |
+
+Reranking 23 to 25 s on two-part questions against 10 to 12 s.
+
+| | pass 6 | pass 7 |
+|---|---:|---:|
+| Correct factual answers shown | 3 | 1 |
+| Wrong attributions shown | 1 | 2 |
+| Correct answers withheld | 0 | 0 |
+
+**Rejected.** The offline metric (designated units in slots) was blind to
+the failure that decided this pass: a part whose answer is not in the
+manuscript still gets a slot, and the slot is filled with the best-scoring
+irrelevant passage, which the composer then presents as the answer. The
+whole-question pool has the same hazard in principle (the de Bourgh unit)
+and happened not to trigger it on drafts. The Charlotte flip on identical
+evidence is composer variance under the history window, recorded as such;
+it is not evidence for or against the split.
+
+The parts path stays behind `SCRIBODO_ANSWER_PARTS=1` (default off; the
+default is the pass 6 selection) so the measurement can be repeated when
+the slot-filling rule changes. While checking the "ten" anchor the gate's
+number-word match was found to be a substring match ("ten" inside
+"often"); fixed to whole words with tests. It did not decide any pass.
+
+What a future split would need, measured here: a reason to leave a part's
+slot empty when nothing admitted states an answer to it. The reranker
+cannot give that reason (0.9793 for "ten miles round" against "what did
+the other draft say?"), and the embedder's scores on these pools are
+0.4 to 0.7 with no gap between answering and non-answering units.

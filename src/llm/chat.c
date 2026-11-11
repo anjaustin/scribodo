@@ -1233,15 +1233,18 @@ static bool build_in_worker(ChatSession *s)
                      pipeline.has_second ? pipeline.second_status : "-");
             const char *ptrace = getenv("SCRIBODO_MEMORY_TRACE");
             if (ptrace && !strcmp(ptrace, "1")) {
-                fprintf(stderr, "ANSWER_PIPELINE candidates=%zu hydrated=%zu scored=%zu failures=%zu top=%s score=%.4f status=%s second=%s second_score=%.4f second_status=%s rerank_ms=%.1f extract_ms=%.1f request_bytes=%zu history_first=%zu\n",
+                fprintf(stderr, "ANSWER_PIPELINE candidates=%zu hydrated=%zu scored=%zu failures=%zu top=%s score=%.4f status=%s second=%s second_score=%.4f second_status=%s parts=%zu top_part=%zu second_part=%zu rerank_ms=%.1f extract_ms=%.1f request_bytes=%zu history_first=%zu\n",
                         pipeline.candidates, pipeline.hydrated, pipeline.scored, pipeline.score_failures,
                         pipeline.has_top ? pipeline.top.id : "-", pipeline.top_score, pipeline.status,
                         pipeline.has_second ? pipeline.second.id : "-", pipeline.second_score, pipeline.has_second ? pipeline.second_status : "-",
+                        pipeline.nparts, pipeline.top_part + 1, pipeline.has_second ? pipeline.second_part + 1 : 0,
                         pipeline.rerank_ms, pipeline.extract_ms, req ? strlen(req) : 0, first_history);
-                fprintf(stderr, "ANSWER_PIPELINE_SCORES");
-                for (size_t i = 0; i < pipeline.scored && i < ANSWER_CANDIDATES; i++)
-                    fprintf(stderr, " %s:%.4f", pipeline.scored_ids[i], pipeline.scored_scores[i]);
-                fprintf(stderr, "\n");
+                for (size_t p = 0; p < pipeline.nparts; p++) {
+                    fprintf(stderr, "ANSWER_PIPELINE_SCORES part=%zu", p + 1);
+                    for (size_t i = 0; i < pipeline.scored && i < ANSWER_SCORED_MAX; i++)
+                        if (pipeline.scored_part[i] == p) fprintf(stderr, " %s:%.4f", pipeline.scored_ids[i], pipeline.scored_scores[i]);
+                    fprintf(stderr, "\n");
+                }
             }
             answer_pipeline_result_free(&pipeline);
             pipeline_done = true;

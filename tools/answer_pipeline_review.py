@@ -19,34 +19,40 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / 'tests/fixtures/answer_boundary/questions.json'
 TRACE = re.compile(r'ANSWER_PIPELINE candidates=(\d+) hydrated=(\d+) scored=(\d+) failures=(\d+) top=(\S+) score=([0-9.]+) status=(\w+) '
                    r'(?:second=(\S+) second_score=([0-9.]+) second_status=(\S+) )?'
+                   r'(?:parts=(\d+) top_part=(\d+) second_part=(\d+) )?'
                    r'rerank_ms=([0-9.]+) extract_ms=([0-9.]+) request_bytes=(\d+)(?: history_first=(\d+))?')
-SCORES = re.compile(r'ANSWER_PIPELINE_SCORES((?: [0-9a-f]{12}:[0-9.]+)*)')
+# Scores: one line per question part since cycle 3 ("part=N"); earlier runs wrote one unlabeled line (part 1).
+SCORES = re.compile(r'ANSWER_PIPELINE_SCORES(?: part=(\d+))?((?: [0-9a-f]{12}:[0-9.]+)*)')
 RECEIPT = re.compile(r'--- VERIFIED SOURCE \| (?:unit=([0-9a-f]+) \| document=([^|]+) \| score=([0-9.]+) \| status=(\w+)|none \| status=(\w+))')
 GATE = re.compile(r'--- ANSWER GATE \| verdict=(\w+) \| withheld=(\d) \| answer=(.*?) ---')
-SECOND = re.compile(r'--- VERIFIED SOURCE 2 \| unit=([0-9a-f]+) \| document=([^|]+) \| score=([0-9.]+) \| status=(\w+) ---\n(.*?)\n(?=---|\Z)', re.S)
+SECOND = re.compile(r'--- VERIFIED SOURCE 2 \| unit=([0-9a-f]+) \| document=([^|]+) \| score=([0-9.]+) \| status=(\w+)(?: \| part=(\d+))? ---\n(.*?)\n(?=---|\Z)', re.S)
+PART = re.compile(r'\| part=(\d+) \|')
 
 
 def parse_trace(log_text):
-    """(trace, scores) pairs in question order; scores may be empty for runs without the score line."""
+    """(trace, scores) pairs in question order: scores is part 1's list (empty for runs without a score line) and
+    trace['part_scores'] holds every part's list, keyed by part number."""
     traces = []
     pending = None
+
+    def close():
+        if pending:
+            traces.append((pending, pending['part_scores'].get(1, [])))
     for line in log_text.splitlines():
         m = TRACE.search(line)
         if m:
-            if pending:
-                traces.append((pending, []))
+            close()
             pending = {'candidates': int(m[1]), 'hydrated': int(m[2]), 'scored': int(m[3]), 'failures': int(m[4]), 'top': m[5],
                        'score': float(m[6]), 'status': m[7], 'second': m[8], 'second_score': float(m[9]) if m[9] else None,
-                       'second_status': m[10], 'rerank_ms': float(m[11]), 'extract_ms': float(m[12]),
-                       'request_bytes': int(m[13]), 'history_first': int(m[14]) if m[14] else None}
+                       'second_status': m[10], 'parts': int(m[11]) if m[11] else None, 'top_part': int(m[12]) if m[12] else None,
+                       'second_part': int(m[13]) if m[13] else None, 'rerank_ms': float(m[14]), 'extract_ms': float(m[15]),
+                       'request_bytes': int(m[16]), 'history_first': int(m[17]) if m[17] else None, 'part_scores': {}}
             continue
         s = SCORES.search(line)
         if s and pending:
-            scores = [(p.split(':')[0], float(p.split(':')[1])) for p in s[1].split()]
-            traces.append((pending, scores))
-            pending = None
-    if pending:
-        traces.append((pending, []))
+            part = int(s[1]) if s[1] else 1
+            pending['part_scores'][part] = [(p.split(':')[0], float(p.split(':')[1])) for p in s[2].split()]
+    close()
     return traces
 
 
@@ -97,10 +103,15 @@ def review(fixture, messages, units, traces):
         g = GATE.search(receipt)
         gate = {'verdict': g[1], 'withheld': g[2] == '1', 'answer': g[3]} if g else None
         s2 = SECOND.search(receipt)
-        second = {'unit_id': s2[1], 'document': s2[2].strip(), 'score': float(s2[3]), 'status': s2[4], 'span': s2[5].strip()} if s2 else None
+        second = {'unit_id': s2[1], 'document': s2[2].strip(), 'score': float(s2[3]), 'status': s2[4],
+                  'part': int(s2[5]) if s2[5] else None, 'span': s2[6].strip()} if s2 else None
+        first_part = PART.search(first_part)
+        chosen['part'] = int(first_part[1]) if first_part else None
         trace, scores = trace_for(q['seq'] + 1)
         ranked = sorted(scores, key=lambda s: -s[1])
         rank_of = {uid: (r + 1, sc) for r, (uid, sc) in enumerate(ranked)}
+        by_part = {part: {uid: (r + 1, sc) for r, (uid, sc) in enumerate(sorted(lst, key=lambda s: -s[1]))}
+                   for part, lst in (trace.get('part_scores') or {}).items()}
         designated = []
         for d in designated_units(case, units):
             uid = d['unit_id']
@@ -109,6 +120,7 @@ def review(fixture, messages, units, traces):
                                'chosen_second': bool(uid) and bool(second) and second['unit_id'] == uid,
                                'candidate_rank': rank_of[prefix][0] if prefix in rank_of else None,
                                'candidate_score': rank_of[prefix][1] if prefix in rank_of else None,
+                               'candidate_rank_by_part': {part: r[prefix][0] for part, r in by_part.items() if prefix in r},
                                'passage_in_span': d['passage'] in span or (bool(second) and d['passage'] in second['span'])})
         sheet.append({'id': case['id'], 'kind': case['kind'], 'question': case['question'], 'chosen': chosen, 'span': span, 'second': second, 'gate': gate,
                       'span_chars': len(span), 'designated': designated, 'trace': trace,
@@ -134,10 +146,11 @@ def main():
     for c in sheet:
         if 'error' in c:
             print(c['id'], 'ERROR', c['error']); continue
-        des = [(d['chosen'] or ('2nd' if d['chosen_second'] else False), d['candidate_rank'], d['candidate_score'], d['passage_in_span']) for d in c['designated']]
+        des = [(d['chosen'] or ('2nd' if d['chosen_second'] else False), d['candidate_rank_by_part'] or d['candidate_rank'], d['candidate_score'], d['passage_in_span']) for d in c['designated']]
         t = c['trace']
         print(f"{c['id']:26s} chosen={c['chosen'].get('document')} status={c['chosen'].get('status')} score={c['chosen'].get('score')} "
               f"designated(chosen,rank,score,in_span)={des} span_chars={c['span_chars']} scored={t.get('scored')} "
+              f"parts={t.get('parts')} slot_parts=({c['chosen'].get('part')},{c['second']['part'] if c['second'] else None}) "
               f"rerank_ms={t.get('rerank_ms')} extract_ms={t.get('extract_ms')} history_first={t.get('history_first')} reply_chars={c['reply_characters']} gate={c.get('gate')}")
 
 

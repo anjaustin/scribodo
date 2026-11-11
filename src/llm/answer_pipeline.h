@@ -24,6 +24,7 @@
 #define ANSWER_PIPELINE_BUDGET_MS 90000.0
 #define ANSWER_HISTORY_MESSAGES 6u /* the composer window: newest three pairs plus the verified block */
 #define ANSWER_SPANS 2u /* pass 3: the top two units each contribute one byte-verified span */
+#define ANSWER_SCORED_MAX (ANSWER_CANDIDATES * ANSWER_SPANS) /* cycle 3: one candidate pool per question part */
 
 typedef struct {
     bool attempted;
@@ -41,8 +42,14 @@ typedef struct {
     char *second_raw_span, *second_span;
     char second_status[48];
     double rerank_ms, extract_ms;
-    char scored_ids[ANSWER_CANDIDATES][13]; /* diagnostic: every scored unit (id prefix) and its score, in scoring order */
-    double scored_scores[ANSWER_CANDIDATES];
+    /* Cycle 3: the request's question parts, each with its context sentence; one slot per part, assigned as a
+     * maximum-score matching (journal/answer-cycle3_relation.md, arm 4). top_part/second_part index parts[]. */
+    size_t nparts;
+    char *parts[ANSWER_SPANS]; /* owned */
+    size_t top_part, second_part;
+    char scored_ids[ANSWER_SCORED_MAX][13]; /* diagnostic: every scored (part, unit) pair, in scoring order */
+    double scored_scores[ANSWER_SCORED_MAX];
+    unsigned char scored_part[ANSWER_SCORED_MAX];
 } AnswerPipelineResult;
 
 bool answer_pipeline_run(Db *db, SemanticClient *vectors, RerankClient *rerank, LlmServer *chat_server,
@@ -68,6 +75,17 @@ const char *answer_gate(const char *answer, const char *question, const char *co
                         const char *const *author_turns, size_t nturns);
 /* The reply shown instead of a withheld answer: the abstention and the verified passages. */
 char *answer_withheld_reply(const char *const *names, const char *const *spans, size_t nspans);
+
+/* ---- question parts and slot assignment (cycle 3) ----------------------- */
+/* The request's question sentences, each conjunction-joined wh-part on its own ("..., and why ..." starts a new
+ * part), each ending in "?", each prefixed with the request's non-question sentences (the referent a bare part
+ * loses). A request with no question sentence is one part, unchanged. At most ANSWER_SPANS parts; owned strings.
+ * Software only; the same rule as tools/answer_question_parts.py. */
+size_t answer_question_parts(const char *question, char *parts[ANSWER_SPANS]);
+/* Slots from per-part scores over n units (a score below 0 means not in that part's pool or not scored). Two parts:
+ * the distinct pair maximizing the score sum; one part, or one empty pool: the two highest of the pool that has
+ * units. slot[k] is SIZE_MAX when empty; slot_part[k] names the part the slot answers. */
+bool answer_assign_slots(const double *s0, const double *s1, size_t n, size_t slot[ANSWER_SPANS], size_t slot_part[ANSWER_SPANS]);
 
 /* ---- pure helpers, exposed for tests ----------------------------------- */
 /* Folds typographic quotes and dashes, drops Markdown emphasis, collapses

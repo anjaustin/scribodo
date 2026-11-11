@@ -163,7 +163,9 @@ modify a database while any Scribodo process is running.
   pipeline's pure parts: normalization, byte verification with the sentence
   cut, the extraction request and reply, the reranker prompt, request and
   probability parsing, the fixture scorer, the verified block and receipt, and
-  the pipeline request builder beside the unchanged production builder; see
+  the pipeline request builder beside the unchanged production builder, the
+  question splitter and the slot matching (cycle 3), and the gate's number
+  anchors as whole words and compounds; see
   `journal/answer-cycle2_pipeline_live.md` and `docs/MODEL-002-qwen3-reranker.md`.
   `tools/answer_pipeline_review.py` joins a pipeline live run's messages, units
   and trace lines into a review sheet (chosen unit, designated units' candidate

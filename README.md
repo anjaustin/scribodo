@@ -268,6 +268,7 @@ in [`docs/TESTING.md`](docs/TESTING.md).
 | `SCRIBODO_MEMORY_EXCERPTS` | unset | `1` selects the failed query-window development variant. Reproduction only; off by default. Requires local memory. |
 | `SCRIBODO_MEMORY_SMALL_UNITS` | unset | `1` tests 128-token saved-document units and a 16-unit candidate packet. Failed its 14/14 development reach target; off by default. Rebuild memory to change existing units. |
 | `SCRIBODO_ANSWER_PIPELINE` | unset | `verified` runs the verified-answer pipeline experiment: the local Qwen3-Reranker picks one unit from 64 candidates, one extraction call copies the stating sentence, the span is byte-checked against the unit, and only that span reaches the model. Requires the memory experiment and the pinned reranker GGUF (`SCRIBODO_RERANK_MODEL`). Measured, not promoted; see `docs/MODEL-002-qwen3-reranker.md`. |
+| `SCRIBODO_ANSWER_PARTS` | unset | With the verified pipeline, `1` splits a multi-part question into its parts (each with the request's context sentence), retrieves and reranks one candidate pool per part and assigns the two verified spans as a maximum-score matching. Measured live and rejected (journal `answer-cycle3_relation.md`, pass 7): a part with no manuscript answer still gets a slot. Kept for repeat measurement; the default is one pool for the whole request. |
 
 ### Dependencies
 
