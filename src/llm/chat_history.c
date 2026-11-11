@@ -4,6 +4,19 @@
 #include <stdlib.h>
 #include <string.h>
 
+bool chat_receipt_refusal(const char *memory_sources)
+{
+    static const char k_mark[] = "--- ANSWER GATE | verdict=";
+    const char *p = memory_sources ? strstr(memory_sources, k_mark) : NULL;
+    if (!p) return false;
+    p += sizeof(k_mark) - 1;
+    const char *end = strstr(p, " |");
+    if (!end) return false;
+    if ((size_t)(end - p) == 9 && !strncmp(p, "no_answer", 9)) return true;
+    const char *w = strstr(end, "withheld=");
+    return w && w[9] == '1';
+}
+
 void chat_request_history_free(ChatRequestHistory *h)
 {
     if (!h) return;
@@ -61,7 +74,11 @@ bool chat_request_history_copy(const ChatMessage *msgs, size_t n, bool remote, C
         copy[j].content = malloc(lengths[k] + 1);
         copy[j].docs = copy[j].via = NULL;
         /* As-of local retrieval evidence is display metadata, never a recent
-         * model turn (including for the remote adapter). Do not even borrow it. */
+         * model turn (including for the remote adapter). Do not even borrow it.
+         * One fact derived from it does travel: whether the gate withheld or
+         * read this reply as an abstention, which the composer window shows
+         * as a neutral marker on question turns (journal/answer-cycle4_window.md). */
+        copy[j].refused = chat_receipt_refusal(msgs[indices[k]].memory_sources);
         copy[j].memory_sources = NULL;
         if (!copy[j].content) {
             /* Only initialized content pointers may be freed. */

@@ -26,11 +26,13 @@ The user selected **#3 as P0** on 2026-11-06 and made the remaining four P0 on
 Every gap is P0; this is the order the records argue for, each item with the
 measurement that closes it. Items run one at a time unless marked otherwise.
 
-1. **Faithful use: window construction** (LANDSCAPE row 13). A withheld notice
-   stored as the assistant's turn is imitated on later turns. Carry it as a
-   neutral marker or omit it from the composer's history, and replay the
-   `pipe-coref3` question order with and without it. Closes when the Charlotte
-   and walk turns stop declining on good evidence.
+1. **Faithful use: window construction** (LANDSCAPE row 13). *Done
+   2026-11-11* (`journal/answer-cycle4_window.md`): earlier refusals are shown
+   to the composer as a neutral marker on question turns, measured offline on
+   the captured requests (72 generations, exact reproduction of recorded
+   replies) and live on both novels. The walk turn answers correctly; the
+   Charlotte turn still declines, for a misread relation, not the window. The
+   successor item on faithful use is a relation check on the reply.
 2. **Generalisation: the second manuscript** (GAP-001, LANDSCAPE rows 12 and
    20). *A Princess of Mars*, imported, with 8 boundary cases and 15 reach
    tasks written before any run. Run reach and the verified pipeline once at

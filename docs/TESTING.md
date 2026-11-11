@@ -119,6 +119,15 @@ modify a database while any Scribodo process is running.
   `tools/answer_product_run.py` attaches the parts directory named by
   `SCRIBODO_MANUSCRIPT` (default the first novel's); see
   `journal/answer-cycle4_mars.md` for the held-out rule.
+  `tools/answer_window_replay.py --capture LABEL=DIR ... --output DIR`
+  regenerates every captured composer request whose history window holds an
+  earlier refusal (a withheld notice or the composer's own abstention) under
+  four arms (as recorded, refusal replaced by a neutral marker, refusal turn
+  dropped, refusal pair dropped) on the pinned model with the app's server
+  flags and the request's own sampling fields, and scores each reply for
+  refusing and for carrying the fixture's designated passages;
+  `test_answer_window_replay` (in `make test`) covers the arms and scoring
+  without a model.
   `tools/answer_boundary_review.py` joins such a run's exported messages, units
   and live capture into a review sheet whose mechanical columns (delivery,
   truncation, lengths, quotation binding) are filled and whose judgment fields

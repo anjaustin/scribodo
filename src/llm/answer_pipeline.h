@@ -23,6 +23,9 @@
 #define ANSWER_MIN_SPAN 12u
 #define ANSWER_PIPELINE_BUDGET_MS 90000.0
 #define ANSWER_HISTORY_MESSAGES 6u /* the composer window: newest three pairs plus the verified block */
+/* What the composer window shows in place of an earlier refusal (a withheld notice or a gated abstention) when the
+ * current turn is a question; measured in journal/answer-cycle4_window.md. On other turns refusals stay as recorded. */
+#define ANSWER_WINDOW_MARKER "(No answer was given.)"
 #define ANSWER_SPANS 2u /* pass 3: the top two units each contribute one byte-verified span */
 #define ANSWER_SCORED_MAX (ANSWER_CANDIDATES * ANSWER_SPANS) /* cycle 3: one candidate pool per question part */
 

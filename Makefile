@@ -290,6 +290,7 @@ test: $(TESTS)
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_income_isolation python3 tests/test_answer_income_isolation.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_citation_binding python3 tests/test_answer_citation_binding.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_boundary_fixture python3 tests/test_answer_boundary_fixture.py
+	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_window_replay python3 tests/test_answer_window_replay.py
 
 # Verify pinned dependency inventory, upstream refs, container digests and OSV
 # advisories. The scheduled workflow publishes the same report as an artifact.

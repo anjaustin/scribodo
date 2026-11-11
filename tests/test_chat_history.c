@@ -75,6 +75,20 @@ static void mandatory_request(void)
     m[1].streaming = false;
     m[1].role = CHAT_ASSISTANT;
     CHECK(!chat_request_history_copy(m, 2, false, &h) && !h.messages);
+    /* The provenance never travels, but the fact that a reply was withheld or abstained does
+     * (journal/answer-cycle4_window.md): the composer window shows such a turn as a marker. */
+    char receipt_withheld[] = "--- ANSWER GATE | verdict=not_in_span | withheld=1 | answer=sons ---\n";
+    char receipt_pass[] = "--- ANSWER GATE | verdict=pass | withheld=0 | answer=three miles ---\n";
+    ChatMessage gated[] = { { .role = CHAT_USER, .content = "On whom is the estate entailed?" },
+                            { .role = CHAT_ASSISTANT, .content = "The supplied manuscript passages do not give that.", .memory_sources = receipt_withheld },
+                            { .role = CHAT_USER, .content = "How far is the walk?" },
+                            { .role = CHAT_ASSISTANT, .content = "Three miles.", .memory_sources = receipt_pass },
+                            { .role = CHAT_USER, .content = "Who is the patroness?" } };
+    CHECK(chat_request_history_copy(gated, 5, false, &h) && h.count == 5);
+    CHECK(h.messages[1].refused && !h.messages[1].memory_sources && !strcmp(h.messages[1].content, gated[1].content));
+    CHECK(!h.messages[3].refused && !h.messages[3].memory_sources && !h.messages[0].refused && !h.messages[4].refused);
+    CHECK(!gated[1].refused && gated[1].memory_sources == receipt_withheld); /* the session's record is untouched */
+    chat_request_history_free(&h);
     ChatMessage sparse[600];
     for (size_t i = 0; i < 600; i++) sparse[i] = (ChatMessage){ .role = CHAT_USER, .content = "private local text" };
     sparse[599].via = "remote";

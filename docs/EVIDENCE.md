@@ -96,3 +96,15 @@ review sheets (`build/answer-pipe-capture/review-pipeline-mars{0,1}.json`), and
 the instrumented builds' generated sources and build logs. Frozen binaries and
 objects are excluded (6 files). Archive SHA-256:
 `d2a305e62be15201e316c6c1d32e866a2d34d1f7c42277d49e9569e2b2ccbed8`.
+
+The composer-window work (answer cycle 4, item one, `journal/answer-cycle4_window.md`)
+is in `scribodo-evidence-2026-11-11-window.tar.gz` in the same folder, with
+`manifest-2026-11-11-window.txt` and an entry in `SHA256SUMS`. It contains 505
+files: the offline window replay (`build/window-replay/wr1`: plan, manifest,
+every arm's request and response, results, server log), the live runs with the
+rule inert (`build/product-memory-use/pipe-window1`, `mars-pipe2`), on the
+intermediate build (`mars-pipe3`) and on the final build (`pipe-window2`,
+`mars-pipe4`) with their captures under `build/window`, the review sheets, the
+gate logs, and the three instrumented builds' generated sources and build
+logs. Frozen binaries and objects are excluded. Archive SHA-256:
+`3ffebd3e3427f08ee6dc63574f7ff24bd0979998dc495858cc05077ef8c6dee4`.

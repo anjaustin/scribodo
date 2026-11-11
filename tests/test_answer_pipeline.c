@@ -4,6 +4,7 @@
  * builder. No models, no services, no network. */
 #include "llm/answer_pipeline.h"
 #include "llm/chat.h"
+#include "llm/chat_history.h"
 #include "llm/rerank.h"
 #include "cJSON.h"
 #include <assert.h>
@@ -236,6 +237,47 @@ static void test_pipeline_request(void)
     cJSON_Delete(j);
     free(req);
     CHECK(chat_build_request_pipeline(msgs, 3, &names, 8192, fixed_count, NULL, &first, NULL) == NULL);
+    /* Earlier refusals (journal/answer-cycle4_window.md): on a question turn a withheld or abstained assistant turn,
+     * known from its stored gate receipt, is shown as the neutral marker; an answered turn, a turn without a receipt
+     * and every turn on a note turn are shown as recorded. The messages themselves are never changed. */
+    {
+        char withheld[] = "The supplied manuscript passages do not give that. An answer was withheld because it quotes words the verified passages do not contain.";
+        char abstained[] = "The supplied manuscript passages do not give that. An answer was not found within the provided excerpts.";
+        char answered[] = "Source 1 (part01.md): \"only three miles.\"";
+        char receipt_w[] = "--- VERIFIED SOURCE | unit=u ---\nspan\n--- ANSWER GATE | verdict=not_in_span | withheld=1 | answer=sons ---\n";
+        char receipt_a[] = "--- ANSWER GATE | verdict=no_answer | withheld=0 | answer=The supplied passages do not give it ---\n";
+        char receipt_p[] = "--- ANSWER GATE | verdict=pass | withheld=0 | answer=three miles ---\n";
+        ChatMessage turns[] = {
+            { .role = CHAT_USER, .content = "On whom is the estate entailed?" },
+            { .role = CHAT_ASSISTANT, .content = withheld, .memory_sources = receipt_w },
+            { .role = CHAT_USER, .content = "About how old is Charlotte?" },
+            { .role = CHAT_ASSISTANT, .content = abstained, .memory_sources = receipt_a },
+            { .role = CHAT_USER, .content = "Who is Mr. Collins's patroness?" },
+        };
+        char *q = chat_build_request_pipeline(turns, 5, &names, 8192, fixed_count, NULL, &first, preface);
+        CHECK(q && first == 0);
+        CHECK(strstr(q, ANSWER_WINDOW_MARKER) && !strstr(q, "An answer was withheld") && !strstr(q, "An answer was not found"));
+        CHECK(strstr(q, "estate entailed?") && strstr(q, "About how old is Charlotte?") && strstr(q, "Who is Mr. Collins"));
+        CHECK(!strcmp(turns[1].content, withheld) && !strcmp(turns[3].content, abstained)); /* the record is untouched */
+        free(q);
+        turns[4].content = "Note for later: Mr. Collins is a clergyman.";
+        q = chat_build_request_pipeline(turns, 5, &names, 8192, fixed_count, NULL, &first, preface);
+        CHECK(q && !strstr(q, ANSWER_WINDOW_MARKER) && strstr(q, "An answer was withheld") && strstr(q, "An answer was not found"));
+        free(q);
+        turns[4].content = "Who is Mr. Collins's patroness?";
+        turns[1].memory_sources = NULL; /* no receipt: not known to be a refusal, shown as recorded */
+        q = chat_build_request_pipeline(turns, 5, &names, 8192, fixed_count, NULL, &first, preface);
+        CHECK(q && strstr(q, "An answer was withheld") && !strstr(q, "An answer was not found") && strstr(q, ANSWER_WINDOW_MARKER));
+        free(q);
+        ChatMessage answered_turns[] = {
+            { .role = CHAT_USER, .content = "How far is the walk?" },
+            { .role = CHAT_ASSISTANT, .content = answered, .memory_sources = receipt_p },
+            { .role = CHAT_USER, .content = "Who is Mr. Collins's patroness?" },
+        };
+        q = chat_build_request_pipeline(answered_turns, 3, &names, 8192, fixed_count, NULL, &first, preface);
+        CHECK(q && strstr(q, "only three miles") && !strstr(q, ANSWER_WINDOW_MARKER)); /* an answered turn is shown as recorded */
+        free(q);
+    }
     /* A long conversation is cut to the newest window, starting at a user turn, and reported as such. */
     ChatMessage many[11];
     char texts[11][32];
@@ -431,6 +473,14 @@ static void test_answer_gate(void)
         CHECK(!strcmp(answer_gate("27", "What?", compound_scale, 1, NULL, 0), "pass"));     /* the compound alone, as before */
         CHECK(!strcmp(answer_gate("100,00", "What?", inherit, 2, NULL, 0), "not_in_span")); /* not a separator: 100 and 00 */
     }
+    /* A stored turn's receipt says whether it was a refusal (withheld, or an abstention the gate read as no_answer);
+     * the composer window reads this, not the reply's wording (journal/answer-cycle4_window.md). */
+    CHECK(chat_receipt_refusal("--- VERIFIED SOURCE | unit=u | document=part01.md ---\nspan\n--- ANSWER GATE | verdict=not_in_span | withheld=1 | answer=five miles ---\n"));
+    CHECK(chat_receipt_refusal("--- ANSWER GATE | verdict=no_answer | withheld=0 | answer=The passages do not give it ---\n"));
+    CHECK(!chat_receipt_refusal("--- ANSWER GATE | verdict=pass | withheld=0 | answer=three miles ---\n--- ANSWER QUOTES | checked=1 | misquoted= ---\n"));
+    CHECK(!chat_receipt_refusal("--- ANSWER GATE | verdict=pass_no_anchors | withheld=0 | answer=short and dirty ---\n"));
+    CHECK(!chat_receipt_refusal("--- VERIFIED SOURCE | none | status=no_candidates | candidates=0 scored=0 ---\n")); /* no gate ran */
+    CHECK(!chat_receipt_refusal(NULL) && !chat_receipt_refusal("") && !chat_receipt_refusal("--- ANSWER GATE | verdict=no_answer"));
     /* Quotation integrity (journal/answer-cycle3_coref.md, the live treatment): every quotation in the reply must be
      * in a verified span, an author turn or the question; emphasis, case, hyphens, ellipses and surrounding
      * punctuation are folded; short quoted words are mentions; an unterminated quote mark is a slip. */

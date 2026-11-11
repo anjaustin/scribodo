@@ -813,7 +813,25 @@ char *chat_build_request_pipeline(const ChatMessage *msgs, size_t n, const ChatN
     size_t start = n > ANSWER_HISTORY_MESSAGES ? n - ANSWER_HISTORY_MESSAGES : 0;
     while (start < n && (msgs[start].error || msgs[start].role != CHAT_USER)) start++;
     if (start >= n) start = n > 0 ? n - 1 : 0;
-    char *out = build_request_core(msgs + start, n - start, NULL, names, ctx_tokens, count, cctx, NULL, first_history,
+    /* Earlier refusals in the window are examples the composer follows
+     * (journal/answer-cycle4_window.md): on a question turn each one is shown
+     * as a neutral marker instead, read from the stored turn's gate receipt.
+     * On a note or request turn the window stays as recorded, because the
+     * marker leaves the earlier question open and the composer answers it
+     * instead of the note. The stored record is untouched. */
+    ChatMessage window[ANSWER_HISTORY_MESSAGES + 1];
+    const ChatMessage *shown = msgs + start;
+    size_t shown_n = n - start;
+    if (shown_n <= ANSWER_HISTORY_MESSAGES + 1 && n > 0 && answer_gate_applies(msgs[n - 1].content)) {
+        for (size_t i = 0; i < shown_n; i++) {
+            window[i] = msgs[start + i];
+            if (window[i].role == CHAT_ASSISTANT && !window[i].error &&
+                (window[i].refused || chat_receipt_refusal(window[i].memory_sources)))
+                window[i].content = (char *)ANSWER_WINDOW_MARKER;
+        }
+        shown = window;
+    }
+    char *out = build_request_core(shown, shown_n, NULL, names, ctx_tokens, count, cctx, NULL, first_history,
                                    block_in_system ? "" : preface, block_in_system ? system_extra : answer_composer_instruction);
     free(system_extra);
     if (out && first_history) *first_history += start;

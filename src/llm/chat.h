@@ -41,6 +41,7 @@ typedef struct {
     bool excerpt_more;
     size_t excerpt_start; /* codepoint offset in the persisted original */
     char *memory_sources; /* optional owned as-of local retrieval provenance, never model history */
+    bool refused;    /* derived when copied for a request: the stored gate receipt says this reply was withheld or abstained */
 } ChatMessage;
 
 #define CHAT_MEMORY_SOURCES_BYTES (16u * 1024u)
