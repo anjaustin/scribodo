@@ -861,8 +861,8 @@ static const char *const k_migration_014[] = {
  * searched, embedded and reranked in place of it under SCRIBODO_INDEX_TEXT_FILE
  * (src/app/memory_index_text.h); NULL otherwise. Never shown; rebuilt with the index. */
 static const char *const k_migration_015[] = {
-    "ALTER TABLE memory_units ADD COLUMN index_text TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL,"
-    " ADD FULLTEXT KEY unit_index_text (index_text)",
+    "ALTER TABLE memory_units ADD COLUMN IF NOT EXISTS index_text TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL,"
+    " ADD FULLTEXT KEY IF NOT EXISTS unit_index_text (index_text)",
     NULL,
 };
 
