@@ -319,9 +319,11 @@ static const char *compound_number(const char *w)
     static char digits[8];
     const char *single = number_word(w);
     if (single) return single;
+    size_t len = strlen(w);
     for (size_t t = 0; t < 8; t++) {
         size_t n = strlen(tens[t]);
-        if (strncmp(w, tens[t], n) || (w[n] != ' ' && w[n] != '-') || !w[n + 1]) continue;
+        /* The tens word, one separator, at least one more character: every index read is below len. */
+        if (len < n + 2 || strncmp(w, tens[t], n) || (w[n] != ' ' && w[n] != '-')) continue;
         const char *unit = number_word(w + n + 1);
         if (unit && strlen(unit) == 1 && unit[0] != '0') { snprintf(digits, sizeof(digits), "%zu%s", t + 2, unit); return digits; }
     }
@@ -353,7 +355,8 @@ static bool abstention(const char *claim_norm)
 const char *answer_gate(const char *answer, const char *question, const char *const *spans, size_t nspans,
                         const char *const *author_turns, size_t nturns)
 {
-    char *norm = answer_normalize(answer ? answer : "");
+    if (!answer) return "no_answer";
+    char *norm = answer_normalize(answer);
     if (!norm) return "not_in_span";
     if (!norm[0]) { free(norm); return "no_answer"; }
     if (abstention(norm)) { free(norm); return "no_answer"; }
@@ -371,11 +374,10 @@ const char *answer_gate(const char *answer, const char *question, const char *co
         while (*p && (isalnum((unsigned char)*p) || *p == '-' || *p == '\'')) p++;
         size_t len = (size_t)(p - start);
         if (!len) continue;
-        char token[64];
+        char token[64] = { 0 }, lowered[64] = { 0 };
         if (len >= sizeof(token)) continue;
-        memcpy(token, start, len); token[len] = 0;
+        memcpy(token, start, len);
         bool numeric = isdigit((unsigned char)token[0]) != 0;
-        char lowered[64];
         for (size_t i = 0; i <= len; i++) lowered[i] = (char)tolower((unsigned char)token[i]);
         if (!numeric && compound_number(lowered)) numeric = true;
         bool capitalized = isupper((unsigned char)token[0]) != 0;
