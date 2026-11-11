@@ -68,6 +68,7 @@ STORE_SRCS += src/app/memory_documents.c src/app/memory_document_store.c
 STORE_SRCS += src/app/memory_gc.c src/app/memory_brief_store.c
 STORE_SRCS += src/app/recall.c src/app/recall_job.c
 STORE_SRCS += src/app/import_job.c
+STORE_SRCS += src/app/memory_index_text.c
 LLM_SRCS  := src/core/json.c src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/llm/chat_history.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/app/recent.c src/app/renames.c src/llm/observer.c src/llm/observer_text.c src/llm/observer_fake.c src/llm/observer_model.c src/llm/observer_job.c src/llm/semantic.c src/llm/remote.c src/llm/names.c src/llm/memfit.c $(STORE_SRCS)
 LLM_SRCS += src/llm/context_planner.c src/llm/memory_tokens.c
 LLM_SRCS += src/llm/memory_budget.c src/llm/generative_gate.c src/llm/memory_brief.c
@@ -89,7 +90,7 @@ TESTS += $(BUILD)/test_memory_job $(BUILD)/test_memory_tokens $(BUILD)/test_memo
 TESTS += $(BUILD)/test_memory_provenance
 TESTS += $(BUILD)/test_memory_saved_file
 TESTS += $(BUILD)/test_memory_document_capture
-TESTS += $(BUILD)/test_answer_pipeline
+TESTS += $(BUILD)/test_answer_pipeline $(BUILD)/test_memory_index_text
 TESTS += $(BUILD)/test_memory_document_cache $(BUILD)/test_memory_budget $(BUILD)/test_generative_gate
 TESTS += $(BUILD)/test_http_deadlines $(BUILD)/test_db_deadlines $(BUILD)/test_memory_brief_model
 TESTS += $(BUILD)/test_http_poll_errno
@@ -132,6 +133,9 @@ $(BUILD)/test_remote: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_state_fixture
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
 
 $(BUILD)/test_answer_pipeline: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_state_fixture.o $(BUILD)/tests/test_answer_pipeline.o
+	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
+
+$(BUILD)/test_memory_index_text: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_state_fixture.o $(BUILD)/tests/test_memory_index_text.o
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
 
 $(BUILD)/test_components: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_state_fixture.o $(BUILD)/tests/test_components.o

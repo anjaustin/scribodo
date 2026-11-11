@@ -201,6 +201,14 @@ modify a database while any Scribodo process is running.
   `make test`) pins the chunking, the name vocabulary, the representative
   choice, the nesting, the possessive forms, the two densities and the edit
   application without a model. See `journal/answer-cycle3_coref.md`.
+  `test_memory_index_text` (in `make test`) pins the index layer's table
+  (`src/app/memory_index_text.h`): off without `SCRIBODO_INDEX_TEXT_FILE`,
+  loaded from a JSON object of {sha256 of the original unit text: resolved
+  text}, resolution by hash with the text itself as the fallback, and refusal
+  of malformed files (not an object, bad key, bad or oversized text,
+  duplicates, missing file) without touching a loaded table; `test_db_core`
+  (in `make dbtest`) carries migration 015. The live measurement is the
+  second half of `journal/answer-cycle3_coref.md`.
 
 - `test_recall` (in `make dbtest`) drives `recall_run` against real SQL in a
   throwaway database: displayed canon text is byte-equal to the current

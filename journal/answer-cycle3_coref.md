@@ -192,3 +192,131 @@ The full table is in `build/cr1/compare.json` and `build/cr1-run.log`.
 No production component changed. The derived products, admission runs,
 stats, manifest with model versions and hashes, and the comparison are in
 `build/cr1`.
+
+## The live path, FCoref (`pipe-coref0` control, `pipe-coref1` treatment)
+
+**Date:** 2026-11-10, after the offline arm above.
+
+### The index layer
+
+A production change behind a flag, default off, so the app can search and
+rerank resolved text while storing, verifying, extracting and quoting only
+the original. `src/app/memory_index_text.{h,c}`; migration 015; tests
+`tests/test_memory_index_text.c` (in `make test`) and the schema-version
+assertions in `test_db_core`. `make test`, `make dbtest`, `make analyze` (0 warnings
+across 86 files), `make sanitize` and `make tsan` (8,343 checks) clean.
+
+- `memory_units.index_text`, a nullable utf8mb4_unicode_ci TEXT with its own
+  FULLTEXT key. NULL for every unit unless the experiment is on.
+- `SCRIBODO_INDEX_TEXT_FILE` names a JSON object of {sha256 of the original
+  unit text: resolved text}, strict UTF-8, at most 8,000 bytes each. A set
+  variable whose file does not load aborts the app: an experiment that ran
+  unresolved would be a wrong measurement, not a degraded one. The coref
+  arm now writes this file beside its derived units (`index_text.json`).
+- Ingestion (chat and document units) stores index_text: the file's
+  resolution for that unit's hash, else a copy of the text. The lexical
+  queries (chat and document) match `u.index_text` instead of `u.text`,
+  with every source-binding check still on the original. The vector index
+  embeds index_text (validated like the text; the 2,000-byte embedder clip
+  applies as always). Hydration carries it in `MemoryUnit.index_text`. The
+  verified pipeline reranks it; extraction and byte verification read the
+  original; the composer sees only verified spans of the original. The
+  recall view is untouched. Trace: `ANSWER_INDEX_TEXT enabled=1 units=N
+  hydrated=M`.
+
+### Runs
+
+The same instrumented binary built from this tree
+(`build/answer-live-coref`, source hashes in its manifest), the boundary
+script, `SCRIBODO_ANSWER_PIPELINE=verified`, seed 42, real models: the
+control with the flag unset, then the treatment with the FCoref all-pronoun
+sidecar (`build/cr2/product-fcoref_replace_all/index_text.json`, 403 units,
+sha256 `671c0b3d…`). Every hydrated unit in the treatment carried an index
+text (trace, all eight questions); the control wrote no such line. Wall
+time 387 s against 445 s; reranking 7.8 to 12.2 s per question against
+10.1 to 14.6 s (longer units at the clip). Sheets
+`build/answer-pipe-capture/review-pipeline-coref{0,1}.json`.
+
+### Selection, measured with production retrieval
+
+Designated unit's rank among the scored candidates, and its slot:
+
+| Case | Control | Treatment |
+|---|---|---|
+| entail | 3, no slot | **2, slot 2** |
+| fortunes, sisters | 7 at 0.65, no slot; Miss de Bourgh in slot 2 | **2 at 0.99, slot 2**; Miss de Bourgh out |
+| fortunes, Bingley | 1, slot 1 | 1, slot 1 |
+| Charlotte | 1, slot 1 | 2, slot 2 |
+| walk | 1, slot 1 | 1, slot 1 |
+| correction | not a candidate | not a candidate |
+| drafts | 2, slot 2 | 1, slot 1 |
+| creative | 9, no slot | 23, no slot |
+
+Designated units in slots: **4 of 8 to 6 of 8**, the offline prediction
+exactly, minus the correction accident, which did not recur: production
+lexical retrieval is not the arm's content-word stand-in, and the wrongly
+resolved "daughter" admitted nothing. Reach moved with real Qdrant and real
+MariaDB full-text, no stand-in anywhere.
+
+### What was shown
+
+| Case | Control shown | Treatment shown |
+|---|---|---|
+| entail | abstention | **"unfortunately for his sons"**: the composer rewrote the quoted span and asserted the swap; gate `pass_no_anchors` |
+| fortunes | hundred thousand right; Miss de Bourgh as the sisters' | **withheld**: the composer's claim was right for the first time in any run ("his sisters had a fortune of twenty thousand pounds") and wrote the inheritance as "£100,000"; the anchor gate cannot match digits against "a hundred thousand" (its documented scale-word limit) and withheld the reply |
+| Charlotte | **27, correct** | abstention: the same two spans, order swapped; "neither refers to Charlotte Lucas" |
+| walk | **three miles, correct** | abstention: slot 1 identical ("only three miles"); slot 2 changed from "walked three miles" (not in the treatment's candidate pool) to a lease sentence at 0.79; "does not explicitly say it is the distance to Netherfield" |
+| correction | abstention | abstention; surfaced "girl of fifteen" |
+| drafts | **three vs five, correct** | **three vs five, correct** |
+| unavailable | withheld (gate) | abstained (composer); nothing invented |
+| creative | draft | draft, marked |
+
+| | control | treatment |
+|---|---:|---:|
+| Correct factual answers shown | 3 | 1 |
+| Wrong statements shown | 1 | 1 |
+| Correct answers withheld by the gate | 0 | 1 |
+| Abstentions with the designated unit in a slot | 0 | 2 |
+| Fabrications shown | 0 | 0 |
+
+### What this establishes
+
+1. **Selection by relation is solved on the live path for this case.** The
+   sisters' unit is in the slot with production retrieval, and nothing in
+   the reranker, embedder, prompts or clip changed. The composer then wrote
+   the right attribution. Reach, the first metric of MEMORY-015, moved from
+   4 to 6 of 8.
+2. **Faithful use did not move, and the shown count fell.** Every loss is
+   downstream of selection: a gate limit (digits against scale words), a
+   noun swapped inside a quotation that the anchor gate has no anchor for,
+   and two abstentions on correct evidence of the kind pass 7 recorded as
+   composer variance under a changed window. The two metrics were kept
+   apart for exactly this reading: the host's half is now right where it
+   was wrong; the model's half is where it was.
+3. **One run per arm cannot separate composition variance from the index
+   effect.** The selection effect is deterministic (temperature 0 over
+   fixed text) and is what this pass measured. The Charlotte and walk
+   abstentions need repeated runs before they are attributed to anything.
+4. **Pool composition changed, not only order.** The walk case lost its
+   supporting second unit because lexical and semantic retrieval ran on
+   resolved text and admitted a different set. Reach on the fixtures of
+   MEMORY-017 should be rerun on the index layer before any density is
+   chosen; this run says the change is not neutral.
+
+### Decisions that remain
+
+1. The anchor gate's number forms: currency and separators ("£100,000")
+   against scale words ("a hundred thousand pounds"). A software change
+   with a fixture case, measured against the recorded pre-gate replies as
+   every gate change has been.
+2. Quotation integrity: the composer's re-quotation of a verified span is
+   not checked, and here it changed a word. A software check that every
+   quoted string in a reply is a substring of a verified span is the
+   candidate; measured against the recorded replies of passes 4 to 7 and
+   these two runs before it ships.
+3. Repeat the treatment (and the control) enough times to bound composer
+   variance on Charlotte and walk; about 7.5 minutes a run.
+4. The index layer stays behind `SCRIBODO_INDEX_TEXT_FILE`, default off. The
+   sidecar is an experiment input: the app cannot produce it, and whether an
+   ingestion-time resolver (today Python and torch) becomes an app
+   dependency is a product decision, not a measurement.

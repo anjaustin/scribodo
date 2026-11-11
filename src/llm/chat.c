@@ -22,6 +22,7 @@
 #include "llm/answer_pipeline.h"
 #include "app/store.h"
 #include "app/memory_documents.h"
+#include "app/memory_index_text.h"
 #include "llm/generative_gate.h"
 #include "llm/memory_budget.h"
 #include "llm/memory_brief.h"
@@ -1245,6 +1246,8 @@ static bool build_in_worker(ChatSession *s)
                         if (pipeline.scored_part[i] == p) fprintf(stderr, " %s:%.4f", pipeline.scored_ids[i], pipeline.scored_scores[i]);
                     fprintf(stderr, "\n");
                 }
+                if (memory_index_text_enabled())
+                    fprintf(stderr, "ANSWER_INDEX_TEXT enabled=1 units=%zu hydrated=%zu\n", pipeline.index_text_units, pipeline.hydrated);
             }
             answer_pipeline_result_free(&pipeline);
             pipeline_done = true;

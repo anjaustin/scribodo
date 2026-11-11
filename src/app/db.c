@@ -857,10 +857,19 @@ static const char *const k_migration_014[] = {
     NULL,
 };
 
+/* journal/answer-cycle3_coref.md: an index text beside the original unit text,
+ * searched, embedded and reranked in place of it under SCRIBODO_INDEX_TEXT_FILE
+ * (src/app/memory_index_text.h); NULL otherwise. Never shown; rebuilt with the index. */
+static const char *const k_migration_015[] = {
+    "ALTER TABLE memory_units ADD COLUMN index_text TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL,"
+    " ADD FULLTEXT KEY unit_index_text (index_text)",
+    NULL,
+};
+
 static const char *const *const k_migrations[] = { k_migration_001, k_migration_002, k_migration_003, k_migration_004,
                                                    k_migration_005, k_migration_006, k_migration_007, k_migration_008,
                                                    k_migration_009, k_migration_010, k_migration_011, k_migration_012,
-                                                   k_migration_013, k_migration_014 };
+                                                   k_migration_013, k_migration_014, k_migration_015 };
 
 int db_schema_version(Db *db)
 {

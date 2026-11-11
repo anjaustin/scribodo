@@ -326,6 +326,10 @@ def resolve_product(product, output, model_name, form, density, device):
                            'rewrites': count}
     output.mkdir(parents=True, mode=0o700)
     (output / 'units.json').write_text(json.dumps(resolved, ensure_ascii=False, indent=1) + '\n')
+    # The app's index layer (src/app/memory_index_text.h): {sha256 of the original unit text: resolved text} for the
+    # document units that changed; the app copies the text of every other unit itself.
+    sidecar = {u['text_hash']: r['text'] for u, r in zip(units, resolved) if u['source_kind'] == 'document' and r['text'] != u['text']}
+    (output / 'index_text.json').write_text(json.dumps(sidecar, ensure_ascii=False, indent=1) + '\n')
     interest = []
     for u, r in zip(units, resolved):
         for passage in UNITS_OF_INTEREST:
