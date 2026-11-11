@@ -170,6 +170,22 @@ modify a database while any Scribodo process is running.
   ranks and scores, verified span, timings, composer window, reply);
   `test_answer_pipeline_review` (in `make test`) pins the trace and receipt
   parsing without a model.
+  `tools/answer_question_parts.py` (no venv; llama-server with the pinned
+  reranker GGUF) takes the candidate pools a pipeline live run scored, splits
+  each question into its parts in software and scores every candidate
+  against the whole question and each part, with the whole-question scores
+  checked against the run's logged scores; `test_answer_question_parts` (in
+  `make test`) pins the splitter, the clip, the ranks, the slot rule and the
+  trace pairing without a model.
+  `tools/answer_window_rerank.py` scores sentence windows of each query's top
+  units with the same reranker (coarse-to-fine); `test_answer_window_rerank`
+  (in `make test`) pins the sentence cut and the window rule.
+  `tools/answer_part_claims.py` (llama-server with the pinned chat model)
+  replays the production claim request and a per-part variant on the
+  pre-gate replies recorded by the pipeline live captures;
+  `test_answer_part_claims` (in `make test`) pins the single arm's strings to
+  the C claim call and the software analysis (numbers, names) without a
+  model. See `journal/answer-cycle3_relation.md`.
 
 - `test_recall` (in `make dbtest`) drives `recall_run` against real SQL in a
   throwaway database: displayed canon text is byte-equal to the current
