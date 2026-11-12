@@ -1,0 +1,3 @@
+--- VERIFIED SOURCE | none | status=no_candidates | candidates=0 scored=0 ---
+--- ANSWER GATE | verdict=no_answer | withheld=0 | answer=The supplied passages do not give it ---
+--- ANSWER QUOTES | checked=0 | misquoted= ---

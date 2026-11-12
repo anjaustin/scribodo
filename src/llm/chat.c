@@ -21,6 +21,7 @@
 #include "llm/canon_reference.h"
 #include "llm/rerank.h"
 #include "llm/answer_pipeline.h"
+#include "llm/answer_receipt.h"
 #include "app/store.h"
 #include "app/memory_documents.h"
 #include "app/memory_index_text.h"
@@ -1250,22 +1251,8 @@ static bool build_in_worker(ChatSession *s)
             snprintf(memory_notice, sizeof(memory_notice), "Verified pipeline: %zu candidates, %zu scored, top %.2f %s, second %.2f %s. Exact spans or none; not canon.",
                      pipeline.candidates, pipeline.scored, pipeline.top_score, pipeline.status, pipeline.second_score,
                      pipeline.has_second ? pipeline.second_status : "-");
-            if (experiments()->memory_trace) {
-                fprintf(stderr, "ANSWER_PIPELINE candidates=%zu hydrated=%zu scored=%zu failures=%zu top=%s score=%.4f status=%s second=%s second_score=%.4f second_status=%s parts=%zu top_part=%zu second_part=%zu rerank_ms=%.1f extract_ms=%.1f request_bytes=%zu history_first=%zu\n",
-                        pipeline.candidates, pipeline.hydrated, pipeline.scored, pipeline.score_failures,
-                        pipeline.has_top ? pipeline.top.id : "-", pipeline.top_score, pipeline.status,
-                        pipeline.has_second ? pipeline.second.id : "-", pipeline.second_score, pipeline.has_second ? pipeline.second_status : "-",
-                        pipeline.nparts, pipeline.top_part + 1, pipeline.has_second ? pipeline.second_part + 1 : 0,
-                        pipeline.rerank_ms, pipeline.extract_ms, req ? strlen(req) : 0, first_history);
-                for (size_t p = 0; p < pipeline.nparts; p++) {
-                    fprintf(stderr, "ANSWER_PIPELINE_SCORES part=%zu", p + 1);
-                    for (size_t i = 0; i < pipeline.scored && i < ANSWER_SCORED_MAX; i++)
-                        if (pipeline.scored_part[i] == p) fprintf(stderr, " %s:%.4f", pipeline.scored_ids[i], pipeline.scored_scores[i]);
-                    fprintf(stderr, "\n");
-                }
-                if (memory_index_text_enabled())
-                    fprintf(stderr, "ANSWER_INDEX_TEXT enabled=1 units=%zu hydrated=%zu\n", pipeline.index_text_units, pipeline.hydrated);
-            }
+            if (experiments()->memory_trace)
+                answer_trace_pipeline(stderr, &pipeline, req ? strlen(req) : 0, first_history, memory_index_text_enabled());
             answer_pipeline_result_free(&pipeline);
             pipeline_done = true;
             available = false;
@@ -1501,21 +1488,12 @@ static void gate_apply(ChatSession *s)
         m->content = replacement;
         s->last_truncated = false;
     }
-    size_t have = m->memory_sources ? strlen(m->memory_sources) : 0;
-    size_t extra = (answer ? strlen(answer) : 0) + (misquoted ? strlen(misquoted) : 0) + 192;
-    char *receipt = realloc(m->memory_sources, have + extra);
-    if (receipt) {
-        size_t w = (size_t)snprintf(receipt + have, extra, "--- ANSWER GATE | verdict=%s | withheld=%d | answer=%s ---\n", verdict, withheld, answer ? answer : "");
-        if (w < extra)
-            snprintf(receipt + have + w, extra - w, "--- ANSWER QUOTES | checked=%zu | misquoted=%s ---\n", quotations, misquoted ? misquoted : "");
-        m->memory_sources = receipt;
-    }
+    answer_receipt_append_gate(&m->memory_sources, verdict, withheld, answer, quotations, misquoted); /* bounded: llm/answer_receipt.h */
     s->version++;
     pthread_mutex_unlock(&s->mu);
     if (experiments()->memory_trace)
-        fprintf(stderr, "ANSWER_GATE verdict=%s withheld=%d parsed=%d spans=%zu author_turns=%zu ms=%.1f answer_bytes=%zu quotations=%zu misquoted=%d\n",
-                verdict, withheld, parsed, s->gate_nspans, s->gate_nauthor, memory_budget_now_ms() - t0, answer ? strlen(answer) : 0,
-                quotations, misquoted != NULL);
+        answer_trace_gate(stderr, verdict, withheld, parsed, s->gate_nspans, s->gate_nauthor, memory_budget_now_ms() - t0,
+                          answer ? strlen(answer) : 0, quotations, misquoted != NULL);
     free(misquoted); free(answer); free(visible); free(content);
 }
 

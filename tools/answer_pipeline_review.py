@@ -25,8 +25,9 @@ TRACE = re.compile(r'ANSWER_PIPELINE candidates=(\d+) hydrated=(\d+) scored=(\d+
 # Scores: one line per question part since cycle 3 ("part=N"); earlier runs wrote one unlabeled line (part 1).
 SCORES = re.compile(r'ANSWER_PIPELINE_SCORES(?: part=(\d+))?((?: [0-9a-f]{12}:[0-9.]+)*)')
 RECEIPT = re.compile(r'--- VERIFIED SOURCE \| (?:unit=([0-9a-f]+) \| document=([^|]+) \| score=([0-9.]+) \| status=(\w+)|none \| status=(\w+))')
-GATE = re.compile(r'--- ANSWER GATE \| verdict=(\w+) \| withheld=(\d) \| answer=(.*?) ---')
-QUOTES = re.compile(r'--- ANSWER QUOTES \| checked=(\d+) \| misquoted=(.*?) ---')
+# The free-text fields run to the line's final " ---" (llm/answer_receipt.h): take the whole line, not the first " ---".
+GATE = re.compile(r'^--- ANSWER GATE \| verdict=(\w+) \| withheld=(\d) \| answer=(.*) ---$', re.M)
+QUOTES = re.compile(r'^--- ANSWER QUOTES \| checked=(\d+) \| misquoted=(.*) ---$', re.M)
 SECOND = re.compile(r'--- VERIFIED SOURCE 2 \| unit=([0-9a-f]+) \| document=([^|]+) \| score=([0-9.]+) \| status=(\w+)(?: \| part=(\d+))? ---\n(.*?)\n(?=---|\Z)', re.S)
 PART = re.compile(r'\| part=(\d+) \|')
 

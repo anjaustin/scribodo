@@ -1083,7 +1083,7 @@ void answer_pipeline_result_free(AnswerPipelineResult *r)
     memset(r, 0, sizeof(*r));
 }
 
-static const char *source_name(const MemoryUnit *u)
+const char *answer_source_name(const MemoryUnit *u)
 {
     if (u->kind == MEMORY_SOURCE_DOCUMENT && u->document_name[0]) return u->document_name;
     return u->role == CHAT_ASSISTANT ? "an earlier reply" : "an earlier note";
@@ -1091,7 +1091,7 @@ static const char *source_name(const MemoryUnit *u)
 
 static char *clean_name(const MemoryUnit *u)
 {
-    char *name = llm_neutralize(source_name(u));
+    char *name = llm_neutralize(answer_source_name(u));
     if (name) for (char *c = name; *c; c++) if (*c == '"' || *c == '\n' || *c == '\r') *c = ' ';
     return name;
 }
@@ -1123,21 +1123,3 @@ char *answer_verified_block(const AnswerPipelineResult *r)
     return out;
 }
 
-char *answer_receipt(const AnswerPipelineResult *r)
-{
-    if (!r) return NULL;
-    size_t cap = 512 + (r->span ? strlen(r->span) : 0);
-    cap += r->second_span ? strlen(r->second_span) + 512 : 512;
-    char *out = malloc(cap);
-    if (!out) return NULL;
-    size_t k;
-    if (r->has_top)
-        k = (size_t)snprintf(out, cap, "--- VERIFIED SOURCE | unit=%s | document=%s | score=%.4f | status=%s | part=%zu | candidates=%zu scored=%zu ---\n%s\n",
-                             r->top.id, source_name(&r->top), r->top_score, r->status, r->top_part + 1, r->candidates, r->scored, r->span ? r->span : "");
-    else
-        k = (size_t)snprintf(out, cap, "--- VERIFIED SOURCE | none | status=%s | candidates=%zu scored=%zu ---\n", r->status, r->candidates, r->scored);
-    if (r->has_second && k < cap)
-        snprintf(out + k, cap - k, "--- VERIFIED SOURCE 2 | unit=%s | document=%s | score=%.4f | status=%s | part=%zu ---\n%s\n",
-                 r->second.id, source_name(&r->second), r->second_score, r->second_status, r->second_part + 1, r->second_span ? r->second_span : "");
-    return out;
-}

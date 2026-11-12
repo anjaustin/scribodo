@@ -1,0 +1,6 @@
+--- VERIFIED SOURCE | unit=f395a4d6679b2e5105afa2c52d388c820f756f40d13b71ef7256381837007e52 | document=part07.md | score=0.9892 | status=verified | part=1 | candidates=52 scored=6 ---
+Quick as lightning they were upon him, and Tars Tarkas would have been gathered to his fathers.
+--- VERIFIED SOURCE 2 | unit=a20205a13f36e66794d13975faa7722e5f77f242866dfb6d5e035243c478aae8 | document=part01.md | score=0.9806 | status=verified | part=2 ---
+I cleared a good hundred and fifty feet;
+--- ANSWER GATE | verdict=pass | withheld=0 | answer=150 feet ---
+--- ANSWER QUOTES | checked=1 | misquoted= ---

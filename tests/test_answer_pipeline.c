@@ -3,6 +3,7 @@
  * the fixture scorer, the verified block and receipt) and the pipeline request
  * builder. No models, no services, no network. */
 #include "llm/answer_pipeline.h"
+#include "llm/answer_receipt.h"
 #include "core/experiments.h"
 #include "llm/chat.h"
 #include "llm/chat_history.h"
@@ -204,6 +205,152 @@ static void test_block_and_receipt(void)
     free(receipt);
     answer_pipeline_result_free(&empty);
     CHECK(answer_verified_block(NULL) == NULL && answer_receipt(NULL) == NULL);
+}
+
+/* The receipt and trace contract (llm/answer_receipt.h): every line the product writes, byte for byte, kept in
+ * tests/fixtures/answer_receipt/ where tests/test_answer_receipt_contract.py parses the same files with the review
+ * tool's expressions. SCRIBODO_WRITE_FIXTURES=1 regenerates them after a deliberate format change. */
+static char *read_file(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    char *buf = NULL; size_t n = 0, cap = 0; int c;
+    while ((c = fgetc(f)) != EOF) {
+        if (n + 1 >= cap) { cap = cap ? cap * 2 : 4096; buf = realloc(buf, cap); CHECK(buf); }
+        buf[n++] = (char)c;
+    }
+    fclose(f);
+    if (!buf) buf = calloc(1, 1); else buf[n] = '\0';
+    return buf;
+}
+
+static void fixture_matches(const char *name, const char *text)
+{
+    char path[256];
+    snprintf(path, sizeof(path), "tests/fixtures/answer_receipt/%s", name);
+    if (getenv("SCRIBODO_WRITE_FIXTURES")) {
+        FILE *f = fopen(path, "wb");
+        CHECK(f && fputs(text, f) >= 0 && !fclose(f));
+        return;
+    }
+    char *expected = read_file(path);
+    if (!expected) fprintf(stderr, "missing %s (run from the repository root)\n", path);
+    CHECK(expected != NULL);
+    if (strcmp(expected, text)) fprintf(stderr, "%s differs from the writer:\n--- fixture ---\n%s--- writer ---\n%s", path, expected, text);
+    CHECK(!strcmp(expected, text));
+    free(expected);
+}
+
+static AnswerPipelineResult contract_result(bool with_second, size_t nparts)
+{
+    AnswerPipelineResult r = {0};
+    r.attempted = true; r.candidates = 52; r.hydrated = 50; r.scored = 47; r.score_failures = 1;
+    r.has_top = true; r.top.kind = MEMORY_SOURCE_DOCUMENT;
+    snprintf(r.top.id, sizeof(r.top.id), "%s", "f395a4d6679b2e5105afa2c52d388c820f756f40d13b71ef7256381837007e52");
+    snprintf(r.top.document_name, sizeof(r.top.document_name), "part07.md");
+    r.top.text = strdup(k_unit); r.top_score = 0.98925; snprintf(r.status, sizeof(r.status), "verified");
+    r.span = strdup("Quick as lightning they were upon him, and Tars Tarkas would have been gathered to his fathers.");
+    r.top_part = 0; r.nparts = nparts; r.rerank_ms = 1234.56; r.extract_ms = 789.04; r.index_text_units = 50;
+    for (size_t p = 0; p < nparts; p++) r.parts[p] = strdup(p ? "How far did he leap?" : "Who saved Tars Tarkas?");
+    const char *ids[] = { "f395a4d6679b", "a20205a13f36", "c87be75a52ea" };
+    const double scores[] = { 0.98925, 0.98063, 0.1204 };
+    r.scored = 0;
+    for (size_t p = 0; p < nparts; p++)
+        for (size_t i = 0; i < 3; i++) {
+            snprintf(r.scored_ids[r.scored], sizeof(r.scored_ids[0]), "%s", ids[i]);
+            r.scored_scores[r.scored] = scores[i] - 0.01 * (double)p; r.scored_part[r.scored] = (unsigned char)p; r.scored++;
+        }
+    if (with_second) {
+        r.has_second = true; r.second.kind = MEMORY_SOURCE_DOCUMENT;
+        snprintf(r.second.id, sizeof(r.second.id), "%s", "a20205a13f36e66794d13975faa7722e5f77f242866dfb6d5e035243c478aae8");
+        snprintf(r.second.document_name, sizeof(r.second.document_name), "part01.md");
+        r.second.text = strdup(k_unit); r.second_score = 0.98063; snprintf(r.second_status, sizeof(r.second_status), "verified");
+        r.second_span = strdup("I cleared a good hundred and fifty feet;"); r.second_part = nparts > 1 ? 1 : 0;
+    }
+    return r;
+}
+
+static void test_receipt_contract(void)
+{
+    char *trace = NULL; size_t trace_len = 0;
+    FILE *t = open_memstream(&trace, &trace_len);
+    CHECK(t);
+    /* An answered question with two sources and two parts: nothing withheld, one quotation checked. */
+    AnswerPipelineResult pass = contract_result(true, 2);
+    char *receipt = answer_receipt(&pass);
+    CHECK(receipt && strlen(receipt) <= ANSWER_RECEIPT_PIPELINE_MAX);
+    CHECK(answer_receipt_append_gate(&receipt, "pass", false, "150 feet", 1, NULL));
+    fixture_matches("receipt-pass.txt", receipt);
+    CHECK(!chat_receipt_refusal(receipt));
+    answer_trace_pipeline(t, &pass, 4321, 3, true);
+    answer_trace_gate(t, "pass", false, true, 2, 5, 704.56, 8, 1, false);
+    free(receipt); answer_pipeline_result_free(&pass);
+    /* A withheld answer: one source, one part, the claim outside the span, a misquotation named. The claim's
+     * newline becomes a space; the field runs to the end of the line even when it contains " ---". */
+    AnswerPipelineResult held = contract_result(false, 1);
+    receipt = answer_receipt(&held);
+    CHECK(answer_receipt_append_gate(&receipt, "not_in_span", true, "sons of\nTardos Mors --- or so", 2, "\"the daughter of Mors Kajak\""));
+    fixture_matches("receipt-withheld.txt", receipt);
+    CHECK(chat_receipt_refusal(receipt) && strstr(receipt, "answer=sons of Tardos Mors --- or so ---\n"));
+    answer_trace_pipeline(t, &held, 4000, 1, false);
+    answer_trace_gate(t, "not_in_span", true, true, 1, 4, 650.0, 27, 2, true);
+    free(receipt); answer_pipeline_result_free(&held);
+    /* No candidates and an abstention: the none header, the gate's no_answer verdict, which is a refusal. */
+    AnswerPipelineResult none = {0};
+    none.attempted = true; snprintf(none.status, sizeof(none.status), "no_candidates");
+    receipt = answer_receipt(&none);
+    CHECK(receipt && !strcmp(receipt, "--- VERIFIED SOURCE | none | status=no_candidates | candidates=0 scored=0 ---\n"));
+    CHECK(answer_receipt_append_gate(&receipt, "no_answer", false, "The supplied passages do not give it", 0, NULL));
+    fixture_matches("receipt-abstained.txt", receipt);
+    CHECK(chat_receipt_refusal(receipt));
+    answer_trace_pipeline(t, &none, 3900, 0, false);
+    answer_trace_gate(t, "no_answer", false, true, 0, 2, 12.3, 36, 0, false);
+    free(receipt);
+    CHECK(!fclose(t));
+    fixture_matches("trace.log", trace);
+    free(trace);
+    /* The bound. A pipeline receipt whose spans would pass the store limit keeps its headers whole and cuts the
+     * spans on a UTF-8 boundary; the gate lines then always fit, cutting the claim first and the misquotation
+     * second; the whole stays within CHAT_MEMORY_SOURCES_BYTES, which is what the store will accept. */
+    AnswerPipelineResult big = contract_result(true, 1);
+    free(big.span); free(big.second_span);
+    size_t huge = 2 * CHAT_MEMORY_SOURCES_BYTES;
+    big.span = malloc(huge + 1); big.second_span = malloc(huge + 1);
+    CHECK(big.span && big.second_span);
+    for (size_t i = 0; i + 3 <= huge; i += 3) memcpy(big.span + i, "\xE2\x82\xAC", 3); /* three-byte characters */
+    big.span[huge - huge % 3] = '\0';
+    memset(big.second_span, 'b', huge); big.second_span[huge] = '\0';
+    receipt = answer_receipt(&big);
+    CHECK(receipt && strlen(receipt) == ANSWER_RECEIPT_PIPELINE_MAX); /* the second span takes exactly what the first left */
+    const char *second = strstr(receipt, "--- VERIFIED SOURCE 2 | unit=a20205a13f36e66794d13975faa7722e5f77f242866dfb6d5e035243c478aae8 | document=part01.md | score=0.9806 | status=verified | part=1 ---\n");
+    CHECK(second != NULL);
+    const char *span_start = strchr(receipt, '\n') + 1;
+    size_t span_len = (size_t)(second - 1 - span_start);
+    CHECK(span_len % 3 == 0 && span_len > 10000); /* cut between characters, never inside one */
+    const char *span2 = strchr(second, '\n') + 1;
+    CHECK(strspn(span2, "b") < 3 && span2[strspn(span2, "b")] == '\n'); /* the second span gets the one or two bytes the first could not use */
+    char *claim = malloc(huge + 1); memset(claim, 'c', huge); claim[huge] = '\0';
+    CHECK(answer_receipt_append_gate(&receipt, "not_in_span", true, claim, 3, claim));
+    CHECK(strlen(receipt) <= CHAT_MEMORY_SOURCES_BYTES);
+    CHECK(strstr(receipt, "--- ANSWER GATE | verdict=not_in_span | withheld=1 | answer=") && strstr(receipt, "--- ANSWER QUOTES | checked=3 | misquoted="));
+    CHECK(chat_receipt_refusal(receipt));
+    /* The fields are cut at ANSWER_RECEIPT_FIELD_MAX when there is room, and to nothing when there is not. */
+    char *small = strdup("");
+    CHECK(answer_receipt_append_gate(&small, "pass", false, claim, 0, claim));
+    const char *a = strstr(small, "answer=") + 7;
+    CHECK((size_t)(strstr(a, " ---\n") - a) == ANSWER_RECEIPT_FIELD_MAX);
+    free(small);
+    char *full = malloc(CHAT_MEMORY_SOURCES_BYTES + 1); memset(full, 'f', CHAT_MEMORY_SOURCES_BYTES - 120); full[CHAT_MEMORY_SOURCES_BYTES - 120] = '\0';
+    CHECK(answer_receipt_append_gate(&full, "pass", false, claim, 0, claim) && strlen(full) <= CHAT_MEMORY_SOURCES_BYTES);
+    CHECK(strstr(full, "| answer= ---\n") && strlen(full) == CHAT_MEMORY_SOURCES_BYTES); /* the claim went first; the misquotation keeps what is left */
+    memset(full, 'f', CHAT_MEMORY_SOURCES_BYTES - 10); full[CHAT_MEMORY_SOURCES_BYTES - 10] = '\0';
+    char *before = strdup(full);
+    CHECK(!answer_receipt_append_gate(&full, "pass", false, NULL, 0, NULL) && !strcmp(full, before)); /* no room at all: unchanged */
+    free(before); free(full); free(claim); free(receipt); answer_pipeline_result_free(&big);
+    CHECK(!answer_receipt_append_gate(NULL, "pass", false, NULL, 0, NULL));
+    char *empty = NULL;
+    CHECK(answer_receipt_append_gate(&empty, NULL, false, NULL, 0, NULL) && !strcmp(empty, "--- ANSWER GATE | verdict=unavailable | withheld=0 | answer= ---\n--- ANSWER QUOTES | checked=0 | misquoted= ---\n"));
+    free(empty);
 }
 
 static long fixed_count(const char *text, void *ctx) { (void)ctx; return (long)(strlen(text) / 4) + 1; }
@@ -563,6 +710,7 @@ int main(void)
     test_rerank_prompt_request_parse();
     test_fixture_scorer();
     test_block_and_receipt();
+    test_receipt_contract();
     test_pipeline_request();
     printf("answer_pipeline: %d checks, 0 failures (pure helpers and the request builder; no model, no reranker claim)\n", checks);
     return 0;

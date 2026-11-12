@@ -1,0 +1,4 @@
+--- VERIFIED SOURCE | unit=f395a4d6679b2e5105afa2c52d388c820f756f40d13b71ef7256381837007e52 | document=part07.md | score=0.9892 | status=verified | part=1 | candidates=52 scored=3 ---
+Quick as lightning they were upon him, and Tars Tarkas would have been gathered to his fathers.
+--- ANSWER GATE | verdict=not_in_span | withheld=1 | answer=sons of Tardos Mors --- or so ---
+--- ANSWER QUOTES | checked=2 | misquoted="the daughter of Mors Kajak" ---

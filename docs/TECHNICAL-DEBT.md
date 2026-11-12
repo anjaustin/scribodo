@@ -67,7 +67,8 @@ five such axes for at least 24 reachable combinations; live runs exercise two.
 
 ## Open — answer receipts and trace lines are an unversioned contract (P2)
 
-**Recorded:** 2026-11-11 (AUDIT-003 F4). **Status:** Open.
+**Recorded:** 2026-11-11 (AUDIT-003 F4). **Status:** Done 2026-11-11, entry
+kept for the record.
 
 The pipeline writes `--- VERIFIED SOURCE ... ---`, `--- ANSWER GATE | ... ---`
 and `--- ANSWER QUOTES | ... ---` into the stored reply
@@ -84,6 +85,24 @@ is appended. 2026-11-11: the product now reads the receipt too
 `journal/answer-cycle4_window.md`), so the ANSWER GATE line is a stored
 format with a consumer in C as well as Python; the remediation above is due
 before the marker format changes again.
+
+2026-11-11, done (`journal/answer-cycle4_receipt.md`): `src/llm/answer_receipt.h`
+is the contract (every receipt line, every trace line, the field rules and the
+bound), and `answer_receipt.c` holds the four writers; `chat.c` writes neither
+receipt nor trace text itself any more. `test_answer_pipeline` writes every
+line into `tests/fixtures/answer_receipt/` and compares byte for byte
+(`SCRIBODO_WRITE_FIXTURES=1` regenerates after a deliberate change);
+`test_answer_receipt_contract` parses the same files with the review tool's
+expressions and applies the composer window's refusal rule. The bound is
+enforced where the receipt is built: the pipeline receipt stays under
+`ANSWER_RECEIPT_PIPELINE_MAX` (headers whole, spans cut on a UTF-8 boundary)
+and the gate append keeps the whole at or under `CHAT_MEMORY_SOURCES_BYTES`,
+cutting the claim first and the misquotation second; before this, a receipt
+over 16 KiB made the store refuse the reply's row. The free-text fields no
+longer carry newlines and run to the end of the line, which the Python
+expressions now read (`tools/answer_pipeline_review.py`). Measured on the
+second novel's live script: requests, replies, receipts and trace lines
+byte-identical to the previous run (`mars-pipe7` against `mars-pipe6`).
 
 ## Open — worker monoliths and the compiled-in script host (P2)
 

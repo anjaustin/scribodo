@@ -189,7 +189,15 @@ modify a database while any Scribodo process is running.
   and trace lines into a review sheet (chosen unit, designated units' candidate
   ranks and scores, verified span, timings, composer window, reply);
   `test_answer_pipeline_review` (in `make test`) pins the trace and receipt
-  parsing without a model.
+  parsing without a model. The receipt and trace format itself is the header
+  comment of `src/llm/answer_receipt.h`: `test_answer_pipeline` writes every
+  line into `tests/fixtures/answer_receipt/` and compares byte for byte
+  (`SCRIBODO_WRITE_FIXTURES=1 ./build/test_answer_pipeline` regenerates the
+  fixtures after a deliberate format change), and
+  `test_answer_receipt_contract` (in `make test`) parses the same files with
+  the review tool's expressions and applies the composer window's refusal rule;
+  a change that breaks a reader fails there, one that breaks the writer fails
+  here (`journal/answer-cycle4_receipt.md`).
   `tools/answer_question_parts.py` (no venv; llama-server with the pinned
   reranker GGUF) takes the candidate pools a pipeline live run scored, splits
   each question into its parts in software and scores every candidate

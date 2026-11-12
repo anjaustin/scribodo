@@ -61,10 +61,10 @@ bool answer_pipeline_run(Db *db, SemanticClient *vectors, RerankClient *rerank, 
                          int64_t before, atomic_bool *cancel, double deadline_ms, AnswerPipelineResult *out);
 void answer_pipeline_result_free(AnswerPipelineResult *r);
 
-/* What the request carries. The block goes before the author's newest words;
- * the receipt is the reply's memory_sources provenance. */
+/* What the request carries: the block goes before the author's newest words. The reply's receipt
+ * (memory_sources provenance) is llm/answer_receipt.h. */
 char *answer_verified_block(const AnswerPipelineResult *r);
-char *answer_receipt(const AnswerPipelineResult *r);
+const char *answer_source_name(const MemoryUnit *u); /* the document name, or "an earlier reply" / "an earlier note" */
 extern const char *const answer_composer_instruction;
 
 /* ---- the answer-in-span gate (pass 4) ---------------------------------- */

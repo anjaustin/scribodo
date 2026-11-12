@@ -74,7 +74,7 @@ LLM_SRCS  := src/core/json.c src/llm/llm_text.c src/llm/http.c src/llm/server.c 
 LLM_SRCS += src/llm/context_planner.c src/llm/memory_tokens.c
 LLM_SRCS += src/llm/memory_budget.c src/llm/generative_gate.c src/llm/memory_brief.c
 LLM_SRCS += src/llm/canon_reference.c
-LLM_SRCS += src/llm/rerank.c src/llm/answer_pipeline.c
+LLM_SRCS += src/llm/rerank.c src/llm/answer_pipeline.c src/llm/answer_receipt.c
 LLM_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(LLM_SRCS)) $(BUILD)/third_party/cJSON/cJSON.o
 APP_SRCS  := src/main.c src/app/script.c src/app/chat_controller.c src/app/reviewed_edit_controller.c src/ui/font.c src/ui/clay_render.c src/ui/editor.c src/ui/input.c src/ui/recall_view.c \
              src/ui/chat_view.c src/ui/review_view.c src/ui/record_view.c src/ui/findings_view.c src/ui/prompt_view.c src/ui/menu_view.c src/ui/vendor_impl.c
@@ -292,6 +292,7 @@ test: $(TESTS)
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_citation_binding python3 tests/test_answer_citation_binding.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_boundary_fixture python3 tests/test_answer_boundary_fixture.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_window_replay python3 tests/test_answer_window_replay.py
+	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_receipt_contract python3 tests/test_answer_receipt_contract.py
 
 # Verify pinned dependency inventory, upstream refs, container digests and OSV
 # advisories. The scheduled workflow publishes the same report as an artifact.
