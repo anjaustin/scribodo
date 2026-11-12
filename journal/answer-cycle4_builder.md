@@ -121,6 +121,11 @@ final tree: `make test` 95,950 and 168, 0; `make dbtest` 18,000, 0;
 `make tsan` 48,579, 0, 0 (`build/builder/gates2-*.log`). Every exit status 0;
 the tally sums every `N checks` line.
 
+## Hosted verdicts
+
+CI and Trusted acceptance both passed on `a98189a` (runs 43257408129 and
+43257407732).
+
 ## What remains of the register entry
 
 The observer's `run_job` and `observer_job_find` have the same shape and are

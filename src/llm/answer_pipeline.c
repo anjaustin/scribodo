@@ -32,12 +32,15 @@ const char *const answer_composer_instruction =
 
 /* ---- normalization and verification ------------------------------------ */
 
-char *answer_normalize(const char *text)
+/* The normalization, with an optional map from every normalized byte to the source bytes that produced it
+ * ([starts[k], ends[k]) in `text`), so a match found in normalized space can be read back as the source's own bytes. */
+static char *normalize_map(const char *text, size_t **starts, size_t **ends)
 {
     if (!text) return NULL;
     size_t n = strlen(text);
     char *out = malloc(n + 1);
-    if (!out) return NULL;
+    size_t *st = starts ? malloc((n + 1) * sizeof(*st)) : NULL, *en = ends ? malloc((n + 1) * sizeof(*en)) : NULL;
+    if (!out || (starts && !st) || (ends && !en)) { free(out); free(st); free(en); return NULL; }
     size_t k = 0;
     bool space = true; /* leading whitespace is dropped */
     for (size_t i = 0; i < n;) {
@@ -64,8 +67,15 @@ char *answer_normalize(const char *text)
         if (c == '"') { i += step; continue; }
         if (c == '\'' && !(k && isalnum((unsigned char)out[k - 1]) && i + step < n && isalnum(p[step]))) { i += step; continue; }
         if (blank) {
-            if (!space) { out[k++] = ' '; space = true; }
+            if (!space) {
+                if (st) st[k] = i;
+                if (en) en[k] = i + step;
+                out[k++] = ' ';
+                space = true;
+            }
         } else {
+            if (st) st[k] = i;
+            if (en) en[k] = i + step;
             out[k++] = c;
             space = false;
         }
@@ -73,15 +83,40 @@ char *answer_normalize(const char *text)
     }
     while (k && out[k - 1] == ' ') k--;
     out[k] = 0;
+    if (starts) *starts = st;
+    if (ends) *ends = en;
     return out;
 }
 
-static bool contains(const char *haystack_norm, const char *needle)
+char *answer_normalize(const char *text)
 {
-    char *n = answer_normalize(needle);
-    bool ok = n && n[0] && strstr(haystack_norm, n) != NULL;
-    free(n);
-    return ok;
+    return normalize_map(text, NULL, NULL);
+}
+
+/* A dropped quotation mark or emphasis marker starting at `i` of `text`: its byte length, else 0. */
+static size_t dropped_mark_at(const char *text, size_t n, size_t i)
+{
+    if (i >= n) return 0;
+    const unsigned char *p = (const unsigned char *)text + i;
+    if (p[0] == '"' || p[0] == '\'' || p[0] == '*' || p[0] == '_') return 1;
+    if (p[0] == 0xE2 && i + 2 < n && p[1] == 0x80 && (p[2] == 0x9C || p[2] == 0x9D || p[2] == 0x98 || p[2] == 0x99)) return 3;
+    return 0;
+}
+
+/* The unit's own bytes behind normalized bytes [k, k + len) of it, widened over the quotation marks and emphasis
+ * markers the normalization dropped at either edge, so a quoted sentence keeps its quotation marks. */
+static char *unit_bytes(const char *unit_text, const size_t *starts, const size_t *ends, size_t k, size_t len)
+{
+    size_t n = strlen(unit_text), start = starts[k], end = ends[k + len - 1];
+    for (;;) { /* a mark ending exactly at start: one byte back (ASCII) or three (a curly quote) */
+        size_t m = 0;
+        if (start >= 1 && dropped_mark_at(unit_text, n, start - 1) == 1) m = 1;
+        else if (start >= 3 && dropped_mark_at(unit_text, n, start - 3) == 3) m = 3;
+        if (!m) break;
+        start -= m;
+    }
+    for (size_t m; (m = dropped_mark_at(unit_text, n, end)) != 0;) end += m;
+    return strndup(unit_text + start, end - start);
 }
 
 static size_t trimmed_length(const char *s)
@@ -98,14 +133,22 @@ bool answer_verify_span(const char *span, const char *unit_text, char **verified
     if (status) *status = "none";
     if (!span || !unit_text || !verified) return false;
     if (trimmed_length(span) < ANSWER_MIN_SPAN) { if (status) *status = "too_short"; return false; }
-    char *unit = answer_normalize(unit_text);
+    size_t *st = NULL, *en = NULL;
+    char *unit = normalize_map(unit_text, &st, &en);
     if (!unit) return false;
     bool ok = false;
-    if (contains(unit, span)) {
-        *verified = strdup(span);
+    /* What is returned is the unit's own bytes at the match, never the model's rendering of them: the normalization
+     * tolerates case, emphasis, dashes, whitespace and quotation marks, and the author is shown the manuscript's text
+     * (journal/answer-cycle4_exact_span.md). */
+    char *n = answer_normalize(span);
+    const char *hit = n && n[0] ? strstr(unit, n) : NULL;
+    if (hit) {
+        *verified = unit_bytes(unit_text, st, en, (size_t)(hit - unit), strlen(n));
         ok = *verified != NULL;
         if (status) *status = ok ? "verified" : "none";
-    } else {
+    }
+    free(n);
+    if (!hit) {
         /* Longest prefix ending at a sentence boundary that is in the unit. */
         size_t len = strlen(span);
         for (size_t end = len; end > 0 && !ok; end--) {
@@ -119,15 +162,19 @@ bool answer_verify_span(const char *span, const char *unit_text, char **verified
             if (cut < len && !isspace((unsigned char)span[cut])) continue;
             char *prefix = strndup(span, cut);
             if (!prefix) break;
-            if (trimmed_length(prefix) >= ANSWER_MIN_SPAN && contains(unit, prefix)) {
-                *verified = prefix;
-                ok = true;
-                if (status) *status = "verified_prefix";
-            } else free(prefix);
+            char *pn = trimmed_length(prefix) >= ANSWER_MIN_SPAN ? answer_normalize(prefix) : NULL;
+            const char *phit = pn && pn[0] ? strstr(unit, pn) : NULL;
+            if (phit) {
+                *verified = unit_bytes(unit_text, st, en, (size_t)(phit - unit), strlen(pn));
+                ok = *verified != NULL;
+                if (status) *status = ok ? "verified_prefix" : "none";
+            }
+            free(pn);
+            free(prefix);
         }
         if (!ok && status) *status = "rejected_not_in_unit";
     }
-    free(unit);
+    free(unit); free(st); free(en);
     return ok;
 }
 

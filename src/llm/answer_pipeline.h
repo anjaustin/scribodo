@@ -126,7 +126,9 @@ bool answer_assign_slots(const double *s0, const double *s1, size_t n, size_t sl
  * whitespace, lowercases ASCII: the citation classifier's normalization. */
 char *answer_normalize(const char *text);
 /* Exact normalized substring, else the longest sentence-boundary prefix that
- * is; at least ANSWER_MIN_SPAN characters. `status` names the outcome. */
+ * is; at least ANSWER_MIN_SPAN characters. `status` names the outcome.
+ * `*verified` is the unit's own bytes at the match (widened over quotation
+ * marks and emphasis markers at its edges), never the model's rendering. */
 bool answer_verify_span(const char *span, const char *unit_text, char **verified, const char **status);
 char *answer_extraction_request(const char *question, const char *unit_text); /* owned JSON */
 /* `parsed` is false when the reply was not the schema's JSON (for example cut

@@ -186,7 +186,7 @@ modify a database while any Scribodo process is running.
   (`build/rr1`). `test_llm: build_base_request` covers the request builder's base stage without a session
   (`chat_build_base_request`, journal/answer-cycle4_builder.md). `test_answer_pipeline` (in `make test`) covers the verified
   pipeline's pure parts: normalization, byte verification with the sentence
-  cut, the extraction request and reply, the reranker prompt, request and
+  cut (the unit's own bytes come back, journal/answer-cycle4_exact_span.md), the extraction request and reply, the reranker prompt, request and
   probability parsing, the fixture scorer, the verified block and receipt, and
   the pipeline request builder beside the unchanged production builder, the
   question splitter and the slot matching (cycle 3), the gate's number

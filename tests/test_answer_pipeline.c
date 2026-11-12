@@ -45,9 +45,22 @@ static void test_normalize(void)
 static void test_verify(void)
 {
     char *v = NULL; const char *status = NULL;
-    /* Exact, with emphasis and curly quotes folded. */
+    /* Exact, with emphasis and curly quotes folded; what comes back is the unit's bytes, not the model's rendering. */
     CHECK(answer_verify_span("Elizabeth said it was *only three miles*.", k_unit, &v, &status) && !strcmp(status, "verified"));
-    CHECK(v && !strcmp(v, "Elizabeth said it was *only three miles*."));
+    CHECK(v && !strcmp(v, "Elizabeth said it was only three miles."));
+    free(v); v = NULL;
+    /* Straight quotes and a spaced hyphen in the model's text: the manuscript's curly apostrophe and em dash come back. */
+    CHECK(answer_verify_span("Her mother's fortune, though ample for her situation in life, could but ill supply the deficiency of his - so they walked.",
+                             k_unit, &v, &status) && !strcmp(status, "verified"));
+    CHECK(v && !strcmp(v, "Her mother\xE2\x80\x99s fortune, though ample for her situation in life, could but ill supply the deficiency of his\xE2\x80\x94so they walked."));
+    free(v); v = NULL;
+    /* A quoted sentence keeps the manuscript's quotation marks even when the model dropped them. */
+    CHECK(answer_verify_span("This was a lucky idea of mine, indeed! said Mrs. Bennet.", k_unit, &v, &status) && !strcmp(status, "verified"));
+    CHECK(v && !strcmp(v, "\xE2\x80\x9CThis was a lucky idea of mine, indeed!\xE2\x80\x9D said Mrs. Bennet."));
+    free(v); v = NULL;
+    const char *starred = "She walked *only three miles* home.";
+    CHECK(answer_verify_span("only three miles home.", starred, &v, &status) && !strcmp(status, "verified"));
+    CHECK(v && !strcmp(v, "*only three miles* home.")); /* the manuscript's own markers at the edge come with it */
     free(v); v = NULL;
     /* Correct sentence followed by text that is not in the unit: cut back to the sentence. */
     CHECK(answer_verify_span("Elizabeth said it was only three miles. Charlotte Lucas is twenty-seven years old.", k_unit, &v, &status));
