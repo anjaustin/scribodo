@@ -93,4 +93,5 @@ CI and Trusted acceptance both passed on `b752592` (runs 43261904802 and
 The span shown is now the manuscript's bytes wherever the verifier matches. The
 match itself is still found in normalized space, so the tolerance decides what
 is accepted, not what is shown; the categories above say what that tolerance
-has let through so far.
+has let through so far. Measured the same day under eighteen mutations of 681
+recorded spans: `journal/answer-cycle4_tolerance.md`.

@@ -186,7 +186,8 @@ modify a database while any Scribodo process is running.
   (`build/rr1`). `test_llm: build_base_request` covers the request builder's base stage without a session
   (`chat_build_base_request`, journal/answer-cycle4_builder.md). `test_answer_pipeline` (in `make test`) covers the verified
   pipeline's pure parts: normalization, byte verification with the sentence
-  cut (the unit's own bytes come back, journal/answer-cycle4_exact_span.md), the extraction request and reply, the reranker prompt, request and
+  cut (the unit's own bytes come back, journal/answer-cycle4_exact_span.md; a marker inside a word is part of the word,
+  journal/answer-cycle4_tolerance.md), the extraction request and reply, the reranker prompt, request and
   probability parsing, the fixture scorer, the verified block and receipt, and
   the pipeline request builder beside the unchanged production builder, the
   question splitter and the slot matching (cycle 3), the gate's number
@@ -270,6 +271,15 @@ modify a database while any Scribodo process is running.
   the current verdict beside the recorded one; a gate change is measured this
   way, and against the committed gate's binary, before it ships.
   `test_answer_gate_replay` (in `make test`) pins the claim extraction.
+  `tools/answer_span_tolerance.py` runs the same binary's span verifier over
+  every verified span the recorded runs showed, unchanged and under eighteen
+  mutations in three families (rendering, which must verify; meaning, which must
+  be rejected; and the edge cases the rules cannot tell from rendering), and
+  tabulates the verifier's answer per mutation; this is how the normalization's
+  tolerance is measured (journal/answer-cycle4_tolerance.md: 681 spans, every
+  meaning mutation rejected, in-word markers closed). `test_answer_span_tolerance`
+  (in `make test`) pins that each mutation changes what it claims and lands
+  inside the first sentence.
   The same replay runs the quotation check (`answer_quotations`: every
   quotation in a composed reply must be a substring of a verified span, an
   author turn or the question under the gate's normalization) over every

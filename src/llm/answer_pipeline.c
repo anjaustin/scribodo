@@ -32,6 +32,16 @@ const char *const answer_composer_instruction =
 
 /* ---- normalization and verification ------------------------------------ */
 
+/* A Markdown emphasis marker at byte `i` of `text`: `*` or `_` at a word's edge. One between two letters or digits
+ * (har_dly) is part of the word, not a marker, so it is kept and a span that carries it does not verify; the
+ * tolerance was measured in journal/answer-cycle4_tolerance.md. */
+static bool emphasis_mark_at(const char *text, size_t n, size_t i)
+{
+    if (i >= n || (text[i] != '*' && text[i] != '_')) return false;
+    bool before = i > 0 && isalnum((unsigned char)text[i - 1]), after = i + 1 < n && isalnum((unsigned char)text[i + 1]);
+    return !(before && after);
+}
+
 /* The normalization, with an optional map from every normalized byte to the source bytes that produced it
  * ([starts[k], ends[k]) in `text`), so a match found in normalized space can be read back as the source's own bytes. */
 static char *normalize_map(const char *text, size_t **starts, size_t **ends)
@@ -57,7 +67,7 @@ static char *normalize_map(const char *text, size_t **starts, size_t **ends)
         }
         if (step == 1) {
             if (p[0] == '-') blank = true;
-            else if (p[0] == '*' || p[0] == '_') { i++; continue; }
+            else if (emphasis_mark_at(text, n, i)) { i++; continue; }
             else if (isspace(p[0])) blank = true;
             else c = (char)tolower(p[0]);
         }
@@ -98,7 +108,7 @@ static size_t dropped_mark_at(const char *text, size_t n, size_t i)
 {
     if (i >= n) return 0;
     const unsigned char *p = (const unsigned char *)text + i;
-    if (p[0] == '"' || p[0] == '\'' || p[0] == '*' || p[0] == '_') return 1;
+    if (p[0] == '"' || p[0] == '\'' || emphasis_mark_at(text, n, i)) return 1;
     if (p[0] == 0xE2 && i + 2 < n && p[1] == 0x80 && (p[2] == 0x9C || p[2] == 0x9D || p[2] == 0x98 || p[2] == 0x99)) return 3;
     return 0;
 }

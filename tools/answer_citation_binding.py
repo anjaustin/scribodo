@@ -28,7 +28,9 @@ def normalize(text):
     text = text.replace('\u201c', '"').replace('\u201d', '"').replace('\u2018', "'").replace('\u2019', "'")
     # Dashes become spaces on both sides so em-dash, spaced-hyphen and hyphen spellings agree.
     text = text.replace('\u2014', ' ').replace('\u2013', ' ').replace('-', ' ')
-    text = text.replace('_', '').replace('*', '')  # markdown emphasis inside a quotation is not a wording change
+    # Markdown emphasis inside a quotation is not a wording change; a marker between two letters or digits (har_dly)
+    # is part of the word and stays (emphasis_mark_at in C).
+    text = re.sub(r'(?<![A-Za-z0-9])[_*]|[_*](?![A-Za-z0-9])', '', text)
     # Quotation marks are not words (answer_normalize in C): double quotes go; a single quote stays only as an
     # apostrophe inside a word.
     text = text.replace('"', '')

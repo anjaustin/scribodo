@@ -27,7 +27,9 @@ static const char *k_unit =
 static void test_normalize(void)
 {
     char *n = answer_normalize("  \xE2\x80\x9CMr. Bennet\xE2\x80\x99s **property**\xE2\x80\x94was_entailed  \n on a distant\trelation.\xE2\x80\x9D ");
-    CHECK(n && !strcmp(n, "mr. bennet's property wasentailed on a distant relation.")); /* underscores and quotation marks are dropped */
+    /* Quotation marks and emphasis markers are dropped; a marker between two letters is part of the word (2026-11-12,
+     * journal/answer-cycle4_tolerance.md; before it, "was_entailed" folded to "wasentailed"). */
+    CHECK(n && !strcmp(n, "mr. bennet's property was_entailed on a distant relation."));
     free(n);
     /* A nested quotation written with single quotes is the same words; an apostrophe inside a word stays. */
     n = answer_normalize("me\xE2\x80\x94\xE2\x80\x9CThe clown\xE2\x80\x9D said 'Now.' O'Neill\xE2\x80\x99s \"tis\"");
@@ -62,6 +64,15 @@ static void test_verify(void)
     CHECK(answer_verify_span("only three miles home.", starred, &v, &status) && !strcmp(status, "verified"));
     CHECK(v && !strcmp(v, "*only three miles* home.")); /* the manuscript's own markers at the edge come with it */
     free(v); v = NULL;
+    /* A marker between two letters is part of the word, not emphasis: the span does not verify (the tolerance
+     * measured in journal/answer-cycle4_tolerance.md); a marker at a word's edge still folds. */
+    CHECK(!answer_verify_span("Elizabeth said it was only three mi_les.", k_unit, &v, &status) && !strcmp(status, "rejected_not_in_unit"));
+    CHECK(answer_verify_span("Elizabeth said it was _only_ three miles.", k_unit, &v, &status) && !strcmp(status, "verified"));
+    CHECK(v && !strcmp(v, "Elizabeth said it was only three miles."));
+    free(v); v = NULL;
+    char *inner = answer_normalize("har_dly *six* _years_ a*b");
+    CHECK(inner && !strcmp(inner, "har_dly six years a*b"));
+    free(inner);
     /* Correct sentence followed by text that is not in the unit: cut back to the sentence. */
     CHECK(answer_verify_span("Elizabeth said it was only three miles. Charlotte Lucas is twenty-seven years old.", k_unit, &v, &status));
     CHECK(!strcmp(status, "verified_prefix") && v && !strcmp(v, "Elizabeth said it was only three miles."));

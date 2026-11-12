@@ -289,6 +289,7 @@ test: $(TESTS)
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_relation_arm python3 tests/test_answer_relation_arm.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_coref_arm python3 tests/test_answer_coref_arm.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_gate_replay python3 tests/test_answer_gate_replay.py
+	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_span_tolerance python3 tests/test_answer_span_tolerance.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_income_isolation python3 tests/test_answer_income_isolation.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_citation_binding python3 tests/test_answer_citation_binding.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_boundary_fixture python3 tests/test_answer_boundary_fixture.py

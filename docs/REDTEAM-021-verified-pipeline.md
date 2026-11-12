@@ -95,7 +95,13 @@ the guarded line and still kills.
   (the "not sixteen" unit was outside 64 candidates on pass 2).
 - **ASCII-only lowercasing in `answer_normalize`.** Both sides of every
   comparison go through the same function, so verification is consistent;
-  it differs from the Python classifier only for non-ASCII letters.
+  it differs from the Python classifier only for non-ASCII letters. The
+  tolerance of the whole normalization was measured on 2026-11-12 over 681
+  recorded spans under eighteen mutations (journal/answer-cycle4_tolerance.md):
+  every meaning change rejected; the one defect, a marker dropped inside a
+  word, closed; a hyphen split and a plural possessive apostrophe lost remain
+  accepted as rendering (the words are unchanged and the manuscript's bytes
+  are shown).
 - **Fixture scorer with the fake backend.** With the flag set and no real
   servers, `rerank_client_create(NULL)` scores by content-word overlap and
   the extraction call is not attempted (no chat server), so the request

@@ -41,6 +41,13 @@ class CitationBindingTests(unittest.TestCase):
         r = self.run_case(reply, s1)
         self.assertEqual((r['pieces'], r['bound_to_cited_source'], r['in_no_supplied_text']), (2, 2, 0))
 
+    def test_a_marker_inside_a_word_is_part_of_the_word(self):
+        # The C normalization's rule (emphasis_mark_at): markers fold at a word's edge and stay between letters.
+        self.assertEqual(cb.normalize('har_dly *six* _years_ a*b'), 'har_dly six years a*b')
+        s1 = 'she was hardly six years old, but she could ride any horse'
+        self.assertEqual(self.run_case('Source 1: "she was har_dly six years old, but she could ride any horse".', s1)['in_no_supplied_text'], 1)
+        self.assertEqual(self.run_case('Source 1: "she was _hardly_ six years old, but she could ride any horse".', s1)['bound_to_cited_source'], 1)
+
     def test_straight_and_curly_quotes_pair_independently(self):
         s1 = 'first supported sentence here'; s2 = 'second supported sentence here'
         reply = 'Source 1 gives “first supported sentence here” and Source 2 gives "second supported sentence here".'
