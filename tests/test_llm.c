@@ -1209,6 +1209,19 @@ static void test_records(void)
     records_new_id(REC_CANON, cid, sizeof(cid));
     records_new_id(REC_CANON, cid2, sizeof(cid2));
     CHECK(nid[0] == 'n' && cid[0] == 'c');
+    /* Ids drawn in one second are distinct (the observer draws dozens a second; journal/observer-cycle1_replay.md). */
+    {
+        enum { N = 5000 };
+        static char ids[N][40];
+        for (size_t i = 0; i < N; i++) records_new_id(REC_FINDING, ids[i], sizeof(ids[i]));
+        qsort(ids, N, sizeof(ids[0]), (int (*)(const void *, const void *))strcmp);
+        bool distinct = true, shaped = true;
+        for (size_t i = 0; i < N; i++) {
+            if (i && !strcmp(ids[i], ids[i - 1])) distinct = false;
+            shaped = shaped && strlen(ids[i]) == 22 && ids[i][0] == 'f' && ids[i][1] == '-' && ids[i][10] == '-' && ids[i][17] == '-';
+        }
+        CHECK(distinct && shaped);
+    }
     int ver = 0;
     CHECK(records_append(g_store, proj, REC_NOTE, nid, "active", "Check the letter's date.", &src, 1, &ver) && ver == 1);
     CHECK(records_append(g_store, proj, REC_NOTE, nid, "active", "Check the letter's date (1911?).", &src, 1, &ver) && ver == 2);

@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <stddef.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -35,12 +36,29 @@ static bool valid_id(const char *id)
 
 void records_new_id(RecordKind kind, char *out, size_t outlen)
 {
+    /* The suffix is unique within this process for each second: a random start when the second changes, then a count.
+     * Measured 2026-11-12 (journal/observer-cycle1_replay.md): with an independent random draw per id, the observer
+     * creating 716 findings in nine seconds drew the same id twice in two of six runs, and the later finding was
+     * stored as the second version of the earlier one, hiding it. Across processes the findings lock serialises the
+     * writers and the observer re-reads the log under it before it creates. */
+    static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
+    static time_t last_second;
+    static unsigned next_suffix;
+    static bool started;
     time_t t = time(NULL);
+    pthread_mutex_lock(&mu);
+    if (!started || t != last_second) {
+        next_suffix = arc4random_uniform(0x10000);
+        last_second = t;
+        started = true;
+    }
+    unsigned suffix = next_suffix++ & 0xffffu;
+    pthread_mutex_unlock(&mu);
     struct tm tmv;
     localtime_r(&t, &tmv);
     char stamp[32];
     strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tmv);
-    snprintf(out, outlen, "%c-%s-%04x", kind == REC_NOTE ? 'n' : kind == REC_CANON ? 'c' : 'f', stamp, arc4random_uniform(0x10000));
+    snprintf(out, outlen, "%c-%s-%04x", kind == REC_NOTE ? 'n' : kind == REC_CANON ? 'c' : 'f', stamp, suffix);
 }
 
 void records_free_sources(SourceRef *s, size_t n)

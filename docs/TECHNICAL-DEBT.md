@@ -129,6 +129,21 @@ section comments into functions with a shared context struct, each unit-tested
 with the fake backend; decide whether the script host stays in the product
 binary (then list it under intentional tradeoffs) or moves behind a build flag.
 
+## Open — findings logs written before 2026-11-12 may hold a collided id (P2)
+
+**Recorded:** 2026-11-12 (`journal/observer-cycle1_replay.md`, REDTEAM-005 #17). **Status:** Open; the cause is fixed,
+the record is not scanned.
+
+Until `ece3439`, `records_new_id` drew an independent 16-bit random suffix behind a one-second stamp and
+`records_create_ex` wrote without reading the log, so two findings created in the same second could share an id;
+the later one was stored as version 2 of the earlier record and hid it. Measured with the fake backend at about
+ninety findings a second: two collisions in six runs over a novel. With the model the rate is far lower, but a job
+writes up to eight findings in one second and nothing checked. A collided record is detectable: a finding whose
+versions differ in content and in sources, which a status change never produces. Remediation: a scan over each
+project's findings (files and the project store) that counts such records; if any exist, a repair that gives the
+hidden version its own id is a migration of the author's record and the author's decision (delete nothing, only
+archive). No author project on this Mac has been scanned.
+
 ## Open — unarchived evidence and undeclared experiment environments (P2)
 
 **Recorded:** 2026-11-11 (AUDIT-003 F6). **Status:** Done 2026-11-12, entry kept for the record.

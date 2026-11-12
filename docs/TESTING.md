@@ -547,7 +547,9 @@ See [`OBSERVER-001-design.md`](OBSERVER-001-design.md):
 - ASan/UBSan and the new `make tsan`, all clean;
 - 10 of 10 mutations caught.
 
-Red-teamed in [`REDTEAM-005-observer.md`](REDTEAM-005-observer.md): 16 findings, all fixed, 20 of 20 mutations caught.
+Red-teamed in [`REDTEAM-005-observer.md`](REDTEAM-005-observer.md): 16 findings, all fixed, 20 of 20 mutations caught; a 17th found on 2026-11-12 by the replay below (finding ids could collide within a second).
+
+`tools/observer_replay.c` (`make tools`, `build/observer_replay`) runs the observer headless with the fake backend over a project folder until "Up to date" and lists every finding, sorted, without ids; `--canon`, `--note` and `--chat` seed the conflict, overlap and chat paths. `tools/observer_replay_run.sh <label> <binary>` runs it over copies of the three test manuscripts with fixed seeds, so two builds' observers are compared byte for byte (journal/observer-cycle1_replay.md: 717, 348 and 948 findings, identical across three runs). A change to the observer's worker is measured this way before it ships.
 
 UI scripts start with the observer **off**, so other scripts' file expectations stay deterministic. A script turns it on with `observer on` and waits with `wait_observer`.
 

@@ -142,6 +142,10 @@ $(BUILD)/test_memory_index_text: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_st
 $(BUILD)/answer_gate_replay: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tools/answer_gate_replay.o
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
 
+# Diagnostic: the observer, headless, with the fake backend over a project folder; findings sorted for byte comparison.
+$(BUILD)/observer_replay: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tools/observer_replay.o
+	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
+
 $(BUILD)/test_components: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_state_fixture.o $(BUILD)/tests/test_components.o
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
 
@@ -403,7 +407,7 @@ $(BUILD)/venv-%/.locked: tools/envs/venv-%.lock
 	cp $< $@
 
 # Every diagnostic tool binary (the Python tools need no build).
-tools: $(BUILD)/answer_gate_replay $(BUILD)/test_crash_points
+tools: $(BUILD)/answer_gate_replay $(BUILD)/observer_replay $(BUILD)/test_crash_points
 # Process death at every kill point, against the local MariaDB (tools/services.sh up); one fresh database per death.
 crashtest: $(BUILD)/test_crash_points
 	$(WATCHDOG) 900 crash-points ./$(BUILD)/test_crash_points
