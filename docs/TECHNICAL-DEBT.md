@@ -220,6 +220,12 @@ every filesystem operation, nor every filesystem/hardware durability behavior.
   transaction commits, marker replacement and archival cleanup. Verify restart
   behavior and authority preservation at each boundary, distinguishing process
   termination tests from actual power-loss/durability testing.
+- **Progress (2026-11-11):** the interruption points exist (`core/crash_point.h`,
+  compiled away in the product) and `make crashtest` kills a process after
+  every migration statement and receipt (95 deaths, each recovered to the
+  clean schema). The matrix of transitions, points, invariants and open rows
+  is `GAP-004-interruption-matrix.md`; the distinction from power loss is
+  stated there and this entry stays until the matrix is complete.
 
 ### Snapshot fingerprints are not a tampering boundary
 

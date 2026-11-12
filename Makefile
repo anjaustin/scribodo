@@ -96,7 +96,7 @@ TESTS += $(BUILD)/test_memory_document_cache $(BUILD)/test_memory_budget $(BUILD
 TESTS += $(BUILD)/test_http_deadlines $(BUILD)/test_db_deadlines $(BUILD)/test_memory_brief_model
 TESTS += $(BUILD)/test_http_poll_errno
 
-.PHONY: all run test analyze analyzetest uitest uitest-real sanitize tsan cstest dbtest uitest-db backuptest remotetest offlinetest dependency-report clean distclean llama model llmtest
+.PHONY: all run test analyze analyzetest uitest uitest-real sanitize tsan cstest dbtest crashtest uitest-db backuptest remotetest offlinetest dependency-report clean distclean llama model llmtest
 
 all: $(APP)
 
@@ -324,7 +324,7 @@ OPENSSL_DIR ?= /opt/homebrew/opt/openssl@3
 MARIADB_LIB := build/mariadb-cc/libmariadb/libmariadbclient.a
 MARIADB_LIBS := $(MARIADB_LIB) $(OPENSSL_DIR)/lib/libssl.a $(OPENSSL_DIR)/lib/libcrypto.a -lz -liconv -lcurl # the system libcurl, for the optional remote model
 # Everything that may include <mysql.h> needs the client built first.
-$(LLM_OBJS) $(APP_OBJS) $(BUILD)/tests/test_llm.o $(BUILD)/tests/test_db.o: | $(MARIADB_LIB)
+$(LLM_OBJS) $(APP_OBJS) $(BUILD)/tests/test_llm.o $(BUILD)/tests/test_db.o $(BUILD)/tests/db_admin.o: | $(MARIADB_LIB)
 $(BUILD)/test_persistence_faults $(BUILD)/test_semantic_faults: | $(MARIADB_LIB)
 $(MARIADB_LIB):
 	@mkdir -p $(dir $@)
@@ -334,8 +334,14 @@ $(MARIADB_LIB):
 	  -DWITH_CURL=OFF -DWITH_EXTERNAL_ZLIB=ON > build/mariadb-cc.log
 	$(CMAKE) --build build/mariadb-cc --target mariadbclient -j8 >> build/mariadb-cc.log
 
-$(BUILD)/test_db: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_db_core.o $(BUILD)/tests/test_db.o
+$(BUILD)/test_db: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_db_core.o $(BUILD)/tests/test_db.o $(BUILD)/tests/db_admin.o
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
+
+# GAP-004 interruption matrix: the store sources compiled with the kill points live (-DSCRIBODO_CRASH_POINTS),
+# the driver forking itself to die at each one (docs/GAP-004-interruption-matrix.md).
+CRASH_SRCS := $(CORE_SRCS) $(LLM_SRCS) src/core/json_vendor.c tests/crash_point.c tests/db_admin.c tests/test_crash_points.c
+$(BUILD)/test_crash_points: $(CRASH_SRCS) $(wildcard src/core/*.h src/app/*.h src/llm/*.h) | $(MARIADB_LIB)
+	$(CC) $(CFLAGS) $(INCLUDES) -DSCRIBODO_CRASH_POINTS $(CRASH_SRCS) -o $@ $(MARIADB_LIBS) -lpthread -lm
 
 # Against the running local services (tools/services.sh up).
 $(BUILD)/test_memory_store: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_memory_store.o
@@ -384,6 +390,10 @@ dbtest: $(BUILD)/test_db $(BUILD)/test_memory_store $(BUILD)/test_memory_vectors
 	$(WATCHDOG) 180 memory-briefs ./$(BUILD)/test_memory_briefs
 	$(WATCHDOG) 180 memory-chat ./$(BUILD)/test_memory_chat
 	$(WATCHDOG) 180 recall ./$(BUILD)/test_recall
+
+# Process death at every kill point, against the local MariaDB (tools/services.sh up); one fresh database per death.
+crashtest: $(BUILD)/test_crash_points
+	$(WATCHDOG) 900 crash-points ./$(BUILD)/test_crash_points
 
 # The app against the project store (needs tools/services.sh up): three runs
 # on one throwaway database and project folder: move and use, resume after

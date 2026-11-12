@@ -46,7 +46,7 @@ jobs:
         run: tools/services.sh up
 
       - name: Build and run database integration
-        run: caffeinate -i make all test dbtest
+        run: caffeinate -i make all test dbtest crashtest
 
       - name: Run scripted UI acceptance
         run: caffeinate -i make uitest

@@ -15,7 +15,7 @@ features are absent. Keep the original numbering for future follow-up.
 | GAP-001 | Broad AI usefulness and accuracy evaluation | **P0** (2026-11-11) | Started: a second, held-out manuscript (A Princess of Mars) with questions written before any run; see the 2026-11-11 section |
 | GAP-002 | Turnkey installation and release distribution | **P0** (2026-11-11) | Not started |
 | GAP-003 | Whole-manuscript scale and sustained-use evidence | **P0** | Implementation underway; bounded-history foundation first; memory contract in MEMORY-015 |
-| GAP-004 | Deterministic crash/recovery interruption coverage | **P0** (2026-11-11) | Not started; AUDIT-003 F1 (a non-idempotent migration) is the first concrete case for the matrix |
+| GAP-004 | Deterministic crash/recovery interruption coverage | **P0** (2026-11-11) | In progress: kill-point harness and the migration rows done 2026-11-11 (`GAP-004-interruption-matrix.md`, 95 deaths, 0 failures); file, store, marker, cleanup and disk rows open |
 | GAP-005 | Real macOS input, accessibility and author usability | **P0** (2026-11-11) | Not started |
 
 The user selected **#3 as P0** on 2026-11-06 and made the remaining four P0 on
@@ -44,7 +44,10 @@ measurement that closes it. Items run one at a time unless marked otherwise.
    column. Runs alongside 1 and 2 because every further experiment adds to it.
 4. **GAP-004 crash points.** Deterministic kill points around journal writes,
    commits, marker replacement, archival cleanup and migration receipts;
-   disk-full and read-only cases. Closes with the transition/failure matrix.
+   disk-full and read-only cases. Closes with the transition/failure matrix. *Started
+   2026-11-11* (`journal/gap004-cycle1_migration.md`): `core/crash_point.h`
+   and `make crashtest`; the migration rows hold at every one of 95 deaths.
+   The matrix is `GAP-004-interruption-matrix.md`.
 5. **GAP-003 budgets and soak.** Workload sizes and budgets agreed, then the
    soak, restart and repeatability runs on the M4; the single MEMORY-019
    baseline becomes a series.
@@ -141,6 +144,11 @@ restart verification of authority, non-duplication and recoverability.
 
 **Exit evidence:** A documented transition/failure matrix with reproducible
 process-death tests and explicit limits separating them from hardware durability.
+
+**Progress (2026-11-11):** the matrix exists ([GAP-004-interruption-matrix](GAP-004-interruption-matrix.md))
+with its method and limits; the migration rows are held by `make crashtest`
+(a process killed after every DDL statement and every receipt recovers to the
+clean schema); the other rows are open and listed there.
 
 ## GAP-005 — Real macOS input, accessibility and author usability
 

@@ -1,5 +1,6 @@
 #define _DARWIN_C_SOURCE
 #include "db.h"
+#include "core/crash_point.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -905,17 +906,22 @@ bool db_migrate_upto(Db *db, int upto, char *err, size_t errlen)
         return false;
     }
     for (int v = have + 1; v <= latest && v <= upto; v++) {
-        for (const char *const *stmt = k_migrations[v - 1]; *stmt; stmt++)
+        for (const char *const *stmt = k_migrations[v - 1]; *stmt; stmt++) {
             if (!db_run(db, *stmt, NULL, 0, NULL)) {
                 snprintf(err, errlen, "Migration %d failed: %s", v, db->err);
                 return false;
             }
+            /* DDL commits itself: a process that dies here has applied this statement and holds no receipt for the
+             * migration, so every statement must be re-runnable (GAP-004 matrix, migration rows). */
+            crash_point("migration.statement");
+        }
         DbArg a[2] = { DB_I(v), DB_D(0) };
         if (!db_run(db, "INSERT INTO schema_migrations (version, applied_at) VALUES (?, UNIX_TIMESTAMP(NOW(6)) + ?)", a, 2,
                     NULL)) {
             snprintf(err, errlen, "Recording migration %d failed: %s", v, db->err);
             return false;
         }
+        crash_point("migration.receipt");
     }
     return true;
 }

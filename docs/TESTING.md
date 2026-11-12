@@ -9,6 +9,7 @@
 | `make uitest` | Scripted UI tests: the **real app**, real input handling, real rendering, with a fake model | Yes |
 | `make tsan` | ThreadSanitizer over the chat, observer, supervisor and storage code | No |
 | `make dbtest` | MariaDB/Qdrant integration in throwaway databases (`tools/services.sh up` first) | No |
+| `make crashtest` | Process death at every kill point of a store transition (GAP-004), one throwaway database per death (`tools/services.sh up` first) | No |
 | `make llmtest` | The model adapter end to end against the real `llama-server`: verification, stale-socket start-up, auth, streaming, injection neutralization, crash and restart | No |
 | `make uitest-real` | `tests/ui/real-*.scribo`: the real model through the real UI | Yes |
 | `make dependency-report` | Verifies committed submodule gitlinks against clean checkouts, container digests and OSV advisories; lists available upstream updates without failing on them | No |
@@ -541,6 +542,20 @@ UI scripts start with the observer **off**, so other scripts' file expectations 
 - **Red-team:** [`REDTEAM-007-attachments.md`](REDTEAM-007-attachments.md): 12 findings, all fixed; 9 of 9 mutations caught.
 
 ## Project store
+
+**`make crashtest`** is the GAP-004 interruption matrix
+(`docs/GAP-004-interruption-matrix.md`). `tests/test_crash_points.c` is built
+from the store sources with `-DSCRIBODO_CRASH_POINTS`, so every
+`crash_point("area.step")` in the product code is live; the driver forks and
+execs itself under `SCRIBODO_CRASH_POINT=area.step#N` for N = 1, 2, ... on a
+fresh throwaway database each time, the child dies of `SIGKILL` at the Nth
+hit, and the driver recovers in its own process and checks the row's
+invariant (for the migration rows: `db_migrate` completes, one receipt per
+version, the schema fingerprint from `information_schema` equals a clean
+migration's). It stops when a child finishes without dying, which counts the
+points. Rows go to `build/crash/migration-matrix.tsv`. The product build
+compiles the points to nothing; the environment variable is read only in
+`tests/crash_point.c`.
 
 **`make dbtest`** runs against the local MariaDB in throwaway databases. It covers:
 - migrations, including 003 applied to a database that already has data;
