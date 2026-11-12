@@ -5,6 +5,7 @@
 #include "doc_io.h"
 #include "core/crash_point.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -12,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "utf8.h"
@@ -351,4 +353,129 @@ DocStatus doc_save(const char *path, const uint32_t *cps, size_t n, bool bom, bo
     free(data);
     free(target);
     return ok ? DOC_OK : changed ? DOC_ERR_CHANGED_ON_DISK : became_read_only ? DOC_ERR_READ_ONLY : DOC_ERR_IO;
+}
+
+/* ---- stray save temps --------------------------------------------------------- */
+
+static bool mkstemp_char(char c)
+{
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+}
+
+/* `name` is `<base>.scribodo-` followed by exactly six mkstemp characters. */
+static bool is_stray_of(const char *name, const char *base)
+{
+    size_t blen = strlen(base);
+    const char *suffix = ".scribodo-";
+    if (strncmp(name, base, blen) != 0 || strncmp(name + blen, suffix, strlen(suffix)) != 0) return false;
+    const char *x = name + blen + strlen(suffix);
+    for (int i = 0; i < 6; i++)
+        if (!mkstemp_char(x[i])) return false;
+    return x[6] == '\0';
+}
+
+/* Whole-file byte comparison; a missing or unreadable side counts as different. */
+static bool same_bytes(const char *a, const char *b)
+{
+    int fa = open(a, O_RDONLY), fb = open(b, O_RDONLY);
+    bool same = fa >= 0 && fb >= 0;
+    while (same) {
+        unsigned char ba[4096], bb[4096];
+        ssize_t na = read(fa, ba, sizeof(ba)), nb = read(fb, bb, sizeof(bb));
+        same = na >= 0 && na == nb && memcmp(ba, bb, (size_t)na) == 0;
+        if (na <= 0) break;
+    }
+    if (fa >= 0) close(fa);
+    if (fb >= 0) close(fb);
+    return same;
+}
+
+/* Move `from` to a name that does not exist yet: link then unlink, so an
+ * existing file is never replaced (rename would). Where links are not
+ * supported, an exclusive create reserves the name and rename fills it. */
+static bool move_without_overwrite(const char *from, const char *to)
+{
+    if (link(from, to) == 0) {
+        unlink(from); /* a failure here leaves a second name on the same bytes; nothing is lost */
+        return true;
+    }
+    if (errno == EEXIST) return false;
+    int fd = open(to, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    if (fd < 0) return false;
+    close(fd);
+    if (rename(from, to) == 0) return true;
+    int saved = errno;
+    unlink(to);
+    errno = saved;
+    return false;
+}
+
+int doc_recover_strays(const char *path, char *first, size_t firstlen, bool *differs)
+{
+    if (first && firstlen) first[0] = '\0';
+    if (differs) *differs = false;
+    char *target = resolve_target(path);
+    if (!target) return 0;
+    char *dir = strdup(target);
+    if (!dir) {
+        free(target);
+        return 0;
+    }
+    const char *base = target;
+    char *slash = strrchr(dir, '/');
+    const char *d = ".";
+    if (slash == dir) d = "/", base = target + 1;
+    else if (slash) {
+        *slash = '\0';
+        d = dir;
+        base = target + (slash - dir) + 1;
+    }
+    /* "<base>" splits into stem and extension at its last dot. */
+    const char *dot = strrchr(base, '.');
+    if (!dot || dot == base) dot = base + strlen(base);
+
+    int recovered = 0;
+    DIR *dp = opendir(d);
+    if (!dp) {
+        free(dir);
+        free(target);
+        return 0;
+    }
+    struct dirent *ent;
+    while ((ent = readdir(dp)) != NULL) {
+        if (!is_stray_of(ent->d_name, base)) continue;
+        char from[PATH_MAX + 300];
+        snprintf(from, sizeof(from), "%s/%s", d, ent->d_name);
+        struct stat st;
+        if (lstat(from, &st) != 0 || !S_ISREG(st.st_mode)) continue;
+        struct tm tmv;
+#ifdef __APPLE__
+        time_t when = st.st_mtimespec.tv_sec;
+#else
+        time_t when = st.st_mtim.tv_sec;
+#endif
+        localtime_r(&when, &tmv);
+        char stamp[32];
+        strftime(stamp, sizeof(stamp), "%Y-%m-%d %H%M%S", &tmv);
+        char name[PATH_MAX + 300], to[PATH_MAX + 600];
+        bool moved = false;
+        for (int k = 1; k < 1000 && !moved; k++) {
+            if (k == 1) snprintf(name, sizeof(name), "%.*s (Scribodo recovered %s)%s", (int)(dot - base), base, stamp, dot);
+            else snprintf(name, sizeof(name), "%.*s (Scribodo recovered %s, %d)%s", (int)(dot - base), base, stamp, k, dot);
+            snprintf(to, sizeof(to), "%s/%s", d, name);
+            moved = move_without_overwrite(from, to);
+            if (!moved && errno != EEXIST) break;
+        }
+        if (!moved) continue;
+        if (recovered == 0) {
+            if (first && firstlen) snprintf(first, firstlen, "%s", name);
+            if (differs) *differs = !same_bytes(to, target);
+        }
+        recovered++;
+    }
+    closedir(dp);
+    if (recovered) fsync_parent_dir(target);
+    free(dir);
+    free(target);
+    return recovered;
 }

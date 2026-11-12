@@ -209,6 +209,63 @@ static void test_failed_save_leaves_original(void)
  * arms an alarm so a regression fails the run instead of hanging it. */
 /* The one atomic writer for the app's small files (core/file_text.h): whole content, requested mode, no temp
  * left, the original kept when the write cannot happen. */
+/* A stray save temp beside a document is kept under a name that lists as a document, never over a file. */
+static void test_recover_strays(void)
+{
+    char dir[600];
+    snprintf(dir, sizeof(dir), "%s/strays", g_dir);
+    CHECK(mkdir(dir, 0755) == 0);
+    char doc[700], stray[800], other[800], first[600];
+    snprintf(doc, sizeof(doc), "%s/chapter.md", dir);
+    write_bytes(doc, "old\n", 4);
+    snprintf(stray, sizeof(stray), "%s/chapter.md.scribodo-Ab3dEf", dir);
+    write_bytes(stray, "new text\n", 9);
+    /* Names that are not a stray of this document stay where they are. */
+    snprintf(other, sizeof(other), "%s/chapter.md.scribodo-short", dir); write_bytes(other, "x", 1);
+    snprintf(other, sizeof(other), "%s/chapter.md.scribodo-toolong", dir); write_bytes(other, "x", 1);
+    snprintf(other, sizeof(other), "%s/chapter.md.scribodo-Ab3d-f", dir); write_bytes(other, "x", 1);
+    snprintf(other, sizeof(other), "%s/other.md.scribodo-Ab3dEf", dir); write_bytes(other, "x", 1);
+    snprintf(other, sizeof(other), "%s/chapter.md.scribodo-DirXYZ", dir); CHECK(mkdir(other, 0755) == 0);
+    bool differs = false;
+    CHECK(doc_recover_strays(doc, first, sizeof(first), &differs) == 1);
+    CHECK(differs);
+    CHECK(!strncmp(first, "chapter (Scribodo recovered ", 28) && !strcmp(first + strlen(first) - 4, ").md"));
+    char moved[1400];
+    snprintf(moved, sizeof(moved), "%s/%s", dir, first);
+    uint8_t buf[64];
+    CHECK(read_bytes(moved, buf, sizeof(buf)) == 9 && !memcmp(buf, "new text\n", 9));
+    CHECK(read_bytes(doc, buf, sizeof(buf)) == 4 && !memcmp(buf, "old\n", 4)); /* the document is untouched */
+    CHECK(access(stray, F_OK) != 0);
+    int left = 0;
+    DIR *d = opendir(dir);
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL) if (strstr(ent->d_name, ".scribodo-")) left++;
+    closedir(d);
+    CHECK(left == 5); /* the four look-alikes and the directory */
+    /* Nothing more to recover; the first-name field is cleared. */
+    CHECK(doc_recover_strays(doc, first, sizeof(first), &differs) == 0 && first[0] == '\0' && !differs);
+    /* A second stray with the same stamp takes a counter; a stray with the document's bytes is reported as such. */
+    write_bytes(stray, "old\n", 4);
+    struct stat st;
+    CHECK(stat(moved, &st) == 0);
+    struct timespec times[2] = { st.st_mtimespec, st.st_mtimespec };
+    CHECK(utimensat(AT_FDCWD, stray, times, 0) == 0);
+    CHECK(doc_recover_strays(doc, first, sizeof(first), &differs) == 1);
+    CHECK(!differs && strstr(first, ", 2).md") != NULL);
+    CHECK(read_bytes(moved, buf, sizeof(buf)) == 9); /* the earlier recovered file was not replaced */
+    /* A document without an extension, and one opened through a symlink (the stray lies beside the real file). */
+    char plain[700], plain_stray[800], link_path[700];
+    snprintf(plain, sizeof(plain), "%s/notes", dir); write_bytes(plain, "n", 1);
+    snprintf(plain_stray, sizeof(plain_stray), "%s/notes.scribodo-000000", dir); write_bytes(plain_stray, "m", 1);
+    snprintf(link_path, sizeof(link_path), "%s/notes-link", dir);
+    CHECK(symlink(plain, link_path) == 0);
+    CHECK(doc_recover_strays(link_path, first, sizeof(first), &differs) == 1 && differs);
+    CHECK(!strncmp(first, "notes (Scribodo recovered ", 26) && first[strlen(first) - 1] == ')');
+    /* No arguments wanted, no document: nothing happens. */
+    snprintf(other, sizeof(other), "%s/missing.md", dir);
+    CHECK(doc_recover_strays(other, NULL, 0, NULL) == 0);
+}
+
 static void test_file_text_write_atomic(void)
 {
     const char *p = tmp_path("atomic.json");
@@ -326,6 +383,7 @@ int main(void)
         { "save_preserves_mode", test_save_preserves_mode },
         { "refuses_external_change", test_refuses_external_change },
         { "failed_save_leaves_original", test_failed_save_leaves_original },
+        { "recover_strays", test_recover_strays },
         { "file_text_write_atomic", test_file_text_write_atomic }, { "fifo_does_not_block", test_fifo_does_not_block },
         { "write_protected", test_write_protected },
         { "large_roundtrip", test_large_roundtrip },

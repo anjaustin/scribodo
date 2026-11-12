@@ -15,7 +15,7 @@ features are absent. Keep the original numbering for future follow-up.
 | GAP-001 | Broad AI usefulness and accuracy evaluation | **P0** (2026-11-11) | Started: a second, held-out manuscript (A Princess of Mars) with questions written before any run; see the 2026-11-11 section |
 | GAP-002 | Turnkey installation and release distribution | **P0** (2026-11-11) | Not started |
 | GAP-003 | Whole-manuscript scale and sustained-use evidence | **P0** | Implementation underway; bounded-history foundation first; memory contract in MEMORY-015 |
-| GAP-004 | Deterministic crash/recovery interruption coverage | **P0** (2026-11-11) | Done 2026-11-12 for the six transitions named: `GAP-004-interruption-matrix.md`, 126 rows (122 process deaths), 0 failures; three defects found and repaired, one finding awaiting a decision; limits stated (process death is not power loss) |
+| GAP-004 | Deterministic crash/recovery interruption coverage | **P0** (2026-11-11) | Done 2026-11-12 for the six transitions named: `GAP-004-interruption-matrix.md`, 126 rows (122 process deaths), 0 failures; three defects found and repaired, one finding decided and built (stray save temps are kept and offered on load); limits stated (process death is not power loss) |
 | GAP-005 | Real macOS input, accessibility and author usability | **P0** (2026-11-11) | Not started |
 
 The user selected **#3 as P0** on 2026-11-06 and made the remaining four P0 on
@@ -155,7 +155,9 @@ at either side of the commit) the import and fork rows (authority and data held
 at every death; a move or fork that died after its marker is now finished at
 the next open) and the disk row (full and read-only volumes refused with the
 cause, data intact) are held by `make crashtest`; the limits and the one
-finding awaiting a decision (stray save temps) are listed there.
+finding that awaited a decision (stray save temps, decided 2026-11-12: kept
+and offered on load as `<name> (Scribodo recovered <stamp>).<ext>`) are
+recorded there.
 
 ## GAP-005 — Real macOS input, accessibility and author usability
 

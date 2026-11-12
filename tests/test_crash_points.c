@@ -638,6 +638,23 @@ static void run_save_point_with(const char *point, const char *mode, const char 
         /* The target is whole: the original or the new text, never a mix, a truncation or nothing. */
         CHECK(!strcmp(found, "original") || !strcmp(found, "new"));
         int temps_at_death = count_pattern(dir, temp_pattern);
+        /* The next open keeps a stray save temp under a name that lists as a document (doc_recover_strays): with the
+         * target still the original, the recovered file holds the new text whole; after the rename there is nothing. */
+        int recovered = -1;
+        if (!strcmp(mode, "--child-save")) {
+            char first[600] = "";
+            bool differs = false;
+            recovered = doc_recover_strays(path, first, sizeof(first), &differs);
+            CHECK(recovered == temps_at_death);
+            if (recovered == 1) {
+                char moved[1800];
+                snprintf(moved, sizeof(moved), "%s/%s", dir, first);
+                n = read_whole(moved, buf, sizeof(buf));
+                CHECK(n != (size_t)-1 && !strcmp(content_name(buf, n), "new"));
+                CHECK(differs == strcmp(found, "new"));
+                CHECK(count_pattern(dir, temp_pattern) == 0 && count_pattern(dir, " (Scribodo recovered ") == 1);
+            }
+        }
         /* The next write (the next process) succeeds and the target holds it whole. */
         bool next = !strcmp(mode, "--child-save") ? save_text(path, k_third, err, sizeof(err))
                                                   : file_text_write_atomic(path, k_third, strlen(k_third), 0644);
@@ -646,8 +663,13 @@ static void run_save_point_with(const char *point, const char *mode, const char 
         n = read_whole(path, buf, sizeof(buf));
         CHECK(n != (size_t)-1 && !strcmp(content_name(buf, n), "third"));
         int temps_after = count_pattern(dir, temp_pattern);
-        fprintf(g_matrix, "%s\t%ld\tSIGKILL\t%s at death\tnext write ok\t%d temp at death, %d after\t%s\n", point, k, found,
-                temps_at_death, temps_after, !strcmp(found, "new") || !strcmp(found, "original") ? "target whole" : "TARGET DAMAGED");
+        if (recovered >= 0)
+            fprintf(g_matrix, "%s\t%ld\tSIGKILL\t%s at death\tnext write ok\t%d temp at death, %d recovered as a document, %d after\t%s\n",
+                    point, k, found, temps_at_death, recovered, temps_after,
+                    !strcmp(found, "new") || !strcmp(found, "original") ? "target whole" : "TARGET DAMAGED");
+        else
+            fprintf(g_matrix, "%s\t%ld\tSIGKILL\t%s at death\tnext write ok\t%d temp at death, %d after\t%s\n", point, k, found,
+                    temps_at_death, temps_after, !strcmp(found, "new") || !strcmp(found, "original") ? "target whole" : "TARGET DAMAGED");
         g_rows++;
         /* Leave nothing behind: the temp files are the test's, named by mkstemp under dir. */
         char cmd[1200];

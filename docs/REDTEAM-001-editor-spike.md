@@ -70,6 +70,6 @@ These are documented rather than fixed in this spike:
 - **Word wrap and word count are recomputed over the whole document on every edit.** That's fine at chapter size; it should become incremental before book-length files.
 - **Input-method composition isn't shown** (raylib doesn't expose it), and **backspace deletes one code point**, not a whole accented character. Both are known gaps for non-Latin scripts.
 - **The window close guard asks once:** closing again within 5 seconds discards changes. A proper dialog and autosave/recovery come with the project model.
-- **There's no reload-from-disk or diff view after a conflict.** Both versions are preserved (the disk file plus the conflict copy), but merging them is manual for now.
+- **There's no reload-from-disk or diff view after a conflict.** Both versions are preserved (the disk file plus the conflict copy), but merging them is manual for now. The same applies to a save that died before its rename: its temp is kept on the next open as `<name> (Scribodo recovered <stamp>).<ext>` (GAP-004 matrix, 2026-11-12).
 - **Caret affinity at soft wraps:** the position exactly at a wrap boundary always displays at the start of the next row, so ⌘→ on a wrapped row stops just before the last character (usually the trailing space).
 - **The headless editor tests stub out raylib,** so window, font and real keyboard behavior are checked by screenshot and by hand, not by `make test`.

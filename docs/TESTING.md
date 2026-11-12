@@ -565,7 +565,11 @@ version, the schema fingerprint from `information_schema` equals a clean
 migration's). It stops when a child finishes without dying, which counts the
 points. Rows go to `build/crash/matrix.tsv`. The product build
 compiles the points to nothing; the environment variable is read only in
-`tests/crash_point.c`.
+`tests/crash_point.c`. The save row also runs the product's recovery after
+each death (`doc_recover_strays`: a stray save temp is kept as `<name>
+(Scribodo recovered <stamp>).<ext>`) and checks the recovered file holds the
+new text whole; `test_doc_io: recover_strays` and the end of
+`tests/ui/files.scribo` cover the same path without a death.
 
 **`make dbtest`** runs against the local MariaDB in throwaway databases. It covers:
 - migrations, including 003 applied to a database that already has data;

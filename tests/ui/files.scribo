@@ -35,3 +35,11 @@ chmod "$DIR/locked.md" 444
 drop "$DIR/locked.md"
 expect readonly yes
 expect status "write-protected"
+# A save that died before its rename left a temp beside the document; on open it is kept
+# under a name that lists as a document, and the author is told (GAP-004 matrix, save row).
+write "$DIR/nav.md.scribodo-Ab3dEf" "the text of the interrupted save\n"
+drop "$DIR/nav.md"
+expect status "An interrupted save left a copy of nav.md"
+expect status "its text differs from the document"
+expect files "$DIR" "nav (Scribodo recovered " 1
+expect files "$DIR" "nav.md.scribodo-" 0

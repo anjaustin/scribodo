@@ -687,6 +687,21 @@ bool editor_load_file(Editor *e, const char *path, char *err, size_t errlen)
     else
         err[0] = '\0';
     doc_load_free(&d);
+
+    /* A save that died before its rename left the author's text in a temp beside the document (GAP-004 matrix,
+     * save row). It is kept under a name that lists as a document, and the author is told. */
+    char recovered[600];
+    bool differs = false;
+    int strays = doc_recover_strays(path, recovered, sizeof(recovered), &differs);
+    if (strays > 0) {
+        size_t used = strlen(err);
+        const char *slash = strrchr(path, '/');
+        if (used && used + 2 < errlen) used += (size_t)snprintf(err + used, errlen - used, "; ");
+        snprintf(err + used, errlen > used ? errlen - used : 0,
+                 "An interrupted save left %s of %s, kept as \"%s\"%s (%s)", strays == 1 ? "a copy" : "copies",
+                 slash ? slash + 1 : path, recovered, strays == 1 ? "" : " and more",
+                 differs ? "its text differs from the document" : "the same text as the document");
+    }
     return true;
 }
 

@@ -64,4 +64,17 @@ bool doc_file_id_equal(DocFileId a, DocFileId b);
 DocStatus doc_save(const char *path, const uint32_t *cps, size_t n, bool bom, bool crlf,
                    const DocFileId *expected, DocFileId *new_id, char *err, size_t errlen);
 
+/* A save that died after its temp file was complete and before the rename
+ * leaves `<document>.scribodo-XXXXXX` beside the document, holding the
+ * author's whole text as of that save (GAP-004 matrix, save row). Nothing is
+ * deleted: on load each such file is kept and offered, renamed beside the
+ * document to "<name> (Scribodo recovered <stamp>).<ext>" (the stamp is the
+ * temp's modification time, a counter follows when the name is taken), never
+ * overwriting a file, so it lists as a document the author can open. Only a
+ * regular file named exactly <basename>.scribodo- plus six mkstemp
+ * characters qualifies. Returns the number recovered; `first` (if non-NULL)
+ * receives the first recovered file's name and `*differs` whether its bytes
+ * differ from the document's. */
+int doc_recover_strays(const char *path, char *first, size_t firstlen, bool *differs);
+
 #endif
