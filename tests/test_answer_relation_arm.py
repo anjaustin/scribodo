@@ -51,6 +51,24 @@ class RelationArmTests(unittest.TestCase):
         rows = ra.check('Elizabeth father is Mr. Bennet.', [], [], 'Is Elizabeth father is Mr. Bennet?')
         self.assertEqual([(r['phrase'], r['flag']) for r in rows], [('Elizabeth father is Mr. Bennet', False)])
 
+    def test_third_novel_rules(self):
+        """A question the composer asks back states nothing; a negation reaches its own clause; nephew is kin; a
+        possessive continues the name (journal/answer-cycle4_heights.md)."""
+        spans = ['No; he is the late Mrs. Linton’s nephew.']
+        rows = ra.check("Hareton Earnshaw is Heathcliff’s nephew, not his son. Who is Hareton Earnshaw's father?", spans, [], 'Whose son is Hareton?')
+        self.assertEqual([(r['phrase'], r['negated'], r['flag']) for r in rows], [('Heathcliff’s nephew', False, True)])
+        rows = ra.check("He is the late Mrs. Linton's nephew, not Heathcliff's son.", spans, [], 'q')
+        self.assertEqual([(r['phrase'], r['negated'], r['flag']) for r in rows], [("Mrs. Linton's nephew", False, False), ("Heathcliff's son", True, False)])
+        rows = ra.check("She is the daughter of Mr. Bingley's cousin.", [], [], 'q')
+        self.assertEqual([(r['phrase'], r['flag']) for r in rows], [("Mr. Bingley's cousin", True)])
+
+    def test_visible_reply_is_what_the_product_checks(self):
+        self.assertEqual(ra.visible('<think>her father is X</think>\n\nShe is Y.'), 'She is Y.')
+        self.assertEqual(ra.visible('reasoning here</think>\nShe is Y.'), 'She is Y.')
+        # llm_split_thinking treats any </think> not opened at the start as an orphan close: what precedes it was reasoning.
+        self.assertEqual(ra.visible('She is Y. <think>literal</think> tag stays'), 'tag stays')
+        self.assertEqual(ra.visible('<think>still streaming'), '')
+
     def test_recorded_fixture_agrees_with_this_check(self):
         """The parity fixture the C check is tested against was written by this arm; re-checking it must reproduce it."""
         path = ROOT / 'tests/fixtures/answer_relation/replies.json'
@@ -63,7 +81,7 @@ class RelationArmTests(unittest.TestCase):
             self.assertEqual(len(got), row['checked'], row['question'])
             self.assertEqual(flags[0] if flags else '', row['unsupported'], row['question'])
             flagged += bool(flags)
-        self.assertEqual(flagged, 7)
+        self.assertEqual(flagged, 10)
 
 
 if __name__ == '__main__':

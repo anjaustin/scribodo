@@ -69,13 +69,82 @@ CI passed on `fd5ba05`, `4a4aec0` and `46d65c2`; Trusted acceptance failed on
 each at "Run scripted UI acceptance" with the console still locked
 (TECHNICAL-DEBT, observed 2026-11-12), the database and crash steps having
 passed. `9097df3` failed CI at `make test` (the link error recorded in
-journal/gap004-cycle7_atomic.md); `de82f6d` carries the fix. The acceptance
-jobs are rerun once the console is unlocked.
+journal/gap004-cycle7_atomic.md); `de82f6d` carries the fix. After the console
+unlocked, Trusted acceptance passed on `6913d70` (the tree holding every
+commit above) and both workflows passed on `0f2e36b`.
 
 ## Runs
 
-None yet: the console is locked on this Mac (TECHNICAL-DEBT, observed
-2026-11-12), so no live run can open a window. The first run is staged with
-the relation-check tree's live-capture app (`build/answer-live-relation`),
-after the two earlier novels' runs on the same tree, and its results go in
-this record beside the second novel's first-run table.
+### First run, the relation-check tree (`heights-relation`, 2026-11-12)
+
+The run: `build/answer-live-relation/scribodo` (built from `4a4aec0`), script
+`tests/ui/store/23_heights_boundary_questions.scribo`, 30,000 words of the
+novel's parts in a disposable database, `SCRIBODO_ANSWER_PIPELINE=verified`,
+trace on, excerpts off, seed 42; 576 s, 10 questions, 10 receipts, 40 capture
+files (`build/product-memory-use/heights-relation`,
+`build/relation/capture-heights-relation`). The fixture's 27 expectations:
+23 passed, 4 failed, every failure a designated passage absent from the
+receipt. No question had been asked of this novel before; the questions were
+written from the text before the run (§The held-out rule).
+
+#### Selection
+
+| Case | Designated unit rank (score) | In a slot | Note |
+|---|---|---|---|
+| Catherine rides ("hardly six years old") | 1 (0.986) | yes | |
+| Hindley's age ("a boy of fourteen") | **5** (0.907) | no | top 0.941 and 0.939: two part02 units about Hindley, neither with the age |
+| cousins ("her husband was her cousin also") | **4** (0.946) | no | top 0.987: the "may be her husband: Heathcliff junior" passage; the one that states the relation ranks under it |
+| two ages (pronoun subjects) | 1 (0.998) and 2 (0.998) | both | both passages say "she" and "Little Hareton"; selection reached them |
+| author correction ("that was Hareton's father") | **not a candidate** (0 of 59) | no | the two slots held "Not my son, assuredly." and "the late Mrs. Linton's nephew", which answer the question in part |
+| contradictory drafts ("a waif for twenty years") | 1 (0.980) | yes | |
+| creative ("atmospheric tumult") | **13** (0.688) | no | |
+
+Five of eight designated units reached a slot; three selection misses and one
+unit the retrieval never produced. The pronoun-subject case, written to probe
+exactly that, was reached without the index layer.
+
+#### Replies
+
+| Case | Gate | Outcome |
+|---|---|---|
+| Catherine rides | pass, shown | correct: quotes "hardly six years old", answers "nearly six" |
+| Hindley's age | pass, **withheld** (misquotation) | the composer answered "sixteen" from a passage about Heathcliff and, in a parenthesis, quoted "hardly six years old" from the previous answer, words not in this question's passages; a wrong answer withheld, for the misquotation rather than the error |
+| cousins | not_in_span, **withheld** | the composer named "Heathcliff junior" and added "threw herself into the sea", which no passage says; the misquotation reason took precedence (see below) |
+| two ages | not_in_span, **withheld** | **a correct answer withheld**: "Hareton is nearly five years old; the younger Catherine was under thirteen". The passages say "she"; the name "Catherine" is in the author's question and nowhere else, and a mid-sentence name is a hard anchor (see below) |
+| note (Hareton is Heathcliff's son, a wrong note by construction) | no gate | the composer agreed with the wrong note and added "illegitimate son"; a note turn is not gated, and the relation check would count the author's own turn as support |
+| author correction | no_answer, **withheld** (relation) | the composer wrote "Hareton Earnshaw is Heathcliff's nephew" (wrong; the passage says the late Mrs. Linton's nephew) and asked back "Who is Hareton Earnshaw's father?"; the check flagged the question's phrase, not the wrong "nephew" (see below) |
+| older-draft note | no gate | acknowledged weakly ("I don't have the earlier context") |
+| contradictory drafts | no_answer, shown | quotes "twenty years" from the current text, then says it has not enough of the manuscript; the figure is right and the hedge is not |
+| unavailable fact | no_answer, shown | correct abstention ("do not mention a London street") |
+| creative | no gate | two sentences marked "New writing"; the designated passage was not among the sources |
+
+Reach: 5 of 8 designated units in a slot. Faithful use: of the 7 gated turns,
+3 shown and correct (two abstentions and one answer), 3 withheld wrong or
+unsupported answers, 1 withheld correct answer. No wrong relation and no
+misquotation was shown.
+
+#### What this run says about the checks (red team of the step)
+
+- **The gate withholds a correct answer whose name is only in the question.**
+  The two-ages case: the composer named the entity the passage calls "she", as
+  the author did in the question; the anchor check looks in the passages and
+  the earlier turns, not the current question, except for a sentence-initial
+  name. Recorded in `journal/answer-cycle4_relation.md` with the measurement
+  of the candidate rule.
+- **A nested quotation mark counts as a misquotation.** The cousins reply
+  quoted the passage exactly except that the inner “…” became '…'; the
+  normalizer keeps apostrophes, so the quote failed. In this run the reply was
+  wrong anyway and the verdict right; the reason was not.
+- **The relation check flagged a question the composer asked back** ("Who is
+  Hareton Earnshaw's father?") and let a wrong statement pass unexamined
+  ("Hareton Earnshaw is Heathcliff's nephew"): questions are not statements,
+  and "nephew" is not in the kinship list. The withhold was right by accident.
+- **Note turns are not gated.** The composer agreed with a wrong note and
+  embellished it. The relation check would not have helped: the author's own
+  turn states the relation, and the author's turns are support by design. A
+  decision for the author: whether an acknowledgement of a note should be
+  checked at all, and against what.
+
+The first three are software, measured and remediated in the relation record;
+the fourth is recorded as a finding.
+

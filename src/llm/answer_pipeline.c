@@ -58,6 +58,11 @@ char *answer_normalize(const char *text)
             else if (isspace(p[0])) blank = true;
             else c = (char)tolower(p[0]);
         }
+        /* Quotation marks are not words: a nested “…” the composer wrote as '…' is the same quotation (measured on the
+         * third novel, journal/answer-cycle4_heights.md). Double quotes are dropped; a single quote stays only as an
+         * apostrophe inside a word (bennet's, o'clock). */
+        if (c == '"') { i += step; continue; }
+        if (c == '\'' && !(k && isalnum((unsigned char)out[k - 1]) && i + step < n && isalnum(p[step]))) { i += step; continue; }
         if (blank) {
             if (!space) { out[k++] = ' '; space = true; }
         } else {
@@ -522,16 +527,6 @@ const char *answer_gate(const char *answer, const char *question, const char *co
     const char *p = answer;
     while (*p) {
         while (*p && !isalnum((unsigned char)*p)) p++;
-        /* Sentence-initial: the first token, or the first after a sentence mark
-         * or an opening quotation mark. Capitalisation there says nothing. */
-        bool sentence_initial = p == answer;
-        for (const char *b = p; !sentence_initial && b > answer;) {
-            unsigned char c = (unsigned char)*--b;
-            if (c == ' ' || c == '\n' || c == '\t' || c == '*' || c == '(' || c == '[') continue;
-            if (c == '.' || c == ';' || c == ':' || c == '?' || c == '!' || c == '"' || c == '\'' || c == '-') sentence_initial = true;
-            else if (c == 0x9c || c == 0x98 || c == 0x94 || c == 0x93) sentence_initial = true; /* last byte of “ ‘ — – */
-            break;
-        }
         char token[64] = { 0 }, lowered[64] = { 0 };
         size_t len = 0;
         bool overflow = false, all_digits = true;
@@ -572,16 +567,17 @@ const char *answer_gate(const char *answer, const char *question, const char *co
         }
         if (!numeric && compound_number(lowered)) numeric = true;
         bool capitalized = isupper((unsigned char)token[0]) != 0;
-        /* Two capitalisations that are not names (measured on the second
-         * manuscript, journal/answer-cycle4_mars.md): a sentence-initial word
-         * the author's own question contains ("Current manuscript: ..." for a
-         * question about the current manuscript), and an all-capitals
-         * closed-class word written for emphasis ("she is NOT the daughter").
-         * Names at the start of a sentence stay anchors unless the question
-         * names them too; all-capitals words outside the closed class stay
-         * anchors. */
+        /* Two capitalisations that are not the composer's own: a word the
+         * author's question contains (first measured on the second manuscript
+         * for sentence-initial words, journal/answer-cycle4_mars.md; then on
+         * the third for a name the passage gives only as "she", which the
+         * author's question named, journal/answer-cycle4_heights.md), and an
+         * all-capitals closed-class word written for emphasis ("she is NOT the
+         * daughter"). A word the author wrote cannot be the composer's
+         * invention, so it is a soft anchor wherever it stands; all-capitals
+         * words outside the closed class stay anchors. */
         if (capitalized && !numeric && emphasis_word(token, lowered, len)) continue;
-        bool soft = capitalized && !numeric && sentence_initial && anchor_present(token, false, qtexts, 1);
+        bool soft = capitalized && !numeric && anchor_present(token, false, qtexts, 1);
         if (!numeric && !capitalized) continue;
         any_anchor = true;
         /* A soft anchor still counts toward echoing the question but cannot fail the span check on its own. */
@@ -729,12 +725,16 @@ size_t answer_quotations(const char *reply, const char *const *spans, size_t nsp
  * removed), sentence by sentence, in pattern order, left to right, as the arm's regular expressions do. */
 
 static const char *const k_rel_kin[] = { "father", "mother", "son", "daughter", "sister", "sisters", "brother", "brothers",
-                                         "wife", "husband", "friend", "estate", "fortune", "inheritance", "property" };
+                                         "wife", "husband", "friend", "estate", "fortune", "inheritance", "property",
+                                         "nephew", "niece", "cousin", "cousins", "uncle", "aunt", "grandfather", "grandmother",
+                                         "grandson", "granddaughter", "widow", "heir" };
 static const char *const k_rel_honorific[] = { "Mr.", "Mrs.", "Miss", "Dr.", "Sir", "Lady" };
 static const char *const k_rel_not_names[] = { "The", "This", "That", "These", "Those", "It", "So", "If", "Let", "However",
                                                "According", "From", "Based", "Source", "Sources", "Summary", "Answer", "Current",
                                                "Older", "Correction", "Note", "Verified", "Neither", "Both", "Also", "And", "But",
-                                               "In", "On", "For", "With", "Your", "His", "Her", "Their", "My" };
+                                               "In", "On", "For", "With", "Your", "His", "Her", "Their", "My", "She", "He", "They",
+                                               "We", "You", "Who", "Whose", "What", "Which", "When", "Where", "Why", "How", "Yes", "No",
+                                               "Here", "There", "Then", "Thus", "Now" };
 static const char *const k_rel_negation[] = { "not", "never", "neither", "nor", "wrong", "instead", "isn't", "aren't", "wasn't" };
 
 static bool rel_word_char(char c) { return isalnum((unsigned char)c) || c == '_'; }
@@ -826,6 +826,49 @@ static bool rel_negated(const char *s, size_t len)
     return false;
 }
 
+/* A clause break at i (the arm's CLAUSE_BREAK): [,;:] then whitespace, or whitespace "but" whitespace; its length. */
+static bool rel_break_at(const char *s, size_t len, size_t i, size_t *blen)
+{
+    if ((s[i] == ',' || s[i] == ';' || s[i] == ':') && i + 1 < len && isspace((unsigned char)s[i + 1])) {
+        size_t j = i + 1;
+        while (j < len && isspace((unsigned char)s[j])) j++;
+        *blen = j - i;
+        return true;
+    }
+    if (isspace((unsigned char)s[i])) {
+        size_t j = i;
+        while (j < len && isspace((unsigned char)s[j])) j++;
+        if (j + 3 < len && !strncmp(s + j, "but", 3) && isspace((unsigned char)s[j + 3])) {
+            size_t k = j + 3;
+            while (k < len && isspace((unsigned char)s[k])) k++;
+            *blen = k - i;
+            return true;
+        }
+    }
+    return false;
+}
+
+/* A negation reaches its own clause: "Hareton is Heathcliff's nephew, not his son" states the first and denies the
+ * second. The clause holding `pos`, then rel_negated on it. */
+static bool rel_clause_negated(const char *s, size_t len, size_t pos)
+{
+    size_t a = 0, b = len, bl = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (!rel_break_at(s, len, i, &bl)) continue;
+        if (i + bl <= pos) a = i + bl;
+        else { b = i; break; }
+        i += bl - 1;
+    }
+    return rel_negated(s + a, b - a);
+}
+
+/* "daughter of Mr. Bingley's cousin" is not "daughter of Mr. Bingley": a pattern whose final name is followed by a
+ * possessive is no match (the arm skips the same match after its regular expression finds it). */
+static bool rel_possessive_follows(const char *s, size_t len, size_t end)
+{
+    return (end + 2 <= len && !strncmp(s + end, "'s", 2)) || (end + 4 <= len && !strncmp(s + end, "\xE2\x80\x99s", 4));
+}
+
 /* [A-Z][a-z]+ at i: its length, or 0. */
 static size_t rel_cap_word(const char *s, size_t len, size_t i)
 {
@@ -911,7 +954,7 @@ static bool rel_match_at(const char *s, size_t len, size_t i, int which, RelMatc
         size_t kl = rel_kin(s, len, i);
         if (!kl || !rel_lit(s, len, i + kl, " of ")) return false;
         n = rel_name_ends(s, len, i + kl + 4, ends);
-        if (!n) return false;
+        if (!n || rel_possessive_follows(s, len, ends[0])) return false;
         m->kin_start = i; m->kin_len = kl;
         m->name_start[0] = i + kl + 4; m->name_len[0] = ends[0] - m->name_start[0]; m->nnames = 1;
         m->end = ends[0];
@@ -956,7 +999,7 @@ static bool rel_match_at(const char *s, size_t len, size_t i, int which, RelMatc
                 n2 = rel_name_ends(s, len, j + strlen(art[a]), ends2);
                 if (n2) obj = j + strlen(art[a]);
             }
-            if (!n2) continue;
+            if (!n2 || rel_possessive_follows(s, len, ends2[0])) continue;
             if (!subj_is_pronoun[k]) { m->name_start[0] = i; m->name_len[0] = e - i; m->nnames = 1; }
             m->name_start[m->nnames] = obj; m->name_len[m->nnames] = ends2[0] - obj; m->nnames++;
             m->kin_start = e + 1; m->kin_len = kl;
@@ -978,7 +1021,7 @@ static bool rel_match_at(const char *s, size_t len, size_t i, int which, RelMatc
             size_t kl = rel_kin(s, len, kj);
             if (!kl || !rel_lit(s, len, kj + kl, " of ")) continue;
             size_t ends2[REL_MAX_ENDS], n2 = rel_name_ends(s, len, kj + kl + 4, ends2);
-            if (!n2) continue;
+            if (!n2 || rel_possessive_follows(s, len, ends2[0])) continue;
             m->name_start[0] = i; m->name_len[0] = e - i;
             m->name_start[1] = kj + kl + 4; m->name_len[1] = ends2[0] - m->name_start[1]; m->nnames = 2;
             m->kin_start = kj; m->kin_len = kl;
@@ -1023,7 +1066,7 @@ size_t answer_relations(const char *reply, const char *const *spans, size_t nspa
     while (rel_next_sentence(prose, &pos, &start, &end)) {
         const char *s = prose + start;
         size_t len = end - start;
-        bool negated = rel_negated(s, len);
+        if (memchr(s, '?', len)) continue; /* a question the composer asks back states nothing */
         for (int which = 1; which <= 4; which++) {
             size_t i = 0;
             while (i < len) {
@@ -1033,6 +1076,7 @@ size_t answer_relations(const char *reply, const char *const *spans, size_t nspa
                 for (size_t q = 0; q < m.nnames && names_ok; q++) names_ok = rel_real_name(s + m.name_start[q], m.name_len[q]);
                 if (names_ok) {
                     checked++;
+                    bool negated = rel_clause_negated(s, len, m.start);
                     char *phrase = malloc(m.end - m.start + 1);
                     if (phrase) {
                         memcpy(phrase, s + m.start, m.end - m.start); phrase[m.end - m.start] = '\0';

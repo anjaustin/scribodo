@@ -27,7 +27,11 @@ static const char *k_unit =
 static void test_normalize(void)
 {
     char *n = answer_normalize("  \xE2\x80\x9CMr. Bennet\xE2\x80\x99s **property**\xE2\x80\x94was_entailed  \n on a distant\trelation.\xE2\x80\x9D ");
-    CHECK(n && !strcmp(n, "\"mr. bennet's property wasentailed on a distant relation.\"")); /* underscores are dropped, as the classifier drops emphasis */
+    CHECK(n && !strcmp(n, "mr. bennet's property wasentailed on a distant relation.")); /* underscores and quotation marks are dropped */
+    free(n);
+    /* A nested quotation written with single quotes is the same words; an apostrophe inside a word stays. */
+    n = answer_normalize("me\xE2\x80\x94\xE2\x80\x9CThe clown\xE2\x80\x9D said 'Now.' O'Neill\xE2\x80\x99s \"tis\"");
+    CHECK(n && !strcmp(n, "me the clown said now. o'neill's tis"));
     free(n);
     n = answer_normalize("A-B--C");
     CHECK(n && !strcmp(n, "a b c"));
@@ -302,6 +306,19 @@ static void test_relations(void)
     free(bad); bad = NULL;
     n = answer_relations("Elizabeth father is Mr. Bennet.", NULL, 0, NULL, 0, "Is Elizabeth father is Mr. Bennet?", &bad);
     CHECK(n == 1 && bad == NULL);
+    /* Measured on the third novel (journal/answer-cycle4_heights.md): a question the composer asks back states nothing;
+     * a negation reaches its own clause, not the sentence; the kinship list has nephew; a curly apostrophe is the
+     * straight one; "daughter of Mr. Bingley's cousin" is not "daughter of Mr. Bingley". */
+    const char *heights[] = { "No; he is the late Mrs. Linton\xE2\x80\x99s nephew." };
+    n = answer_relations("Hareton Earnshaw is Heathcliff\xE2\x80\x99s nephew, not his son. Who is Hareton Earnshaw's father?",
+                         heights, 1, NULL, 0, "Whose son is Hareton?", &bad);
+    CHECK(n == 1 && bad && !strcmp(bad, "Heathcliff\xE2\x80\x99s nephew"));
+    free(bad); bad = NULL;
+    n = answer_relations("He is the late Mrs. Linton's nephew, not Heathcliff's son.", heights, 1, NULL, 0, "q", &bad);
+    CHECK(n == 2 && bad == NULL);
+    n = answer_relations("She is the daughter of Mr. Bingley's cousin.", NULL, 0, NULL, 0, "q", &bad);
+    CHECK(n == 1 && bad && !strcmp(bad, "Mr. Bingley's cousin"));
+    free(bad); bad = NULL;
 
     char *text = read_file("tests/fixtures/answer_relation/replies.json");
     CHECK(text != NULL);
@@ -330,7 +347,7 @@ static void test_relations(void)
     }
     cJSON_Delete(j);
     free(text);
-    CHECK(agree == total && flagged == 7);
+    CHECK(agree == total && flagged == 10);
 }
 
 static void test_receipt_contract(void)
@@ -671,6 +688,13 @@ static void test_answer_gate(void)
         CHECK(!strcmp(answer_gate("Tardos Mors", parent_q, parent, 1, NULL, 0), "echoes_question")); /* every anchor is in the question */
         CHECK(!strcmp(answer_gate("Mors Kajak, son of Tardos Mors", "Whose daughter is she?", parent, 1, NULL, 0), "pass"));
         CHECK(!strcmp(answer_gate("Bennet", "What is Mr. Bennet's first name?", parent, 1, NULL, 0), "echoes_question")); /* a soft anchor still echoes */
+        /* A name the author's question gives for a passage's "she" is the author's word wherever the claim puts it
+         * (journal/answer-cycle4_heights.md, the two-ages case); a name from nowhere is still checked. */
+        const char *she[] = { "Little Hareton was nearly five years old, and I had just begun to teach him his letters.",
+                              "Till she reached the age of thirteen she had not once been beyond the range of the park by herself." };
+        const char *she_q = "How old is Hareton when Nelly begins teaching him his letters, and until what age had the younger Catherine never once been beyond the range of the park by herself?";
+        CHECK(!strcmp(answer_gate("Hareton is nearly five years old; the younger Catherine was under thirteen before she went beyond the park.", she_q, she, 2, NULL, 0), "pass"));
+        CHECK(!strcmp(answer_gate("Hareton is nearly five years old; the younger Linton was under thirteen.", she_q, she, 2, NULL, 0), "not_in_span"));
         CHECK(!strcmp(answer_gate("1,000", "What?", inherit, 2, NULL, 0), "not_in_span"));
         const char *estate[] = { "an estate of two thousand a year; her father had left her four thousand pounds" };
         CHECK(!strcmp(answer_gate("2,000 a year and 4000 pounds", "What?", estate, 1, NULL, 0), "pass"));

@@ -70,14 +70,16 @@ names the document.
 
 ## Gates
 
-Tallied as the sum of every `N checks, M failures` line and every `Ran N tests`
-line in the log (the same count on the previous tree's log,
-`build/relation/gates3-test.log`, gives 95,636 and 166):
-`make test` 95,671 C checks and 166 Python tests, 0 failures; `make crashtest`
-1,413, 0 (above); `make analyze` 0 warnings across 88 source files;
-`make sanitize` 95,671 checks, 0 failures, 0 diagnostics; `make tsan` 48,300
-checks, 0 failures, 0 diagnostics; `tests/ui/files.scribo` 19 expectations, 0
-failed. Every exit status 0 (`build/recover/gates2-*.log`,
+Tallied as the sum of every `N checks, M failures` line (including the one
+`test_answer_pipeline` prefixes with its name) and every `Ran N tests` line in
+the log; the previous tree's log, `build/relation/gates3-test.log`, gives
+95,901 and 166 by the same count. (As first committed, this paragraph read
+95,671, 95,671 and 48,300: a tally that missed the prefixed line, corrected
+in the next commit.) `make test` 95,936 C checks and 166 Python tests,
+0 failures; `make crashtest` 1,413, 0 (above); `make analyze` 0 warnings across
+88 source files; `make sanitize` 95,936 checks, 0 failures, 0 diagnostics;
+`make tsan` 48,565 checks, 0 failures, 0 diagnostics; `tests/ui/files.scribo`
+19 expectations, 0 failed. Every exit status 0 (`build/recover/gates2-*.log`,
 `build/ui-one/files/stderr.log`).
 
 The first analyzer run reported four `unix.Stream` findings in the byte

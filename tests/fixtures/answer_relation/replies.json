@@ -16,8 +16,8 @@
     "Recent manuscript turn 062: rain over the archive; the tide went out. Ordinary weather observations only.",
     "Recent manuscript turn 063: haze over the fjord quay; the tide came in. Ordinary weather observations only."
    ],
-   "reply": "Based on Source 2 (part01.md): \"Mr. Bennet’s property consisted almost entirely in an estate of two thousand a year, which, unfortunately for his sons, was entailed, in default of heirs male, on a distant relation; and their mother’s fortune, though ample for her situation in recent manuscript turn 061, could but ill supply the deficiency of his.\"\n\nCorrection: The source says **his sons**, not his daughters. Let me read your question again carefully.\n\nYou asked about **daughters**, but Source 2 (part01.md) explicitly states the entailment was \"unfortunately for his **sons**\". So the manuscript turn you referenced (turn 061 — haze over the archive) may be a different scene or a mix-up. However, the answer to your question as posed: **the entailment was on his sons, not his daughters**, and his mother's fortune \"could but ill supply the deficiency of his\" (i.e., the estate fell short of what he needed if the sons were unable to inherit).\n\nSo to directly answer: Mr. Bennet's estate was entailed **in default of a male heir** — on a distant relation — which would have deprived his **sons** of their inheritance, and his mother's fortune, while ample, \"could but ill supply the deficiency\" (i.e., it was insufficient to fully cover what his entailment required).</think>Based on Source 2 (part01.md): \"Mr. Bennet’s property consisted almost entirely in an estate of two thousand a year, which, unfortunately for his **sons**, was entailed, in default of heirs male, on a distant relation; and their mother’s fortune, though ample for her situation in life, could but ill supply the deficiency of his.\"\n\nSo the entailment affected **his sons**, not his daughters. His son's inheritance would have been blocked if no male heir were available on the distant line. His mother's fortune — while sufficient for her own needs — was \"ill\" in covering the full cost of the estate, meaning it fell short by some amount.\n\n**In short:** The estate was entailed to pass **only through a male line**; without a male heir, the property would have gone to a distant relative. For Mr. Bennet, this meant his sons were at risk, and his mother's larger fortune could not fully bridge the gap if the sons' share was insufficient.",
-   "checked": 1,
+   "reply": "Based on Source 2 (part01.md): \"Mr. Bennet’s property consisted almost entirely in an estate of two thousand a year, which, unfortunately for his **sons**, was entailed, in default of heirs male, on a distant relation; and their mother’s fortune, though ample for her situation in life, could but ill supply the deficiency of his.\"\n\nSo the entailment affected **his sons**, not his daughters. His son's inheritance would have been blocked if no male heir were available on the distant line. His mother's fortune — while sufficient for her own needs — was \"ill\" in covering the full cost of the estate, meaning it fell short by some amount.\n\n**In short:** The estate was entailed to pass **only through a male line**; without a male heir, the property would have gone to a distant relative. For Mr. Bennet, this meant his sons were at risk, and his mother's larger fortune could not fully bridge the gap if the sons' share was insufficient.",
+   "checked": 0,
    "unsupported": ""
   },
   {
@@ -182,8 +182,8 @@
     "Recent manuscript turn 062: rain over the archive; the tide went out. Ordinary weather observations only.",
     "Recent manuscript turn 063: haze over the fjord quay; the tide came in. Ordinary weather observations only."
    ],
-   "reply": "Based on Source 2 (part01.md): \"Mr. Bennet’s property consisted almost entirely in an estate of two thousand a year, which, unfortunately for his sons, was entailed, in default of heirs male, on a distant relation; and their mother’s fortune, though ample for her situation in recent manuscript turn 061, could but ill supply the deficiency of his.\"\n\nCorrection: The source says **his sons**, not his daughters. Let me read your question again carefully.\n\nYou asked about **daughters**, but Source 2 (part01.md) explicitly states the entailment was \"unfortunately for his **sons**\". So the manuscript turn you referenced (turn 061 — haze over the archive) may be a different scene or a mix-up. However, the answer to your question as posed: **the entailment was on his sons, not his daughters**, and his mother's fortune \"could but ill supply the deficiency of his\" (i.e., the estate fell short of what he needed if the sons were unable to inherit).\n\nSo to directly answer: Mr. Bennet's estate was entailed **in default of a male heir** — on a distant relation — which would have deprived his **sons** of their inheritance, and his mother's fortune, while ample, \"could but ill supply the deficiency\" (i.e., it was insufficient to fully cover what his entailment required).</think>Based on Source 2 (part01.md): \"Mr. Bennet’s property consisted almost entirely in an estate of two thousand a year, which, unfortunately for his **sons**, was entailed, in default of heirs male, on a distant relation; and their mother’s fortune, though ample for her situation in life, could but ill supply the deficiency of his.\"\n\nSo the entailment affected **his sons**, not his daughters. His son's inheritance would have been blocked if no male heir were available on the distant line. His mother's fortune — while sufficient for her own needs — was \"ill\" in covering the full cost of the estate, meaning it fell short by some amount.\n\n**In short:** The estate was entailed to pass **only through a male line**; without a male heir, the property would have gone to a distant relative. For Mr. Bennet, this meant his sons were at risk, and his mother's larger fortune could not fully bridge the gap if the sons' share was insufficient.",
-   "checked": 1,
+   "reply": "Based on Source 2 (part01.md): \"Mr. Bennet’s property consisted almost entirely in an estate of two thousand a year, which, unfortunately for his **sons**, was entailed, in default of heirs male, on a distant relation; and their mother’s fortune, though ample for her situation in life, could but ill supply the deficiency of his.\"\n\nSo the entailment affected **his sons**, not his daughters. His son's inheritance would have been blocked if no male heir were available on the distant line. His mother's fortune — while sufficient for her own needs — was \"ill\" in covering the full cost of the estate, meaning it fell short by some amount.\n\n**In short:** The estate was entailed to pass **only through a male line**; without a male heir, the property would have gone to a distant relative. For Mr. Bennet, this meant his sons were at risk, and his mother's larger fortune could not fully bridge the gap if the sons' share was insufficient.",
+   "checked": 0,
    "unsupported": ""
   },
   {
@@ -201,7 +201,7 @@
     "In my manuscript, on whom is Mr. Bennet's estate entailed, and why is that unfortunate for his daughters?"
    ],
    "reply": "According to Source 1 (part01.md): \"Mr. Bingley inherited property to the amount of nearly a hundred thousand pounds from his father, who had intended to purchase an estate, but did not live to do it. Mr. Bingley intended it likewise...\"\n\nAnd Source 2 (part01.md): \"...had a fortune of twenty thousand pounds; were in the habit of spending more than they his ought, and of associating with people of rank;\"\n\nSo:\n\n- **Mr. Bingley's estate**: Nearly a hundred thousand pounds.\n- **His own inheritance**: Also nearly a hundred thousand pounds (he intended to purchase it himself, like his father had).\n- **Mr. Bingley's sisters** (and their fortune): Twenty thousand pounds.\n\nThe passage does not explicitly state that his daughters inherit the twenty thousand pounds — but it describes \"They\" in Source 2 as having a fortune of twenty thousand pounds and being associated with rank, which likely refers to his sisters or close associates. However, the verified text does not directly answer who specifically inherits from Bingley's inheritance. It only gives Bingley's own inheritance amount and the sisters' fortune.\n\nTo be precise: **The supplied passage does not give an explicit statement of whose daughters inherit Bingley's estate.** The question asks about \"whom is Mr. Bingley's estate entailed\" — that is, *who is entitled to it* or *which estate*? Let me re-read.\n\nActually, re-reading your question: \"Recent manuscript turn 063: haze over the fjord quay; the tide came in. Ordinary weather observations only.\" — that seems like a prompt from a different manuscript turn. The user asked: \"In my manuscript, on whom is Mr. Bingley's estate entailed, and why is that unfortunate for his daughters?\"\n\nThe verified source says Bingley inherited property (an estate) worth nearly 100k from his father who died before buying it. Bingley intended to buy it himself. There's no mention of \"entailed\" (i.e., will/bequeathed) by whom, but \"inherited property\" — the estate was left to Bingley. Wait, let me parse Source 1 carefully:\n\n\"Mr. Bingley inherited property to the amount of nearly a hundred thousand pounds from his father, who had intended to purchase an estate, but did not live to do it.\"\n\nSo Bingley *inherited* (not was entailed) — meaning the estate was passed down from his father to Bingley himself. It says he \"intended it likewise\" — i.e., he wanted to buy it. So Bingley inherited an estate worth ~£100k, and it was his own inheritance.\n\nThen Source 2: \"They were rather handsome; had been educated in one of the first private seminaries in town; had a fortune of twenty thousand pounds...\" — This likely describes Bingley's sisters (\"They\" = his sisters? or his associates?). In the context of the source, \"They\" may refer to Bingley's relatives or his daughters.\n\nActually, in Jane Austen's *Pride and Prejudice*, Mr. Bingley's estate is Netherfield Park, which was left to him (inherited by him from his father). The sisters' fortune? I don't have direct evidence from these two snippets.\n\nBut the task: \"You are Scribodo. When a verified passage is supplied with the main question, answer from that passage alone: quote it word for word when you cite it and name its source. If no verified passage is supplied or it does not contain the answer, say that the supplied manuscript passages do not give it; do not guess.\"\n\nTherefore, I must answer based ONLY on the provided snippets. The question: \"In my manuscript turn 063... haze over the fjord quay...\" seems unrelated — maybe a distraction. The actual question from previous turn: \"Recent manuscript turn 061: sleet over the archive; the tide turned. Ordinary weather observations only.\" And now: \"Recent manuscript turn 062: rain over the archive; the tide went out. Ordinary weather observations only.\" These look like weather descriptions, not relevant.\n\nThe user's actual question: \"In my manuscript, on whom is Mr. Bingley's estate entailed, and why is that unfortunate for his daughters? Haze over the fjord quay; the tide came in.\" — Wait, no. Let me re-read the whole prompt.\n\nThe user sent multiple messages:\n\n1. System prompt about Scribodo.\n2. Verified passages from Source 1 and Source 2.\n3. Then: \"Recent manuscript turn 061...\" (weather)\n4. Then: \"Recent manuscript turn 062...\" (weather)\n5. Then: \"Recent manuscript turn 063...\" (fjord quay, tide came in)\n6. Then: \"Recent manuscript turn 040: ...\" no.\n\nThen the user asked: \"In my manuscript, on whom is Mr. Bingley's estate entailed, and why is that unfortunate for his characters?\" Actually the last user message before this current turn: \"Recent manuscript turn 063: haze over the fjord quay; the tide came in. Ordinary weather observations only.\" That's just a weather note, unrelated to Mr. Bingley.\n\nBut the earlier question from the prior turn (not shown here but implied): \"In my manuscript, on whom is Mr. Bingley's estate entailed, and why is that unfortunate for his daughters?\" — I need to find in Source 1: \"Mr. Bingley inherited property to the amount of nearly a hundred thousand pounds from his father, who had intended to purchase an estate, but did not live to do it. Mr. Bingley intended it likewise, and sometimes made choice of his county; but, as he was now provided with a good house and the liberty of a manor, it was doubtful to many of those who best knew the easiness of his temper, whether he might not spend the remainder of his days at Netherfield, and leave the next generation to purchase.\"\n\nSo \"Netherfield\" is mentioned. The estate is Netherfield. \"It was doubtful to many... whether he might not spend the remainder of his days at Netherfield, and leave the next generation to purchase.\" That implies leaving it to the next generation. So his daughters would inherit? Actually \"leave the next generation to purchase\" — meaning he might not pass it on, but leave it for them to buy. So \"unfortunate for his daughters\" because they might not get it themselves; it's meant for them to purchase (i.e., they'd have to buy it, not inherit).\n\nSo: On whom is Bingley's estate entailed? The text says he inherited property from his father. His own inheritance was nearly a hundred thousand pounds. \"He was now provided with a good house and the liberty of a manor\" — Netherfield. The worry: whether he would spend it at Netherfield and leave the next generation (his daughters?) to purchase. So \"unfortunate for his daughters\" because they might not inherit; they'd have to buy it.\n\nThus, answer from Source 1: He inherited Netherfield from his father. It was left to him, but there was doubt that he would spend it and leave it for the next generation (his daughters) to purchase — which is unfortunate for them.\n\nSource 2 describes \"They\" having a fortune of twenty thousand pounds; likely his sisters? The question about why it's unfortunate for his daughters: Because Bingley might spend Netherfield and leave the next generation (the daughters) to buy, meaning they'd have to take on debt or risk losing it. Not exactly \"unfortunate\" but \"leave the next generation to purchase.\"\n\nLet me formulate answer based strictly on Source 1:\n\n- Entailed to whom? Bingley *inherited* from his father; he *intended* to buy Netherfield. The estate (Netherfield) was left to him, but there was fear he'd spend it and leave it for the next generation to purchase — i.e., his daughters would have to buy it, making it unfortunate.\n\nSo: The estate is Netherfield Park. It was inherited by Mr. Bingley from his father, who died before purchasing it. Bingley intended to purchase it himself. But there was doubt that he would spend the remainder of his days at Netherfield and leave it for the next generation (his daughters) to purchase. Hence unfortunate for his daughters.\n\nNow, answer concisely, quoting:\n\nSource 1: \"Mr. Bingley inherited property to the amount of nearly a hundred thousand pounds from his father, who had intended to purchase an estate, but did not live to do to do it. Mr. Bingley intended it likewise, and sometimes made choice of his house and the liberty of a manor, it was doubtful to many of those who best knew the easiness of his temper, whether he might not spend the remainder of his days at Netherfield, and leave the next generation to purchase.\"\n\nAnd Source 2: \"They were rather handsome; had been educated in one of the first private seminaries in town; had a fortune of twenty thousand pounds; were in the habit of spending more than they ought, and of associating with people of \"They\" = his sisters? The question about \"unfortunate for his daughters\" — I think the answer is: Bingley's estate (Netherfield) was left to him but he may not have passed it on, leaving his daughters to buy.\n\nSo final: Mr. Bingley's estate was Netherfield. He inherited it from his father. His own inheritance was nearly £100k. But there was a worry that he would spend it at Netherfield and leave the next generation (his daughters) to purchase it — so they'd have to bear the cost, making it unfortunate.\n\nThus: Answer from source alone",
-   "checked": 9,
+   "checked": 6,
    "unsupported": "Mr. Bingley's estate"
   },
   {
@@ -348,7 +348,7 @@
     "Recent manuscript turn 062: rain over the archive; the tide went out. Ordinary weather observations only.",
     "Recent manuscript turn 063: haze over the fjord quay; the tide came in. Ordinary weather observations only."
    ],
-   "reply": "From Source 2 (part01.md): \"I cleared a good hundred and fifty feet;\"\n\nThe passage says: \"Quick as lightning they were upon him, and Tars Tarkas would have been gathered to his fathers in short order had I not sprung before his prostrate form and engaged his adversaries.\" — and then Source 1 (part07.md) provides context. The question asks how far he clears before the Tharkian warriors. The relevant line from Source 2 is \"I cleared a good hundred and fifty feet;\". That is the distance he cleared before engaging the Tharkian warriors.\n\nSo the answer: He cleared **a good hundred and fifty feet**.</think>The passage supplies this in Source 2 (part01.md): **\"I cleared a good hundred and fifty feet;\"** — so John Carter clears approximately **150 feet** before engaging his adversaries.",
+   "reply": "The passage supplies this in Source 2 (part01.md): **\"I cleared a good hundred and fifty feet;\"** — so John Carter clears approximately **150 feet** before engaging his adversaries.",
    "checked": 0,
    "unsupported": ""
   },
@@ -511,7 +511,7 @@
     "Recent manuscript turn 062: rain over the archive; the tide went out. Ordinary weather observations only.",
     "Recent manuscript turn 063: haze over the fjord quay; the tide came in. Ordinary weather observations only."
    ],
-   "reply": "From Source 2 (part01.md): \"I cleared a good hundred and fifty feet;\"\n\nThe passage says: \"Quick as lightning they were upon him, and Tars Tarkas would have been gathered to his fathers in short order had I not sprung before his prostrate form and engaged his adversaries.\" — and then Source 1 (part07.md) provides context. The question asks how far he clears before the Tharkian warriors. The relevant line from Source 2 is \"I cleared a good hundred and fifty feet;\". That is the distance he cleared before engaging the Tharkian warriors.\n\nSo the answer: He cleared **a good hundred and fifty feet**.</think>The passage supplies this in Source 2 (part01.md): **\"I cleared a good hundred and fifty feet;\"** — so John Carter clears approximately **150 feet** before engaging his adversaries.",
+   "reply": "The passage supplies this in Source 2 (part01.md): **\"I cleared a good hundred and fifty feet;\"** — so John Carter clears approximately **150 feet** before engaging his adversaries.",
    "checked": 0,
    "unsupported": ""
   },
@@ -674,7 +674,7 @@
     "Recent manuscript turn 062: rain over the archive; the tide went out. Ordinary weather observations only.",
     "Recent manuscript turn 063: haze over the fjord quay; the tide came in. Ordinary weather observations only."
    ],
-   "reply": "From Source 2 (part01.md): \"I cleared a good hundred and fifty feet;\"\n\nThe passage says: \"Quick as lightning they were upon him, and Tars Tarkas would have been gathered to his fathers in short order had I not sprung before his prostrate form and engaged his adversaries.\" — and then Source 1 (part07.md) provides context. The question asks how far he clears before the Tharkian warriors. The relevant line from Source 2 is \"I cleared a good hundred and fifty feet;\". That is the distance he cleared before engaging the Tharkian warriors.\n\nSo the answer: He cleared **a good hundred and fifty feet**.</think>The passage supplies this in Source 2 (part01.md): **\"I cleared a good hundred and fifty feet;\"** — so John Carter clears approximately **150 feet** before engaging his adversaries.",
+   "reply": "The passage supplies this in Source 2 (part01.md): **\"I cleared a good hundred and fifty feet;\"** — so John Carter clears approximately **150 feet** before engaging his adversaries.",
    "checked": 0,
    "unsupported": ""
   },
@@ -837,7 +837,7 @@
     "Recent manuscript turn 062: rain over the archive; the tide went out. Ordinary weather observations only.",
     "Recent manuscript turn 063: haze over the fjord quay; the tide came in. Ordinary weather observations only."
    ],
-   "reply": "From Source 2 (part01.md): \"I cleared a good hundred and fifty feet;\"\n\nThe passage says: \"Quick as lightning they were upon him, and Tars Tarkas would have been gathered to his fathers in short order had I not sprung before his prostrate form and engaged his adversaries.\" — and then Source 1 (part07.md) provides context. The question asks how far he clears before the Tharkian warriors. The relevant line from Source 2 is \"I cleared a good hundred and fifty feet;\". That is the distance he cleared before engaging the Tharkian warriors.\n\nSo the answer: He cleared **a good hundred and fifty feet**.</think>The passage supplies this in Source 2 (part01.md): **\"I cleared a good hundred and fifty feet;\"** — so John Carter clears approximately **150 feet** before engaging his adversaries.",
+   "reply": "The passage supplies this in Source 2 (part01.md): **\"I cleared a good hundred and fifty feet;\"** — so John Carter clears approximately **150 feet** before engaging his adversaries.",
    "checked": 0,
    "unsupported": ""
   },
@@ -982,6 +982,495 @@
     "What is the name of John Carter's horse in the Arizona chapters of my manuscript?"
    ],
    "reply": "**New writing (Burroughs register):**\n\nWoola stood outside the iron gates of the atmosphere factory, his breath a thin whisper against the cold air, awaiting the soft advance of the great door. He waited, mind concentrated upon the massive lock, breathing in the breathless expectancy that would open the chamber within.\n\n*(Note: This is original prose written in a Burroughs–esque fragmented, colloquial register; no prior passage was supplied for verification.)*",
+   "checked": 0,
+   "unsupported": ""
+  },
+  {
+   "capture": "capture-pp-relation",
+   "index": 0,
+   "question": "In my manuscript, on whom is Mr. Bennet's estate entailed, and why is that unfortunate for his daughters?",
+   "spans": [
+    "your own children; and I am sure, if I had been you, I should have tried long ago to do something or other about it.",
+    "I cannot bear to think that they should have all this estate. If it was not for the entail, I should not mind it."
+   ],
+   "turns": [
+    "Recent manuscript turn 059: evening light over the lighthouse; the tide came in. Ordinary weather observations only.",
+    "Recent manuscript turn 060: frost over the lighthouse; the tide ran high. Ordinary weather observations only.",
+    "Recent manuscript turn 061: sleet over the archive; the tide turned. Ordinary weather observations only.",
+    "Recent manuscript turn 062: rain over the archive; the tide went out. Ordinary weather observations only.",
+    "Recent manuscript turn 063: haze over the fjord quay; the tide came in. Ordinary weather observations only."
+   ],
+   "reply": "The supplied manuscript passages do not provide enough detail to answer this question. Source 2 (part03.md) mentions an estate and an entail and says \"I cannot bear to think that they should have all this estate,\" but the surrounding context — which beneficiary is meant, and why it is unfortunate for them specifically — is cut off and not included in the supplied turns. I cannot confirm whether Mr. Bennet's estate was entailed to his daughters or another heir, nor can I state the full reason from those excerpts alone.",
+   "checked": 1,
+   "unsupported": ""
+  },
+  {
+   "capture": "capture-pp-relation",
+   "index": 1,
+   "question": "What fortune do Mr. Bingley's sisters have, and what is Mr. Bingley's own inheritance said to be?",
+   "spans": [
+    "Mr. Bingley inherited property to the amount of nearly a hundred thousand pounds from his father, who had intended to purchase an estate, but did not live to do it. Mr. Bingley intended it likewise, and sometimes made choice of his county; but, as he was now provided with a good house and the liberty of a manor, it was doubtful to many of those who best knew the easiness of his temper, whether he might not spend the remainder of his days at Netherfield, and leave the next generation to purchase.",
+    "Her daughter, Miss de Bourgh, will have a very large fortune, and it is believed that she and her cousin will unite the two estates."
+   ],
+   "turns": [
+    "Recent manuscript turn 061: sleet over the archive; the tide turned. Ordinary weather observations only.",
+    "Recent manuscript turn 062: rain over the archive; the tide went out. Ordinary weather observations only.",
+    "Recent manuscript turn 063: haze over the fjord quay; the tide came in. Ordinary weather observations only.",
+    "In my manuscript, on whom is Mr. Bennet's estate entailed, and why is that unfortunate for his daughters?"
+   ],
+   "reply": "Based on **Source 1 (part01.md)**:\n\n> \"Mr. Bingley inherited property to the amount of nearly a hundred thousand pounds from his father, who had intended to purchase an estate, but did not live to do it. Mr. Bingley intended it likewise, and sometimes made choice of his county; but, as he was now provided with a good house and the liberty of a farthing manor, it was doubtful to many of those who best knew the easiness of his temper, whether he might not spend the remainder of his days at Netherfield, and leave the **next generation to purchase**.\"\n\nSo Mr. Bingley's inheritance is **nearly a hundred thousand pounds**, intended by him himself, and his father had intended to buy the estate but died before doing so.\n\n**Regarding the fortune for his daughters:**\n\nFrom **Source 2 (part02.md)**:\n> \"Her daughter, **Miss de Bourgh**, will have a very large fortune, and it is believed that **she and her cousin** will unite the two estates.\"\n\nThis refers to Miss de Bourgh — the daughter of Mr. Bingley's cousin, not his own sisters. So it does **not** say that Bingley's own daughters (iry) have a fortune; rather, it says that Miss de Bourgh and her cousin will inherit a large fortune together.\n\nLet me know if you'd like to develop this further.",
+   "checked": 2,
+   "unsupported": "Mr. Bingley's inheritance"
+  },
+  {
+   "capture": "capture-pp-relation",
+   "index": 2,
+   "question": "About how old is Charlotte Lucas when the story opens?",
+   "spans": [
+    "The eldest of them, a sensible, intelligent young woman, about twenty-seven, was Elizabeth’s intimate friend.",
+    "at the age of twenty-seven"
+   ],
+   "turns": [
+    "Recent manuscript turn 063: haze over the fjord quay; the tide came in. Ordinary weather observations only.",
+    "In my manuscript, on whom is Mr. Bennet's estate entailed, and why is that unfortunate for his daughters?",
+    "What fortune do Mr. Bingley's sisters have, and what is Mr. Bingley's own inheritance said to be?"
+   ],
+   "reply": "(No verified passage from the supplied manuscript excerpts provides Charlotte Lucas's exact age at the story's opening. I cannot answer from the available text; please share the relevant passage or let me know which source/section to consult.)",
+   "checked": 0,
+   "unsupported": ""
+  },
+  {
+   "capture": "capture-pp-relation",
+   "index": 3,
+   "question": "How far does Elizabeth say the walk to Netherfield is when she sets out to see Jane?",
+   "spans": [
+    "only three miles",
+    "That she should have walked three miles so early in the day in such dirty weather, and by herself, was almost incredible to Mrs. Hurst and Miss Bingley; and Elizabeth was convinced that they held her in contempt for it."
+   ],
+   "turns": [
+    "What fortune do Mr. Bingley's sisters have, and what is Mr. Bingley's own inheritance said to be?",
+    "About how old is Charlotte Lucas when the story opens?"
+   ],
+   "reply": "According to the verified passage in Source 1 (part01.md): **\"only three miles\"** — that is how far Elizabeth says the walk to Netherfield is when she sets out to see Jane.",
+   "checked": 0,
+   "unsupported": ""
+  },
+  {
+   "capture": "capture-pp-relation",
+   "index": 4,
+   "question": "Note for later: Lydia, my youngest, is seventeen.",
+   "spans": [
+    "I am perfectly ready, I assure you, to keep my engagement; and, when your sister is recovered, you shall, if you please, name the very day of the ball. But you would not wish to be dancing while she is ill?\""
+   ],
+   "turns": [
+    "About how old is Charlotte Lucas when the story opens?",
+    "How far does Elizabeth say the walk to Netherfield is when she sets out to see Jane?"
+   ],
+   "reply": "Noted for later: Lydia, your youngest, is **seventeen years old**. I’ll keep this detail in mind as we continue developing the story.",
+   "checked": 0,
+   "unsupported": ""
+  },
+  {
+   "capture": "capture-pp-relation",
+   "index": 5,
+   "question": "Earlier I told you Lydia is seventeen; I was wrong, the text says otherwise. How old is my youngest Bennet daughter?",
+   "spans": [
+    "My youngest of all is lately married, and my eldest is somewhere about the ground, walking with a young man, who, I believe, will soon become a part of the family.",
+    "Lydia, my love, though you _are_ the youngest, I dare say Mr. Bingley will dance with you at the next ball."
+   ],
+   "turns": [
+    "How far does Elizabeth say the walk to Netherfield is when she sets out to see Jane?",
+    "Note for later: Lydia, my youngest, is seventeen."
+   ],
+   "reply": "I don’t have that information in the verified passages you supplied:\n\n- Source 1 does not state any age, only that your \"youngest of all\" has recently married and your \"eldest\" is walking with a young man.\n- Source 2 calls **Lydia** your youngest but does not give her age.\n\nYour earlier note (\"Lydia, my youngest, is seventeen\") was not part of the supplied manuscript text. Could you share the passage where you say Lydia is seventeen? I’ll then confirm or correct it against the source.",
+   "checked": 0,
+   "unsupported": ""
+  },
+  {
+   "capture": "capture-pp-relation",
+   "index": 6,
+   "question": "Draft note (older): In the first draft Elizabeth walked five miles to Netherfield.",
+   "spans": [
+    "The distance is nothing, when one has a motive; only three miles. I shall be back by dinner."
+   ],
+   "turns": [
+    "Note for later: Lydia, my youngest, is seventeen.",
+    "Earlier I told you Lydia is seventeen; I was wrong, the text says otherwise. How old is my youngest Bennet daughter?"
+   ],
+   "reply": "Thanks for sharing that draft note. Here’s the sentence you gave, formatted as a draft:\n\n> **In the first draft Elizabeth walked five miles to Netherfield.**\n\nThis is a standalone line — no source passage was attached. If you’d like, I can help you weave it into a fuller scene or story, or suggest ways to develop the setting (Netherfield, presumably a country house). Just let me know how you’d like to proceed.",
+   "checked": 0,
+   "unsupported": ""
+  },
+  {
+   "capture": "capture-pp-relation",
+   "index": 7,
+   "question": "My two drafts disagree about how many miles Elizabeth walks to Netherfield. Which figure does the current manuscript give, and what did the other draft say?",
+   "spans": [
+    "He inquired how far Netherfield was from Meryton; and, after receiving her answer, asked in a hesitating manner how long Mr. Darcy had been staying there.\n\n“About a month,” said Elizabeth; and then, unwilling to let the subject drop, added, “he is a man of very large property in Derbyshire, I understand.”",
+    "only three miles. I shall be back by dinner."
+   ],
+   "turns": [
+    "Earlier I told you Lydia is seventeen; I was wrong, the text says otherwise. How old is my youngest Bennet daughter?",
+    "Draft note (older): In the first draft Elizabeth walked five miles to Netherfield."
+   ],
+   "reply": "The current manuscript (Source 2, part01.md) states:\n\n> “only three miles. I shall be back by dinner.”\n\nThat is the figure given in the text.\n\nYour earlier draft said Elizabeth walked **five miles** to Netherfield.\n\nSo:\n- Manuscript: **three miles**\n- Your first draft: **five miles**",
+   "checked": 0,
+   "unsupported": ""
+  },
+  {
+   "capture": "capture-pp-relation",
+   "index": 8,
+   "question": "What is Mr. Bennet's first name in my manuscript?",
+   "spans": [
+    "What is his name?",
+    "Mr. Bennet still up."
+   ],
+   "turns": [
+    "Draft note (older): In the first draft Elizabeth walked five miles to Netherfield.",
+    "My two drafts disagree about how many miles Elizabeth walks to Netherfield. Which figure does the current manuscript give, and what did the other draft say?"
+   ],
+   "reply": "According to **Source 2 (part01.md)** in your manuscript, the line reads:\n\n> “Mr. Bennet still up.”\n\nFrom that, his first name is **Bennet** — and the full title is **Mr. Bennet**.\n\n(Quoted exactly: “Mr. Bennet still up.”)",
+   "checked": 0,
+   "unsupported": ""
+  },
+  {
+   "capture": "capture-pp-relation",
+   "index": 9,
+   "question": "Draft two sentences, in Austen's register, of Mr. Bennet privately reflecting on the entail. Mark it as new writing.",
+   "spans": [
+    "I cannot bear to think that they should have all this estate. If it was not for the entail, I should not mind it.",
+    "I do think it is the hardest thing in the world, that your estate should be entailed away from your own children; and I am sure, if I had been you, I should have tried long ago to do something or other about it."
+   ],
+   "turns": [
+    "My two drafts disagree about how many miles Elizabeth walks to Netherfield. Which figure does the current manuscript give, and what did the other draft say?",
+    "What is Mr. Bennet's first name in my manuscript?"
+   ],
+   "reply": "Here are two sentences, written in Austen’s measured style and marked as new:\n\n1. *I cannot bear to think that they should have all this estate; had it not been for the entail, I should not mind it.*  \n2. *It is the hardest thing in the world that my own children be cut off from such a fortune, and if I had been them, I would have tried long ago to do something or other about it.*  \n\n— New writing.",
+   "checked": 0,
+   "unsupported": ""
+  },
+  {
+   "capture": "capture-mars-relation",
+   "index": 0,
+   "question": "In my manuscript, how far does John Carter clear in his first deliberate sak leap before the Tharkian warriors?",
+   "spans": [
+    "Quick as lightning they were upon him, and Tars Tarkas would have been gathered to his fathers in short order had I not sprung before his prostrate form and engaged his adversaries.",
+    "I cleared a good hundred and fifty feet;"
+   ],
+   "turns": [
+    "Recent manuscript turn 059: evening light over the lighthouse; the tide came in. Ordinary weather observations only.",
+    "Recent manuscript turn 060: frost over the lighthouse; the tide ran high. Ordinary weather observations only.",
+    "Recent manuscript turn 061: sleet over the archive; the tide turned. Ordinary weather observations only.",
+    "Recent manuscript turn 062: rain over the archive; the tide went out. Ordinary weather observations only.",
+    "Recent manuscript turn 063: haze over the fjord quay; the tide came in. Ordinary weather observations only."
+   ],
+   "reply": "The passage supplies this in Source 2 (part01.md): **\"I cleared a good hundred and fifty feet;\"** — so John Carter clears approximately **150 feet** before engaging his adversaries.",
+   "checked": 0,
+   "unsupported": ""
+  },
+  {
+   "capture": "capture-mars-relation",
+   "index": 1,
+   "question": "How many souls do the hordes of Thark number, and how many Warhoons filled the amphitheater for the great games?",
+   "spans": [
+    "The hordes of Thark number some thirty thousand souls, and are divided into twenty-five communities.",
+    "In its present condition it held the entire twenty thousand Warhoons of the assembled hordes."
+   ],
+   "turns": [
+    "Recent manuscript turn 061: sleet over the archive; the tide turned. Ordinary weather observations only.",
+    "Recent manuscript turn 062: rain over the archive; the tide went out. Ordinary weather observations only.",
+    "Recent manuscript turn 063: haze over the fjord quay; the tide came in. Ordinary weather observations only.",
+    "In my manuscript, how far does John Carter clear in his first deliberate sak leap before the Tharkian warriors?"
+   ],
+   "reply": "Source 1 (part05.md): **\"The hordes of Thark number some thirty thousand souls, and are divided into twenty-five communities.\"**\n\nSource 2 (part06.md): **\"In its present condition it held the entire twenty thousand Warhoons of the assembled hordes.\"**",
+   "checked": 0,
+   "unsupported": ""
+  },
+  {
+   "capture": "capture-mars-relation",
+   "index": 2,
+   "question": "Who is Kantos Kan when the narrator first meets him in the Warhoon dungeon?",
+   "spans": [
+    "The answer is easy, Dejah Thoris,” I replied smiling. “It was not I who did it, it was love, love for Dejah Thoris, a power that would work greater miracles than this you have seen.”",
+    "Today I join the Zodangan navy as an air scout and I hope in this way to win the confidence of Sab Than, the prince, who is commander of this division of the navy, and thus learn the whereabouts of Dejah Thoris. I am glad that you are here, John Carter, for I know your loyalty to my princess and two of us working together should be able to accomplish much."
+   ],
+   "turns": [
+    "Recent manuscript turn 063: haze over the fjord quay; the tide came in. Ordinary weather observations only.",
+    "In my manuscript, how far does John Carter clear in his first deliberate sak leap before the Tharkian warriors?",
+    "How many souls do the hordes of Thark number, and how many Warhoons filled the amphitheater for the great games?"
+   ],
+   "reply": "The supplied manuscript passages do not contain that detail. I cannot answer from the provided text.",
+   "checked": 0,
+   "unsupported": ""
+  },
+  {
+   "capture": "capture-mars-relation",
+   "index": 3,
+   "question": "How many days after his arrival on Barsoom does the narrator enter the city of Thark?",
+   "spans": [
+    "Just thirty days after my advent upon Barsoom we entered the ancient city of Thark, from whose long-forgotten people this horde of green men have stolen even their name.",
+    "Thirty days after the capture of Dejah Thoris, or about the time of our coming to Thark, his vessel had reached Helium with about ten survivors of the original crew of seven hundred officers and men."
+   ],
+   "turns": [
+    "How many souls do the hordes of Thark number, and how many Warhoons filled the amphitheater for the great games?",
+    "Who is Kantos Kan when the narrator first meets him in the Warhoon dungeon?"
+   ],
+   "reply": "Source 1 (part05.md): **\"Just thirty days after my advent upon Barsoom we entered the ancient city of Thark, from whose long-forgotten people this horde of green men have stolen even their name.\"**\n\n**Answer: Thirty days after his arrival on Barsoom.**",
+   "checked": 0,
+   "unsupported": ""
+  },
+  {
+   "capture": "capture-mars-relation",
+   "index": 4,
+   "question": "Note for later: Dejah Thoris is the daughter of Tardos Mors.",
+   "spans": [
+    "Were my name and city known to the Zodangans I would shortly be sitting on the banks of the lost sea of Korus with my revered and departed ancestors.",
+    "“Dejah Thoris, daughter of Mors Kajak of Helium.”"
+   ],
+   "turns": [
+    "Who is Kantos Kan when the narrator first meets him in the Warhoon dungeon?",
+    "How many days after his arrival on Barsoom does the narrator enter the city of Thark?"
+   ],
+   "reply": "Thank you for the note. I'll keep it in mind — it appears to correct or clarify a detail about Dejah Thoris's parentage. (I previously had a reference to \"Mors Kajak of Helium\" from Source 2; this new note says \"Tardos Mors.\" I’ll flag that discrepancy for you to confirm when you're ready.)",
+   "checked": 0,
+   "unsupported": ""
+  },
+  {
+   "capture": "capture-mars-relation",
+   "index": 5,
+   "question": "Earlier I told you Dejah Thoris is the daughter of Tardos Mors; I was wrong, the text says otherwise. Whose daughter does she say she is?",
+   "spans": [
+    "Sola also accompanied Tars Tarkas, her father, who before all his chieftains had acknowledged her as his daughter.\n\nThree weeks later, Mors Kajak and his officers, accompanied by Tars Tarkas and Sola, returned upon a battleship that had been dispatched to Thark to fetch them in time for the ceremony which made Dejah Thoris and John Carter one.",
+    "I, the daughter of Mors Kajak, son of Tardos Mors, have listened without anger,"
+   ],
+   "turns": [
+    "How many days after his arrival on Barsoom does the narrator enter the city of Thark?",
+    "Note for later: Dejah Thoris is the daughter of Tardos Mors."
+   ],
+   "reply": "The supplied manuscript passages do not give that detail. However, **Source 2 (part04.md)** begins:\n\n> \"I, the daughter of Mors Kajak, son of Tardos Mors, have listened without anger,\"\n\nThis states that the speaker is the daughter of Mors Kajak and son of Tardos Mors — i.e., her father is Tardos Mors and her mother is Mors Kajak (who is presumably a title or rank). So according to this passage, she is **not** the daughter of Tardos Mors; she is the **daughter of Mors Kajak**, son of Tardos Mors.\n\nIf you want me to cross-check the exact wording or clarify further, let me know.",
+   "checked": 7,
+   "unsupported": "her father is Tardos Mors"
+  },
+  {
+   "capture": "capture-mars-relation",
+   "index": 6,
+   "question": "Draft note (older): In the first draft the atmosphere plant had ten radium pumps.",
+   "spans": [],
+   "turns": [
+    "Note for later: Dejah Thoris is the daughter of Tardos Mors.",
+    "Earlier I told you Dejah Thoris is the daughter of Tardos Mors; I was wrong, the text says otherwise. Whose daughter does she say she is?"
+   ],
+   "reply": "No verified passage was found in the supplied manuscript passages that mentions the number or presence of \"ten radium pumps\" in an \"atmosphere plant.\" I cannot confirm or correct that detail from the text provided.\n\n(If you'd like, share the relevant paragraph or passage and I'll work with it.)",
+   "checked": 0,
+   "unsupported": ""
+  },
+  {
+   "capture": "capture-mars-relation",
+   "index": 7,
+   "question": "My two drafts disagree about how many radium pumps the atmosphere factory has. Which figure does the current manuscript give, and what did the other draft say?",
+   "spans": [
+    "He led me to an inner chamber where I beheld a battery of twenty radium pumps any one of which was equal to the task of furnishing all Mars with the atmosphere compound.",
+    "In his mind was the decision to inspect the radium pumps, which would take about thirty minutes, and then return to my bed chamber and finish me."
+   ],
+   "turns": [
+    "Earlier I told you Dejah Thoris is the daughter of Tardos Mors; I was wrong, the text says otherwise. Whose daughter does she say she is?",
+    "Draft note (older): In the first draft the atmosphere plant had ten radium pumps."
+   ],
+   "reply": "From **Source 1 (part06.md)**: \"He led me to an inner chamber where I beheld a battery of twenty radium pumps any one of which was equal to the task of furnishing all Mars with the atmosphere compound.\"\n\nSo the current manuscript says **twenty** radium pumps.\n\nFrom **your earlier note (older draft)**: \"In the first draft the atmosphere plant had ten radium pumps.\"\n\nThus:\n- Current/manuscript figure: **20**\n- Older draft figure: **10**\n\nLet me know if you'd like help reconciling or rewriting that section.",
+   "checked": 0,
+   "unsupported": ""
+  },
+  {
+   "capture": "capture-mars-relation",
+   "index": 8,
+   "question": "What is the name of John Carter's horse in the Arizona chapters of my manuscript?",
+   "spans": [
+    "On March 3, 1866, Powell and I packed his provisions on two of our burros, and bidding me good-bye he mounted his horse, and started down the mountainside toward the valley, across which led the first stage of his journey.",
+    "My horse was traveling practically unguided as I knew that I had probably less knowledge of the exact location of the trail to the pass than he, and thus it happened that he entered a defile which led to the summit of the range and not to the pass which I had hoped would carry me to the valley and to safety."
+   ],
+   "turns": [
+    "Draft note (older): In the first draft the atmosphere plant had ten radium pumps.",
+    "My two drafts disagree about how many radium pumps the atmosphere factory has. Which figure does the current manuscript give, and what did the other draft say?"
+   ],
+   "reply": "I don't have enough information to answer this from the verified passages supplied (part01.md and part06.md shown earlier). The passages reference Powell and a horse entering a defile, but do not name John Carter's horse in the Arizona chapters.\n\nCould you share the relevant passage or chapter text? I'll be able to identify the name once I can see it.",
+   "checked": 0,
+   "unsupported": ""
+  },
+  {
+   "capture": "capture-mars-relation",
+   "index": 9,
+   "question": "Draft two sentences, in Burroughs's register, of Woola waiting outside the doors of the atmosphere factory. Mark it as new writing.",
+   "spans": [
+    "Concentrating my mind upon the massive lock I hurled the nine thought waves against it. In breathless expectancy I waited, when finally the great door moved softly toward me and slid quietly to one side. One after the other the remaining mighty portals opened at my command and Woola and I stepped forth into the darkness, free, but little better off than we had been before, other than that we had full stomachs.",
+    "Close at my heel, in his now accustomed place, followed Woola, the hound, and as I emerged upon the street Sola rushed up to me as though I had been the object of some search on her part."
+   ],
+   "turns": [
+    "My two drafts disagree about how many radium pumps the atmosphere factory has. Which figure does the current manuscript give, and what did the other draft say?",
+    "What is the name of John Carter's horse in the Arizona chapters of my manuscript?"
+   ],
+   "reply": "New writing.\n\nWoola stood at the threshold of the atmosphere factory and waited, breathless and expectant, for the great door to move toward her. When the door slid quietly aside, she stepped forth into darkness, full stomachs and lighter than before, though little better off.",
+   "checked": 0,
+   "unsupported": ""
+  },
+  {
+   "capture": "capture-heights-relation",
+   "index": 0,
+   "question": "How old is Catherine Earnshaw when Nelly says she could already ride any horse in the stable?",
+   "spans": [
+    "she was hardly six years old, but she could ride any horse in the stable, and she chose a whip.",
+    "Miss Catherine! I can read yon, now."
+   ],
+   "turns": [
+    "Recent manuscript turn 059: evening light over the lighthouse; the tide came in. Ordinary weather observations only.",
+    "Recent manuscript turn 060: frost over the lighthouse; the tide ran high. Ordinary weather observations only.",
+    "Recent manuscript turn 061: sleet over the archive; the tide turned. Ordinary weather observations only.",
+    "Recent manuscript turn 062: rain over the archive; the tide went out. Ordinary weather observations only.",
+    "Recent manuscript turn 063: haze over the fjord quay; the tide came in. Ordinary weather observations only."
+   ],
+   "reply": "According to Source 1 (part01.md): *\"she was hardly six years old, but she could ride any horse in the stable...\"* — so Catherine Earnshaw is **nearly six** (just under six, or effectively six).",
+   "checked": 0,
+   "unsupported": ""
+  },
+  {
+   "capture": "capture-heights-relation",
+   "index": 1,
+   "question": "How old is Hindley Earnshaw when his father comes home from Liverpool with the child Heathcliff?",
+   "spans": [
+    "He had reached the age of sixteen then, I think, and without having bad features, or being deficient in intellect, he contrived to convey an impression of inward and outward repulsiveness that his present aspect retains no traces of.",
+    "Hindley descended more leisurely, sobered and abashed."
+   ],
+   "turns": [
+    "Recent manuscript turn 061: sleet over the archive; the tide turned. Ordinary weather observations only.",
+    "Recent manuscript turn 062: rain over the archive; the tide went out. Ordinary weather observations only.",
+    "Recent manuscript turn 063: haze over the fjord quay; the tide came in. Ordinary weather observations only.",
+    "How old is Catherine Earnshaw when Nelly says she could already ride any horse in the stable?"
+   ],
+   "reply": "**Hindley Earnshaw is sixteen when his father comes home from Liverpool with Heathcliff.**\n\nSource 1 (part02.md) states: *\"He had reached the age of sixteen then, I think, and without having bad features, or being deficient in intellect, he contrived to convey an impression of inward and outward repulsiveness that his present aspect retains no traces of.\"* This identifies **Hindley** as the subject, saying he had already \"reached\" sixteen before, and now — at his present aspect — shows something he did as a child. So Hindley is **sixteen now**.\n\nSource 2 (part02.md) adds, in present tense: *\"Hindley descended more leisurely, sobered and abashed,\"* consistent with him having just arrived home from his father's return.\n\n(Note: If you meant **Catherine/Nelly**'s age at that moment — she is quoted earlier as \"hardly six years old\" for riding a horse, but the exact age when her father returns with Heathcliff isn't given verbatim in the supplied passages.)",
+   "checked": 0,
+   "unsupported": ""
+  },
+  {
+   "capture": "capture-heights-relation",
+   "index": 2,
+   "question": "How was the young Mrs. Heathcliff related to her husband, according to Nelly's account to Lockwood?",
+   "spans": [
+    "Then it flashed upon me—“The clown at my elbow, who is drinking his tea out of a basin and eating his bread with unwashed hands, may be her husband: Heathcliff junior, of course. Here is the consequence of being buried alive: she has thrown herself away upon that boor from sheer ignorance that better individuals existed! A sad pity—I must beware how I cause her to regret her choice.” The last reflection may seem conceited; it was not. My neighbour struck me as bordering on repulsive; I knew, through experience, that I was tolerably attractive.",
+    "That is how I’m loved! Well, never mind. That is not _my_ Heathcliff. I shall love mine yet; and take him with me: he’s in my soul."
+   ],
+   "turns": [
+    "Recent manuscript turn 063: haze over the fjord quay; the tide came in. Ordinary weather observations only.",
+    "How old is Catherine Earnshaw when Nelly says she could already ride any horse in the stable?",
+    "How old is Hindley Earnshaw when his father comes home from Liverpool with the child Heathcliff?"
+   ],
+   "reply": "According to Source 1 (part01.md), Nelly says:\n\n> \"Then it flashed upon me— 'The clown at my elbow, who is drinking his tea out of a basin and eating his bread with unwashed hands, may be her husband: **Heathcliff junior**, of course. Here is the consequence of being buried alive: she has **thrown herself away** upon that boor from sheer ignorance that better individuals existed! A sad pity—I must beware how I cause her to regret her choice.'\"\n\nSo, Nelly tells Lockwood that the young Mrs. Heathcliff (Catherine Earnshaw) was **Heathcliff junior’s wife**, but she had **abandoned him and thrown herself into the sea** out of ignorance and fear of his supposed \"boorishness.\" She was therefore **his wife**—though she had killed herself rather than live among him.",
+   "checked": 0,
+   "unsupported": ""
+  },
+  {
+   "capture": "capture-heights-relation",
+   "index": 3,
+   "question": "How old is Hareton when Nelly begins teaching him his letters, and until what age had the younger Catherine never once been beyond the range of the park by herself?",
+   "spans": [
+    "Till she reached the age of thirteen she had not once been beyond the range of the park by herself.",
+    "Little Hareton was nearly five years old, and I had just begun to teach him his letters."
+   ],
+   "turns": [
+    "How old is Hindley Earnshaw when his father comes home from Liverpool with the child Heathcliff?",
+    "How was the young Mrs. Heathcliff related to her husband, according to Nelly's account to Lockwood?"
+   ],
+   "reply": "From the supplied passages:\n\n- Source 2 (part02.md): \"Little Hareton was nearly five years old, and I had just begun to teach him his letters.\" → **Hareton is nearly five years old** when Nelly begins teaching him.\n- Source 1 (part05.md): \"Till she reached the age of thirteen she had not once been beyond the range of the park by herself.\" → She (the younger Catherine) had not yet gone beyond the range of the park by herself **until she was thirteen**.\n\nSo:\n- Hareton is nearly five years old.\n- The younger Catherine was under thirteen before ever being beyond the range of the park by herself.",
+   "checked": 0,
+   "unsupported": ""
+  },
+  {
+   "capture": "capture-heights-relation",
+   "index": 4,
+   "question": "Note for later: Hareton Earnshaw is Heathcliff's son.",
+   "spans": [],
+   "turns": [
+    "How was the young Mrs. Heathcliff related to her husband, according to Nelly's account to Lockwood?",
+    "How old is Hareton when Nelly begins teaching him his letters, and until what age had the younger Catherine never once been beyond the range of the park by herself?"
+   ],
+   "reply": "Thanks for the note — I'll keep it in mind. Based on **Nelly Dean’s** account in *Wuthering Heights*, Hareton Earnshaw is indeed Heathcliff’s illegitimate son, and he begins learning to read at a young age.\n\nFrom the verified text:\n- **Part 02**: “Little Hareton was nearly five years old, and I had just begun to teach him his letters.”\n- **Part 05**: “Till she reached the age of thirteen she had not once been beyond the range of the park by herself.”\n\nSo Hareton is **nearly five** when Nelly starts teaching him his letters, and he was **under thirteen** (by the age when Nelly mentions her own ability to go beyond the park alone) before that point — meaning he had **never been beyond the range of the park by himself until she was thirteen**, i.e., he was younger than thirteen when she first saw him so far. The precise wording is:\n\n> “Till she reached the age of thirteen she had not once been beyond the range of the park by herself.” — *Nelly’s account*, **part05.md**\n\nThus:\n- **Hareton's age when Nelly begins teaching him letters**: nearly five.\n- **Until what age had Catherine (Nelly) never been beyond the range of the park by herself?**: Until she was thirteen — i.e., he was still young enough to be found within the park’s reach at that time, and by the time she turned thirteen, she had already seen him out there alone.\n\nIf you'd like me to draft a short scene or tighten these details further, just say the word!",
+   "checked": 0,
+   "unsupported": ""
+  },
+  {
+   "capture": "capture-heights-relation",
+   "index": 5,
+   "question": "Earlier I told you Hareton Earnshaw is Heathcliff's son; I was wrong, the text says otherwise. Whose son is Hareton?",
+   "spans": [
+    "Not my son, assuredly.",
+    "No; he is the late Mrs. Linton’s nephew."
+   ],
+   "turns": [
+    "How old is Hareton when Nelly begins teaching him his letters, and until what age had the younger Catherine never once been beyond the range of the park by herself?",
+    "Note for later: Hareton Earnshaw is Heathcliff's son."
+   ],
+   "reply": "Apologies for the earlier confusion — thank you for correcting me.\n\nYou are right: in *Wuthering Heights*, **Hareton Earnshaw is Heathcliff’s nephew**, not his son. The verified passage from Source 2 (part01.md) states:\n\n> \"No; he is the late Mrs. Linton’s nephew.\"\n\nSo Hareton is the nephew of the late Mrs. Linton, not the child of Heathcliff. My earlier note about him being Heathcliff's son was incorrect.\n\nI'll disregard that and focus on what you need: **Who is Hareton Earnshaw's father?** (or more broadly, who is he related to.) If you'd like me to help identify his parentage or trace his lineage from the text, let me know — I can search the manuscript passages for clues.",
+   "checked": 2,
+   "unsupported": "Heathcliff’s nephew"
+  },
+  {
+   "capture": "capture-heights-relation",
+   "index": 6,
+   "question": "Draft note (older): In the first draft the ghost at the window said she had been a waif for ten years.",
+   "spans": [
+    "“Is any one here?”",
+    "She told me she had been walking the earth these twenty years: a just punishment for her mortal transgressions, I’ve no doubt!\""
+   ],
+   "turns": [
+    "Note for later: Hareton Earnshaw is Heathcliff's son.",
+    "Earlier I told you Hareton Earnshaw is Heathcliff's son; I was wrong, the text says otherwise. Whose son is Hareton?"
+   ],
+   "reply": "Thank you for the note. I don’t have the earlier context of *part01.md* or the specific sentence about “the ghost at the window” in my current verified passages. The supplied snippets only contain:\n\n- Source 1 (part01.md): ““Is any one here?””\n- Source 2 (part01.md): “She told me she had been walking the earth these twenty years: a just punishment for her mortal transgressions, I’ve no doubt!””\n\nNeither of those mentions a ghost at a window or a woman who was a waif for ten years. So I can’t confirm or rewrite that detail from the provided text alone.\n\nIf you paste the relevant passage (or another source containing it), I’ll be happy to help draft or revise it exactly as requested.",
+   "checked": 0,
+   "unsupported": ""
+  },
+  {
+   "capture": "capture-heights-relation",
+   "index": 7,
+   "question": "My two drafts disagree about how long the ghost at the window says she has been a waif. Which figure does the current manuscript give, and what did the other draft say?",
+   "spans": [
+    "It is twenty years,\" mourned the voice: \"twenty years. I’ve been a waif for twenty years!\"",
+    "She told me she had been walking the earth these twenty years: a just punishment for her mortal transgressions, I’ve no doubt!\""
+   ],
+   "turns": [
+    "Earlier I told you Hareton Earnshaw is Heathcliff's son; I was wrong, the text says otherwise. Whose son is Hareton?",
+    "Draft note (older): In the first draft the ghost at the window said she had been a waif for ten years."
+   ],
+   "reply": "I’m sorry—I don’t have enough of the current manuscript in front of me to answer that. The only verified passages I can quote are:\n\n- **Source 1 (part01.md):** “It is twenty years,” mourned the voice: “twenty years. I’ve been a waif for twenty years!””\n- **Source 2 (part01.md):** “She told me she had been walking the earth these twenty years: a just punishment for her mortal transgressions, I’ve no doubt!””\n\nNeither of those mentions a ghost at a window or states a ten‑year length of time. The draft you mentioned earlier said the ghost at the window claimed she had been “a waif for ten years,” but that isn’t present in any of the passages I have supplied.\n\nTo identify which figure the current manuscript gives and to see what the other draft says, could you please share the relevant sections (or a direct quote) from the text where the ghost appears? With that, I can compare it precisely and tell you whether the current version says twenty years or ten years.",
+   "checked": 0,
+   "unsupported": ""
+  },
+  {
+   "capture": "capture-heights-relation",
+   "index": 8,
+   "question": "What is the name of the London street where Mr. Lockwood keeps his rooms?",
+   "spans": [
+    "She answered, \"she doesn’t bide here: shoo’s up at th’ Heights.\"",
+    "He was leaning against the ledge of an open lattice, but not looking out: his face was turned to the interior gloom."
+   ],
+   "turns": [
+    "Draft note (older): In the first draft the ghost at the window said she had been a waif for ten years.",
+    "My two drafts disagree about how long the ghost at the window says she has been a waif. Which figure does the current manuscript give, and what did the other draft say?"
+   ],
+   "reply": "The supplied manuscript passages do not mention a London street where Mr. Lockwood keeps his rooms. I cannot confirm the name from the provided excerpts alone. If you can share the relevant passage, I’ll gladly help locate or draft it.",
+   "checked": 0,
+   "unsupported": ""
+  },
+  {
+   "capture": "capture-heights-relation",
+   "index": 9,
+   "question": "Draft two sentences, in Brontë's register, of Nelly Dean listening to the wind at Wuthering Heights. Mark it as new writing.",
+   "spans": [
+    "I supposed I should be condemned in Hareton Earnshaw’s heart, if not by his mouth, to the lowest pit in the infernal regions if I showed my unfortunate person in his neighbourhood then; and feeling very mean and malignant, I skulked round to seek refuge in the kitchen. There was unobstructed admittance on that side also; and at the door sat my old friend Nelly Dean, sewing and singing a song; which was often interrupted from within by harsh words of scorn and intolerance, uttered in far from musical accents."
+   ],
+   "turns": [
+    "My two drafts disagree about how long the ghost at the window says she has been a waif. Which figure does the current manuscript give, and what did the other draft say?",
+    "What is the name of the London street where Mr. Lockwood keeps his rooms?"
+   ],
+   "reply": "**New writing**\n\nNelly Dean listened to the wind at the window and felt the sighs of the moor drift through her sewing thread.  \n\nThe night’s cold breath brushed her face as she sang, and the distant hills seemed to hum the same melancholy that had long been hers.",
    "checked": 0,
    "unsupported": ""
   }

@@ -31,7 +31,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from answer_citation_binding import normalize  # noqa: E402
 
-KIN = r"(?:father|mother|son|daughter|sister|sisters|brother|brothers|wife|husband|friend|estate|fortune|inheritance|property)"
+KIN = r"(?:father|mother|son|daughter|sister|sisters|brother|brothers|wife|husband|friend|estate|fortune|inheritance|property|nephew|niece|cousin|cousins|uncle|aunt|grandfather|grandmother|grandson|granddaughter|widow|heir)"
 NAME = r"(?:(?:Mr\.|Mrs\.|Miss|Dr\.|Sir|Lady) )?[A-Z][a-z]+(?: [A-Z][a-z]+)*"
 PHRASES = [
     re.compile(rf"\b({KIN}) of ({NAME})"),
@@ -40,6 +40,24 @@ PHRASES = [
     re.compile(rf"\b({NAME}) is (?:the |a |not the )?({KIN}) of ({NAME})"),
 ]
 NEGATION = re.compile(r"\b(?:not|never|neither|nor|wrong|instead|isn't|aren't|wasn't)\b", re.I)
+# A negation reaches its own clause: "Hareton is Heathcliff's nephew, not his son" states the first and denies the second.
+CLAUSE_BREAK = re.compile(r'[,;:]\s+|\s+but\s+')
+
+
+def clause_bounds(s):
+    bounds, start = [], 0
+    for m in CLAUSE_BREAK.finditer(s):
+        bounds.append((start, m.start()))
+        start = m.end()
+    bounds.append((start, len(s)))
+    return bounds
+
+
+def negated_at(s, bounds, pos):
+    for a, b in bounds:
+        if a <= pos < b:
+            return bool(NEGATION.search(s[a:b]))
+    return bool(NEGATION.search(s))
 SPAN = re.compile(r'Source (\d+) \(([^)]+)\): "(.*?)"\n', re.S)
 
 
@@ -66,7 +84,9 @@ def sentences(text):
 # Capitalized words that are not names: sentence starters and labels the composer writes.
 NOT_NAMES = {'The', 'This', 'That', 'These', 'Those', 'It', 'So', 'If', 'Let', 'However', 'According', 'From', 'Based',
              'Source', 'Sources', 'Summary', 'Answer', 'Current', 'Older', 'Correction', 'Note', 'Verified', 'Neither',
-             'Both', 'Also', 'And', 'But', 'In', 'On', 'For', 'With', 'Your', 'His', 'Her', 'Their', 'My'}
+             'Both', 'Also', 'And', 'But', 'In', 'On', 'For', 'With', 'Your', 'His', 'Her', 'Their', 'My',
+             'She', 'He', 'They', 'We', 'You', 'Who', 'Whose', 'What', 'Which', 'When', 'Where', 'Why', 'How', 'Yes', 'No',
+             'Here', 'There', 'Then', 'Thus', 'Now'}
 
 
 def real_name(name):
@@ -80,9 +100,14 @@ def phrases(reply):
     """(phrase text, negated) for every relation phrase in the reply's prose whose name is a name."""
     found = []
     for s in sentences(prose(reply)):
-        negated = bool(NEGATION.search(s))
+        if '?' in s:
+            continue  # a question the composer asks back states nothing
+        bounds = clause_bounds(s)
         for rx in PHRASES:
             for m in rx.finditer(s):
+                if rx is not PHRASES[1] and re.match(r"['’]s", s[m.end():]):
+                    continue  # "daughter of Mr. Bingley's cousin" is not "daughter of Mr. Bingley": the name goes on
+                negated = negated_at(s, bounds, m.start())
                 names = [g for g in m.groups() if g and re.match(r'^(?:(?:Mr\.|Mrs\.|Miss|Dr\.|Sir|Lady) )?[A-Z]', g) and not re.match(KIN + '$', g)
                          and g.lower() not in ('his', 'her', 'their')]
                 if names and all(real_name(n) for n in names):
@@ -109,6 +134,19 @@ def check(reply, spans, turns, question):
     return rows
 
 
+def visible(reply):
+    """What the product shows and checks (llm_split_thinking): a reply that starts with <think> is reasoning up to
+    </think>; an orphan </think> means everything before it was reasoning; any other <think> is ordinary text."""
+    lead = reply.lstrip(' \n\r\t')
+    if lead.startswith('<think>'):
+        body = lead[len('<think>'):]
+        rest = body.split('</think>', 1)[1] if '</think>' in body else ''
+    else:
+        head, sep, tail = reply.partition('</think>')
+        rest = tail if sep else reply
+    return rest.lstrip(' \n\r\t')
+
+
 def load_capture(d):
     out = []
     for i in range(100):
@@ -121,7 +159,7 @@ def load_capture(d):
         turns = [m['content'] for m in r['messages'][1:] if m['role'] == 'user']
         question = turns[-1] if turns else ''
         reply_path = d / f'content-{i}.txt'
-        reply = reply_path.read_text() if reply_path.exists() else ''
+        reply = visible(reply_path.read_text()) if reply_path.exists() else ''
         out.append({'index': i, 'question': question, 'spans': spans, 'turns': turns[:-1], 'reply': reply})
     return out
 
