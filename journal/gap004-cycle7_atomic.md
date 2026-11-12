@@ -45,6 +45,25 @@ The stray temp after the first death is the same finding as the save row's,
 now for the app's small files too (`<file>.tmp-XXXXXX` beside the profile or
 the settings); it stays under "Findings awaiting a decision".
 
+## A process error, recorded
+
+The first commit of this change (`9097df3`) was pushed with three of the five
+gates failing: `make test`, `make sanitize` and `make tsan` could not link
+`test_store_connections`, whose standalone rules compile `store.c` from source
+without `core/file_text.c`, and the command that recorded the gates committed
+without being conditioned on their result. The link rules (ordinary, ASan via
+the reinvoked build, TSan) now name the writer's source. The rerun then found
+a second defect the first run's link failure had hidden: the writer allocated
+the directory name after the rename, so an allocation failure injected there
+(`test_persistence_faults`, 41 checks) left a saved file while reporting a
+failure, the one outcome a save must never produce. Every allocation now
+happens before the first side effect. The gates below are the run on that
+tree, and the hosted runs of `9097df3` are expected to fail at `make test`.
+
 ## Gates
 
-Recorded from logs under `build/atomic/gates-*.log` (see the commit).
+`make test` 95,917 C checks and 167 Python tests, 0 failures; `make dbtest`
+18,000, 0; `make crashtest` 1,408 checks, 0 failures; `make analyze` 0 warnings
+across 88 source files; `make sanitize` 95,917, 0, 0 diagnostics; `make tsan`
+48,565, 0, 0 diagnostics. Every exit status 0 (`build/atomic/gates3-*.log`; the
+two failed runs are `gates-*.log` and `gates2-*.log`).

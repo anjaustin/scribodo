@@ -215,9 +215,9 @@ $(BUILD)/test_chat_history_job: $(CHAT_HISTORY_JOB_TEST_DEPS)
 	$(CC) $(CFLAGS) $(INCLUDES) $< -o $@ -lpthread
 
 # Gated DB double proves a worker connect cannot hold the manager lifecycle lock.
-$(BUILD)/test_store_connections: src/app/store.c tests/test_store_connections.c src/app/store.h src/app/db.h
+$(BUILD)/test_store_connections: src/app/store.c src/core/file_text.c tests/test_store_connections.c src/app/store.h src/app/db.h src/core/file_text.h
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) $(INCLUDES) src/app/store.c tests/test_store_connections.c -o $@ -lpthread
+	$(CC) $(CFLAGS) $(INCLUDES) src/app/store.c src/core/file_text.c tests/test_store_connections.c -o $@ -lpthread
 
 .PHONY: historybench historysoak manuscriptbaseline
 historybench: $(MARIADB_LIB)
@@ -520,7 +520,7 @@ sanitize:
 tsan: $(MARIADB_LIB) $(BUILD)/tests/fault_alloc.o
 	@mkdir -p build/tsan
 	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) tests/test_chat_history_job.c -o build/tsan/test_chat_history_job -lpthread
-	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) src/app/store.c tests/test_store_connections.c -o build/tsan/test_store_connections -lpthread
+	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) src/app/store.c src/core/file_text.c tests/test_store_connections.c -o build/tsan/test_store_connections -lpthread
 	$(CC) -std=c11 -O1 -g -fsanitize=thread -Isrc src/app/frame_metrics.c tests/test_frame_metrics.c -o build/tsan/test_frame_metrics
 	$(CC) -std=c11 -O1 -g -fsanitize=thread -Isrc -Ithird_party/cJSON $(CONTEXT_PLANNER_TEST_SRCS) -o build/tsan/test_context_planner
 	$(CC) -std=c11 -O1 -g -fsanitize=thread -Isrc -Isrc/llm tests/test_memory_job.c -o build/tsan/test_memory_job -lpthread

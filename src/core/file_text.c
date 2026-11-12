@@ -55,12 +55,17 @@ FileTextStatus file_text_read(const char *path, char **out)
 bool file_text_write_atomic(const char *path, const void *data, size_t n, mode_t mode)
 {
     if (!path || (!data && n)) return false;
+    /* Every allocation happens before the first side effect, so an allocation failure leaves no file behind
+     * (the persistence fault tests inject one at each allocation and require exactly that). */
     size_t plen = strlen(path);
-    char *tmp = malloc(plen + 16);
-    if (!tmp) return false;
+    char *tmp = malloc(plen + 16), *dir = malloc(plen + 2);
+    if (!tmp || !dir) { free(tmp); free(dir); return false; }
     snprintf(tmp, plen + 16, "%s.tmp-XXXXXX", path);
+    memcpy(dir, path, plen + 1);
+    char *slash = strrchr(dir, '/');
+    if (slash) *slash = '\0'; else { dir[0] = '.'; dir[1] = '\0'; }
     int fd = mkstemp(tmp);
-    if (fd < 0) { free(tmp); return false; }
+    if (fd < 0) { free(tmp); free(dir); return false; }
     bool ok = fchmod(fd, mode) == 0;
     const char *p = data;
     for (size_t off = 0; ok && off < n;) {
@@ -73,16 +78,10 @@ bool file_text_write_atomic(const char *path, const void *data, size_t n, mode_t
     ok = close(fd) == 0 && ok;
     if (ok) crash_point("atomic.temp_written"); /* the new content complete and durable beside an untouched target */
     ok = ok && rename(tmp, path) == 0;
-    if (!ok) { unlink(tmp); free(tmp); return false; }
+    if (!ok) { unlink(tmp); free(tmp); free(dir); return false; }
     crash_point("atomic.renamed"); /* the target replaced; its directory entry not yet fsynced */
-    char *dir = strdup(path);
-    if (dir) {
-        char *slash = strrchr(dir, '/');
-        if (slash) *slash = '\0'; else { dir[0] = '.'; dir[1] = '\0'; }
-        int dfd = open(dir, O_RDONLY);
-        if (dfd >= 0) { fsync(dfd); close(dfd); }
-        free(dir);
-    }
-    free(tmp);
+    int dfd = open(dir, O_RDONLY);
+    if (dfd >= 0) { fsync(dfd); close(dfd); }
+    free(tmp); free(dir);
     return true;
 }
