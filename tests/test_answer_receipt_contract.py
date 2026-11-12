@@ -103,7 +103,6 @@ class ReceiptContractTests(unittest.TestCase):
         gates = [l for l in self.trace.splitlines() if l.startswith('ANSWER_GATE ')]
         self.assertEqual([g.split()[1] for g in gates], ['verdict=pass', 'verdict=not_in_span', 'verdict=no_answer'])
         self.assertEqual([g.split()[-2:] for g in gates], [['relations=2', 'unsupported=0'], ['relations=3', 'unsupported=1'], ['relations=0', 'unsupported=0']])
-        self.assertEqual(sum(1 for l in self.trace.splitlines() if l.startswith('ANSWER_INDEX_TEXT ')), 1)
 
     def test_recorded_run_receipts_still_parse_the_same(self):
         """The greedy field rule changes nothing on a recorded receipt without ' ---' inside a field."""

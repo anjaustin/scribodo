@@ -267,7 +267,7 @@ static AnswerPipelineResult contract_result(bool with_second, size_t nparts)
     snprintf(r.top.document_name, sizeof(r.top.document_name), "part07.md");
     r.top.text = strdup(k_unit); r.top_score = 0.98925; snprintf(r.status, sizeof(r.status), "verified");
     r.span = strdup("Quick as lightning they were upon him, and Tars Tarkas would have been gathered to his fathers.");
-    r.top_part = 0; r.nparts = nparts; r.rerank_ms = 1234.56; r.extract_ms = 789.04; r.index_text_units = 50;
+    r.top_part = 0; r.nparts = nparts; r.rerank_ms = 1234.56; r.extract_ms = 789.04;
     for (size_t p = 0; p < nparts; p++) r.parts[p] = strdup(p ? "How far did he leap?" : "Who saved Tars Tarkas?");
     const char *ids[] = { "f395a4d6679b", "a20205a13f36", "c87be75a52ea" };
     const double scores[] = { 0.98925, 0.98063, 0.1204 };
@@ -381,7 +381,7 @@ static void test_receipt_contract(void)
     CHECK(answer_receipt_append_gate(&receipt, "pass", false, "150 feet", 1, NULL, 2, NULL));
     fixture_matches("receipt-pass.txt", receipt);
     CHECK(!chat_receipt_refusal(receipt));
-    answer_trace_pipeline(t, &pass, 4321, 3, true);
+    answer_trace_pipeline(t, &pass, 4321, 3);
     answer_trace_gate(t, "pass", false, true, 2, 5, 704.56, 8, 1, false, 2, false);
     free(receipt); answer_pipeline_result_free(&pass);
     /* A withheld answer: one source, one part, the claim outside the span, a misquotation named. The claim's
@@ -391,7 +391,7 @@ static void test_receipt_contract(void)
     CHECK(answer_receipt_append_gate(&receipt, "not_in_span", true, "sons of\nTardos Mors --- or so", 2, "\"the daughter of Mors Kajak\"", 3, "her father is Tardos Mors"));
     fixture_matches("receipt-withheld.txt", receipt);
     CHECK(chat_receipt_refusal(receipt) && strstr(receipt, "answer=sons of Tardos Mors --- or so ---\n"));
-    answer_trace_pipeline(t, &held, 4000, 1, false);
+    answer_trace_pipeline(t, &held, 4000, 1);
     answer_trace_gate(t, "not_in_span", true, true, 1, 4, 650.0, 27, 2, true, 3, true);
     free(receipt); answer_pipeline_result_free(&held);
     /* No candidates and an abstention: the none header, the gate's no_answer verdict, which is a refusal. */
@@ -402,7 +402,7 @@ static void test_receipt_contract(void)
     CHECK(answer_receipt_append_gate(&receipt, "no_answer", false, "The supplied passages do not give it", 0, NULL, 0, NULL));
     fixture_matches("receipt-abstained.txt", receipt);
     CHECK(chat_receipt_refusal(receipt));
-    answer_trace_pipeline(t, &none, 3900, 0, false);
+    answer_trace_pipeline(t, &none, 3900, 0);
     answer_trace_gate(t, "no_answer", false, true, 0, 2, 12.3, 36, 0, false, 0, false);
     free(receipt);
     CHECK(!fclose(t));

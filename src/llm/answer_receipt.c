@@ -109,8 +109,7 @@ bool answer_receipt_append_gate(char **memory_sources, const char *verdict, bool
     return true;
 }
 
-void answer_trace_pipeline(FILE *out, const AnswerPipelineResult *r, size_t request_bytes, size_t history_first,
-                           bool index_text_enabled)
+void answer_trace_pipeline(FILE *out, const AnswerPipelineResult *r, size_t request_bytes, size_t history_first)
 {
     if (!out || !r) return;
     fprintf(out, "ANSWER_PIPELINE candidates=%zu hydrated=%zu scored=%zu failures=%zu top=%s score=%.4f status=%s second=%s second_score=%.4f second_status=%s parts=%zu top_part=%zu second_part=%zu rerank_ms=%.1f extract_ms=%.1f request_bytes=%zu history_first=%zu\n",
@@ -125,7 +124,6 @@ void answer_trace_pipeline(FILE *out, const AnswerPipelineResult *r, size_t requ
             if (r->scored_part[i] == p) fprintf(out, " %s:%.4f", r->scored_ids[i], r->scored_scores[i]);
         fprintf(out, "\n");
     }
-    if (index_text_enabled) fprintf(out, "ANSWER_INDEX_TEXT enabled=1 units=%zu hydrated=%zu\n", r->index_text_units, r->hydrated);
 }
 
 void answer_trace_gate(FILE *out, const char *verdict, bool withheld, bool parsed, size_t spans, size_t author_turns,

@@ -69,7 +69,6 @@ STORE_SRCS += src/app/memory_documents.c src/app/memory_document_store.c
 STORE_SRCS += src/app/memory_gc.c src/app/memory_brief_store.c
 STORE_SRCS += src/app/recall.c src/app/recall_job.c
 STORE_SRCS += src/app/import_job.c
-STORE_SRCS += src/app/memory_index_text.c
 LLM_SRCS  := src/core/json.c src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/llm/chat_history.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/app/recent.c src/app/renames.c src/llm/observer.c src/llm/observer_text.c src/llm/observer_fake.c src/llm/observer_model.c src/llm/observer_job.c src/llm/semantic.c src/llm/remote.c src/llm/names.c src/llm/memfit.c $(STORE_SRCS)
 LLM_SRCS += src/llm/context_planner.c src/llm/memory_tokens.c
 LLM_SRCS += src/llm/memory_budget.c src/llm/generative_gate.c src/llm/memory_brief.c
@@ -136,7 +135,7 @@ $(BUILD)/test_remote: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_state_fixture
 $(BUILD)/test_answer_pipeline: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_state_fixture.o $(BUILD)/tests/test_answer_pipeline.o
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
 
-$(BUILD)/test_memory_index_text: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_state_fixture.o $(BUILD)/tests/test_memory_index_text.o
+$(BUILD)/test_memory_index_text: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_state_fixture.o $(BUILD)/tests/memory_index_text.o $(BUILD)/tests/test_memory_index_text.o
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
 
 # Diagnostic: the anchor gate over recorded claims (tools/answer_gate_replay.py).

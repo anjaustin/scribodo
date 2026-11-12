@@ -1,5 +1,8 @@
-/* Experiment (journal/answer-cycle3_coref.md): an index layer beside the
- * original unit text.
+/* Retired experiment (journal/answer-cycle3_coref.md; retired 2026-11-12,
+ * journal/answer-cycle4_retire_index.md): an index layer beside the original
+ * unit text. Harness code now: the product neither stores nor reads an index
+ * text, and migration 016 removed the column. Kept with its test so the
+ * experiment stays reproducible from the recorded runs and the coref arm.
  *
  * With SCRIBODO_INDEX_TEXT_FILE naming a JSON object of
  * {sha256(original unit text) in lowercase hex: resolved text}, every unit

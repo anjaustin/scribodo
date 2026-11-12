@@ -60,7 +60,6 @@
  *
  *   ANSWER_PIPELINE candidates=<n> hydrated=<n> scored=<n> failures=<n> top=<id|-> score=<0.0000> status=<status> second=<id|-> second_score=<0.0000> second_status=<status|-> parts=<n> top_part=<n> second_part=<n|0> rerank_ms=<0.0> extract_ms=<0.0> request_bytes=<n> history_first=<n>
  *   ANSWER_PIPELINE_SCORES part=<n> <id12>:<0.0000> ...      (one line per question part; ids are 12-character prefixes)
- *   ANSWER_INDEX_TEXT enabled=1 units=<n> hydrated=<n>       (only with SCRIBODO_INDEX_TEXT_FILE set)
  *   ANSWER_GATE verdict=<verdict> withheld=<0|1> parsed=<0|1> spans=<n> author_turns=<n> ms=<0.0> answer_bytes=<n> quotations=<n> misquoted=<0|1> relations=<n> unsupported=<0|1>
  *
  * MEMORY_PREPARE (the planner's timing line) is written by chat.c and is not
@@ -90,8 +89,7 @@ char *answer_receipt(const AnswerPipelineResult *r);
 bool answer_receipt_append_gate(char **memory_sources, const char *verdict, bool withheld, const char *answer,
                                 size_t quotations, const char *misquoted, size_t relations, const char *unsupported);
 /* The trace lines, written only by the callers that checked the trace flag. */
-void answer_trace_pipeline(FILE *out, const AnswerPipelineResult *r, size_t request_bytes, size_t history_first,
-                           bool index_text_enabled);
+void answer_trace_pipeline(FILE *out, const AnswerPipelineResult *r, size_t request_bytes, size_t history_first);
 void answer_trace_gate(FILE *out, const char *verdict, bool withheld, bool parsed, size_t spans, size_t author_turns,
                        double ms, size_t answer_bytes, size_t quotations, bool misquoted, size_t relations, bool unsupported);
 

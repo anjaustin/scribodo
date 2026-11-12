@@ -1,7 +1,6 @@
 ANSWER_PIPELINE candidates=52 hydrated=50 scored=6 failures=1 top=f395a4d6679b2e5105afa2c52d388c820f756f40d13b71ef7256381837007e52 score=0.9892 status=verified second=a20205a13f36e66794d13975faa7722e5f77f242866dfb6d5e035243c478aae8 second_score=0.9806 second_status=verified parts=2 top_part=1 second_part=2 rerank_ms=1234.6 extract_ms=789.0 request_bytes=4321 history_first=3
 ANSWER_PIPELINE_SCORES part=1 f395a4d6679b:0.9892 a20205a13f36:0.9806 c87be75a52ea:0.1204
 ANSWER_PIPELINE_SCORES part=2 f395a4d6679b:0.9792 a20205a13f36:0.9706 c87be75a52ea:0.1104
-ANSWER_INDEX_TEXT enabled=1 units=50 hydrated=50
 ANSWER_GATE verdict=pass withheld=0 parsed=1 spans=2 author_turns=5 ms=704.6 answer_bytes=8 quotations=1 misquoted=0 relations=2 unsupported=0
 ANSWER_PIPELINE candidates=52 hydrated=50 scored=3 failures=1 top=f395a4d6679b2e5105afa2c52d388c820f756f40d13b71ef7256381837007e52 score=0.9892 status=verified second=- second_score=0.0000 second_status=- parts=1 top_part=1 second_part=0 rerank_ms=1234.6 extract_ms=789.0 request_bytes=4000 history_first=1
 ANSWER_PIPELINE_SCORES part=1 f395a4d6679b:0.9892 a20205a13f36:0.9806 c87be75a52ea:0.1204

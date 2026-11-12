@@ -15,7 +15,7 @@ features are absent. Keep the original numbering for future follow-up.
 | GAP-001 | Broad AI usefulness and accuracy evaluation | **P0** (2026-11-11) | Started: a second, held-out manuscript (A Princess of Mars) with questions written before any run; see the 2026-11-11 section |
 | GAP-002 | Turnkey installation and release distribution | **P0** (2026-11-11) | Not started |
 | GAP-003 | Whole-manuscript scale and sustained-use evidence | **P0** | Implementation underway; bounded-history foundation first; memory contract in MEMORY-015 |
-| GAP-004 | Deterministic crash/recovery interruption coverage | **P0** (2026-11-11) | Done 2026-11-12 for the six transitions named: `GAP-004-interruption-matrix.md`, 126 rows (122 process deaths), 0 failures; three defects found and repaired, one finding decided and built (stray save temps are kept and offered on load); limits stated (process death is not power loss) |
+| GAP-004 | Deterministic crash/recovery interruption coverage | **P0** (2026-11-11) | Done 2026-11-12 for the six transitions named: `GAP-004-interruption-matrix.md`, 129 rows (125 process deaths), 0 failures; three defects found and repaired, one finding decided and built (stray save temps are kept and offered on load); limits stated (process death is not power loss) |
 | GAP-005 | Real macOS input, accessibility and author usability | **P0** (2026-11-11) | Not started |
 
 The user selected **#3 as P0** on 2026-11-06 and made the remaining four P0 on
@@ -46,7 +46,7 @@ measurement that closes it. Items run one at a time unless marked otherwise.
    commits, marker replacement, archival cleanup and migration receipts;
    disk-full and read-only cases. Closes with the transition/failure matrix. *Started
    2026-11-11* (`journal/gap004-cycle1_migration.md`): `core/crash_point.h`
-   and `make crashtest`; all six rows and the app's small-file writer hold (126 matrix rows, 122 deaths); the import and fork rows
+   and `make crashtest`; all six rows and the app's small-file writer hold (129 matrix rows, 125 deaths); the import and fork rows
    each found and repaired a move that a plain open never finished, the disk
    row a misleading refusal. *Done 2026-11-12* within the limits the matrix states.
    The matrix is `GAP-004-interruption-matrix.md`.

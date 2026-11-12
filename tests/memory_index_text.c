@@ -1,6 +1,5 @@
 /* See memory_index_text.h. */
-#include "app/memory_index_text.h"
-#include "core/experiments.h"
+#include "memory_index_text.h"
 
 #include <CommonCrypto/CommonDigest.h>
 #include <pthread.h>
@@ -11,6 +10,13 @@
 
 #include "cJSON.h"
 #include "core/utf8.h"
+
+/* Harness code (retired experiment, journal/answer-cycle4_retire_index.md): the flag is read here, not in the product. */
+static const char *index_text_file_setting(void)
+{
+    const char *v = getenv("SCRIBODO_INDEX_TEXT_FILE");
+    return v && v[0] ? v : "";
+}
 
 #define INDEX_TEXT_FILE_BYTES (64u * 1024u * 1024u)
 
@@ -176,7 +182,7 @@ bool memory_index_text_load(const char *path, char *err, size_t errlen)
 
 static void init_once(void)
 {
-    const char *path = experiments()->index_text_file;
+    const char *path = index_text_file_setting();
     if (!path[0]) return;
     pthread_mutex_lock(&g_mu);
     bool loaded = g_table.enabled; /* a test loaded a table before the first use */

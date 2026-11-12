@@ -45,7 +45,6 @@ typedef struct {
     char *second_raw_span, *second_span;
     char second_status[48];
     double rerank_ms, extract_ms;
-    size_t index_text_units; /* diagnostic: hydrated units reranked on their index text (app/memory_index_text.h) */
     /* Cycle 3: the request's question parts, each with its context sentence; one slot per part, assigned as a
      * maximum-score matching (journal/answer-cycle3_relation.md, arm 4). top_part/second_part index parts[]. */
     size_t nparts;

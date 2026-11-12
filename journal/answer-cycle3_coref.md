@@ -319,7 +319,9 @@ MariaDB full-text, no stand-in anywhere.
 4. The index layer stays behind `SCRIBODO_INDEX_TEXT_FILE`, default off. The
    sidecar is an experiment input: the app cannot produce it, and whether an
    ingestion-time resolver (today Python and torch) becomes an app
-   dependency is a product decision, not a measurement.
+   dependency is a product decision, not a measurement. **Decided
+   2026-11-12: retired** into the harness; migration 016 removes the column
+   (`journal/answer-cycle4_retire_index.md`).
 
 ## The gate's number forms, and the treatment rerun (`pipe-coref2`)
 

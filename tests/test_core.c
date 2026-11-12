@@ -140,17 +140,16 @@ static void test_experiments_read_once_and_reload(void)
     experiments_reload();
     CHECK(!experiments()->answer_parts && !experiments()->answer_block_in_message && !experiments()->memory_trace); /* only the exact values count */
     setenv("SCRIBODO_MEMORY_EXPERIMENT", "1", 1); setenv("SCRIBODO_MEMORY_BRIEFS", "1", 1); setenv("SCRIBODO_ANSWER_PIPELINE", "verified", 1);
-    setenv("SCRIBODO_MEMORY_PRESENTATION", "episode", 1); setenv("SCRIBODO_INDEX_TEXT_FILE", "/tmp/index.json", 1);
+    setenv("SCRIBODO_MEMORY_PRESENTATION", "episode", 1);
     experiments_reload();
     e = experiments();
     CHECK(e->memory_experiment && e->memory_briefs && e->answer_pipeline && e->memory_presentation_episode && !e->memory_presentation_compact);
-    CHECK(!strcmp(e->index_text_file, "/tmp/index.json"));
-    setenv("SCRIBODO_ANSWER_PIPELINE", "1", 1); setenv("SCRIBODO_MEMORY_PRESENTATION", "compact", 1); setenv("SCRIBODO_INDEX_TEXT_FILE", "", 1);
+    setenv("SCRIBODO_ANSWER_PIPELINE", "1", 1); setenv("SCRIBODO_MEMORY_PRESENTATION", "compact", 1);
     experiments_reload();
     e = experiments();
-    CHECK(!e->answer_pipeline && e->memory_presentation_compact && !e->memory_presentation_episode && !e->index_text_file[0]);
+    CHECK(!e->answer_pipeline && e->memory_presentation_compact && !e->memory_presentation_episode);
     unsetenv("SCRIBODO_MEMORY_EXPERIMENT"); unsetenv("SCRIBODO_MEMORY_BRIEFS"); unsetenv("SCRIBODO_ANSWER_PIPELINE");
-    unsetenv("SCRIBODO_MEMORY_PRESENTATION"); unsetenv("SCRIBODO_INDEX_TEXT_FILE");
+    unsetenv("SCRIBODO_MEMORY_PRESENTATION");
     unsetenv("SCRIBODO_ANSWER_PARTS"); unsetenv("SCRIBODO_ANSWER_BLOCK"); unsetenv("SCRIBODO_MEMORY_TRACE");
     unsetenv("SCRIBODO_MEMORY_EXCERPTS"); unsetenv("SCRIBODO_MEMORY_SMALL_UNITS"); unsetenv("SCRIBODO_SEM_DEBUG");
     experiments_reload();

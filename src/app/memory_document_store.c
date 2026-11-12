@@ -1,7 +1,6 @@
 #define _DARWIN_C_SOURCE
 #include "memory_documents.h"
 #include "core/experiments.h"
-#include "memory_index_text.h"
 #include "core/text_cut.h"
 #include <limits.h>
 #include <stdio.h>
@@ -279,15 +278,15 @@ bool memory_document_ingest_step(Db *db, const MemoryScope *s, const MemoryDocum
         }
         if (ok && n) {
             ok = db_run(db, "INSERT INTO memory_units(id,scope_id,project_id,conversation_id,history_epoch,policy_epoch,"
-                           "generation,byte_start,source_hash,text_hash,text,tokens,tokenizer,role,source_kind,document_id,revision_id,index_text)"
+                           "generation,byte_start,source_hash,text_hash,text,tokens,tokenizer,role,source_kind,document_id,revision_id)"
                            " VALUES(SHA2(CONCAT_WS(':','document',?,?,?,?,?,?,?,?,SHA2(?,256)),256),"
-                           "?,?,?,?,?,?,?,?,SHA2(?,256),?,?,?,'user','document',?,?,?)",
+                           "?,?,?,?,?,?,?,?,SHA2(?,256),?,?,?,'user','document',?,?)",
                         (DbArg[]){ DB_S(s->id), DB_I(s->history_epoch), DB_I(s->policy_epoch), DB_I(s->generation),
                                    DB_S(ref->document_id), DB_S(ref->revision_id), DB_S(ref->source_hash),
                                    DB_I(off), DB_S(text), DB_S(s->id), DB_S(s->project_id), DB_S(s->conversation_id),
                                    DB_I(s->history_epoch), DB_I(s->policy_epoch), DB_I(s->generation), DB_I(off),
                                    DB_S(ref->source_hash), DB_S(text), DB_S(text), DB_I(tokens), DB_S(tokenizer),
-                                   DB_S(ref->document_id), DB_S(ref->revision_id), DB_S(memory_index_text_for(text)) }, 24, NULL);
+                                   DB_S(ref->document_id), DB_S(ref->revision_id) }, 23, NULL);
             ok = ok && db_run(db, "INSERT INTO memory_outbox(scope_id,unit_id,generation)"
                                  " SELECT scope_id,id,generation FROM memory_units"
                                  " WHERE scope_id=? AND generation=? AND revision_id=? AND byte_start=?",
@@ -322,7 +321,7 @@ bool memory_candidate_hydrate_with_documents(Db *db, const MemoryScope *s, const
     for (size_t i = 0; set && i < set->count; i++) {
         const MemoryDocumentRef *ref = &set->refs[i];
         DbRows rows;
-        bool ok = db_query(db, "SELECT u.text,u.tokens,u.byte_start,u.source_hash,d.name,u.index_text FROM memory_units u"
+        bool ok = db_query(db, "SELECT u.text,u.tokens,u.byte_start,u.source_hash,d.name FROM memory_units u"
                                " JOIN memory_scopes s ON s.id=u.scope_id"
                                " JOIN documents d ON d.id=u.document_id AND d.project_id=u.project_id"
                                " JOIN revisions r ON r.document_id=d.id AND r.id=u.revision_id"
@@ -347,11 +346,6 @@ bool memory_candidate_hydrate_with_documents(Db *db, const MemoryScope *s, const
             if (ok) {
                 out->text = strdup(text);
                 ok = out->text != NULL;
-                const char *index_text = NULL;
-                if (ok && db_cell_nullable(&rows, 0, 5, &index_text) && index_text) {
-                    out->index_text = strdup(index_text);
-                    ok = out->index_text != NULL;
-                }
                 out->kind = MEMORY_SOURCE_DOCUMENT;
                 out->role = CHAT_USER;
                 out->tokens = tokens;
@@ -393,9 +387,7 @@ bool memory_lexical_candidates_with_documents_before(Db *db, const MemoryScope *
     for (size_t i = 0; set && i < set->count; i++) {
         const MemoryDocumentRef *ref = &set->refs[i];
         DbRows rows;
-        /* The matched column is the index text under the experiment (memory_index_text.h), else the text;
-         * the source-binding checks stay on the original text. */
-        const char *column = memory_index_text_match_column();
+        const char *column = "u.text"; /* the retired index-text experiment matched another column here (journal/answer-cycle4_retire_index.md) */
         char sql[1600];
         snprintf(sql, sizeof(sql), "SELECT u.id,u.text_hash,MATCH(%s) AGAINST (? IN NATURAL LANGUAGE MODE)"
                                " / POW(CHAR_LENGTH(%s)," MEMORY_LEXICAL_LENGTH_NORM ") AS score"

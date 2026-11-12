@@ -1,7 +1,6 @@
 #define _DARWIN_C_SOURCE
 #include "memory_store.h"
 #include "memory_documents.h"
-#include "memory_index_text.h"
 #include "core/text_cut.h"
 #include <limits.h>
 #include <stdio.h>
@@ -79,11 +78,9 @@ static bool scope_row(const DbRows *r, MemoryScope *s)
 void memory_unit_free(MemoryUnit *unit)
 {
     if (!unit) return;
-    char *text = unit->text, *index_text = unit->index_text;
+    char *text = unit->text;
     unit->text = NULL;
-    unit->index_text = NULL;
     free(text);
-    free(index_text);
     memset(unit, 0, sizeof(*unit));
 }
 
@@ -320,13 +317,13 @@ bool memory_ingest_step(Db *db, const char *id, const char *owner, MemoryTokenCo
     }
     if (ok && eligible && n) {
         ok = db_run(db, "INSERT INTO memory_units(id,scope_id,project_id,conversation_id,message_id,sequence,"
-                        " history_epoch,policy_epoch,generation,byte_start,source_hash,text_hash,text,tokens,tokenizer,role,index_text)"
+                        " history_epoch,policy_epoch,generation,byte_start,source_hash,text_hash,text,tokens,tokenizer,role)"
                         " VALUES (SHA2(CONCAT_WS(':',?,?,?,?,?,SHA2(?,256)),256),"
-                        " ?,?,?,?,?,?,?,?,?,?,SHA2(?,256),?,?,?,?,?)",
+                        " ?,?,?,?,?,?,?,?,?,?,SHA2(?,256),?,?,?,?)",
                     (DbArg[]){ DB_S(id), DB_I(s.generation), DB_I(mid), DB_I(off), DB_S(hash), DB_S(text), DB_S(id),
                                DB_S(s.project_id), DB_S(s.conversation_id), DB_I(mid), DB_I(seq), DB_I(s.history_epoch),
                                DB_I(s.policy_epoch), DB_I(s.generation), DB_I(off), DB_S(hash), DB_S(text), DB_S(text),
-                               DB_I(tokens), DB_S(tokenizer), DB_S(role), DB_S(memory_index_text_for(text)) }, 22, NULL);
+                               DB_I(tokens), DB_S(tokenizer), DB_S(role) }, 21, NULL);
         ok = ok && db_run(db, "INSERT INTO memory_outbox(scope_id,unit_id,generation)"
                               " SELECT scope_id,id,generation FROM memory_units"
                               " WHERE scope_id=? AND generation=? AND message_id=? AND byte_start=?",
@@ -362,7 +359,7 @@ bool memory_candidate_hydrate(Db *db, const MemoryScope *s, const MemoryCandidat
     DbRows r;
     /* Eligibility/hash validation is in the same statement as bounded hydration. */
     bool ok = db_query(db, "SELECT u.id,u.text_hash,u.source_hash,u.message_id,u.sequence,u.byte_start,"
-                          " OCTET_LENGTH(u.text),u.tokens,u.role,u.text,u.index_text FROM memory_units u"
+                          " OCTET_LENGTH(u.text),u.tokens,u.role,u.text FROM memory_units u"
                           " JOIN memory_scopes s ON s.id=u.scope_id"
                           " JOIN messages m ON m.id=u.message_id AND m.conversation_id=u.conversation_id"
                           " WHERE u.id=? AND u.text_hash=? AND u.scope_id=? AND s.project_id=?"
@@ -379,7 +376,7 @@ bool memory_candidate_hydrate(Db *db, const MemoryScope *s, const MemoryCandidat
     if (r.nrows) {
         uint64_t bytes, tokens;
         const char *role, *text;
-        ok = r.nrows == 1 && r.ncols == 11 && copy_cell(&r, 0, 0, out->id, sizeof(out->id)) &&
+        ok = r.nrows == 1 && r.ncols == 10 && copy_cell(&r, 0, 0, out->id, sizeof(out->id)) &&
              copy_cell(&r, 0, 1, out->text_hash, sizeof(out->text_hash)) && valid_hash(out->text_hash) &&
              copy_cell(&r, 0, 2, out->source_hash, sizeof(out->source_hash)) && valid_hash(out->source_hash) &&
              db_cell_i64(&r, 0, 3, &out->message_id) && out->message_id > 0 &&
@@ -395,11 +392,6 @@ bool memory_candidate_hydrate(Db *db, const MemoryScope *s, const MemoryCandidat
             out->tokens = tokens;
             out->text = strdup(text);
             ok = out->text && strlen(out->text) == bytes;
-            const char *index_text = NULL;
-            if (ok && db_cell_nullable(&r, 0, 10, &index_text) && index_text) {
-                out->index_text = strdup(index_text);
-                ok = out->index_text != NULL;
-            }
         }
         *found = ok;
     }
@@ -421,8 +413,7 @@ bool memory_lexical_candidates_before(Db *db, const MemoryScope *s, const char *
     if (out && limit > 0 && limit <= MEMORY_CANDIDATES) memset(out, 0, limit * sizeof(*out));
     if (!db || !n || !out || before < 0 || !valid_scope(s) || !valid_text(q, 2000) || !limit || limit > MEMORY_CANDIDATES) return false;
     DbRows r;
-    /* The matched column is the index text under the experiment (memory_index_text.h), else the text. */
-    const char *column = memory_index_text_match_column();
+    const char *column = "u.text"; /* the retired index-text experiment matched another column here (journal/answer-cycle4_retire_index.md) */
     char sql[1200];
     snprintf(sql, sizeof(sql), "SELECT u.id,u.text_hash,MATCH(%s) AGAINST (? IN NATURAL LANGUAGE MODE)"
                           " / POW(CHAR_LENGTH(%s)," MEMORY_LEXICAL_LENGTH_NORM ") AS score"

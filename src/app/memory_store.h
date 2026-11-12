@@ -45,8 +45,6 @@ typedef struct {
     size_t text_bytes, tokens;
     ChatRole role;
     char *text; /* owned, canonical SQL text, <= MEMORY_UNIT_BYTES */
-    char *index_text; /* owned or NULL: the experiment's resolved text (app/memory_index_text.h), searched, embedded
-                         and reranked in place of text; never shown, never verified against the source */
 } MemoryUnit;
 
 typedef struct {

@@ -864,17 +864,29 @@ static const char *const k_migration_014[] = {
 
 /* journal/answer-cycle3_coref.md: an index text beside the original unit text,
  * searched, embedded and reranked in place of it under SCRIBODO_INDEX_TEXT_FILE
- * (src/app/memory_index_text.h); NULL otherwise. Never shown; rebuilt with the index. */
+ * (then src/app/memory_index_text.h); NULL otherwise. Never shown; rebuilt with
+ * the index. Retired by migration 016. */
 static const char *const k_migration_015[] = {
     "ALTER TABLE memory_units ADD COLUMN IF NOT EXISTS index_text TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL,"
     " ADD FULLTEXT KEY IF NOT EXISTS unit_index_text (index_text)",
     NULL,
 };
 
+/* journal/answer-cycle4_retire_index.md (the author's decision, 2026-11-12): the
+ * index-text experiment is retired into the harness (tests/memory_index_text.c).
+ * The column never held author text (NULL, or a derived copy under the
+ * experiment), so removing it deletes nothing of the record. Two statements, each
+ * re-runnable, so a death between them recovers (GAP-004 matrix). */
+static const char *const k_migration_016[] = {
+    "ALTER TABLE memory_units DROP INDEX IF EXISTS unit_index_text",
+    "ALTER TABLE memory_units DROP COLUMN IF EXISTS index_text",
+    NULL,
+};
+
 static const char *const *const k_migrations[] = { k_migration_001, k_migration_002, k_migration_003, k_migration_004,
                                                    k_migration_005, k_migration_006, k_migration_007, k_migration_008,
                                                    k_migration_009, k_migration_010, k_migration_011, k_migration_012,
-                                                   k_migration_013, k_migration_014, k_migration_015 };
+                                                   k_migration_013, k_migration_014, k_migration_015, k_migration_016 };
 
 int db_schema_version(Db *db)
 {

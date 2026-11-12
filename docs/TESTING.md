@@ -254,8 +254,9 @@ modify a database while any Scribodo process is running.
   `make test`) pins the chunking, the name vocabulary, the representative
   choice, the nesting, the possessive forms, the two densities and the edit
   application without a model. See `journal/answer-cycle3_coref.md`.
-  `test_memory_index_text` (in `make test`) pins the index layer's table
-  (`src/app/memory_index_text.h`): off without `SCRIBODO_INDEX_TEXT_FILE`,
+  `test_memory_index_text` (in `make test`) pins the retired index layer's table,
+  harness code since 2026-11-12 (`tests/memory_index_text.h`,
+  journal/answer-cycle4_retire_index.md): off without `SCRIBODO_INDEX_TEXT_FILE`,
   loaded from a JSON object of {sha256 of the original unit text: resolved
   text}, resolution by hash with the text itself as the fallback, and refusal
   of malformed files (not an object, bad key, bad or oversized text,

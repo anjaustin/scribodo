@@ -59,11 +59,14 @@ five such axes for at least 24 reachable combinations; live runs exercise two.
   `SCRIBODO_MEMORY_BRIEFS`, `SCRIBODO_MEMORY_PRESENTATION`) and
   `SCRIBODO_INDEX_TEXT_FILE` joined the table: every experiment flag the
   product reads is one of its eleven fields. Both steps measured byte-identical
-  on a live run (`journal/answer-cycle4_flags.md`). Remaining: migration 015's
-  column, to be decided (permanent with an in-app resolver, or dropped) when
-  the index-layer question in `journal/answer-cycle3_coref.md` is decided.
-  The flag-lifecycle part of this entry is otherwise done; the entry stays
-  open for the column.
+  on a live run (`journal/answer-cycle4_flags.md`). Migration 015's column:
+  the author decided on 2026-11-12 to retire the index layer. The module moved
+  into the harness (`tests/memory_index_text.c`, with its test), the product
+  stores and reads no index text, `SCRIBODO_INDEX_TEXT_FILE` left the table
+  (ten fields), and migration 016 drops the column and its key in two
+  re-runnable statements (`journal/answer-cycle4_retire_index.md`). The column
+  never held author text. The experiment stays reproducible from the recorded
+  runs and `tools/answer_coref_arm.py`. **Entry closed.**
 
 ## Open — answer receipts and trace lines are an unversioned contract (P2)
 
@@ -247,7 +250,7 @@ every filesystem operation, nor every filesystem/hardware durability behavior.
   compiled away in the product) and `make crashtest` kills a process after
   every migration statement and receipt, at both moments of a document save
   on both sides of a store commit, at five moments of a legacy import, at three
-  of a fork and at both moments of the app's small-file writer (122 deaths, each recovered; the import and fork rows each
+  of a fork and at both moments of the app's small-file writer (125 deaths, each recovered; the import and fork rows each
   found a move that was never finished after a death past its marker, both
   repaired by `store_finish_import`), and a full or read-only volume is
   refused with its cause (a misleading refusal repaired). The matrix of transitions, points, invariants and open rows

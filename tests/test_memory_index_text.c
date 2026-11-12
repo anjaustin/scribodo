@@ -7,7 +7,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "app/memory_index_text.h"
+#include "memory_index_text.h"
 #include "core/experiments.h"
 #include "test_util.h"
 

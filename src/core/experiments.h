@@ -26,7 +26,6 @@ typedef struct {
     bool answer_pipeline;         /* SCRIBODO_ANSWER_PIPELINE=verified: the verified-answer pipeline (journal/answer-cycle2_pipeline_live.md, pass 6) */
     bool memory_presentation_compact; /* SCRIBODO_MEMORY_PRESENTATION=compact: archived presentation (MEMORY-011: failed, kept for the harness) */
     bool memory_presentation_episode; /* SCRIBODO_MEMORY_PRESENTATION=episode: archived presentation (MEMORY-011: failed, kept for the harness) */
-    char index_text_file[1024];   /* SCRIBODO_INDEX_TEXT_FILE: resolved index text beside the original unit text (journal/answer-cycle3_coref.md); "" = off */
 } Experiments;
 
 const Experiments *experiments(void);

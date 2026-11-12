@@ -2,7 +2,6 @@
 #include "semantic.h"
 #include "core/experiments.h"
 #include "memory_vectors.h"
-#include "app/memory_index_text.h"
 
 #include "core/utf8.h"
 
@@ -1167,11 +1166,6 @@ bool memory_vectors_unit_valid(const MemoryIndexLease *lease, char *why, size_t 
         return mv_fail(why, n, "Invalid, oversized, or noncanonical memory unit");
     mv_sha(lease->unit.text, bytes, hash);
     if (strcmp(hash, lease->unit.text_hash)) return mv_fail(why, n, "Memory text hash mismatch");
-    /* The experiment's index text (app/memory_index_text.h) is embedded in place of the text; it is bounded and
-     * strict UTF-8 or the unit fails, never silently falls back. */
-    size_t index_bytes;
-    if (lease->unit.index_text && !memory_index_text_valid(lease->unit.index_text, &index_bytes))
-        return mv_fail(why, n, "Invalid or oversized memory index text");
     return true;
 }
 
@@ -1186,7 +1180,7 @@ bool memory_vectors_upsert(SemanticClient *c, const MemoryIndexLease *lease, cha
     if (!exists) return mv_fail(why, n, "Memory collection lost; rebuild SQL generation before creating");
     memory_vectors_fingerprint(c, fp);
     float v[SEM_DIM];
-    const char *text = lease->unit.index_text ? lease->unit.index_text : lease->unit.text;
+    const char *text = lease->unit.text;
     char err[256] = "";
     /* Already checked <=2000 bytes and strict UTF-8: legacy clipping is a no-op. */
     if (!semantic_embed(c, &text, 1, false, v, err, sizeof(err))) return mv_fail(why, n, err);

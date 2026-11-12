@@ -24,7 +24,6 @@
 #include "llm/answer_receipt.h"
 #include "app/store.h"
 #include "app/memory_documents.h"
-#include "app/memory_index_text.h"
 #include "llm/generative_gate.h"
 #include "llm/memory_budget.h"
 #include "llm/memory_brief.h"
@@ -1310,7 +1309,7 @@ static void memory_pipeline(ChatSession *s, ChatBuild *b, MemoryStage *m)
              pipeline.candidates, pipeline.scored, pipeline.top_score, pipeline.status, pipeline.second_score,
              pipeline.has_second ? pipeline.second_status : "-");
     if (experiments()->memory_trace)
-        answer_trace_pipeline(stderr, &pipeline, b->req ? strlen(b->req) : 0, b->first_history, memory_index_text_enabled());
+        answer_trace_pipeline(stderr, &pipeline, b->req ? strlen(b->req) : 0, b->first_history);
     answer_pipeline_result_free(&pipeline);
     m->pipeline_done = true;
     m->available = false;

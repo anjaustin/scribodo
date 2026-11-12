@@ -38,7 +38,7 @@
 
 bool admin_name(const char *sql_fmt, const char *name);
 
-#define LATEST_SCHEMA 15
+#define LATEST_SCHEMA 16
 
 static const char *const k_points[] = { "migration.statement", "migration.receipt" };
 
@@ -172,8 +172,8 @@ static void run_point(const char *point)
         CHECK(db != NULL);
         if (!db) { fprintf(stderr, "    %s\n", err); admin_name("DROP DATABASE %s", name); break; }
         int at_death = db_schema_version(db);
-        /* A death after a statement leaves the migration unreceipted (schema below 15); a death after receipt k
-         * leaves exactly k receipts, the fifteenth included. */
+        /* A death after a statement leaves the migration unreceipted (schema below 16); a death after receipt k
+         * leaves exactly k receipts, the sixteenth included. */
         if (!strcmp(point, "migration.receipt")) CHECK(at_death == k);
         else CHECK(at_death >= 0 && at_death < LATEST_SCHEMA);
         bool recovered = db_migrate(db, err, sizeof(err));
@@ -181,8 +181,8 @@ static void run_point(const char *point)
         CHECK(recovered && db_schema_version(db) == LATEST_SCHEMA);
         DbRows rows;
         bool receipts = db_query(db, "SELECT COUNT(*), COUNT(DISTINCT version), MIN(version), MAX(version) FROM schema_migrations", NULL, 0, &rows) &&
-                        rows.nrows == 1 && !strcmp(db_cell(&rows, 0, 0), "15") && !strcmp(db_cell(&rows, 0, 1), "15") &&
-                        !strcmp(db_cell(&rows, 0, 2), "1") && !strcmp(db_cell(&rows, 0, 3), "15");
+                        rows.nrows == 1 && !strcmp(db_cell(&rows, 0, 0), "16") && !strcmp(db_cell(&rows, 0, 1), "16") &&
+                        !strcmp(db_cell(&rows, 0, 2), "1") && !strcmp(db_cell(&rows, 0, 3), "16");
         if (rows.nrows) db_rows_free(&rows);
         CHECK(receipts);
         char *fp = schema_fingerprint(db, name);
@@ -195,7 +195,7 @@ static void run_point(const char *point)
             fprintf(stderr, "    schema differs at: %.120s\n    reference:         %.120s\n", a, b);
         }
         CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == LATEST_SCHEMA); /* idempotent after recovery */
-        fprintf(g_matrix, "%s\t%ld\tSIGKILL\t%d\t%d\t%s\t%s\n", point, k, at_death, db_schema_version(db), receipts ? "15 receipts" : "receipts wrong",
+        fprintf(g_matrix, "%s\t%ld\tSIGKILL\t%d\t%d\t%s\t%s\n", point, k, at_death, db_schema_version(db), receipts ? "16 receipts" : "receipts wrong",
                 same ? "schema identical" : "schema differs");
         g_rows++;
         free(fp);

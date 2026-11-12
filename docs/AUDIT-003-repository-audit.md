@@ -123,7 +123,9 @@ compiled into the product. `SCRIBODO_ANSWER_BLOCK` appears in no document.
 The flags compose. `build_in_worker` carries five independent mode axes
 (pipeline, three-valued presentation, briefs, canon reference, remote or edit)
 for at least 24 reachable combinations, of which the live runs exercise two.
-Schema migration 015 exists only to serve `SCRIBODO_INDEX_TEXT_FILE`; its
+Schema migration 015 exists only to serve `SCRIBODO_INDEX_TEXT_FILE` (retired
+2026-11-12: migration 016 drops the column, the module is harness code,
+journal/answer-cycle4_retire_index.md); its
 column is carried by every unit hydrator (`memory_store.c:398-401`,
 `memory_document_store.c:350-353`), by `semantic.c:1169-1188` and by
 `answer_pipeline.c:977-994`, and `memory_index_text_match_column()` swaps the

@@ -1435,7 +1435,6 @@ bool answer_pipeline_run(Db *db, SemanticClient *vectors, RerankClient *rerank, 
         }
     }
     out->hydrated = nu;
-    for (size_t u = 0; u < nu; u++) out->index_text_units += units[u].index_text != NULL;
     if (!nu) { set_status(out, "no_candidates"); free(w); return true; }
     if (!rerank_client_ready(rerank, cancel, deadline_ms)) {
         for (size_t i = 0; i < nu; i++) memory_unit_free(&units[i]);
@@ -1452,7 +1451,7 @@ bool answer_pipeline_run(Db *db, SemanticClient *vectors, RerankClient *rerank, 
             char err[128];
             /* The reranker reads the index text when the unit has one (the experiment of
              * journal/answer-cycle3_coref.md); extraction and quotation stay on the original text. */
-            const char *scored_text = units[u].index_text ? units[u].index_text : units[u].text;
+            const char *scored_text = units[u].text;
             if (!rerank_score(rerank, out->parts[p], scored_text, cancel, deadline_ms, &score, err, sizeof(err))) {
                 out->score_failures++;
                 continue;
