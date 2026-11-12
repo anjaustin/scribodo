@@ -1,0 +1,127 @@
+{
+ "manuscript": "Wuthering Heights (Project Gutenberg #768), imported by tools/manuscript_import.py into 8 parts",
+ "note": "hand-written document_fact tasks over real prose, written 2026-11-12 before any reach run on this novel and spread over all eight parts; each required text is the part file's own bytes and occurs once in the book; answers are the words a correct reply must carry",
+ "tasks": [
+  {
+   "question": "How old does Heathcliff say Isabella Linton is on the night he and Cathy watch the Lintons through the window at Thrushcross Grange?",
+   "answers": [
+    "eleven"
+   ],
+   "required_document": "part01.md",
+   "required_document_text": "Isabella—I believe she is eleven, a year younger than Cathy—lay screaming at the farther end of the room, shrieking as if witches were running red-hot needles into her."
+  },
+  {
+   "question": "How many days was old Mr. Earnshaw away on the journey from which he brought the child Heathcliff home?",
+   "answers": [
+    "three days"
+   ],
+   "required_document": "part01.md",
+   "required_document_text": "It seemed a long while to us all—the three days of his absence—and often did little Cathy ask when he would be home."
+  },
+  {
+   "question": "How much more careless and uncared for does Nelly say Heathcliff had become since Catherine's stay at the Grange?",
+   "answers": [
+    "ten times"
+   ],
+   "required_document": "part02.md",
+   "required_document_text": "If he were careless, and uncared for, before Catherine’s absence, he had been ten times more so since."
+  },
+  {
+   "question": "Which two servants were the only ones who would stay at Wuthering Heights under Hindley's tyrannical conduct?",
+   "answers": [
+    "Joseph"
+   ],
+   "required_document": "part02.md",
+   "required_document_text": "The servants could not bear his tyrannical and evil conduct long: Joseph and I were the only two that would stay."
+  },
+  {
+   "question": "How does Catherine mockingly tell Ellen to lay the tables when Heathcliff comes to tea at the Grange?",
+   "answers": [
+    "two tables"
+   ],
+   "required_document": "part03.md",
+   "required_document_text": "Set two tables here, Ellen: one for your master and Miss Isabella, being gentry; the other for Heathcliff and myself, being of the lower orders."
+  },
+  {
+   "question": "Whom does Heathcliff blame for the uproar at the Grange when he tells Nelly that she should be told to shun him?",
+   "answers": [
+    "Isabella"
+   ],
+   "required_document": "part03.md",
+   "required_document_text": "Tell Isabella to shun me; this uproar is owing to her; and should she or any one else aggravate my anger at present, I shall get wild."
+  },
+  {
+   "question": "How long after her departure did Isabella send her brother a note announcing her marriage with Heathcliff?",
+   "answers": [
+    "six weeks"
+   ],
+   "required_document": "part04.md",
+   "required_document_text": "I should mention that Isabella sent to her brother, some six weeks from her departure, a short note, announcing her marriage with Heathcliff."
+  },
+  {
+   "question": "How many times does Nelly say she flatly refused Heathcliff before he forced her to an agreement?",
+   "answers": [
+    "fifty"
+   ],
+   "required_document": "part04.md",
+   "required_document_text": "Lockwood, I argued and complained, and flatly refused him fifty times; but in the long run he forced me to an agreement."
+  },
+  {
+   "question": "How long after his sister's death did Hindley Earnshaw's own end follow?",
+   "answers": [
+    "six months"
+   ],
+   "required_document": "part05.md",
+   "required_document_text": "The end of Earnshaw was what might have been expected; it followed fast on his sister’s: there were scarcely six months between them."
+  },
+  {
+   "question": "Until what age of Miss Cathy did time wear on at the Grange in its former pleasant way?",
+   "answers": [
+    "sixteen"
+   ],
+   "required_document": "part05.md",
+   "required_document_text": "Time wore on at the Grange in its former pleasant way till Miss Cathy reached sixteen."
+  },
+  {
+   "question": "At what hour did Nelly set out on foot hoping to creep into Wuthering Heights and up to Linton's room unobserved?",
+   "answers": [
+    "five"
+   ],
+   "required_document": "part06.md",
+   "required_document_text": "I went at five o’clock, and walked; fancying I might manage to creep into the house, and up to Linton’s room, unobserved."
+  },
+  {
+   "question": "At what hour did Heathcliff come and inquire whether Miss Linton had risen?",
+   "answers": [
+    "seven"
+   ],
+   "required_document": "part07.md",
+   "required_document_text": "At seven o’clock he came, and inquired if Miss Linton had risen."
+  },
+  {
+   "question": "How long before Lockwood's arrival did Nelly have her long talk with Zillah on the moor?",
+   "answers": [
+    "six weeks"
+   ],
+   "required_document": "part07.md",
+   "required_document_text": "I had a long talk with Zillah about six weeks ago, a little before you came, one day when we foregathered on the moor; and this is what she told me."
+  },
+  {
+   "question": "For how long had Lockwood agreed to rent Thrushcross Grange, and where was he setting out for next week?",
+   "answers": [
+    "twelve months",
+    "London"
+   ],
+   "required_document": "part08.md",
+   "required_document_text": "I shall set out for London next week; and I must give you warning that I feel no disposition to retain Thrushcross Grange beyond the twelve months I agreed to rent it."
+  },
+  {
+   "question": "Who made up the whole attendance at Heathcliff's burial, according to Nelly?",
+   "answers": [
+    "six men"
+   ],
+   "required_document": "part08.md",
+   "required_document_text": "Earnshaw and I, the sexton, and six men to carry the coffin, comprehended the whole attendance."
+  }
+ ]
+}

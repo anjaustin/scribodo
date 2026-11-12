@@ -151,3 +151,53 @@ misquotation was shown.
 The first three are software, measured and remediated in the relation record;
 the fourth is recorded as a finding.
 
+## Reach (selection only, production planner; 2026-11-12)
+
+The fifteen document-fact tasks
+(`tests/fixtures/memory_reach/wuthering-heights-tasks.json`) were written on
+2026-11-12 from the candidate sentences of the eight imported parts (a name and
+a number in one sentence, 60 to 170 characters), before any reach run on this
+novel, two per part and one for the sixth; each required text is the part
+file's own bytes and occurs once in the book, and the fixture's writer asserted
+both. Then `tools/memory_reach_eval.sh --words 30000 --per-category 3
+--manuscript build/manuscripts/wuthering-heights/parts --manuscript-tasks
+tests/fixtures/memory_reach/wuthering-heights-tasks.json` at `2aede34`, the
+same shape as the first two novels' runs (the 30K fixture chat with the eight
+parts attached, real tokenizer and embedder, 16 lexical and 16 semantic
+candidates, 8 admitted excerpts), on an idle machine after the day's gates. Run
+`build/memory-reach/runs/scribodo_test_reach_84012_dda94ab4a2395173`, 129 s;
+all harness gates passed; the first novel's control at the same tree
+(`build/memory-reach/runs/scribodo_test_reach_91611_a4a3f43632da1dd4`, all
+gates passed) is unchanged from its two earlier runs to the last digit (the
+same four misses), so the planner has not drifted between measurements.
+
+| Novel | Document tasks | reach@candidates | reach@admitted | lexical hit | semantic hit | planning p95 |
+|---|---:|---:|---:|---:|---:|---:|
+| Pride and Prejudice (control at `2aede34`, `..._91611_...`, 131 s) | 14 | 1.00 | 0.71 | 0.93 | 0.93 | 137 ms |
+| A Princess of Mars (2026-11-11, `..._63447_...`) | 15 | 1.00 | 1.00 | 1.00 | 0.80 | 108 ms |
+| Wuthering Heights (`..._84012_...`) | 15 | 0.93 | **0.80** | 0.93 | 0.73 | 157 ms |
+
+Twelve of fifteen held-out passages were admitted. The three that were not:
+
+- **t28**, Isabella's age at the window ("Isabella—I believe she is eleven, a
+  year younger than Cathy—lay screaming at the farther end of the room"): not
+  among the 32 candidates by either channel. The question names Isabella
+  Linton, the window and Thrushcross Grange; the sentence has "Isabella",
+  "eleven" and "Cathy" and nothing else the question says.
+- **t29**, the three days of old Mr. Earnshaw's absence ("It seemed a long
+  while to us all—the three days of his absence—and often did little Cathy
+  ask when he would be home"): a candidate by both channels, not admitted. The
+  subject is "his"; the question names Mr. Earnshaw, Liverpool and Heathcliff.
+- **t39**, the hour Heathcliff came ("At seven o’clock he came, and inquired
+  if Miss Linton had risen"): a candidate by both channels, not admitted. The
+  subject is "he".
+
+All three are the first novel's miss class, an attribute or event whose
+sentence names its subject by a pronoun while the question names the person:
+the class LANDSCAPE row 12 recorded as "not yet measured on a second book".
+It is now measured on a third: the second novel's fifteen tasks had no such
+sentence and reached 1.00; this novel's fifteen have three and reach 0.80. The
+difficulty is the question's distance from the name, not the book, which is
+what the second novel's record said. Nothing in the selection path was changed
+for this novel, and the fixture is not tuned against.
+

@@ -681,8 +681,11 @@ A real manuscript goes through the same harnesses (MEMORY-021):
 Gutenberg text into chapter files and eight attachable parts;
 `tools/memory_reach_eval.sh --manuscript DEST/parts --manuscript-tasks KEYS.json`
 measures selection reach against hand-written answer keys
-(`tests/fixtures/memory_reach/pride-and-prejudice-tasks.json`, and the held-out
-`a-princess-of-mars-tasks.json` for the second novel);
+(`tests/fixtures/memory_reach/pride-and-prejudice-tasks.json`, the held-out
+`a-princess-of-mars-tasks.json` for the second novel and
+`wuthering-heights-tasks.json` for the third, each written before any reach
+run on its novel and with every required text the part file's own bytes,
+once in the book);
 `tools/manuscript_baseline.sh --manuscript DEST/parts --script
 tests/ui/store/18_manuscript_questions.scribo [--real]` asks the app
 questions about it. `--keep` leaves the disposable database and work
