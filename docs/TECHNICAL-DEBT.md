@@ -181,6 +181,15 @@ protections remain enabled.
   and promptly fix failures with a follow-up commit.
 - **Future consideration:** restore pre-merge gating if contributors or release
   requirements grow; reassess this workflow before relying on `main` for releases.
+- **Observed 2026-11-11:** both runs for `815e0fd` sat in GitHub's queue for
+  three and a half hours with no job assigned while the runs for the next push
+  completed; the API refused cancel ("completed"), re-run ("running") and
+  force-cancel ("not been queued yet") for the same run. A run in this state
+  cannot be recovered. The verdict for the commit was obtained by pushing a
+  branch at the same SHA (`verify/815e0fd`), which runs CI on any push, and
+  dispatching the acceptance workflow on that branch (`workflow_dispatch`);
+  see `journal/answer-cycle4_flags.md`. When a run shows `queued` with no jobs
+  after the next push's run has completed, do this rather than wait.
 
 ### Power-loss recovery testing is not exhaustive
 

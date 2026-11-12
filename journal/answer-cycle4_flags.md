@@ -115,3 +115,20 @@ Migration 015's column (`memory_units.index_text`), to be decided when the
 index-layer question in `journal/answer-cycle3_coref.md` is decided: permanent
 with an in-app resolver, or dropped. The register entry's flag list is now
 the header file.
+
+## Hosted verdicts
+
+| Commit | CI | Trusted acceptance |
+|---|---|---|
+| `815e0fd` (step one) | success, run 43126177443 | success, run 43126187394 |
+| `8298782` (step two) | success, run 43098799042 | success, run 43098799175 |
+
+The push of `815e0fd` produced runs 43097549796 and 43097549796's acceptance
+partner 43097549847, which stayed `queued` with no job for three and a half
+hours while the next push's runs completed; GitHub refused cancel, re-run and
+force-cancel for them with three different reasons. The verdicts above for
+`815e0fd` come from a branch pushed at the same SHA (`verify/815e0fd`, deleted
+after the runs) and a manual dispatch of the acceptance workflow on it. The
+remedy is recorded in TECHNICAL-DEBT under "CI reports after direct pushes".
+Logs: `build/window/flags-ci-43126177443.log`,
+`build/window/flags-acceptance-43126187394.log`.
