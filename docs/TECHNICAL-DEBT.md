@@ -126,7 +126,7 @@ binary (then list it under intentional tradeoffs) or moves behind a build flag.
 
 ## Open — unarchived evidence and undeclared experiment environments (P2)
 
-**Recorded:** 2026-11-11 (AUDIT-003 F6). **Status:** Partly remediated.
+**Recorded:** 2026-11-11 (AUDIT-003 F6). **Status:** Done 2026-11-12, entry kept for the record.
 
 Journals since 2026-11-09 cite about 60 `build/` entries that no archive in
 [EVIDENCE](EVIDENCE.md) held; the pass-6 design and the coreference decision
@@ -144,9 +144,10 @@ package of the two environments (Python 3.12.15, torch 2.15.0, fastcoref
 2.1.6 with spaCy 3.8.18 and the `en_core_web_sm` 3.8.0 wheel by URL;
 transformers 4.57.6 and 5.22.1); `make envs` recreates them with uv and
 Homebrew Python 3.12 and marks each with its lock; `make tools` builds the
-tool binaries (`answer_gate_replay`, `test_crash_points`). The environment
-part of this entry is done; the archive part stays (the evidence of the
-2026-11-11 and -12 steps under `build/` is not yet in a tarball).
+tool binaries (`answer_gate_replay`, `test_crash_points`). The evidence of
+the 2026-11-11 and -12 steps is in `scribodo-evidence-2026-11-12-p0.tar.gz`
+(EVIDENCE). Both parts of this entry are done; the standing rule is the
+archive at every dated report.
 
 ## Open — duplication that raises the cost of the next change (P2 and P3)
 

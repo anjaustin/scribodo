@@ -21,6 +21,7 @@ downloads torch) was not run here. `make test` on this tree: 95,917 C checks
 and 167 Python tests, 0 failures, exit 0 (`build/envs/gates-test.log`); the
 other gates compile nothing this change touches.
 
-The archive half stays open: the `build/` evidence of the 2026-11-11 and -12
-steps (window, flags, receipt, margin, crash, relation, atomic) is not yet in
-a tarball under EVIDENCE.
+The archive half: the `build/` evidence of the 2026-11-11 and -12 steps
+(window, flags, receipt, margin, crash, relation, atomic, environments, the
+third novel's import) is `scribodo-evidence-2026-11-12-p0.tar.gz` (656 files,
+3.8 MB) with its manifest and `SHA256SUMS` entry, recorded in EVIDENCE.

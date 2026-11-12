@@ -108,3 +108,21 @@ intermediate build (`mars-pipe3`) and on the final build (`pipe-window2`,
 gate logs, and the three instrumented builds' generated sources and build
 logs. Frozen binaries and objects are excluded. Archive SHA-256:
 `3ffebd3e3427f08ee6dc63574f7ff24bd0979998dc495858cc05077ef8c6dee4`.
+
+The P0 steps of 2026-11-11 and -12 (journals `answer-cycle4_flags`, `_receipt`,
+`_margin`, `_relation`, `_heights`, `gap004-cycle1` to `-cycle7`,
+`debt-environments`) are in `scribodo-evidence-2026-11-12-p0.tar.gz` in the same
+folder, with `manifest-scribodo-evidence-2026-11-12-p0.txt` and an entry in
+`SHA256SUMS`. It contains 656 files: the three receipt-era live runs
+(`build/product-memory-use/mars-pipe5` to `-pipe7`, exported messages, units,
+manifests and logs), the captured requests and replies of the flags and receipt
+runs with their comparison scripts and gate logs (`build/window`), the margin
+arm's three runs (`build/margin1` to `-3` and logs), the interruption matrix's
+runs and every gate log (`build/crash`), the relation arm's outputs and gate
+logs (`build/relation`), the atomic-writer and environment gate logs
+(`build/atomic`, `build/envs`), the third novel's import with its Gutenberg
+source and checksum (`build/manuscripts/wuthering-heights`), and the
+instrumented live-capture builds' manifests and logs (`build/answer-live-flags`,
+`-flags2`, `-receipt`, `-relation`). Binaries, objects and the work copies'
+databases are excluded. Archive SHA-256:
+`dfcc8e9a8530c015b90946a5b38fd4445be35014fb8f98dcb10719ae5b03984d`.
