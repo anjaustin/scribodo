@@ -124,14 +124,26 @@ def supported(phrase, sources):
     m = re.match(rf"({NAME})['’]s ({KIN})$", phrase)
     if m and any(normalize(f"{m.group(2)} of {m.group(1)}") in src for src in sources):
         return True
+    # The one possession word with a verb: "X's inheritance" is also supported by "X inherited" (the C check's rule).
+    if m and m.group(2) == 'inheritance' and any(normalize(f"{m.group(1)} inherited") in src for src in sources):
+        return True
     return False
+
+
+POSSESSION = {'estate', 'fortune', 'inheritance', 'property'}
+
+
+def phrase_class(phrase):
+    """'possession' when the phrase's relation word is a possession, else 'kinship'."""
+    words = re.findall(KIN, phrase)
+    return 'possession' if words and words[-1] in POSSESSION else 'kinship'
 
 
 def check(reply, spans, turns, question):
     sources = [normalize(t) for t in spans + turns + [question]]
     rows = []
     for text, negated in phrases(reply):
-        rows.append({'phrase': text, 'negated': negated, 'supported': supported(text, sources),
+        rows.append({'phrase': text, 'class': phrase_class(text), 'negated': negated, 'supported': supported(text, sources),
                      'flag': not negated and not supported(text, sources)})
     return rows
 
@@ -173,12 +185,20 @@ def main():
     parser.add_argument('--fixture', type=Path, help='also write the replies with their sources and this check\'s result as the C parity fixture')
     args = parser.parse_args()
     results, flagged, total, fixture = [], 0, 0, []
+    by_class = {}  # (class, outcome) -> phrases; the kinship/possession split (journal/answer-cycle4_relation_split.md)
+    only_by = {'kinship': 0, 'possession': 0, 'both': 0}
     for d in args.capture:
         for row in load_capture(d):
             rows = check(row['reply'], row['spans'], row['turns'], row['question'])
             total += 1
             flags = [r for r in rows if r['flag']]
             flagged += bool(flags)
+            for r in rows:
+                key = (r['class'], 'flag' if r['flag'] else 'negated' if r['negated'] else 'supported')
+                by_class[key] = by_class.get(key, 0) + 1
+            classes = {r['class'] for r in flags}
+            if classes:
+                only_by['both' if len(classes) == 2 else classes.pop()] += 1
             results.append({'capture': d.name, **{k: row[k] for k in ('index', 'question')}, 'phrases': rows, 'flagged': bool(flags)})
             fixture.append({'capture': d.name, 'index': row['index'], 'question': row['question'], 'spans': row['spans'], 'turns': row['turns'],
                             'reply': row['reply'], 'checked': len(rows), 'unsupported': flags[0]['phrase'] if flags else ''})
@@ -194,6 +214,10 @@ def main():
                                             '(tools/answer_relation_arm.py); the C check (answer_relations) must agree on every row.',
                                             'replies': fixture}, indent=1, ensure_ascii=False) + '\n')
     print(f"\n{flagged} of {total} replies flagged; {args.output}")
+    for cls in ('kinship', 'possession'):
+        print(f"  {cls:10} phrases: {by_class.get((cls, 'supported'), 0)} supported, {by_class.get((cls, 'negated'), 0)} negated, "
+              f"{by_class.get((cls, 'flag'), 0)} flagged")
+    print(f"  replies flagged by a kinship phrase only {only_by['kinship']}, by a possession phrase only {only_by['possession']}, by both {only_by['both']}")
 
 
 if __name__ == '__main__':

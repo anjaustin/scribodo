@@ -125,5 +125,8 @@ diagnostics; `make dbtest` 18,000, 0. Every exit status 0
 `test_normalize` had pinned the old fold of `was_entailed`, the very behaviour
 the measurement found; the pin was changed to the new rule and the gates were
 rerun from the start. `make dbtest`, the last of the five, ran while the next
-step's `rel_supported` hunk was already in the working tree; it is rerun on
-this commit alone below.
+step's `rel_supported` hunk was already in the working tree, so `make test`
+(95,959 and 173, 0) and `make dbtest` (18,000, 0) were run again on the
+committed tree `5f9b53f` alone, with the working changes stashed
+(`build/tolerance/commit-test.log`, `commit-dbtest.log`, `commit-exit.txt`),
+before the push.

@@ -1102,13 +1102,23 @@ static bool rel_supported(const char *phrase, const RelMatch *m, char *const *no
     free(norm);
     if (ok || !m->possessive) return ok;
     /* "X's Y" is also supported by "Y of X". */
-    size_t cap = m->kin_len + 4 + m->name_len[0] + 1;
+    size_t cap = m->kin_len + 11 + m->name_len[0] + 1;
     char *alt = malloc(cap);
     if (!alt) return false;
     snprintf(alt, cap, "%.*s of %.*s", (int)m->kin_len, phrase + (m->kin_start - m->start), (int)m->name_len[0], phrase + (m->name_start[0] - m->start));
     norm = answer_normalize(alt);
     ok = norm && quotation_in_texts(norm, norms, n);
-    free(norm); free(alt);
+    free(norm);
+    if (!ok && m->kin_len == 11 && !strncmp(phrase + (m->kin_start - m->start), "inheritance", 11)) {
+        /* The one possession word with a verb: "X's inheritance" is also supported by "X inherited" (measured on the first
+         * novel, journal/answer-cycle4_relation_split.md: the span says "Mr. Bingley inherited property", the composer
+         * writes "Mr. Bingley's inheritance"). */
+        snprintf(alt, cap, "%.*s inherited", (int)m->name_len[0], phrase + (m->name_start[0] - m->start));
+        norm = answer_normalize(alt);
+        ok = norm && quotation_in_texts(norm, norms, n);
+        free(norm);
+    }
+    free(alt);
     return ok;
 }
 

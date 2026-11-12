@@ -39,6 +39,16 @@ class RelationArmTests(unittest.TestCase):
         rows = ra.check("Mr. Bingley's estate is large.", ['Mr. Bingley inherited property'], [], 'q')
         self.assertEqual([r['phrase'] for r in rows if r['flag']], ["Mr. Bingley's estate"])
 
+    def test_inheritance_is_supported_by_inherited_and_phrases_carry_their_class(self):
+        span = ['Mr. Bingley inherited property to the amount of nearly a hundred thousand pounds from his father']
+        rows = ra.check("Mr. Bingley's inheritance is nearly a hundred thousand pounds. Mr. Bingley's estate is Netherfield Park.", span, [], 'q')
+        self.assertEqual([(r['phrase'], r['class'], r['flag']) for r in rows],
+                         [("Mr. Bingley's inheritance", 'possession', False), ("Mr. Bingley's estate", 'possession', True),
+                          ("Mr. Bingley's estate is Netherfield Park", 'possession', True)])
+        self.assertEqual([r['flag'] for r in ra.check("Mr. Darcy's inheritance is large.", span, [], 'q')], [True])
+        self.assertEqual(ra.phrase_class("Elizabeth's father is Mr. Bennet"), 'kinship')
+        self.assertEqual(ra.phrase_class("daughter of Mr. Bennet"), 'kinship')
+
     def test_author_turns_and_the_question_support_a_phrase(self):
         rows = ra.check("Lydia's age is seventeen.", [], ['Note for later: Lydia, my youngest, is seventeen.'], 'How old?')
         self.assertEqual(rows, [])  # "age" is not in the closed kin list
@@ -83,7 +93,7 @@ class RelationArmTests(unittest.TestCase):
             self.assertEqual(len(got), row['checked'], row['question'])
             self.assertEqual(flags[0] if flags else '', row['unsupported'], row['question'])
             flagged += bool(flags)
-        self.assertEqual(flagged, 12)
+        self.assertEqual(flagged, 21)  # 230 rows from 23 recorded runs (journal/answer-cycle4_relation_split.md)
 
 
 if __name__ == '__main__':

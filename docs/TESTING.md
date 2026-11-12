@@ -193,13 +193,15 @@ modify a database while any Scribodo process is running.
   question splitter and the slot matching (cycle 3), the gate's number
   anchors as whole words and compounds, and the relation check
   (`answer_relations`) against `tests/fixtures/answer_relation/replies.json`,
-  110 recorded visible replies from three novels on which the C check must
-  agree with `tools/answer_relation_arm.py` row for row
+  230 recorded visible replies from 23 live runs on three novels on which the
+  C check must agree with `tools/answer_relation_arm.py` row for row
   (`test_answer_relation_arm` re-checks the same fixture from Python; the arm
   strips the composer's think block as the product does, skips questions,
   scopes a negation to its clause, stops a name at a possessive and takes
   only a pronoun or a possessive as a relation's subject, all measured in
-  journal/answer-cycle4_relation.md); see
+  journal/answer-cycle4_relation.md; it supports "X's inheritance" by "X
+  inherited" and tallies phrases and flagged replies by class, kinship or
+  possession, journal/answer-cycle4_relation_split.md); see
   `journal/answer-cycle2_pipeline_live.md`, `docs/MODEL-002-qwen3-reranker.md`
   and `journal/answer-cycle4_relation.md`.
   `tools/answer_pipeline_review.py` joins a pipeline live run's messages, units

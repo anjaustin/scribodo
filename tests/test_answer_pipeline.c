@@ -318,6 +318,16 @@ static void test_relations(void)
     n = answer_relations("Mr. Bingley's estate is large.", spans2, 1, NULL, 0, "q", &bad);
     CHECK(n == 1 && bad && !strcmp(bad, "Mr. Bingley's estate"));
     free(bad); bad = NULL;
+    /* "X's inheritance" is supported by "X inherited" (the composer's paraphrase of the first novel's passage,
+     * journal/answer-cycle4_relation_split.md); the other possession words have no verb form. */
+    const char *inherited[] = { "Mr. Bingley inherited property to the amount of nearly a hundred thousand pounds from his father" };
+    n = answer_relations("Mr. Bingley's inheritance is nearly a hundred thousand pounds. Mr. Bingley's estate is Netherfield Park.",
+                         inherited, 1, NULL, 0, "q", &bad);
+    CHECK(n == 3 && bad && !strcmp(bad, "Mr. Bingley's estate")); /* the possessive, and the whole "is" statement, of the estate */
+    free(bad); bad = NULL;
+    n = answer_relations("Mr. Darcy's inheritance is large.", inherited, 1, NULL, 0, "q", &bad);
+    CHECK(n == 1 && bad && !strcmp(bad, "Mr. Darcy's inheritance"));
+    free(bad); bad = NULL;
     /* An author turn supports a phrase; an honorific's period does not end the sentence. */
     const char *turns[] = { "Note: her father is Tardos Mors." };
     n = answer_relations("Her father is Tardos Mors. Mr. Bennet's estate, then.", NULL, 0, turns, 1, "Whose?", &bad);
@@ -377,7 +387,7 @@ static void test_relations(void)
     }
     cJSON_Delete(j);
     free(text);
-    CHECK(agree == total && flagged == 12);
+    CHECK(agree == total && flagged == 21); /* 230 rows from 23 recorded runs, journal/answer-cycle4_relation_split.md */
 }
 
 static void test_receipt_contract(void)

@@ -371,3 +371,9 @@ commit above) and both workflows passed on `0f2e36b` and on `ca908bd` (the live 
 95,901, 0, 0 diagnostics; `make tsan` 48,565, 0, 0 diagnostics. Every exit
 status 0 (`build/relation/gates3-*.log`; the first run's analyzer finding and
 its fix are in `gates-analyze.log` and `gates2-analyze.log`).
+
+## Follow-up
+
+The precision cost of the possession words was measured on its own on
+2026-11-12, over 230 recorded replies from 23 runs, with the phrases classed
+kinship or possession: `journal/answer-cycle4_relation_split.md`.
