@@ -201,3 +201,12 @@ difficulty is the question's distance from the name, not the book, which is
 what the second novel's record said. Nothing in the selection path was changed
 for this novel, and the fixture is not tuned against.
 
+
+### Hosted verdicts for the reach step
+
+CI passed on `f2558ea` (run 43322785218); its Trusted acceptance run
+(43322785148) was cancelled by the next push, and Trusted acceptance passed on
+`a8b8da1` (run 43323008199), which carries the same code and the evidence
+record.
+
+CI passed on `a8b8da1` as well (run 43323008274).

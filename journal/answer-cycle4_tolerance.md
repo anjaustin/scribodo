@@ -130,3 +130,8 @@ step's `rel_supported` hunk was already in the working tree, so `make test`
 committed tree `5f9b53f` alone, with the working changes stashed
 (`build/tolerance/commit-test.log`, `commit-dbtest.log`, `commit-exit.txt`),
 before the push.
+
+## Hosted verdicts
+
+CI and Trusted acceptance both passed on `5f9b53f` (runs 43316689618 and
+43316689512).

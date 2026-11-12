@@ -127,3 +127,9 @@ across 87 source files; `make sanitize` 95,962, 0, 0 diagnostics; `make tsan`
 48,592, 0, 0 diagnostics; `make dbtest` 18,000, 0. Every exit status 0
 (`build/tolerance/split-gates-*.log`, `split-gates-exit.txt`; the tally sums
 every `N checks` line).
+
+## Hosted verdicts
+
+`efb391e` was pushed together with `ece3439` (the note-turn record, no code),
+so the hosted workflows ran on `ece3439`: CI and Trusted acceptance both passed
+(runs 43317951921 and 43317951878).

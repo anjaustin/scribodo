@@ -88,3 +88,8 @@ The composer's agreement with a wrong note is not a corruption of the
 author's record: the pipeline's candidates are manuscript units only, so an
 assistant turn is never a verified span. It is a model error shown to the
 author and not disclosed, and it is now measured.
+
+## Hosted verdicts
+
+No code changed in `ece3439`; CI and Trusted acceptance both passed on it
+(runs 43317951921 and 43317951878).

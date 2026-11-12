@@ -57,3 +57,8 @@ would only make the suites test something else.
 The worker-monolith entry's three items are done: `build_in_worker`
 (`journal/answer-cycle4_builder.md`), `run_job` and `observer_job_find`
 (`journal/observer-cycle1_split.md`), and this decision. The entry closes.
+
+## Hosted verdicts
+
+The decision shipped with the observer split in `2aede34`: CI and Trusted
+acceptance both passed (runs 43321958181 and 43321958154).

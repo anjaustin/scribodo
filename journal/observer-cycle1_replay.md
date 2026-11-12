@@ -92,3 +92,8 @@ than `ece3439`: the id loop); `make analyze` 0 warnings across 87 source files;
 `make sanitize` 95,963, 0, 0 diagnostics; `make tsan` 48,593, 0, 0
 diagnostics; `make dbtest` 18,000, 0. Every exit status 0
 (`build/observer/idfix-gates-*.log`, `idfix-gates-exit.txt`).
+
+## Hosted verdicts
+
+CI and Trusted acceptance both passed on `2fd2866` (runs 43320587825 and
+43320587697).

@@ -99,3 +99,8 @@ as `2fd2866`: no test was added or removed); `make analyze` 0 warnings across
 87 source files; `make sanitize` 95,963, 0, 0 diagnostics; `make tsan` 48,593,
 0, 0 diagnostics; `make dbtest` 18,000, 0. Every exit status 0
 (`build/observer/split-gates-*.log`, `split-gates-exit.txt`).
+
+## Hosted verdicts
+
+CI and Trusted acceptance both passed on `2aede34` (runs 43321958181 and
+43321958154).
