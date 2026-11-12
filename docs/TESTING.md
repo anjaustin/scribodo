@@ -10,6 +10,8 @@
 | `make tsan` | ThreadSanitizer over the chat, observer, supervisor and storage code | No |
 | `make dbtest` | MariaDB/Qdrant integration in throwaway databases (`tools/services.sh up` first) | No |
 | `make crashtest` | Process death at every kill point of a store transition (GAP-004), one throwaway database per death (`tools/services.sh up` first) | No |
+| `make envs` | Recreate the two experiment Python environments under `build/` from `tools/envs/*.lock` (uv, Homebrew Python 3.12) | No |
+| `make tools` | Build every diagnostic tool binary | No |
 | `make llmtest` | The model adapter end to end against the real `llama-server`: verification, stale-socket start-up, auth, streaming, injection neutralization, crash and restart | No |
 | `make uitest-real` | `tests/ui/real-*.scribo`: the real model through the real UI | Yes |
 | `make dependency-report` | Verifies committed submodule gitlinks against clean checkouts, container digests and OSV advisories; lists available upstream updates without failing on them | No |

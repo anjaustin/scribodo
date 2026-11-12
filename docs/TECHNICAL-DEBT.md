@@ -139,6 +139,15 @@ on it. Remediation: archive at every dated report, not at audits; a lock file
 per environment under `tools/` with the Makefile target that creates it; a
 `tools` target that builds every tool binary.
 
+2026-11-12: `tools/envs/venv-coref.lock` and `venv-causal.lock` pin every
+package of the two environments (Python 3.12.15, torch 2.15.0, fastcoref
+2.1.6 with spaCy 3.8.18 and the `en_core_web_sm` 3.8.0 wheel by URL;
+transformers 4.57.6 and 5.22.1); `make envs` recreates them with uv and
+Homebrew Python 3.12 and marks each with its lock; `make tools` builds the
+tool binaries (`answer_gate_replay`, `test_crash_points`). The environment
+part of this entry is done; the archive part stays (the evidence of the
+2026-11-11 and -12 steps under `build/` is not yet in a tarball).
+
 ## Open — duplication that raises the cost of the next change (P2 and P3)
 
 **Recorded:** 2026-11-11 (AUDIT-003 F8). **Status:** Open; remediate when touched.

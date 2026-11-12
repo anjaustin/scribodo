@@ -96,7 +96,7 @@ TESTS += $(BUILD)/test_memory_document_cache $(BUILD)/test_memory_budget $(BUILD
 TESTS += $(BUILD)/test_http_deadlines $(BUILD)/test_db_deadlines $(BUILD)/test_memory_brief_model
 TESTS += $(BUILD)/test_http_poll_errno
 
-.PHONY: all run test analyze analyzetest uitest uitest-real sanitize tsan cstest dbtest crashtest uitest-db backuptest remotetest offlinetest dependency-report clean distclean llama model llmtest
+.PHONY: all run test analyze analyzetest uitest uitest-real sanitize tsan cstest dbtest crashtest envs tools uitest-db backuptest remotetest offlinetest dependency-report clean distclean llama model llmtest
 
 all: $(APP)
 
@@ -392,6 +392,18 @@ dbtest: $(BUILD)/test_db $(BUILD)/test_memory_store $(BUILD)/test_memory_vectors
 	$(WATCHDOG) 180 memory-chat ./$(BUILD)/test_memory_chat
 	$(WATCHDOG) 180 recall ./$(BUILD)/test_recall
 
+# The experiment Python environments, recreated from their lock files (tools/envs/*.lock; register, "undeclared
+# experiment environments"). Homebrew Python 3.12 and uv, as the originals were made; `make distclean` removes them.
+PY312 ?= /opt/homebrew/opt/python@3.12/bin/python3.12
+envs: $(BUILD)/venv-coref/.locked $(BUILD)/venv-causal/.locked
+$(BUILD)/venv-%/.locked: tools/envs/venv-%.lock
+	@test -x $(PY312) || { echo "envs: $(PY312) not found (brew install python@3.12)"; exit 1; }
+	test -d $(BUILD)/venv-$* || uv venv --python $(PY312) $(BUILD)/venv-$*
+	uv pip install --python $(BUILD)/venv-$*/bin/python -r $<
+	cp $< $@
+
+# Every diagnostic tool binary (the Python tools need no build).
+tools: $(BUILD)/answer_gate_replay $(BUILD)/test_crash_points
 # Process death at every kill point, against the local MariaDB (tools/services.sh up); one fresh database per death.
 crashtest: $(BUILD)/test_crash_points
 	$(WATCHDOG) 900 crash-points ./$(BUILD)/test_crash_points

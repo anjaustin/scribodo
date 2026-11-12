@@ -63,6 +63,15 @@ required kinds, fresh questions and complete cases. No reach-task fixture was
 written for this novel; the item named the boundary classes, and the reach
 measurement is GAP-001's.
 
+## Hosted verdicts
+
+CI passed on `fd5ba05`, `4a4aec0` and `46d65c2`; Trusted acceptance failed on
+each at "Run scripted UI acceptance" with the console still locked
+(TECHNICAL-DEBT, observed 2026-11-12), the database and crash steps having
+passed. `9097df3` failed CI at `make test` (the link error recorded in
+journal/gap004-cycle7_atomic.md); `de82f6d` carries the fix. The acceptance
+jobs are rerun once the console is unlocked.
+
 ## Runs
 
 None yet: the console is locked on this Mac (TECHNICAL-DEBT, observed

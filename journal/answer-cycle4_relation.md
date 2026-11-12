@@ -112,6 +112,15 @@ object's start when its subject was a name rather than a pronoun; no recorded
 reply has such a phrase, so the parity fixture did not see it, and a unit
 check on both sides now pins the path ("Elizabeth father is Mr. Bennet").
 
+## Hosted verdicts
+
+CI passed on `fd5ba05`, `4a4aec0` and `46d65c2`; Trusted acceptance failed on
+each at "Run scripted UI acceptance" with the console still locked
+(TECHNICAL-DEBT, observed 2026-11-12), the database and crash steps having
+passed. `9097df3` failed CI at `make test` (the link error recorded in
+journal/gap004-cycle7_atomic.md); `de82f6d` carries the fix. The acceptance
+jobs are rerun once the console is unlocked.
+
 ## Gates
 
 `make test` 95,901 C checks and 167 Python tests, 0 failures; `make dbtest`
