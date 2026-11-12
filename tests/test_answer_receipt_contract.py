@@ -57,6 +57,8 @@ class ReceiptContractTests(unittest.TestCase):
         self.assertEqual((g[1], g[2], g[3]), ('pass', '0', '150 feet'))
         q = pr.QUOTES.search(self.pass_)
         self.assertEqual((int(q[1]), q[2]), (1, ''))
+        r = pr.RELATIONS.search(self.pass_)
+        self.assertEqual((int(r[1]), r[2]), (2, ''))
         self.assertFalse(refusal(self.pass_))
 
     def test_withheld_receipt_keeps_the_whole_claim_line(self):
@@ -68,6 +70,8 @@ class ReceiptContractTests(unittest.TestCase):
         self.assertEqual((g[1], g[2], g[3]), ('not_in_span', '1', 'sons of Tardos Mors --- or so'))
         q = pr.QUOTES.search(self.withheld)
         self.assertEqual((int(q[1]), q[2]), (2, '"the daughter of Mors Kajak"'))
+        r = pr.RELATIONS.search(self.withheld)
+        self.assertEqual((int(r[1]), r[2]), (3, 'her father is Tardos Mors'))
         self.assertTrue(refusal(self.withheld))
 
     def test_abstained_receipt_has_the_none_header_and_is_a_refusal(self):
@@ -76,6 +80,7 @@ class ReceiptContractTests(unittest.TestCase):
         self.assertEqual(lines(self.abstained)[0], '--- VERIFIED SOURCE | none | status=no_candidates | candidates=0 scored=0 ---')
         g = pr.GATE.search(self.abstained)
         self.assertEqual((g[1], g[2]), ('no_answer', '0'))
+        self.assertEqual(pr.RELATIONS.search(self.abstained)[1], '0')
         self.assertTrue(refusal(self.abstained))
 
     def test_trace_lines_parse_in_order_with_scores_per_part(self):
@@ -97,6 +102,7 @@ class ReceiptContractTests(unittest.TestCase):
         self.assertEqual(scores, [])
         gates = [l for l in self.trace.splitlines() if l.startswith('ANSWER_GATE ')]
         self.assertEqual([g.split()[1] for g in gates], ['verdict=pass', 'verdict=not_in_span', 'verdict=no_answer'])
+        self.assertEqual([g.split()[-2:] for g in gates], [['relations=2', 'unsupported=0'], ['relations=3', 'unsupported=1'], ['relations=0', 'unsupported=0']])
         self.assertEqual(sum(1 for l in self.trace.splitlines() if l.startswith('ANSWER_INDEX_TEXT ')), 1)
 
     def test_recorded_run_receipts_still_parse_the_same(self):
@@ -106,6 +112,7 @@ class ReceiptContractTests(unittest.TestCase):
         g = pr.GATE.search(recorded)
         self.assertEqual(g[3], 'thirty thousand souls; twenty thousand Warhoons')
         self.assertEqual(pr.QUOTES.search(recorded)[2], '')
+        self.assertIsNone(pr.RELATIONS.search(recorded))  # a receipt from before the relation line still parses; the field is absent
 
 
 if __name__ == '__main__':

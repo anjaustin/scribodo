@@ -80,7 +80,10 @@ the receipts persist in `messages.memory_sources`, bounded at 16 KiB by the
 store, and nothing asserts a receipt stays under it. Remediation: one header
 comment that is the contract, one C test that writes each marker and one
 Python test that parses the same fixture, and a bound check where the receipt
-is appended. 2026-11-11: the product now reads the receipt too
+is appended. 2026-11-12: the format changed once since, as prescribed (a third gate
+line, `--- ANSWER RELATIONS | ... ---`, for the relation check: header edited,
+fixtures regenerated, both tests and the review tool followed;
+`journal/answer-cycle4_relation.md`). 2026-11-11: the product now reads the receipt too
 (`answer_receipt_refusal`, used by the composer window;
 `journal/answer-cycle4_window.md`), so the ANSWER GATE line is a stored
 format with a consumer in C as well as Python; the remediation above is due

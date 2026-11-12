@@ -27,8 +27,9 @@
  *       (only when a second unit was ranked; its span line may be empty)
  *   --- ANSWER GATE | verdict=<verdict> | withheld=<0|1> | answer=<claim> ---
  *   --- ANSWER QUOTES | checked=<n> | misquoted=<text> ---
- *       (both appended by the gate after the reply finished; absent when the
- *       gate did not run, which is any turn that is not a question)
+ *   --- ANSWER RELATIONS | checked=<n> | unsupported=<text> ---
+ *       (the three appended by the gate after the reply finished; absent when
+ *       the gate did not run, which is any turn that is not a question)
  *
  * <id> is the memory unit id (64 hex digits in the product; tests use short
  * ids). <name> is the document name as stored, or "an earlier reply" / "an
@@ -36,20 +37,23 @@
  * status words (answer_pipeline.h). part= is 1-based. <verdict> is one of
  * answer_gate()'s words: pass | pass_no_anchors | no_answer | echoes_question |
  * not_in_span, or "unavailable" when the claim request failed. withheld=1 when
- * the shown reply was replaced by the abstention, for either the verdict or a
- * misquotation. answer= is the claim the model gave for its own reply;
- * misquoted= is the first quoted phrase the verified text did not contain, or
- * empty. These two are free text: newlines become spaces, the field is cut at
- * ANSWER_RECEIPT_FIELD_MAX bytes on a UTF-8 boundary, and it runs to the
+ * the shown reply was replaced by the abstention, for the verdict, a
+ * misquotation or an unsupported relation. answer= is the claim the model gave
+ * for its own reply; misquoted= is the first quoted phrase the verified text
+ * did not contain, or empty; unsupported= is the first relation phrase in the
+ * reply's own prose that no source states (answer_relations, answer_pipeline.h),
+ * or empty. These three are free text: newlines become spaces, the field is
+ * cut at ANSWER_RECEIPT_FIELD_MAX bytes on a UTF-8 boundary, and it runs to the
  * line's final " ---", so a parser takes everything up to the end of line.
  * A refusal, for the composer window, is withheld=1 or verdict=no_answer.
  *
  * Bound. answer_receipt() never exceeds ANSWER_RECEIPT_PIPELINE_MAX bytes: the
  * header lines are always complete and the span lines are cut, on a UTF-8
  * boundary, to fit. answer_receipt_append_gate() keeps the whole receipt at
- * or under CHAT_MEMORY_SOURCES_BYTES by cutting answer= first and misquoted=
- * second, down to empty; it fails, leaving the receipt unchanged, only when
- * the two lines do not fit even then, which the pipeline bound prevents.
+ * or under CHAT_MEMORY_SOURCES_BYTES by cutting answer= first, misquoted=
+ * second and unsupported= third, down to empty; it fails, leaving the receipt
+ * unchanged, only when the three lines do not fit even then, which the
+ * pipeline bound prevents.
  *
  * Trace lines (stderr, only under SCRIBODO_MEMORY_TRACE=1; space-separated
  * name=value fields, one line each, parsed by tools/answer_pipeline_review.py):
@@ -57,12 +61,13 @@
  *   ANSWER_PIPELINE candidates=<n> hydrated=<n> scored=<n> failures=<n> top=<id|-> score=<0.0000> status=<status> second=<id|-> second_score=<0.0000> second_status=<status|-> parts=<n> top_part=<n> second_part=<n|0> rerank_ms=<0.0> extract_ms=<0.0> request_bytes=<n> history_first=<n>
  *   ANSWER_PIPELINE_SCORES part=<n> <id12>:<0.0000> ...      (one line per question part; ids are 12-character prefixes)
  *   ANSWER_INDEX_TEXT enabled=1 units=<n> hydrated=<n>       (only with SCRIBODO_INDEX_TEXT_FILE set)
- *   ANSWER_GATE verdict=<verdict> withheld=<0|1> parsed=<0|1> spans=<n> author_turns=<n> ms=<0.0> answer_bytes=<n> quotations=<n> misquoted=<0|1>
+ *   ANSWER_GATE verdict=<verdict> withheld=<0|1> parsed=<0|1> spans=<n> author_turns=<n> ms=<0.0> answer_bytes=<n> quotations=<n> misquoted=<0|1> relations=<n> unsupported=<0|1>
  *
  * MEMORY_PREPARE (the planner's timing line) is written by chat.c and is not
  * part of this contract; no tool parses it. Records: journal/answer-cycle2_*,
  * answer-cycle3_relation.md (parts), answer-cycle4_window.md (the refusal rule),
- * answer-cycle4_receipt.md (this contract). */
+ * answer-cycle4_receipt.md (this contract), answer-cycle4_relation.md (the
+ * relation line). */
 #ifndef SCRIBODO_ANSWER_RECEIPT_H
 #define SCRIBODO_ANSWER_RECEIPT_H
 
@@ -72,22 +77,22 @@
 #include "llm/answer_pipeline.h"
 #include "llm/chat.h"
 
-#define ANSWER_RECEIPT_FIELD_MAX 1024u /* answer= and misquoted= are cut here */
-/* Room the gate's two lines may need at most, reserved out of the store bound by the pipeline receipt. */
-#define ANSWER_RECEIPT_GATE_RESERVE (2u * ANSWER_RECEIPT_FIELD_MAX + 256u)
+#define ANSWER_RECEIPT_FIELD_MAX 1024u /* answer=, misquoted= and unsupported= are cut here */
+/* Room the gate's three lines may need at most, reserved out of the store bound by the pipeline receipt. */
+#define ANSWER_RECEIPT_GATE_RESERVE (3u * ANSWER_RECEIPT_FIELD_MAX + 384u)
 #define ANSWER_RECEIPT_PIPELINE_MAX (CHAT_MEMORY_SOURCES_BYTES - ANSWER_RECEIPT_GATE_RESERVE)
 
 /* The pipeline's receipt for a reply: owned, at most ANSWER_RECEIPT_PIPELINE_MAX bytes, NULL only on no memory. */
 char *answer_receipt(const AnswerPipelineResult *r);
-/* Appends the gate's two lines to *memory_sources (which may be NULL) in place, keeping the whole at or under
+/* Appends the gate's three lines to *memory_sources (which may be NULL) in place, keeping the whole at or under
  * CHAT_MEMORY_SOURCES_BYTES. False, with *memory_sources unchanged, on no memory or when even the empty-field
  * lines do not fit. */
 bool answer_receipt_append_gate(char **memory_sources, const char *verdict, bool withheld, const char *answer,
-                                size_t quotations, const char *misquoted);
+                                size_t quotations, const char *misquoted, size_t relations, const char *unsupported);
 /* The trace lines, written only by the callers that checked the trace flag. */
 void answer_trace_pipeline(FILE *out, const AnswerPipelineResult *r, size_t request_bytes, size_t history_first,
                            bool index_text_enabled);
 void answer_trace_gate(FILE *out, const char *verdict, bool withheld, bool parsed, size_t spans, size_t author_turns,
-                       double ms, size_t answer_bytes, size_t quotations, bool misquoted);
+                       double ms, size_t answer_bytes, size_t quotations, bool misquoted, size_t relations, bool unsupported);
 
 #endif

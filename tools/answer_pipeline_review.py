@@ -28,6 +28,7 @@ RECEIPT = re.compile(r'--- VERIFIED SOURCE \| (?:unit=([0-9a-f]+) \| document=([
 # The free-text fields run to the line's final " ---" (llm/answer_receipt.h): take the whole line, not the first " ---".
 GATE = re.compile(r'^--- ANSWER GATE \| verdict=(\w+) \| withheld=(\d) \| answer=(.*) ---$', re.M)
 QUOTES = re.compile(r'^--- ANSWER QUOTES \| checked=(\d+) \| misquoted=(.*) ---$', re.M)
+RELATIONS = re.compile(r'^--- ANSWER RELATIONS \| checked=(\d+) \| unsupported=(.*) ---$', re.M)
 SECOND = re.compile(r'--- VERIFIED SOURCE 2 \| unit=([0-9a-f]+) \| document=([^|]+) \| score=([0-9.]+) \| status=(\w+)(?: \| part=(\d+))? ---\n(.*?)\n(?=---|\Z)', re.S)
 PART = re.compile(r'\| part=(\d+) \|')
 
@@ -109,6 +110,10 @@ def review(fixture, messages, units, traces):
         if gate is not None and qm:
             gate['quotations'] = int(qm[1])
             gate['misquoted'] = qm[2] or None
+        rm = RELATIONS.search(receipt)
+        if gate is not None and rm:
+            gate['relations'] = int(rm[1])
+            gate['unsupported'] = rm[2] or None
         s2 = SECOND.search(receipt)
         second = {'unit_id': s2[1], 'document': s2[2].strip(), 'score': float(s2[3]), 'status': s2[4],
                   'part': int(s2[5]) if s2[5] else None, 'span': s2[6].strip()} if s2 else None

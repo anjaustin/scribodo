@@ -229,6 +229,10 @@ diagnostics; `make tsan` 48,511 checks, 0 failures, 0 diagnostics
    ought", the drafts' labels, Elizabeth for Charlotte, Tardos Mors for Mors
    Kajak). The quotation check is the model for how it sits beside the gate;
    whether a deterministic check can hold "X of Y" to the span is open.
+   Measured and built 2026-11-12 (journal/answer-cycle4_relation.md): a
+   closed-list kinship and possession check on the reply's prose flags 7 of
+   60 recorded replies, the wrong relation shown among them and no correct
+   answer; it sits beside the gate as the quotation check does.
 2. **The marker text** was chosen once and measured once; a second wording
    is a cheap replay, not a live run, and should only be tried if a run shows
    the composer imitating the marker to its cost (Charlotte imitated its

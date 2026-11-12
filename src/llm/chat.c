@@ -1480,6 +1480,15 @@ static void gate_apply(ChatSession *s)
         withheld = true;
         reason = "it quotes words the verified passages do not contain";
     }
+    /* Relation integrity: a kinship or possession the composer states in its own words must be one the sources
+     * state (answer_pipeline.h, answer_relations; journal/answer-cycle4_relation.md). */
+    char *unsupported = NULL;
+    size_t relations = answer_relations(visible, (const char *const *)s->gate_spans, s->gate_nspans,
+                                        (const char *const *)s->gate_author, s->gate_nauthor, s->gate_question, &unsupported);
+    if (unsupported && !misquoted) {
+        withheld = true;
+        reason = "it states a relation the verified passages do not";
+    }
     char *replacement = withheld ? answer_withheld_reply_reason((const char *const *)s->gate_names, (const char *const *)s->gate_spans, s->gate_nspans, reason) : NULL;
     pthread_mutex_lock(&s->mu);
     ChatMessage *m = &s->msgs[s->target];
@@ -1488,13 +1497,13 @@ static void gate_apply(ChatSession *s)
         m->content = replacement;
         s->last_truncated = false;
     }
-    answer_receipt_append_gate(&m->memory_sources, verdict, withheld, answer, quotations, misquoted); /* bounded: llm/answer_receipt.h */
+    answer_receipt_append_gate(&m->memory_sources, verdict, withheld, answer, quotations, misquoted, relations, unsupported); /* bounded: llm/answer_receipt.h */
     s->version++;
     pthread_mutex_unlock(&s->mu);
     if (experiments()->memory_trace)
         answer_trace_gate(stderr, verdict, withheld, parsed, s->gate_nspans, s->gate_nauthor, memory_budget_now_ms() - t0,
-                          answer ? strlen(answer) : 0, quotations, misquoted != NULL);
-    free(misquoted); free(answer); free(visible); free(content);
+                          answer ? strlen(answer) : 0, quotations, misquoted != NULL, relations, unsupported != NULL);
+    free(unsupported); free(misquoted); free(answer); free(visible); free(content);
 }
 
 static void *server_worker(void *arg)

@@ -94,6 +94,22 @@ char *answer_withheld_reply_reason(const char *const *names, const char *const *
 size_t answer_quotations(const char *reply, const char *const *spans, size_t nspans, const char *const *author_turns,
                          size_t nturns, const char *question, char **misquoted);
 
+/* ---- relation integrity (cycle 4, the relation item) --------------------- */
+/* A relation the composer states in its own words must be one the sources state: kinship and possession phrases
+ * in the reply's prose (quotations and blockquote lines excluded), "<kin> of <Name>", "<Name>'s <kin>", "<his|her|
+ * their|Name> <kin> is <Name>", "<Name> is the <kin> of <Name>", with kin from a closed list (father, mother, son,
+ * daughter, sister(s), brother(s), wife, husband, friend, estate, fortune, inheritance, property) and Name a
+ * capitalized run (honorific allowed; sentence starters and labels are not names). A phrase is supported when its
+ * normalized text is a substring of a verified span, an author turn or the question ("X's Y" also by "Y of X"); a
+ * sentence carrying a negation (not, never, neither, nor, wrong, instead, isn't, aren't, wasn't) is skipped,
+ * because a correct correction states the wrong relation to deny it. Returns the number of phrases found;
+ * `*unsupported` gets the first unsupported phrase (owned) or NULL. The arm that measured this on 60 recorded
+ * replies (7 flagged, every one with a relation the sources do not state, no correct answer among them) is
+ * tools/answer_relation_arm.py; tests/fixtures/answer_relation/replies.json pins the two to each other
+ * (journal/answer-cycle4_relation.md). */
+size_t answer_relations(const char *reply, const char *const *spans, size_t nspans, const char *const *author_turns,
+                        size_t nturns, const char *question, char **unsupported);
+
 /* ---- question parts and slot assignment (cycle 3) ----------------------- */
 /* The request's question sentences, each conjunction-joined wh-part on its own ("..., and why ..." starts a new
  * part), each ending in "?", each prefixed with the request's non-question sentences (the referent a bare part

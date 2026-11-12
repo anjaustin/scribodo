@@ -287,6 +287,7 @@ test: $(TESTS)
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_part_claims python3 tests/test_answer_part_claims.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_admission_arm python3 tests/test_answer_admission_arm.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_margin_arm python3 tests/test_answer_margin_arm.py
+	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_relation_arm python3 tests/test_answer_relation_arm.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_coref_arm python3 tests/test_answer_coref_arm.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_gate_replay python3 tests/test_answer_gate_replay.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_income_isolation python3 tests/test_answer_income_isolation.py

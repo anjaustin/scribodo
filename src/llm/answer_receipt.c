@@ -74,32 +74,37 @@ static size_t field_copy(char *dst, size_t max, const char *src)
 }
 
 bool answer_receipt_append_gate(char **memory_sources, const char *verdict, bool withheld, const char *answer,
-                                size_t quotations, const char *misquoted)
+                                size_t quotations, const char *misquoted, size_t relations, const char *unsupported)
 {
     if (!memory_sources) return false;
     static const char fmt_gate[] = "--- ANSWER GATE | verdict=%s | withheld=%d | answer=%s ---\n";
     static const char fmt_quotes[] = "--- ANSWER QUOTES | checked=%zu | misquoted=%s ---\n";
-    char a[ANSWER_RECEIPT_FIELD_MAX + 1], m[ANSWER_RECEIPT_FIELD_MAX + 1];
-    size_t alen = field_copy(a, ANSWER_RECEIPT_FIELD_MAX, answer);
-    size_t mlen = field_copy(m, ANSWER_RECEIPT_FIELD_MAX, misquoted);
+    static const char fmt_relations[] = "--- ANSWER RELATIONS | checked=%zu | unsupported=%s ---\n";
+    const char *v = verdict ? verdict : "unavailable";
+    char a[ANSWER_RECEIPT_FIELD_MAX + 1], m[ANSWER_RECEIPT_FIELD_MAX + 1], u[ANSWER_RECEIPT_FIELD_MAX + 1];
+    field_copy(a, ANSWER_RECEIPT_FIELD_MAX, answer);
+    field_copy(m, ANSWER_RECEIPT_FIELD_MAX, misquoted);
+    field_copy(u, ANSWER_RECEIPT_FIELD_MAX, unsupported);
     size_t have = *memory_sources ? strlen(*memory_sources) : 0;
     size_t room = have < CHAT_MEMORY_SOURCES_BYTES ? CHAT_MEMORY_SOURCES_BYTES - have : 0;
-    size_t need = header_length(fmt_gate, verdict ? verdict : "unavailable", withheld, a) + header_length(fmt_quotes, quotations, m);
-    if (need > room && alen) {
-        size_t cut = need - room < alen ? alen - (need - room) : 0;
-        a[utf8_prefix(a, cut)] = '\0';
-        need = header_length(fmt_gate, verdict ? verdict : "unavailable", withheld, a) + header_length(fmt_quotes, quotations, m);
+#define GATE_NEED() (header_length(fmt_gate, v, withheld, a) + header_length(fmt_quotes, quotations, m) + header_length(fmt_relations, relations, u))
+    size_t need = GATE_NEED();
+    /* Cut the claim first, the misquotation second, the relation third, each down to empty. */
+    char *fields[3] = { a, m, u };
+    for (int f = 0; f < 3 && need > room; f++) {
+        size_t len = strlen(fields[f]);
+        if (!len) continue;
+        size_t cut = need - room < len ? len - (need - room) : 0;
+        fields[f][utf8_prefix(fields[f], cut)] = '\0';
+        need = GATE_NEED();
     }
-    if (need > room && mlen) {
-        size_t cut = need - room < mlen ? mlen - (need - room) : 0;
-        m[utf8_prefix(m, cut)] = '\0';
-        need = header_length(fmt_gate, verdict ? verdict : "unavailable", withheld, a) + header_length(fmt_quotes, quotations, m);
-    }
+#undef GATE_NEED
     if (need > room) return false;
     char *grown = realloc(*memory_sources, have + need + 1);
     if (!grown) return false;
-    size_t w = (size_t)snprintf(grown + have, need + 1, fmt_gate, verdict ? verdict : "unavailable", withheld, a);
-    snprintf(grown + have + w, need + 1 - w, fmt_quotes, quotations, m);
+    size_t w = (size_t)snprintf(grown + have, need + 1, fmt_gate, v, withheld, a);
+    w += (size_t)snprintf(grown + have + w, need + 1 - w, fmt_quotes, quotations, m);
+    snprintf(grown + have + w, need + 1 - w, fmt_relations, relations, u);
     *memory_sources = grown;
     return true;
 }
@@ -124,9 +129,9 @@ void answer_trace_pipeline(FILE *out, const AnswerPipelineResult *r, size_t requ
 }
 
 void answer_trace_gate(FILE *out, const char *verdict, bool withheld, bool parsed, size_t spans, size_t author_turns,
-                       double ms, size_t answer_bytes, size_t quotations, bool misquoted)
+                       double ms, size_t answer_bytes, size_t quotations, bool misquoted, size_t relations, bool unsupported)
 {
     if (!out) return;
-    fprintf(out, "ANSWER_GATE verdict=%s withheld=%d parsed=%d spans=%zu author_turns=%zu ms=%.1f answer_bytes=%zu quotations=%zu misquoted=%d\n",
-            verdict ? verdict : "unavailable", withheld, parsed, spans, author_turns, ms, answer_bytes, quotations, misquoted);
+    fprintf(out, "ANSWER_GATE verdict=%s withheld=%d parsed=%d spans=%zu author_turns=%zu ms=%.1f answer_bytes=%zu quotations=%zu misquoted=%d relations=%zu unsupported=%d\n",
+            verdict ? verdict : "unavailable", withheld, parsed, spans, author_turns, ms, answer_bytes, quotations, misquoted, relations, unsupported);
 }

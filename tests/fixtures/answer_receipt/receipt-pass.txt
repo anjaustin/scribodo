@@ -4,3 +4,4 @@ Quick as lightning they were upon him, and Tars Tarkas would have been gathered 
 I cleared a good hundred and fifty feet;
 --- ANSWER GATE | verdict=pass | withheld=0 | answer=150 feet ---
 --- ANSWER QUOTES | checked=1 | misquoted= ---
+--- ANSWER RELATIONS | checked=2 | unsupported= ---

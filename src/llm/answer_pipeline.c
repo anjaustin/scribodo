@@ -723,6 +723,332 @@ size_t answer_quotations(const char *reply, const char *const *spans, size_t nsp
     return checked;
 }
 
+/* ---- relation integrity (cycle 4) --------------------------------------- */
+/* The deterministic mirror of tools/answer_relation_arm.py; tests/fixtures/answer_relation/replies.json holds the
+ * recorded replies both must agree on. Patterns are matched on the reply's prose (quotations and blockquote lines
+ * removed), sentence by sentence, in pattern order, left to right, as the arm's regular expressions do. */
+
+static const char *const k_rel_kin[] = { "father", "mother", "son", "daughter", "sister", "sisters", "brother", "brothers",
+                                         "wife", "husband", "friend", "estate", "fortune", "inheritance", "property" };
+static const char *const k_rel_honorific[] = { "Mr.", "Mrs.", "Miss", "Dr.", "Sir", "Lady" };
+static const char *const k_rel_not_names[] = { "The", "This", "That", "These", "Those", "It", "So", "If", "Let", "However",
+                                               "According", "From", "Based", "Source", "Sources", "Summary", "Answer", "Current",
+                                               "Older", "Correction", "Note", "Verified", "Neither", "Both", "Also", "And", "But",
+                                               "In", "On", "For", "With", "Your", "His", "Her", "Their", "My" };
+static const char *const k_rel_negation[] = { "not", "never", "neither", "nor", "wrong", "instead", "isn't", "aren't", "wasn't" };
+
+static bool rel_word_char(char c) { return isalnum((unsigned char)c) || c == '_'; }
+static bool rel_boundary(const char *s, size_t i) { return i == 0 || !rel_word_char(s[i - 1]); }
+
+/* The reply without blockquote lines and without the text between a pair of double quotes on one line (straight
+ * pairs first, then curly), each replaced by one space: the quotation check's territory. */
+static char *rel_prose(const char *reply)
+{
+    size_t n = strlen(reply);
+    char *out = calloc(n + 2, 1), *o = out; /* zeroed: every byte the sentence scan reads is defined */
+    if (!out) return NULL;
+    const char *p = reply;
+    while (*p) {
+        const char *e = strchr(p, '\n');
+        size_t len = e ? (size_t)(e - p) : strlen(p);
+        const char *q = p;
+        while (q < p + len && (*q == ' ' || *q == '\t' || *q == '\r' || *q == '\f' || *q == '\v')) q++;
+        if (q < p + len && *q == '>') { p += len; if (*p) p++; continue; }
+        /* Straight pairs, then curly pairs, within the line. */
+        char *line = calloc(len + 1, 1);
+        if (!line) { free(out); return NULL; }
+        memcpy(line, p, len);
+        for (int pass = 0; pass < 2; pass++) {
+            const char *open = pass ? "\xE2\x80\x9C" : "\"", *close = pass ? "\xE2\x80\x9D" : "\"";
+            size_t ol = strlen(open), cl = strlen(close);
+            char *w = line;
+            for (;;) {
+                char *a = strstr(w, open);
+                if (!a) break;
+                char *b = strstr(a + ol, close);
+                if (!b) break;
+                size_t tail = strlen(b + cl);
+                a[0] = ' ';
+                memmove(a + 1, b + cl, tail + 1);
+                w = a + 1;
+            }
+        }
+        size_t ll = strlen(line);
+        memcpy(o, line, ll); o += ll;
+        free(line);
+        p += len;
+        if (*p) { *o++ = '\n'; p++; }
+    }
+    *o = '\0';
+    return out;
+}
+
+/* The next sentence of `text` from `*pos`: [start, end) or false when none is left. A sentence ends at a run of
+ * newlines, or at [.!?] followed by whitespace unless the period closes Mr., Mrs., Dr. or St. */
+static bool rel_next_sentence(const char *text, size_t *pos, size_t *start, size_t *end)
+{
+    size_t n = strlen(text), i = *pos;
+    for (;;) {
+        if (i >= n) return false;
+        size_t s = i;
+        while (i < n && text[i] != '\n') {
+            if ((text[i] == '.' || text[i] == '!' || text[i] == '?') && i + 1 < n && isspace((unsigned char)text[i + 1])) {
+                bool honorific = false;
+                if (text[i] == '.') {
+                    static const char *const h[] = { "Mr", "Mrs", "Dr", "St" };
+                    for (size_t k = 0; k < 4 && !honorific; k++) {
+                        size_t hl = strlen(h[k]);
+                        honorific = i >= hl && !strncmp(text + i - hl, h[k], hl) && rel_boundary(text, i - hl);
+                    }
+                }
+                if (!honorific) { i++; break; }
+            }
+            i++;
+        }
+        size_t e = i;
+        while (i < n && isspace((unsigned char)text[i])) i++;
+        bool blank = true;
+        for (size_t k = s; k < e; k++) if (!isspace((unsigned char)text[k])) { blank = false; break; }
+        if (!blank) { *start = s; *end = e; *pos = i; return true; }
+        if (i == s) i++;
+    }
+}
+
+static bool rel_negated(const char *s, size_t len)
+{
+    for (size_t i = 0; i < len; i++) {
+        if (!rel_boundary(s, i)) continue;
+        for (size_t k = 0; k < sizeof(k_rel_negation) / sizeof(k_rel_negation[0]); k++) {
+            size_t wl = strlen(k_rel_negation[k]);
+            if (i + wl <= len && !strncasecmp(s + i, k_rel_negation[k], wl) && (i + wl == len || !rel_word_char(s[i + wl]))) return true;
+        }
+    }
+    return false;
+}
+
+/* [A-Z][a-z]+ at i: its length, or 0. */
+static size_t rel_cap_word(const char *s, size_t len, size_t i)
+{
+    if (i >= len || !(s[i] >= 'A' && s[i] <= 'Z')) return 0;
+    size_t j = i + 1;
+    while (j < len && s[j] >= 'a' && s[j] <= 'z') j++;
+    return j - i >= 2 ? j - i : 0;
+}
+
+/* A name run at i: the candidate end offsets, longest first, as the regular expression would try them (the
+ * honorific path first, then the plain path). Returns the count. */
+#define REL_MAX_ENDS 24
+static size_t rel_name_ends(const char *s, size_t len, size_t i, size_t ends[REL_MAX_ENDS])
+{
+    size_t n = 0;
+    for (int path = 0; path < 2; path++) {
+        size_t j = i;
+        if (path == 0) {
+            bool found = false;
+            for (size_t k = 0; k < sizeof(k_rel_honorific) / sizeof(k_rel_honorific[0]) && !found; k++) {
+                size_t hl = strlen(k_rel_honorific[k]);
+                if (i + hl < len && !strncmp(s + i, k_rel_honorific[k], hl) && s[i + hl] == ' ') { j = i + hl + 1; found = true; }
+            }
+            if (!found) continue;
+        }
+        size_t w = rel_cap_word(s, len, j);
+        if (!w) continue;
+        size_t path_ends[REL_MAX_ENDS], pn = 0;
+        j += w;
+        path_ends[pn++] = j;
+        while (pn < REL_MAX_ENDS && j < len && s[j] == ' ') {
+            size_t w2 = rel_cap_word(s, len, j + 1);
+            if (!w2) break;
+            j += 1 + w2;
+            path_ends[pn++] = j;
+        }
+        for (size_t k = pn; k > 0 && n < REL_MAX_ENDS; k--) ends[n++] = path_ends[k - 1];
+    }
+    return n;
+}
+
+/* A kin word at i (lowercase, whole word): its length, or 0. */
+static size_t rel_kin(const char *s, size_t len, size_t i)
+{
+    for (size_t k = 0; k < sizeof(k_rel_kin) / sizeof(k_rel_kin[0]); k++) {
+        size_t kl = strlen(k_rel_kin[k]);
+        if (i + kl <= len && !strncmp(s + i, k_rel_kin[k], kl) && (i + kl == len || !rel_word_char(s[i + kl]))) return kl;
+    }
+    return 0;
+}
+
+static bool rel_lit(const char *s, size_t len, size_t i, const char *lit)
+{
+    size_t l = strlen(lit);
+    return i + l <= len && !strncmp(s + i, lit, l);
+}
+
+/* The first word of a name, past an honorific when more follows, is not a sentence starter or label. */
+static bool rel_real_name(const char *name, size_t len)
+{
+    size_t i = 0;
+    for (size_t k = 0; k < sizeof(k_rel_honorific) / sizeof(k_rel_honorific[0]); k++) {
+        size_t hl = strlen(k_rel_honorific[k]);
+        if (len > hl && !strncmp(name, k_rel_honorific[k], hl) && name[hl] == ' ') { i = hl + 1; break; }
+    }
+    size_t j = i;
+    while (j < len && name[j] != ' ') j++;
+    for (size_t k = 0; k < sizeof(k_rel_not_names) / sizeof(k_rel_not_names[0]); k++)
+        if (strlen(k_rel_not_names[k]) == j - i && !strncmp(name + i, k_rel_not_names[k], j - i)) return false;
+    return true;
+}
+
+typedef struct { size_t start, end; size_t name_start[2], name_len[2]; size_t nnames; size_t kin_start, kin_len; bool possessive; } RelMatch;
+
+/* Pattern `which` (1..4) at position i of the sentence; the match or false. */
+static bool rel_match_at(const char *s, size_t len, size_t i, int which, RelMatch *m)
+{
+    size_t ends[REL_MAX_ENDS], n;
+    memset(m, 0, sizeof(*m));
+    m->start = i;
+    if (!rel_boundary(s, i)) return false;
+    if (which == 1) { /* KIN of NAME */
+        size_t kl = rel_kin(s, len, i);
+        if (!kl || !rel_lit(s, len, i + kl, " of ")) return false;
+        n = rel_name_ends(s, len, i + kl + 4, ends);
+        if (!n) return false;
+        m->kin_start = i; m->kin_len = kl;
+        m->name_start[0] = i + kl + 4; m->name_len[0] = ends[0] - m->name_start[0]; m->nnames = 1;
+        m->end = ends[0];
+        return true;
+    }
+    if (which == 2) { /* NAME's KIN */
+        n = rel_name_ends(s, len, i, ends);
+        for (size_t k = 0; k < n; k++) {
+            size_t e = ends[k], j;
+            if (rel_lit(s, len, e, "'s ")) j = e + 3;
+            else if (rel_lit(s, len, e, "\xE2\x80\x99s ")) j = e + 5;
+            else continue;
+            size_t kl = rel_kin(s, len, j);
+            if (!kl) continue;
+            m->name_start[0] = i; m->name_len[0] = e - i; m->nnames = 1;
+            m->kin_start = j; m->kin_len = kl; m->possessive = true;
+            m->end = j + kl;
+            return true;
+        }
+        return false;
+    }
+    if (which == 3) { /* (his|her|their|NAME) KIN is (the |a )?NAME */
+        static const char *const pron[] = { "His", "his", "Her", "her", "Their", "their" };
+        size_t subj_ends[REL_MAX_ENDS + 1], sn = 0;
+        bool subj_is_pronoun[REL_MAX_ENDS + 1];
+        for (size_t k = 0; k < 6; k++) {
+            size_t pl = strlen(pron[k]);
+            if (rel_lit(s, len, i, pron[k])) { subj_ends[sn] = i + pl; subj_is_pronoun[sn++] = true; break; }
+        }
+        n = rel_name_ends(s, len, i, ends);
+        for (size_t k = 0; k < n; k++) { subj_ends[sn] = ends[k]; subj_is_pronoun[sn++] = false; }
+        for (size_t k = 0; k < sn; k++) {
+            size_t e = subj_ends[k];
+            if (!rel_lit(s, len, e, " ")) continue;
+            size_t kl = rel_kin(s, len, e + 1);
+            if (!kl || !rel_lit(s, len, e + 1 + kl, " is ")) continue;
+            size_t j = e + 1 + kl + 4;
+            size_t ends2[REL_MAX_ENDS], n2 = 0, obj = j;
+            const char *art[3] = { "the ", "a ", "" };
+            for (int a = 0; a < 3 && !n2; a++) {
+                if (art[a][0] && !rel_lit(s, len, j, art[a])) continue;
+                n2 = rel_name_ends(s, len, j + strlen(art[a]), ends2);
+                if (n2) obj = j + strlen(art[a]);
+            }
+            if (!n2) continue;
+            if (!subj_is_pronoun[k]) { m->name_start[0] = i; m->name_len[0] = e - i; m->nnames = 1; }
+            m->name_start[m->nnames] = obj; m->name_len[m->nnames] = ends2[0] - obj; m->nnames++;
+            m->kin_start = e + 1; m->kin_len = kl;
+            m->end = ends2[0];
+            return true;
+        }
+        return false;
+    }
+    /* which == 4: NAME is (the |a |not the )?KIN of NAME */
+    n = rel_name_ends(s, len, i, ends);
+    for (size_t k = 0; k < n; k++) {
+        size_t e = ends[k];
+        if (!rel_lit(s, len, e, " is ")) continue;
+        size_t j = e + 4;
+        const char *art[4] = { "the ", "a ", "not the ", "" };
+        for (int a = 0; a < 4; a++) {
+            if (art[a][0] && !rel_lit(s, len, j, art[a])) continue;
+            size_t kj = j + strlen(art[a]);
+            size_t kl = rel_kin(s, len, kj);
+            if (!kl || !rel_lit(s, len, kj + kl, " of ")) continue;
+            size_t ends2[REL_MAX_ENDS], n2 = rel_name_ends(s, len, kj + kl + 4, ends2);
+            if (!n2) continue;
+            m->name_start[0] = i; m->name_len[0] = e - i;
+            m->name_start[1] = kj + kl + 4; m->name_len[1] = ends2[0] - m->name_start[1]; m->nnames = 2;
+            m->kin_start = kj; m->kin_len = kl;
+            m->end = ends2[0];
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool rel_supported(const char *phrase, const RelMatch *m, char *const *norms, size_t n)
+{
+    char *norm = answer_normalize(phrase);
+    bool ok = norm && quotation_in_texts(norm, norms, n);
+    free(norm);
+    if (ok || !m->possessive) return ok;
+    /* "X's Y" is also supported by "Y of X". */
+    size_t cap = m->kin_len + 4 + m->name_len[0] + 1;
+    char *alt = malloc(cap);
+    if (!alt) return false;
+    snprintf(alt, cap, "%.*s of %.*s", (int)m->kin_len, phrase + (m->kin_start - m->start), (int)m->name_len[0], phrase + (m->name_start[0] - m->start));
+    norm = answer_normalize(alt);
+    ok = norm && quotation_in_texts(norm, norms, n);
+    free(norm); free(alt);
+    return ok;
+}
+
+size_t answer_relations(const char *reply, const char *const *spans, size_t nspans, const char *const *author_turns,
+                        size_t nturns, const char *question, char **unsupported)
+{
+    if (unsupported) *unsupported = NULL;
+    if (!reply) return 0;
+    size_t nn = nspans + nturns + 1;
+    char **norms = calloc(nn, sizeof(*norms));
+    char *prose = rel_prose(reply);
+    if (!norms || !prose) { free(norms); free(prose); return 0; }
+    size_t k = 0;
+    for (size_t i = 0; i < nspans; i++) norms[k++] = answer_normalize(spans[i]);
+    for (size_t i = 0; i < nturns; i++) norms[k++] = answer_normalize(author_turns[i]);
+    norms[k++] = answer_normalize(question ? question : "");
+    size_t checked = 0, pos = 0, start, end;
+    while (rel_next_sentence(prose, &pos, &start, &end)) {
+        const char *s = prose + start;
+        size_t len = end - start;
+        bool negated = rel_negated(s, len);
+        for (int which = 1; which <= 4; which++) {
+            size_t i = 0;
+            while (i < len) {
+                RelMatch m;
+                if (!rel_match_at(s, len, i, which, &m)) { i++; continue; }
+                bool names_ok = m.nnames > 0;
+                for (size_t q = 0; q < m.nnames && names_ok; q++) names_ok = rel_real_name(s + m.name_start[q], m.name_len[q]);
+                if (names_ok) {
+                    checked++;
+                    char *phrase = malloc(m.end - m.start + 1);
+                    if (phrase) {
+                        memcpy(phrase, s + m.start, m.end - m.start); phrase[m.end - m.start] = '\0';
+                        if (!negated && unsupported && !*unsupported && !rel_supported(phrase, &m, norms, nn)) *unsupported = phrase;
+                        else free(phrase);
+                    }
+                }
+                i = m.end > i ? m.end : i + 1;
+            }
+        }
+    }
+    for (size_t i = 0; i < nn; i++) free(norms[i]);
+    free(norms); free(prose);
+    return checked;
+}
+
 /* ---- question parts and slot assignment (cycle 3) ----------------------- */
 
 static bool word_char(char c) { return isalnum((unsigned char)c) || c == '_'; }

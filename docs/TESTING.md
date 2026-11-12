@@ -183,9 +183,14 @@ modify a database while any Scribodo process is running.
   cut, the extraction request and reply, the reranker prompt, request and
   probability parsing, the fixture scorer, the verified block and receipt, and
   the pipeline request builder beside the unchanged production builder, the
-  question splitter and the slot matching (cycle 3), and the gate's number
-  anchors as whole words and compounds; see
-  `journal/answer-cycle2_pipeline_live.md` and `docs/MODEL-002-qwen3-reranker.md`.
+  question splitter and the slot matching (cycle 3), the gate's number
+  anchors as whole words and compounds, and the relation check
+  (`answer_relations`) against `tests/fixtures/answer_relation/replies.json`,
+  60 recorded replies on which the C check must agree with
+  `tools/answer_relation_arm.py` row for row (`test_answer_relation_arm`
+  re-checks the same fixture from Python); see
+  `journal/answer-cycle2_pipeline_live.md`, `docs/MODEL-002-qwen3-reranker.md`
+  and `journal/answer-cycle4_relation.md`.
   `tools/answer_pipeline_review.py` joins a pipeline live run's messages, units
   and trace lines into a review sheet (chosen unit, designated units' candidate
   ranks and scores, verified span, timings, composer window, reply);

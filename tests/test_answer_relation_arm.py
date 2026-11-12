@@ -1,0 +1,70 @@
+"""Relation arm: the deterministic check, model-free (tools/answer_relation_arm.py)."""
+import importlib.util
+import json
+from pathlib import Path
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location('answer_relation_arm', ROOT / 'tools/answer_relation_arm.py')
+ra = importlib.util.module_from_spec(spec); spec.loader.exec_module(ra)
+
+SPANS = ['I, the daughter of Mors Kajak, son of Tardos Mors, have listened without anger,']
+QUESTION = 'Earlier I told you Dejah Thoris is the daughter of Tardos Mors; I was wrong, the text says otherwise. Whose daughter does she say she is?'
+
+
+class RelationArmTests(unittest.TestCase):
+    def test_prose_excludes_quotations_and_block_quotes(self):
+        reply = 'Source 2 begins:\n\n> "I, the daughter of Mors Kajak"\n\nShe says "daughter of Mors Kajak" and her father is Tardos Mors.'
+        self.assertNotIn('Mors Kajak"', ra.prose(reply))
+        self.assertIn('her father is Tardos Mors', ra.prose(reply))
+        self.assertNotIn('> ', ra.prose(reply))
+
+    def test_the_recorded_misreading_is_flagged_and_its_correct_denial_is_not(self):
+        reply = ('This states that the speaker is the daughter of Mors Kajak and son of Tardos Mors — i.e., her father is Tardos Mors '
+                 'and her mother is Mors Kajak. So according to this passage, she is **not** the daughter of Tardos Mors; she is the '
+                 'daughter of Mors Kajak, son of Tardos Mors.')
+        rows = ra.check(reply, SPANS, [], QUESTION)
+        flagged = [r['phrase'] for r in rows if r['flag']]
+        self.assertEqual(flagged, ['her father is Tardos Mors', 'her mother is Mors Kajak'])
+        negated = [r['phrase'] for r in rows if r['negated']]
+        self.assertIn('daughter of Tardos Mors', negated)
+        self.assertTrue(all(r['supported'] for r in rows if r['phrase'] in ('daughter of Mors Kajak', 'son of Tardos Mors')))
+
+    def test_possessive_is_supported_by_the_of_form_and_sentence_starters_are_not_names(self):
+        rows = ra.check("Mr. Bingley's sisters have twenty thousand pounds. The estate is Netherfield.",
+                        ['They were rather handsome; had a fortune of twenty thousand pounds; the sisters of Mr. Bingley'], [], 'What fortune?')
+        by = {r['phrase']: r for r in rows}
+        self.assertTrue(by["Mr. Bingley's sisters"]['supported'])
+        self.assertNotIn('The estate is Netherfield', by)  # "The" is not a name
+        rows = ra.check("Mr. Bingley's estate is large.", ['Mr. Bingley inherited property'], [], 'q')
+        self.assertEqual([r['phrase'] for r in rows if r['flag']], ["Mr. Bingley's estate"])
+
+    def test_author_turns_and_the_question_support_a_phrase(self):
+        rows = ra.check("Lydia's age is seventeen.", [], ['Note for later: Lydia, my youngest, is seventeen.'], 'How old?')
+        self.assertEqual(rows, [])  # "age" is not in the closed kin list
+        rows = ra.check('Her father is Tardos Mors.', [], [], 'Earlier I told you her father is Tardos Mors; whose daughter is she?')
+        self.assertFalse(rows[0]['flag'])
+
+    def test_a_name_subject_counts_both_names_and_a_label_subject_is_dropped(self):
+        rows = ra.check('Elizabeth father is Mr. Bennet. The father is Mr. Bennet.', [], [], 'q')
+        self.assertEqual([(r['phrase'], r['flag']) for r in rows], [('Elizabeth father is Mr. Bennet', True)])
+        rows = ra.check('Elizabeth father is Mr. Bennet.', [], [], 'Is Elizabeth father is Mr. Bennet?')
+        self.assertEqual([(r['phrase'], r['flag']) for r in rows], [('Elizabeth father is Mr. Bennet', False)])
+
+    def test_recorded_fixture_agrees_with_this_check(self):
+        """The parity fixture the C check is tested against was written by this arm; re-checking it must reproduce it."""
+        path = ROOT / 'tests/fixtures/answer_relation/replies.json'
+        rows = json.loads(path.read_text())['replies']
+        self.assertGreaterEqual(len(rows), 60)
+        flagged = 0
+        for row in rows:
+            got = ra.check(row['reply'], row['spans'], row['turns'], row['question'])
+            flags = [r['phrase'] for r in got if r['flag']]
+            self.assertEqual(len(got), row['checked'], row['question'])
+            self.assertEqual(flags[0] if flags else '', row['unsupported'], row['question'])
+            flagged += bool(flags)
+        self.assertEqual(flagged, 7)
+
+
+if __name__ == '__main__':
+    unittest.main()

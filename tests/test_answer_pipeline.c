@@ -270,6 +270,69 @@ static AnswerPipelineResult contract_result(bool with_second, size_t nparts)
     return r;
 }
 
+/* The relation check: the recorded misreading and its correct denial, then parity with the Python arm on every
+ * recorded reply of tests/fixtures/answer_relation/replies.json (written by tools/answer_relation_arm.py). */
+static void test_relations(void)
+{
+    const char *spans[] = { "I, the daughter of Mors Kajak, son of Tardos Mors, have listened without anger," };
+    const char *question = "Earlier I told you Dejah Thoris is the daughter of Tardos Mors; I was wrong, the text says otherwise. Whose daughter does she say she is?";
+    char *bad = NULL;
+    size_t n = answer_relations("This states that the speaker is the daughter of Mors Kajak and son of Tardos Mors \xE2\x80\x94 i.e., her father is Tardos Mors "
+                                "and her mother is Mors Kajak. So according to this passage, she is **not** the daughter of Tardos Mors; she is the "
+                                "**daughter of Mors Kajak**, son of Tardos Mors.", spans, 1, NULL, 0, question, &bad);
+    CHECK(n == 7 && bad && !strcmp(bad, "her father is Tardos Mors"));
+    free(bad); bad = NULL;
+    /* Quotations and blockquotes are the quotation check's; a possessive is supported by its "of" form; "The" is no name. */
+    const char *spans2[] = { "They were rather handsome; had a fortune of twenty thousand pounds; the sisters of Mr. Bingley" };
+    n = answer_relations("> \"her father is Tardos Mors\"\nMr. Bingley's sisters have twenty thousand pounds. The estate is Netherfield. \"Her mother is Mors Kajak.\"",
+                         spans2, 1, NULL, 0, "What fortune?", &bad);
+    CHECK(n == 1 && bad == NULL);
+    n = answer_relations("Mr. Bingley's estate is large.", spans2, 1, NULL, 0, "q", &bad);
+    CHECK(n == 1 && bad && !strcmp(bad, "Mr. Bingley's estate"));
+    free(bad); bad = NULL;
+    /* An author turn supports a phrase; an honorific's period does not end the sentence. */
+    const char *turns[] = { "Note: her father is Tardos Mors." };
+    n = answer_relations("Her father is Tardos Mors. Mr. Bennet's estate, then.", NULL, 0, turns, 1, "Whose?", &bad);
+    CHECK(n == 2 && bad && !strcmp(bad, "Mr. Bennet's estate"));
+    free(bad); bad = NULL;
+    CHECK(answer_relations(NULL, NULL, 0, NULL, 0, NULL, &bad) == 0 && bad == NULL);
+    /* A name as the subject of "<Name> <kin> is <Name>": both names are checked; a label subject is no name. */
+    n = answer_relations("Elizabeth father is Mr. Bennet. The father is Mr. Bennet.", NULL, 0, NULL, 0, "q", &bad);
+    CHECK(n == 1 && bad && !strcmp(bad, "Elizabeth father is Mr. Bennet"));
+    free(bad); bad = NULL;
+    n = answer_relations("Elizabeth father is Mr. Bennet.", NULL, 0, NULL, 0, "Is Elizabeth father is Mr. Bennet?", &bad);
+    CHECK(n == 1 && bad == NULL);
+
+    char *text = read_file("tests/fixtures/answer_relation/replies.json");
+    CHECK(text != NULL);
+    if (!text) return;
+    cJSON *j = cJSON_Parse(text);
+    cJSON *rows = cJSON_GetObjectItem(j, "replies");
+    CHECK(cJSON_IsArray(rows) && cJSON_GetArraySize(rows) >= 60);
+    size_t agree = 0, total = 0, flagged = 0;
+    cJSON *row;
+    cJSON_ArrayForEach(row, rows) {
+        cJSON *sp = cJSON_GetObjectItem(row, "spans"), *tu = cJSON_GetObjectItem(row, "turns");
+        const char *sv[8] = { 0 }, *tv[32] = { 0 };
+        size_t ns = 0, nt = 0;
+        cJSON *it;
+        cJSON_ArrayForEach(it, sp) if (ns < 8) sv[ns++] = it->valuestring;
+        cJSON_ArrayForEach(it, tu) if (nt < 32) tv[nt++] = it->valuestring;
+        const char *reply = cJSON_GetObjectItem(row, "reply")->valuestring, *q = cJSON_GetObjectItem(row, "question")->valuestring;
+        const char *expected = cJSON_GetObjectItem(row, "unsupported")->valuestring;
+        int checked = cJSON_GetObjectItem(row, "checked")->valueint;
+        char *got = NULL;
+        size_t c = answer_relations(reply, sv, ns, tv, nt, q, &got);
+        bool same = (int)c == checked && !strcmp(got ? got : "", expected);
+        if (!same) fprintf(stderr, "    relations differ on %.60s: C %zu/%s, arm %d/%s\n", q, c, got ? got : "", checked, expected);
+        agree += same; total++; flagged += got != NULL;
+        free(got);
+    }
+    cJSON_Delete(j);
+    free(text);
+    CHECK(agree == total && flagged == 7);
+}
+
 static void test_receipt_contract(void)
 {
     char *trace = NULL; size_t trace_len = 0;
@@ -279,32 +342,32 @@ static void test_receipt_contract(void)
     AnswerPipelineResult pass = contract_result(true, 2);
     char *receipt = answer_receipt(&pass);
     CHECK(receipt && strlen(receipt) <= ANSWER_RECEIPT_PIPELINE_MAX);
-    CHECK(answer_receipt_append_gate(&receipt, "pass", false, "150 feet", 1, NULL));
+    CHECK(answer_receipt_append_gate(&receipt, "pass", false, "150 feet", 1, NULL, 2, NULL));
     fixture_matches("receipt-pass.txt", receipt);
     CHECK(!chat_receipt_refusal(receipt));
     answer_trace_pipeline(t, &pass, 4321, 3, true);
-    answer_trace_gate(t, "pass", false, true, 2, 5, 704.56, 8, 1, false);
+    answer_trace_gate(t, "pass", false, true, 2, 5, 704.56, 8, 1, false, 2, false);
     free(receipt); answer_pipeline_result_free(&pass);
     /* A withheld answer: one source, one part, the claim outside the span, a misquotation named. The claim's
      * newline becomes a space; the field runs to the end of the line even when it contains " ---". */
     AnswerPipelineResult held = contract_result(false, 1);
     receipt = answer_receipt(&held);
-    CHECK(answer_receipt_append_gate(&receipt, "not_in_span", true, "sons of\nTardos Mors --- or so", 2, "\"the daughter of Mors Kajak\""));
+    CHECK(answer_receipt_append_gate(&receipt, "not_in_span", true, "sons of\nTardos Mors --- or so", 2, "\"the daughter of Mors Kajak\"", 3, "her father is Tardos Mors"));
     fixture_matches("receipt-withheld.txt", receipt);
     CHECK(chat_receipt_refusal(receipt) && strstr(receipt, "answer=sons of Tardos Mors --- or so ---\n"));
     answer_trace_pipeline(t, &held, 4000, 1, false);
-    answer_trace_gate(t, "not_in_span", true, true, 1, 4, 650.0, 27, 2, true);
+    answer_trace_gate(t, "not_in_span", true, true, 1, 4, 650.0, 27, 2, true, 3, true);
     free(receipt); answer_pipeline_result_free(&held);
     /* No candidates and an abstention: the none header, the gate's no_answer verdict, which is a refusal. */
     AnswerPipelineResult none = {0};
     none.attempted = true; snprintf(none.status, sizeof(none.status), "no_candidates");
     receipt = answer_receipt(&none);
     CHECK(receipt && !strcmp(receipt, "--- VERIFIED SOURCE | none | status=no_candidates | candidates=0 scored=0 ---\n"));
-    CHECK(answer_receipt_append_gate(&receipt, "no_answer", false, "The supplied passages do not give it", 0, NULL));
+    CHECK(answer_receipt_append_gate(&receipt, "no_answer", false, "The supplied passages do not give it", 0, NULL, 0, NULL));
     fixture_matches("receipt-abstained.txt", receipt);
     CHECK(chat_receipt_refusal(receipt));
     answer_trace_pipeline(t, &none, 3900, 0, false);
-    answer_trace_gate(t, "no_answer", false, true, 0, 2, 12.3, 36, 0, false);
+    answer_trace_gate(t, "no_answer", false, true, 0, 2, 12.3, 36, 0, false, 0, false);
     free(receipt);
     CHECK(!fclose(t));
     fixture_matches("trace.log", trace);
@@ -330,26 +393,26 @@ static void test_receipt_contract(void)
     const char *span2 = strchr(second, '\n') + 1;
     CHECK(strspn(span2, "b") < 3 && span2[strspn(span2, "b")] == '\n'); /* the second span gets the one or two bytes the first could not use */
     char *claim = malloc(huge + 1); memset(claim, 'c', huge); claim[huge] = '\0';
-    CHECK(answer_receipt_append_gate(&receipt, "not_in_span", true, claim, 3, claim));
+    CHECK(answer_receipt_append_gate(&receipt, "not_in_span", true, claim, 3, claim, 1, claim));
     CHECK(strlen(receipt) <= CHAT_MEMORY_SOURCES_BYTES);
-    CHECK(strstr(receipt, "--- ANSWER GATE | verdict=not_in_span | withheld=1 | answer=") && strstr(receipt, "--- ANSWER QUOTES | checked=3 | misquoted="));
+    CHECK(strstr(receipt, "--- ANSWER GATE | verdict=not_in_span | withheld=1 | answer=") && strstr(receipt, "--- ANSWER QUOTES | checked=3 | misquoted=") && strstr(receipt, "--- ANSWER RELATIONS | checked=1 | unsupported="));
     CHECK(chat_receipt_refusal(receipt));
     /* The fields are cut at ANSWER_RECEIPT_FIELD_MAX when there is room, and to nothing when there is not. */
     char *small = strdup("");
-    CHECK(answer_receipt_append_gate(&small, "pass", false, claim, 0, claim));
+    CHECK(answer_receipt_append_gate(&small, "pass", false, claim, 0, claim, 0, claim));
     const char *a = strstr(small, "answer=") + 7;
     CHECK((size_t)(strstr(a, " ---\n") - a) == ANSWER_RECEIPT_FIELD_MAX);
     free(small);
-    char *full = malloc(CHAT_MEMORY_SOURCES_BYTES + 1); memset(full, 'f', CHAT_MEMORY_SOURCES_BYTES - 120); full[CHAT_MEMORY_SOURCES_BYTES - 120] = '\0';
-    CHECK(answer_receipt_append_gate(&full, "pass", false, claim, 0, claim) && strlen(full) <= CHAT_MEMORY_SOURCES_BYTES);
-    CHECK(strstr(full, "| answer= ---\n") && strlen(full) == CHAT_MEMORY_SOURCES_BYTES); /* the claim went first; the misquotation keeps what is left */
+    char *full = malloc(CHAT_MEMORY_SOURCES_BYTES + 1); memset(full, 'f', CHAT_MEMORY_SOURCES_BYTES - 200); full[CHAT_MEMORY_SOURCES_BYTES - 200] = '\0';
+    CHECK(answer_receipt_append_gate(&full, "pass", false, claim, 0, claim, 0, claim) && strlen(full) <= CHAT_MEMORY_SOURCES_BYTES);
+    CHECK(strstr(full, "| answer= ---\n") && strstr(full, "| misquoted= ---\n") && strlen(full) == CHAT_MEMORY_SOURCES_BYTES); /* the claim and misquotation went first; the relation keeps what is left */
     memset(full, 'f', CHAT_MEMORY_SOURCES_BYTES - 10); full[CHAT_MEMORY_SOURCES_BYTES - 10] = '\0';
     char *before = strdup(full);
-    CHECK(!answer_receipt_append_gate(&full, "pass", false, NULL, 0, NULL) && !strcmp(full, before)); /* no room at all: unchanged */
+    CHECK(!answer_receipt_append_gate(&full, "pass", false, NULL, 0, NULL, 0, NULL) && !strcmp(full, before)); /* no room at all: unchanged */
     free(before); free(full); free(claim); free(receipt); answer_pipeline_result_free(&big);
-    CHECK(!answer_receipt_append_gate(NULL, "pass", false, NULL, 0, NULL));
+    CHECK(!answer_receipt_append_gate(NULL, "pass", false, NULL, 0, NULL, 0, NULL));
     char *empty = NULL;
-    CHECK(answer_receipt_append_gate(&empty, NULL, false, NULL, 0, NULL) && !strcmp(empty, "--- ANSWER GATE | verdict=unavailable | withheld=0 | answer= ---\n--- ANSWER QUOTES | checked=0 | misquoted= ---\n"));
+    CHECK(answer_receipt_append_gate(&empty, NULL, false, NULL, 0, NULL, 0, NULL) && !strcmp(empty, "--- ANSWER GATE | verdict=unavailable | withheld=0 | answer= ---\n--- ANSWER QUOTES | checked=0 | misquoted= ---\n--- ANSWER RELATIONS | checked=0 | unsupported= ---\n"));
     free(empty);
 }
 
@@ -711,6 +774,7 @@ int main(void)
     test_fixture_scorer();
     test_block_and_receipt();
     test_receipt_contract();
+    test_relations();
     test_pipeline_request();
     printf("answer_pipeline: %d checks, 0 failures (pure helpers and the request builder; no model, no reranker claim)\n", checks);
     return 0;
