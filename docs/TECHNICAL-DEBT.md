@@ -112,9 +112,14 @@ byte-identical to the previous run (`mars-pipe7` against `mars-pipe6`).
 
 ## Open — worker monoliths and the compiled-in script host (P2)
 
-**Recorded:** 2026-11-11 (AUDIT-003 F5). **Status:** Open; `build_in_worker` split 2026-11-12
-(`journal/answer-cycle4_builder.md`: eleven staged functions over `ChatBuild` and `MemoryStage`, the base stage
-public and unit-tested, bytes identical on two live runs); the observer functions and the script-host decision remain.
+**Recorded:** 2026-11-11 (AUDIT-003 F5). **Status:** Done 2026-11-12, entry kept for the record.
+`build_in_worker` split 2026-11-12 (`journal/answer-cycle4_builder.md`: eleven staged functions over `ChatBuild` and
+`MemoryStage`, the base stage public and unit-tested, bytes identical on two live runs); `run_job` and
+`observer_job_find` split 2026-11-12 (`journal/observer-cycle1_split.md`: fifteen stages over a `JobRun`, eight
+discovery functions; the headless replay `tools/observer_replay.c` byte-identical on three novels before and after
+each split); the script host stays in the product binary, inert without `SCRIBODO_SCRIPT`, listed under the
+intentional tradeoffs below with its reasons (`journal/debt-script_host.md`), to be revisited once at GAP-002 when a
+signed release build exists.
 
 `build_in_worker` (`src/llm/chat.c:1082-1389`) was 308 lines with about 176
 decision points and no unit test of its orchestration (`chat_answer_pipeline_configure`
@@ -501,7 +506,7 @@ enforced: direct pushes are permitted, and CI reports after the fact. See
 
 | Debt | Status | Evidence | Next action |
 |---|---|---|---|
-| Observer monolith | Done; size re-measured 2026-11-11 | Text analysis, deterministic/model backends and job discovery/state pruning are separate modules; `observer.c` retains candidate application plus worker synchronization, cancellation and generations. `run_job` is 285 lines and `observer_job_find` 234; see the worker-monolith entry above. | Keep worker ownership cohesive unless a narrower interface emerges. |
+| Observer monolith | Done; size re-measured 2026-11-12 | Text analysis, deterministic/model backends and job discovery/state pruning are separate modules; `observer.c` retains candidate application plus worker synchronization, cancellation and generations. `run_job` is 15 lines over fifteen stages (the largest 40) and `observer_job_find` 7 over eight functions (the largest 53), measured byte-identical by the headless replay (journal/observer-cycle1_split.md); `worker` is 161 lines and owns the thread's synchronisation. | Keep worker ownership cohesive unless a narrower interface emerges; a change to a stage is measured with `tools/observer_replay_run.sh`. |
 | Test monoliths | Done | Pure observer/DB suites, stateful components and remote/network behavior run independently; shared fixtures own temporary roots and stores, and database core/migrations are a separately registered suite. | Add future subsystem tests to the narrowest existing binary. |
 | Documentation drift | Done | Living guides no longer encode volatile source locations or assertion totals; dated red-team reports retain their point-in-time evidence. | Keep contracts current and reserve numeric evidence for dated reports. |
 | Weakly typed DB rows | Regressed (2026-11-11) | Repository decoders validate shape, nullability, type and domain, and checked record/revision list failures propagate through `ProjectStore`. One violator: `src/app/memory_gc.c:254-256` reads `db_cell(&r, 0, 4/5/6)` raw into `snprintf` with no column check (added 2026-11-07; harmless today because the columns are `NOT NULL`). The chat family keeps a count-returning `chat_list` in the ops table (`project_store.c:41`) and `project_store_chat_list_checked` bypasses the table with a backend ternary. No Makefile or CI check forbids `db_cell(` outside `db.c`. | Convert the three reads to `db_cell_text`; add a grep gate to `make analyze` allowing `db_cell(` only in `db.[ch]`; finish the chat checked-list routing when next touched. |
@@ -516,7 +521,12 @@ Do not treat these as remediation targets without a changed product decision:
 - one Makefile;
 - pinned vendored dependencies;
 - file and MariaDB implementations for migration/recovery/store-off mode;
-- embedded SQL migrations while migration volume remains small.
+- embedded SQL migrations while migration volume remains small;
+- the UI test interpreter (`src/app/script.c`, 1.3% of the binary) compiled
+  into the product binary and inert without `SCRIBODO_SCRIPT`, so the scripted
+  suites and the hosted acceptance exercise the binary an author runs; decided
+  2026-11-12 (`journal/debt-script_host.md`), revisited once at GAP-002 when a
+  signed release build exists.
 
 ## Session log
 

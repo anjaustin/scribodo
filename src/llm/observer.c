@@ -530,291 +530,367 @@ static void plain_check(const char *check, char *out, size_t outlen)
     utf8_clip(out, outlen, buf, SIZE_MAX);
 }
 
+/* ---- one extraction job, in stages ----------------------------------------------------
+ * run_job was one 285-line function (AUDIT-003 F5). It is now the stages below over a JobRun: extract, load the
+ * records, deduplicate, judge against canon and notes, snapshot, commit under the findings lock, index, mark read.
+ * The order, the locks, the generation checks and every condition are the ones the single function had; the
+ * headless replay (tools/observer_replay.c) is byte-identical on three novels (journal/observer-cycle1_split.md). */
+
+typedef struct {
+    size_t cand;
+    char canon_id[40];
+    char *canon_text;
+    char check[300];
+} Conflict;
+
+typedef struct {
+    Observer *o;
+    const char *project;
+    uint64_t gen, fence;
+    ObserverJob *j;
+    cJSON *st;
+    Cand cands[16];
+    size_t nc;
+    Record *existing, *canon, *notes;
+    size_t ne, ncanon, nnotes;
+    char sem_pid[64];
+    bool use_sem;
+    Conflict conflicts[MAX_JUDGE_PAIRS];
+    size_t nconf, pairs;
+    bool cancelled, io_failed, ok;
+} JobRun;
+
+/* A conflict finding already recorded for this canon entry with this text, from this passage (a revised entry is
+ * checked afresh). The judge stage and the commit stage ask the same question of two lists. */
+static bool conflict_recorded(const Record *existing, size_t ne, const char *canon_id, const char *canon_text, const char *quote)
+{
+    for (size_t e = 0; e < ne; e++) {
+        const RecordVersion *ev = record_current(&existing[e]);
+        if (!strcmp(ev->finding.type, "conflict") && !strcmp(ev->finding.related, canon_id) && ev->finding.related_text &&
+            canon_text && !strcmp(ev->finding.related_text, canon_text) && ev->nsources && ev->sources[0].quote && quote &&
+            !strcmp(ev->sources[0].quote, quote))
+            return true;
+    }
+    return false;
+}
+
+/* Stage 1: the backend reads the chunk; its findings become candidates. False when the backend gave nothing. */
+static bool job_extract(JobRun *r)
+{
+    char *json = backend_extract(r->o, r->j->chunk, !r->j->is_doc);
+    if (!json) return false;
+    r->nc = parse_candidates(r->j, json, "", r->cands, 16);
+    free(json);
+    return true;
+}
+
+/* Stage 2: the stored findings (under the findings lock), canon and notes. False, with io_failed, when a list
+ * could not be read. */
+static bool job_load_records(JobRun *r)
+{
+    int findings_fd = findings_lock(r->project);
+    bool lists_ok = findings_fd >= 0 && records_list_checked(r->o->store, r->project, REC_FINDING, &r->existing, &r->ne);
+    findings_unlock(findings_fd);
+    lists_ok = lists_ok && records_list_checked(r->o->store, r->project, REC_CANON, &r->canon, &r->ncanon) &&
+               records_list_checked(r->o->store, r->project, REC_NOTE, &r->notes, &r->nnotes);
+    if (!lists_ok) r->io_failed = true;
+    return lists_ok;
+}
+
+/* Stage 3: deduplicate against stored findings and within this batch. */
+static void job_dedupe(JobRun *r)
+{
+    for (size_t i = 0; i < r->nc; i++) {
+        Cand *c = &r->cands[i];
+        char key[400], other[400];
+        finding_key(c->type, c->info.subject, c->info.relation, c->info.object, c->desc, key, sizeof(key));
+        for (size_t e = 0; e < r->ne && c->keep; e++) {
+            const RecordVersion *v = record_current(&r->existing[e]);
+            finding_key(v->finding.type, v->finding.subject, v->finding.relation, v->finding.object, v->content, other, sizeof(other));
+            if (!strcmp(key, other)) c->keep = false;
+        }
+        for (size_t p = 0; p < i && c->keep; p++) {
+            if (!r->cands[p].keep) continue;
+            finding_key(r->cands[p].type, r->cands[p].info.subject, r->cands[p].info.relation, r->cands[p].info.object,
+                        r->cands[p].desc, other, sizeof(other));
+            if (!strcmp(key, other)) c->keep = false;
+        }
+    }
+}
+
+/* Stage 4: projects in the store get semantic retrieval when the index is up; canon and notes are synced into it
+ * first (cheap when unchanged). */
+static void job_semantic(JobRun *r)
+{
+    r->use_sem = r->o->semantic &&
+                 project_store_feature_key(r->o->store, r->project, PROJECT_STORE_CAP_SEMANTIC, r->sem_pid, sizeof(r->sem_pid)) &&
+                 semantic_ready(r->o->semantic);
+    if (r->use_sem) {
+        char serr[200];
+        r->use_sem = semantic_sync_records(r->o->semantic, r->sem_pid, serr, sizeof(serr));
+    }
+}
+
+/* The canon entries one statement is judged against: up to two nearest in meaning (projects with an index), then the
+ * best two by shared words, three at most, each once. */
+static int job_canon_candidates(JobRun *r, const char *stmt, size_t cand[4])
+{
+    size_t best[2] = { SIZE_MAX, SIZE_MAX };
+    int score[2] = { 1, 1 };
+    for (size_t c = 0; c < r->ncanon; c++) {
+        const RecordVersion *v = record_current(&r->canon[c]);
+        if (strcmp(v->status, "committed")) continue;
+        int sc = obs_overlap(stmt, v->content);
+        if (sc > score[0]) {
+            best[1] = best[0];
+            score[1] = score[0];
+            best[0] = c;
+            score[0] = sc;
+        } else if (sc > score[1]) {
+            best[1] = c;
+            score[1] = sc;
+        }
+    }
+    /* Semantic candidates: the entries nearest in meaning, which shared words can miss ("the old woman" vs canon
+     * about "Grandmother Signe"). Lexical ones too. */
+    int ncand = 0;
+    for (int k = 0; k < 4; k++) cand[k] = SIZE_MAX;
+    if (r->use_sem) {
+        SemHit *hits = NULL;
+        size_t nh = semantic_canon_for(r->o->semantic, r->sem_pid, stmt, 2, &hits);
+        for (size_t k = 0; k < nh && ncand < 2; k++)
+            for (size_t c = 0; c < r->ncanon; c++)
+                if (!strcmp(r->canon[c].id, hits[k].record_id) && !strcmp(record_current(&r->canon[c])->status, "committed")) {
+                    cand[ncand++] = c;
+                    break;
+                }
+        semantic_hits_free(hits, nh);
+    }
+    for (int b = 0; b < 2 && ncand < 3; b++) {
+        bool dup = false;
+        for (int k = 0; k < ncand; k++) dup = dup || cand[k] == best[b];
+        if (best[b] != SIZE_MAX && !dup) cand[ncand++] = best[b];
+    }
+    return ncand;
+}
+
+/* One statement against one canon entry: the backend's verdict, once per canon entry and passage, and not when the
+ * same conflict is already recorded. Returns false when the job was cancelled meanwhile. */
+static bool job_judge_pair(JobRun *r, size_t i, size_t c, const char *stmt)
+{
+    r->pairs++;
+    const RecordVersion *v = record_current(&r->canon[c]);
+    char check[300];
+    bool conflict = backend_judge(r->o, v->content, stmt, check, sizeof(check));
+    if (atomic_load(&r->o->cancel)) return false;
+    for (size_t q = 0; conflict && q < r->nconf; q++) /* same canon, same passage: once */
+        if (!strcmp(r->conflicts[q].canon_id, r->canon[c].id) && r->cands[r->conflicts[q].cand].src.start == r->cands[i].src.start)
+            conflict = false;
+    if (conflict && conflict_recorded(r->existing, r->ne, r->canon[c].id, v->content, r->cands[i].src.quote)) conflict = false;
+    if (conflict && r->nconf < MAX_JUDGE_PAIRS) {
+        Conflict *cf = &r->conflicts[r->nconf++];
+        cf->cand = i;
+        snprintf(cf->canon_id, sizeof(cf->canon_id), "%s", r->canon[c].id);
+        cf->canon_text = strdup(v->content);
+        plain_check(check, cf->check, sizeof(cf->check));
+    }
+    return true;
+}
+
+/* A related note (no model call): the first live note sharing three words with the statement. */
+static void job_note_overlap(JobRun *r, size_t i, const char *stmt)
+{
+    for (size_t n = 0; n < r->nnotes; n++) {
+        const RecordVersion *v = record_current(&r->notes[n]);
+        if (!strcmp(v->status, "deleted")) continue;
+        if (obs_overlap(stmt, v->content) >= 3) {
+            snprintf(r->cands[i].info.related, sizeof(r->cands[i].info.related), "%s", r->notes[n].id);
+            r->cands[i].info.related_text = strdup(v->content);
+            break;
+        }
+    }
+}
+
+/* Stage 5: compare every statement with committed canon (possible conflicts) and notes (overlaps). Every statement
+ * is checked, including ones that duplicate an existing finding ("Zoë" is known, but "Zoë's brown eyes" may still
+ * contradict canon). A question asserts nothing. */
+static void job_judge(JobRun *r)
+{
+    for (size_t i = 0; i < r->nc && !r->cancelled; i++) {
+        if (!strcmp(r->cands[i].type, "question")) continue;
+        char stmt[600];
+        snprintf(stmt, sizeof(stmt), "%s (\xE2\x80\x9C%.300s\xE2\x80\x9D)", r->cands[i].desc, r->cands[i].src.quote);
+        size_t cand[4];
+        int ncand = job_canon_candidates(r, stmt, cand);
+        for (int b = 0; b < ncand && r->pairs < MAX_JUDGE_PAIRS; b++) {
+            if (cand[b] == SIZE_MAX) continue;
+            if (!job_judge_pair(r, i, cand[b], stmt)) {
+                r->cancelled = true;
+                break;
+            }
+        }
+        job_note_overlap(r, i, stmt);
+    }
+}
+
+/* Stage 6: document sources point at an immutable snapshot of the text that was read (usually the save's own
+ * revision, reused), only taken when there is something to point at; then the project must be unchanged. */
+static void job_snapshot(JobRun *r)
+{
+    r->ok = !r->cancelled && generation_current(r->o, r->fence);
+    bool any = r->nconf > 0;
+    for (size_t i = 0; i < r->nc; i++) any = any || r->cands[i].keep;
+    if (r->ok && any && r->j->is_doc) {
+        char revision[160] = "";
+        r->ok = revisions_snapshot(r->o->store, r->project, r->j->path, r->j->src, revision, sizeof(revision));
+        for (size_t i = 0; i < r->nc; i++) snprintf(r->cands[i].src.revision, sizeof(r->cands[i].src.revision), "%s", revision);
+    }
+    pthread_mutex_lock(&r->o->mu);
+    r->ok = r->ok && r->gen == r->o->gen && generation_current(r->o, r->fence); /* project unchanged */
+    pthread_mutex_unlock(&r->o->mu);
+}
+
+/* Under the final write lock: model work happened outside it, so the stored findings are read again and the
+ * candidates and conflicts another process may have created meanwhile are dropped. */
+static void job_revalidate(JobRun *r)
+{
+    records_free(r->existing, r->ne);
+    r->existing = NULL;
+    if (!records_list_checked(r->o->store, r->project, REC_FINDING, &r->existing, &r->ne)) r->io_failed = true;
+    for (size_t i = 0; i < r->nc; i++)
+        if (!r->io_failed && r->cands[i].keep && candidate_already_exists(&r->cands[i], r->existing, r->ne)) r->cands[i].keep = false;
+    for (size_t c = 0; !r->io_failed && c < r->nconf; c++) {
+        const Cand *candidate = &r->cands[r->conflicts[c].cand];
+        if (conflict_recorded(r->existing, r->ne, r->conflicts[c].canon_id, r->conflicts[c].canon_text, candidate->src.quote))
+            r->conflicts[c].cand = SIZE_MAX;
+    }
+}
+
+/* The kept candidates and the conflicts become findings, each a new record; stops at a generation change. */
+static void job_create(JobRun *r, int findings_fd)
+{
+    for (size_t i = 0; !r->io_failed && findings_fd >= 0 && i < r->nc; i++) {
+        if (!generation_current(r->o, r->fence)) { r->ok = false; break; }
+        if (!r->cands[i].keep) continue;
+        char id[40];
+        records_new_id(REC_FINDING, id, sizeof(id));
+        if (!records_create_ex(r->o->store, r->project, REC_FINDING, id, "new", r->cands[i].desc, &r->cands[i].src, 1, &r->cands[i].info))
+            r->io_failed = true;
+    }
+    for (size_t c = 0; !r->io_failed && findings_fd >= 0 && c < r->nconf; c++) {
+        if (!generation_current(r->o, r->fence)) { r->ok = false; break; }
+        if (r->conflicts[c].cand == SIZE_MAX) continue;
+        Cand *cd = &r->cands[r->conflicts[c].cand];
+        FindingInfo fi = { 0 };
+        snprintf(fi.type, sizeof(fi.type), "conflict");
+        snprintf(fi.subject, sizeof(fi.subject), "%s", cd->info.subject);
+        snprintf(fi.related, sizeof(fi.related), "%s", r->conflicts[c].canon_id);
+        fi.related_text = r->conflicts[c].canon_text;
+        char id[40];
+        records_new_id(REC_FINDING, id, sizeof(id));
+        if (!records_create_ex(r->o->store, r->project, REC_FINDING, id, "new", r->conflicts[c].check, &cd->src, 1, &fi)) r->io_failed = true;
+    }
+}
+
+/* Index what was read (documents as draft text, chats as chat), and drop the document's points for pieces it no
+ * longer has. */
+static void job_index(JobRun *r)
+{
+    const ObserverJob *j = r->j;
+    char did[40] = "";
+    if (j->is_doc) store_document_id(r->o->store, r->sem_pid, j->name, true, did, sizeof(did));
+    char rev[160] = "";
+    if (j->is_doc) revisions_snapshot(r->o->store, r->project, j->path, j->src, rev, sizeof(rev));
+    for (size_t q = 0; q < j->nsegs; q++) {
+        const ObserverSegment *sg = &j->segs[q];
+        char *piece = dupn(j->chunk + sg->chunk_off, sg->len);
+        if (!piece) continue;
+        const char *base = j->is_doc ? j->src : j->msgs[sg->message];
+        size_t start = cp_count(base, sg->src_off), len = cp_count(piece, sg->len);
+        if (j->is_doc) semantic_index_text(r->o->semantic, r->sem_pid, "draft", did, rev[0] ? rev : NULL, NULL, 0, start, len, piece);
+        else semantic_index_text(r->o->semantic, r->sem_pid, "chat", NULL, NULL, j->name, sg->message, start, len, piece);
+        free(piece);
+    }
+    if (j->is_doc && did[0] && j->current) {
+        size_t n = (size_t)cJSON_GetArraySize(j->current), k = 0;
+        const char **hs = calloc(n ? n : 1, sizeof(char *));
+        cJSON *it;
+        cJSON_ArrayForEach(it, j->current) if (hs && cJSON_IsString(it)) hs[k++] = it->valuestring;
+        if (hs) semantic_prune_doc(r->o->semantic, r->sem_pid, did, hs, k);
+        free(hs);
+    }
+}
+
+/* Mark the text read in the state: a document's piece hashes, or the chat's position. */
+static void job_mark_read(JobRun *r)
+{
+    const ObserverJob *j = r->j;
+    if (j->is_doc) {
+        cJSON *docs = cJSON_GetObjectItem(r->st, "docs");
+        cJSON *arr = cJSON_GetObjectItem(docs, j->name);
+        if (!cJSON_IsArray(arr)) {
+            cJSON_DeleteItemFromObject(docs, j->name);
+            arr = cJSON_AddArrayToObject(docs, j->name);
+        }
+        if (!arr) r->io_failed = true;
+        for (size_t h = 0; !r->io_failed && h < j->nhashes; h++) {
+            char hex[17];
+            snprintf(hex, sizeof(hex), "%016llx", (unsigned long long)j->hashes[h]);
+            cJSON *value = cJSON_CreateString(hex);
+            if (!value || !cJSON_AddItemToArray(arr, value)) {
+                cJSON_Delete(value);
+                r->io_failed = true;
+            }
+        }
+    } else {
+        if (!observer_job_set_chat_progress(cJSON_GetObjectItem(r->st, "chats"), j->name, j->msg_to, j->off_to)) r->io_failed = true;
+    }
+}
+
+/* Stage 7: the findings are written under the lock, the index updated, the text marked read and the state saved,
+ * unless a finding couldn't be saved: then the text is read again later rather than silently missing (red-team 008). */
+static void job_commit(JobRun *r)
+{
+    int findings_fd = findings_lock(r->project);
+    if (findings_fd < 0) r->io_failed = true;
+    if (findings_fd >= 0) job_revalidate(r);
+    job_create(r, findings_fd);
+    findings_unlock(findings_fd);
+    if (r->ok && generation_current(r->o, r->fence) && r->use_sem) job_index(r);
+    if (!(r->io_failed || !r->ok || !generation_current(r->o, r->fence))) job_mark_read(r);
+    r->ok = r->ok && !r->io_failed && generation_current(r->o, r->fence);
+    if (r->ok && !observer_job_state_save(r->o->store, r->project, r->st)) r->io_failed = true;
+    r->ok = r->ok && !r->io_failed && generation_current(r->o, r->fence);
+}
+
+static void job_end(JobRun *r)
+{
+    for (size_t i = 0; i < r->nc; i++) {
+        free(r->cands[i].desc);
+        free(r->cands[i].src.quote);
+        free(r->cands[i].info.related_text);
+    }
+    for (size_t c = 0; c < r->nconf; c++) free(r->conflicts[c].canon_text);
+    records_free(r->existing, r->ne);
+    records_free(r->canon, r->ncanon);
+    records_free(r->notes, r->nnotes);
+}
+
 /* Returns true if the job completed (its text is now read). */
 static bool run_job(Observer *o, const char *project, uint64_t gen, ObserverJob *j, cJSON *st, bool *io_out)
 {
-    bool io_failed = false;
-    uint64_t fence = generative_gate_fence(o->generative_gate);
-    char *json = backend_extract(o, j->chunk, !j->is_doc);
-    if (!json) return false;
-    Cand cands[16];
-    size_t nc = parse_candidates(j, json, "", cands, 16);
-    free(json);
-
-    /* Deduplicate against stored findings (and within this batch). */
-    int findings_fd = findings_lock(project);
-    Record *existing = NULL, *canon = NULL, *notes = NULL;
-    size_t ne = 0, ncanon = 0, nnotes = 0;
-    bool lists_ok = findings_fd >= 0 && records_list_checked(o->store, project, REC_FINDING, &existing, &ne);
-    findings_unlock(findings_fd);
-    lists_ok = lists_ok && records_list_checked(o->store, project, REC_CANON, &canon, &ncanon) &&
-               records_list_checked(o->store, project, REC_NOTE, &notes, &nnotes);
-    if (!lists_ok) {
-        for (size_t i = 0; i < nc; i++) {
-            free(cands[i].desc);
-            free(cands[i].src.quote);
-            free(cands[i].info.related_text);
-        }
-        records_free(existing, ne);
-        records_free(canon, ncanon);
-        records_free(notes, nnotes);
-        if (io_out) *io_out = true;
-        return false;
+    JobRun r = { .o = o, .project = project, .gen = gen, .fence = generative_gate_fence(o->generative_gate), .j = j, .st = st };
+    if (!job_extract(&r)) return false;
+    if (job_load_records(&r)) {
+        job_dedupe(&r);
+        job_semantic(&r);
+        job_judge(&r);
+        job_snapshot(&r);
+        if (r.ok) job_commit(&r);
     }
-    for (size_t i = 0; i < nc; i++) {
-        char key[400], other[400];
-        finding_key(cands[i].type, cands[i].info.subject, cands[i].info.relation, cands[i].info.object, cands[i].desc, key,
-                    sizeof(key));
-        for (size_t e = 0; e < ne && cands[i].keep; e++) {
-            const RecordVersion *v = record_current(&existing[e]);
-            finding_key(v->finding.type, v->finding.subject, v->finding.relation, v->finding.object, v->content, other,
-                        sizeof(other));
-            if (!strcmp(key, other)) cands[i].keep = false;
-        }
-        for (size_t p = 0; p < i && cands[i].keep; p++) {
-            if (!cands[p].keep) continue;
-            finding_key(cands[p].type, cands[p].info.subject, cands[p].info.relation, cands[p].info.object, cands[p].desc,
-                        other, sizeof(other));
-            if (!strcmp(key, other)) cands[i].keep = false;
-        }
-    }
-
-    /* Projects in the store get semantic retrieval when the index is up;
-     * canon and notes are synced into it first (cheap when unchanged). */
-    char sem_pid[64] = "";
-    bool use_sem = o->semantic && project_store_feature_key(o->store, project, PROJECT_STORE_CAP_SEMANTIC, sem_pid, sizeof(sem_pid)) &&
-                   semantic_ready(o->semantic);
-    if (use_sem) {
-        char serr[200];
-        use_sem = semantic_sync_records(o->semantic, sem_pid, serr, sizeof(serr));
-    }
-
-    /* Compare with committed canon (possible conflicts) and notes (overlaps). */
-    typedef struct {
-        size_t cand;
-        char canon_id[40];
-        char *canon_text;
-        char check[300];
-    } Conflict;
-    Conflict conflicts[MAX_JUDGE_PAIRS];
-    size_t nconf = 0, pairs = 0;
-    bool cancelled = false;
-    for (size_t i = 0; i < nc && !cancelled; i++) {
-        /* Every statement is checked, including ones that duplicate an
-         * existing finding ("Zoë" is known, but "Zoë's brown eyes" may still
-         * contradict canon). A question asserts nothing. */
-        if (!strcmp(cands[i].type, "question")) continue;
-        char stmt[600];
-        snprintf(stmt, sizeof(stmt), "%s (\xE2\x80\x9C%.300s\xE2\x80\x9D)", cands[i].desc, cands[i].src.quote);
-        /* best two canon entries by overlap */
-        size_t best[2] = { SIZE_MAX, SIZE_MAX };
-        int score[2] = { 1, 1 };
-        for (size_t c = 0; c < ncanon; c++) {
-            const RecordVersion *v = record_current(&canon[c]);
-            if (strcmp(v->status, "committed")) continue;
-            int sc = obs_overlap(stmt, v->content);
-            if (sc > score[0]) {
-                best[1] = best[0];
-                score[1] = score[0];
-                best[0] = c;
-                score[0] = sc;
-            } else if (sc > score[1]) {
-                best[1] = c;
-                score[1] = sc;
-            }
-        }
-        /* Semantic candidates (projects in the store with an index): the
-         * entries nearest in meaning, which shared words can miss ("the old
-         * woman" vs canon about "Grandmother Signe"). Lexical ones too. */
-        size_t cand[4] = { SIZE_MAX, SIZE_MAX, SIZE_MAX, SIZE_MAX };
-        int ncand = 0;
-        if (use_sem) {
-            SemHit *hits = NULL;
-            size_t nh = semantic_canon_for(o->semantic, sem_pid, stmt, 2, &hits);
-            for (size_t k = 0; k < nh && ncand < 2; k++)
-                for (size_t c = 0; c < ncanon; c++)
-                    if (!strcmp(canon[c].id, hits[k].record_id) && !strcmp(record_current(&canon[c])->status, "committed")) {
-                        cand[ncand++] = c;
-                        break;
-                    }
-            semantic_hits_free(hits, nh);
-        }
-        for (int b = 0; b < 2 && ncand < 3; b++) {
-            bool dup = false;
-            for (int k = 0; k < ncand; k++) dup = dup || cand[k] == best[b];
-            if (best[b] != SIZE_MAX && !dup) cand[ncand++] = best[b];
-        }
-        for (int b = 0; b < ncand && pairs < MAX_JUDGE_PAIRS; b++) {
-            best[0] = cand[b];
-            if (best[0] == SIZE_MAX) continue;
-            pairs++;
-            const RecordVersion *v = record_current(&canon[best[0]]);
-            char check[300];
-            bool conflict = backend_judge(o, v->content, stmt, check, sizeof(check));
-            if (atomic_load(&o->cancel)) {
-                cancelled = true;
-                break;
-            }
-            for (size_t q = 0; conflict && q < nconf; q++) /* same canon, same passage: once */
-                if (!strcmp(conflicts[q].canon_id, canon[best[0]].id) && cands[conflicts[q].cand].src.start == cands[i].src.start)
-                    conflict = false;
-            for (size_t e = 0; conflict && e < ne; e++) { /* already flagged earlier */
-                const RecordVersion *ev = record_current(&existing[e]);
-                /* Same canon entry *with the same text* (a revised entry is
-                 * checked afresh), same passage. */
-                conflict = !(!strcmp(ev->finding.type, "conflict") && !strcmp(ev->finding.related, canon[best[0]].id) &&
-                             ev->finding.related_text && !strcmp(ev->finding.related_text, v->content) &&
-                             ev->nsources && ev->sources[0].quote && !strcmp(ev->sources[0].quote, cands[i].src.quote));
-            }
-            if (conflict && nconf < MAX_JUDGE_PAIRS) {
-                Conflict *cf = &conflicts[nconf++];
-                cf->cand = i;
-                snprintf(cf->canon_id, sizeof(cf->canon_id), "%s", canon[best[0]].id);
-                cf->canon_text = strdup(v->content);
-                plain_check(check, cf->check, sizeof(cf->check));
-            }
-        }
-        /* A related note (no model call). */
-        for (size_t n = 0; n < nnotes; n++) {
-            const RecordVersion *v = record_current(&notes[n]);
-            if (!strcmp(v->status, "deleted")) continue;
-            if (obs_overlap(stmt, v->content) >= 3) {
-                snprintf(cands[i].info.related, sizeof(cands[i].info.related), "%s", notes[n].id);
-                cands[i].info.related_text = strdup(v->content);
-                break;
-            }
-        }
-    }
-
-    bool ok = !cancelled && generation_current(o, fence);
-    /* Document sources point at an immutable snapshot of the text that was
-     * read (usually the save's own revision, reused). Only taken when there
-     * is something to point at. */
-    bool any = nconf > 0;
-    for (size_t i = 0; i < nc; i++) any = any || cands[i].keep;
-    if (ok && any && j->is_doc) {
-        char revision[160] = "";
-        ok = revisions_snapshot(o->store, project, j->path, j->src, revision, sizeof(revision));
-        for (size_t i = 0; i < nc; i++) snprintf(cands[i].src.revision, sizeof(cands[i].src.revision), "%s", revision);
-    }
-    pthread_mutex_lock(&o->mu);
-    ok = ok && gen == o->gen && generation_current(o, fence); /* project unchanged */
-    pthread_mutex_unlock(&o->mu);
-    if (ok) {
-        findings_fd = findings_lock(project);
-        if (findings_fd < 0) io_failed = true;
-        if (findings_fd >= 0) {
-            /* Model work happens outside the lock. Revalidate under the final
-             * write lock so another process cannot create the same finding
-             * between our first deduplication read and append. */
-            records_free(existing, ne);
-            existing = NULL;
-            if (!records_list_checked(o->store, project, REC_FINDING, &existing, &ne)) io_failed = true;
-            for (size_t i = 0; i < nc; i++)
-                if (!io_failed && cands[i].keep && candidate_already_exists(&cands[i], existing, ne)) cands[i].keep = false;
-            for (size_t c = 0; !io_failed && c < nconf; c++) {
-                Cand *candidate = &cands[conflicts[c].cand];
-                for (size_t e = 0; e < ne; e++) {
-                    const RecordVersion *version = record_current(&existing[e]);
-                    bool duplicate = !strcmp(version->finding.type, "conflict") &&
-                                     !strcmp(version->finding.related, conflicts[c].canon_id) &&
-                                     version->finding.related_text && conflicts[c].canon_text &&
-                                     !strcmp(version->finding.related_text, conflicts[c].canon_text) &&
-                                     version->nsources && version->sources[0].quote && candidate->src.quote &&
-                                     !strcmp(version->sources[0].quote, candidate->src.quote);
-                    if (duplicate) {
-                        conflicts[c].cand = SIZE_MAX;
-                        break;
-                    }
-                }
-            }
-        }
-        for (size_t i = 0; !io_failed && findings_fd >= 0 && i < nc; i++) {
-            if (!generation_current(o, fence)) { ok = false; break; }
-            if (!cands[i].keep) continue;
-            char id[40];
-            records_new_id(REC_FINDING, id, sizeof(id));
-            if (!records_create_ex(o->store, project, REC_FINDING, id, "new", cands[i].desc, &cands[i].src, 1, &cands[i].info))
-                io_failed = true;
-        }
-        for (size_t c = 0; !io_failed && findings_fd >= 0 && c < nconf; c++) {
-            if (!generation_current(o, fence)) { ok = false; break; }
-            if (conflicts[c].cand == SIZE_MAX) continue;
-            Cand *cd = &cands[conflicts[c].cand];
-            FindingInfo fi = { 0 };
-            snprintf(fi.type, sizeof(fi.type), "conflict");
-            snprintf(fi.subject, sizeof(fi.subject), "%s", cd->info.subject);
-            snprintf(fi.related, sizeof(fi.related), "%s", conflicts[c].canon_id);
-            fi.related_text = conflicts[c].canon_text;
-            char id[40];
-            records_new_id(REC_FINDING, id, sizeof(id));
-            if (!records_create_ex(o->store, project, REC_FINDING, id, "new", conflicts[c].check, &cd->src, 1, &fi)) io_failed = true;
-        }
-        findings_unlock(findings_fd);
-        /* Index what was read (documents as draft text, chats as chat), and
-         * drop the document's points for pieces it no longer has. */
-        if (ok && generation_current(o, fence) && use_sem) {
-            char did[40] = "";
-            if (j->is_doc) store_document_id(o->store, sem_pid, j->name, true, did, sizeof(did));
-            char rev[160] = "";
-            if (j->is_doc) revisions_snapshot(o->store, project, j->path, j->src, rev, sizeof(rev));
-            for (size_t q = 0; q < j->nsegs; q++) {
-                const ObserverSegment *sg = &j->segs[q];
-                char *piece = dupn(j->chunk + sg->chunk_off, sg->len);
-                if (!piece) continue;
-                const char *base = j->is_doc ? j->src : j->msgs[sg->message];
-                size_t start = cp_count(base, sg->src_off), len = cp_count(piece, sg->len);
-                if (j->is_doc) semantic_index_text(o->semantic, sem_pid, "draft", did, rev[0] ? rev : NULL, NULL, 0, start, len, piece);
-                else semantic_index_text(o->semantic, sem_pid, "chat", NULL, NULL, j->name, sg->message, start, len, piece);
-                free(piece);
-            }
-            if (j->is_doc && did[0] && j->current) {
-                size_t n = (size_t)cJSON_GetArraySize(j->current), k = 0;
-                const char **hs = calloc(n ? n : 1, sizeof(char *));
-                cJSON *it;
-                cJSON_ArrayForEach(it, j->current) if (hs && cJSON_IsString(it)) hs[k++] = it->valuestring;
-                if (hs) semantic_prune_doc(o->semantic, sem_pid, did, hs, k);
-                free(hs);
-            }
-        }
-        /* Mark the text read, unless a finding couldn't be saved: then it is
-         * read again later rather than silently missing (red-team 008). */
-        if (io_failed || !ok || !generation_current(o, fence)) {
-        } else if (j->is_doc) {
-            cJSON *docs = cJSON_GetObjectItem(st, "docs");
-            cJSON *arr = cJSON_GetObjectItem(docs, j->name);
-            if (!cJSON_IsArray(arr)) {
-                cJSON_DeleteItemFromObject(docs, j->name);
-                arr = cJSON_AddArrayToObject(docs, j->name);
-            }
-            if (!arr) io_failed = true;
-            for (size_t h = 0; !io_failed && h < j->nhashes; h++) {
-                char hex[17];
-                snprintf(hex, sizeof(hex), "%016llx", (unsigned long long)j->hashes[h]);
-                cJSON *value = cJSON_CreateString(hex);
-                if (!value || !cJSON_AddItemToArray(arr, value)) {
-                    cJSON_Delete(value);
-                    io_failed = true;
-                }
-            }
-        } else {
-            if (!observer_job_set_chat_progress(cJSON_GetObjectItem(st, "chats"), j->name, j->msg_to, j->off_to)) io_failed = true;
-        }
-        ok = ok && !io_failed && generation_current(o, fence);
-        if (ok && !observer_job_state_save(o->store, project, st)) io_failed = true;
-        ok = ok && !io_failed && generation_current(o, fence);
-    }
-    for (size_t i = 0; i < nc; i++) {
-        free(cands[i].desc);
-        free(cands[i].src.quote);
-        free(cands[i].info.related_text);
-    }
-    for (size_t c = 0; c < nconf; c++) free(conflicts[c].canon_text);
-    records_free(existing, ne);
-    records_free(canon, ncanon);
-    records_free(notes, nnotes);
-    if (io_out) *io_out = io_failed;
-    return ok;
+    job_end(&r);
+    if (io_out) *io_out = r.io_failed;
+    return r.ok;
 }
 
 /* ---- worker ------------------------------------------------------------------------- */

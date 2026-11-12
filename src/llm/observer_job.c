@@ -181,21 +181,24 @@ static bool in_list(char **names, size_t n, const char *s)
 
 /* The next unread piece of stored text, or false if all is read. Also
  * prunes state for paragraphs, documents and chats that no longer exist. */
-bool observer_job_find(StoreManager *store, const char *project, cJSON *st, ObserverJob *j, bool *error)
+/* ---- job discovery, in stages ---------------------------------------------------------
+ * observer_job_find was one 234-line function (AUDIT-003 F5). It is now: the project's document names, the pruning
+ * of state for documents that are gone, one document's unread pieces, the chat's read position, one chat's unread
+ * messages; the order and every condition are the ones the single function had (journal/observer-cycle1_split.md). */
+
+/* The project's manuscript files (.md, .txt, .markdown; no dot files), sorted by name. False on a directory or
+ * memory error, with nothing allocated. */
+static bool list_documents(const char *project, char ***names_out, size_t *nn_out)
 {
-    memset(j, 0, sizeof(*j));
-    *error = false;
-    cJSON *docs = cJSON_GetObjectItem(st, "docs"), *chats = cJSON_GetObjectItem(st, "chats");
-    /* Documents, by name (no cap). */
+    *names_out = NULL;
+    *nn_out = 0;
     DIR *d = opendir(project);
-    if (!d) {
-        *error = true;
-        return false;
-    }
+    if (!d) return false;
     char **names = NULL;
     size_t nn = 0, cap = 0;
+    bool error = false;
     struct dirent *ent;
-    while (d && (ent = readdir(d)) != NULL) {
+    while (!error && (ent = readdir(d)) != NULL) {
         size_t n = strlen(ent->d_name);
         if (ent->d_name[0] == '.') continue;
         if (!((n > 3 && !strcasecmp(ent->d_name + n - 3, ".md")) || (n > 4 && !strcasecmp(ent->d_name + n - 4, ".txt")) ||
@@ -204,31 +207,122 @@ bool observer_job_find(StoreManager *store, const char *project, cJSON *st, Obse
         if (nn == cap) {
             cap = cap ? cap * 2 : 64;
             char **nm = realloc(names, cap * sizeof(char *));
-            if (!nm) {
-                *error = true;
-                break;
-            }
+            if (!nm) { error = true; break; }
             names = nm;
         }
         names[nn] = strdup(ent->d_name);
-        if (!names[nn]) {
-            *error = true;
-            break;
-        }
+        if (!names[nn]) { error = true; break; }
         nn++;
     }
-    if (d) closedir(d);
-    if (*error) {
+    closedir(d);
+    if (error) {
         for (size_t i = 0; i < nn; i++) free(names[i]);
         free(names);
         return false;
     }
     if (nn) qsort(names, nn, sizeof(char *), cmp_names);
-    /* Forget documents that are gone. */
+    *names_out = names;
+    *nn_out = nn;
+    return true;
+}
+
+static void free_names(char **names, size_t nn)
+{
+    for (size_t i = 0; i < nn; i++) free(names[i]);
+    free(names);
+}
+
+/* Forget documents that are gone. */
+static void prune_missing_documents(cJSON *docs, char **names, size_t nn)
+{
     for (cJSON *it = docs ? docs->child : NULL, *next; it; it = next) {
         next = it->next;
         if (!in_list(names, nn, it->string)) cJSON_DeleteItemFromObject(docs, it->string);
     }
+}
+
+/* One document's text, piece by piece: every piece already seen is kept in `kept`; unseen pieces fill the job's
+ * chunk until it is full, their hashes recorded. On return *error says whether memory or JSON failed. */
+static void document_pieces(ObserverJob *j, const char *text, cJSON *seen, cJSON *kept, bool *error)
+{
+    size_t np = 0, pcap = 256;
+    size_t *ps = malloc(pcap * sizeof(size_t)), *pl = malloc(pcap * sizeof(size_t));
+    if (!ps || !pl) *error = true;
+    while (!*error && ps && pl) { /* all paragraphs, however many */
+        np = obs_paragraphs(text, ps, pl, pcap);
+        if (np < pcap) break;
+        pcap *= 2;
+        size_t *a = realloc(ps, pcap * sizeof(size_t)), *b = realloc(pl, pcap * sizeof(size_t));
+        if (!a || !b) {
+            free(a ? a : ps);
+            free(b ? b : pl);
+            ps = pl = NULL;
+            *error = true;
+            break;
+        }
+        ps = a;
+        pl = b;
+    }
+    bool full = false;
+    for (size_t p = 0; !*error && ps && pl && p < np; p++) {
+        for (size_t off = 0; !*error && off < pl[p];) {
+            size_t plen = piece_len(text + ps[p] + off, pl[p] - off);
+            while (off + plen < pl[p] && text[ps[p] + off + plen] == ' ') plen++; /* keep spaces with the piece */
+            uint64_t h = fnv(text + ps[p] + off, plen);
+            if (seen && hash_seen(seen, h)) {
+                char hex[17];
+                snprintf(hex, sizeof(hex), "%016llx", (unsigned long long)h);
+                if (!hash_seen(kept, h)) {
+                    cJSON *value = cJSON_CreateString(hex);
+                    if (!value || !cJSON_AddItemToArray(kept, value)) {
+                        cJSON_Delete(value);
+                        *error = true;
+                        break;
+                    }
+                }
+            } else if (!full) {
+                if (chunk_add(j, NULL, text, ps[p] + off, plen, -1)) {
+                    if (!add_hash(j, h)) {
+                        *error = true;
+                        break;
+                    }
+                }
+                else full = true;
+            }
+            off += plen;
+        }
+    }
+    free(ps);
+    free(pl);
+}
+
+/* Every piece the document has now: what was read before plus this job's (the semantic index drops the rest). */
+static void document_current_pieces(ObserverJob *j, const cJSON *kept, bool *error)
+{
+    j->current = cJSON_Duplicate(kept, true);
+    if (!j->current) *error = true;
+    for (size_t h = 0; !*error && h < j->nhashes; h++) {
+        char hex[17];
+        snprintf(hex, sizeof(hex), "%016llx", (unsigned long long)j->hashes[h]);
+        cJSON *value = cJSON_CreateString(hex);
+        if (!value || !cJSON_AddItemToArray(j->current, value)) {
+            cJSON_Delete(value);
+            *error = true;
+        }
+    }
+}
+
+/* Documents, by name (no cap): the first with unread text becomes the job. Returns whether one was found; *error
+ * is set on a directory, memory or JSON failure, with the job freed. */
+static bool find_document_job(const char *project, cJSON *docs, ObserverJob *j, bool *error)
+{
+    char **names = NULL;
+    size_t nn = 0;
+    if (!list_documents(project, &names, &nn)) {
+        *error = true;
+        return false;
+    }
+    prune_missing_documents(docs, names, nn);
     bool found = false;
     for (size_t i = 0; i < nn && !found; i++) {
         if (!names[i]) continue;
@@ -242,75 +336,9 @@ bool observer_job_find(StoreManager *store, const char *project, cJSON *st, Obse
         }
         cJSON *seen = cJSON_GetObjectItem(docs, names[i]);
         cJSON *kept = cJSON_CreateArray(); /* seen hashes still present (pruned) */
-        size_t np = 0, pcap = 256;
-        size_t *ps = malloc(pcap * sizeof(size_t)), *pl = malloc(pcap * sizeof(size_t));
-        if (!kept || !ps || !pl) *error = true;
-        while (!*error && ps && pl) { /* all paragraphs, however many */
-            np = obs_paragraphs(text, ps, pl, pcap);
-            if (np < pcap) break;
-            pcap *= 2;
-            size_t *a = realloc(ps, pcap * sizeof(size_t)), *b = realloc(pl, pcap * sizeof(size_t));
-            if (!a || !b) {
-                free(a ? a : ps);
-                free(b ? b : pl);
-                ps = pl = NULL;
-                *error = true;
-                break;
-            }
-            ps = a;
-            pl = b;
-        }
-        bool full = false;
-        for (size_t p = 0; !*error && ps && pl && p < np; p++) {
-            for (size_t off = 0; !*error && off < pl[p];) {
-                size_t plen = piece_len(text + ps[p] + off, pl[p] - off);
-                while (off + plen < pl[p] && text[ps[p] + off + plen] == ' ') plen++; /* keep spaces with the piece */
-                uint64_t h = fnv(text + ps[p] + off, plen);
-                if (seen && hash_seen(seen, h)) {
-                    char hex[17];
-                    snprintf(hex, sizeof(hex), "%016llx", (unsigned long long)h);
-                    if (!hash_seen(kept, h)) {
-                        cJSON *value = cJSON_CreateString(hex);
-                        if (!value || !cJSON_AddItemToArray(kept, value)) {
-                            cJSON_Delete(value);
-                            *error = true;
-                            break;
-                        }
-                    }
-                } else if (!full) {
-                    if (chunk_add(j, NULL, text, ps[p] + off, plen, -1)) {
-                        if (!add_hash(j, h)) {
-                            *error = true;
-                            break;
-                        }
-                    }
-                    else full = true;
-                }
-                off += plen;
-            }
-        }
-        free(ps);
-        free(pl);
-        if (*error) {
-            cJSON_Delete(kept);
-            free(text);
-            break;
-        }
-        if (j->nsegs) {
-            /* Every piece the document has now: what was read before plus
-             * this job's (the semantic index drops the rest). */
-            j->current = cJSON_Duplicate(kept, true);
-            if (!j->current) *error = true;
-            for (size_t h = 0; !*error && h < j->nhashes; h++) {
-                char hex[17];
-                snprintf(hex, sizeof(hex), "%016llx", (unsigned long long)j->hashes[h]);
-                cJSON *value = cJSON_CreateString(hex);
-                if (!value || !cJSON_AddItemToArray(j->current, value)) {
-                    cJSON_Delete(value);
-                    *error = true;
-                }
-            }
-        }
+        if (!kept) *error = true;
+        document_pieces(j, text, seen, kept, error);
+        if (!*error && j->nsegs) document_current_pieces(j, kept, error);
         if (*error) {
             cJSON_Delete(kept);
             free(text);
@@ -328,15 +356,57 @@ bool observer_job_find(StoreManager *store, const char *project, cJSON *st, Obse
             free(text);
         }
     }
-    for (size_t i = 0; i < nn; i++) free(names[i]);
-    free(names);
+    free_names(names, nn);
     if (*error) {
         observer_job_free(j);
         return false;
     }
-    if (found) return true;
+    return found;
+}
 
-    /* Chats: what follows the position already read. */
+/* Where reading stopped in a chat: a message count (older state) or {n, off}. */
+static void chat_position(const cJSON *pos, size_t *from, size_t *from_off)
+{
+    *from = 0;
+    *from_off = 0;
+    if (cJSON_IsNumber(pos) && pos->valuedouble >= 0 && pos->valuedouble < 0x1p64) *from = (size_t)pos->valuedouble; /* older state */
+    if (cJSON_IsObject(pos)) {
+        cJSON *a = cJSON_GetObjectItem(pos, "n"), *b = cJSON_GetObjectItem(pos, "off");
+        if (cJSON_IsNumber(a) && a->valuedouble >= 0 && a->valuedouble < 0x1p64) *from = (size_t)a->valuedouble;
+        if (cJSON_IsNumber(b) && b->valuedouble >= 0 && b->valuedouble < 0x1p64) *from_off = (size_t)b->valuedouble;
+    }
+}
+
+/* The chat's messages from the read position fill the job's chunk, piece by piece, until it is full; failed replies
+ * and AI rewrites (which may have been rejected) are not story text. Sets msg_to and off_to. */
+static void chat_pieces(ObserverJob *j, const ChatMessage *msgs, size_t from, size_t from_off)
+{
+    size_t k = from, off = from_off;
+    bool full = false;
+    for (; k < j->nmsgs && !full; k++, off = 0) {
+        bool skip = msgs[k].error || !j->msgs[k] || !j->msgs[k][0] || (msgs[k].role == CHAT_ASSISTANT && msgs[k].is_edit);
+        if (skip) continue;
+        const char *label = msgs[k].role == CHAT_USER ? "AUTHOR: " : "ASSISTANT: ";
+        size_t mlen = strlen(j->msgs[k]);
+        if (off > mlen) off = mlen;
+        while (off < mlen) {
+            size_t plen = piece_len(j->msgs[k] + off, mlen - off);
+            if (!chunk_add(j, off == 0 ? label : NULL, j->msgs[k], off, plen, (long)k)) {
+                full = true;
+                break;
+            }
+            off += plen;
+        }
+        if (full) break;
+    }
+    j->msg_to = k;
+    j->off_to = full ? off : 0;
+}
+
+/* Chats: what follows the position already read. The first chat with unread story text becomes the job; a chat
+ * whose unread messages are all failed, empty or rewrites is just marked read. */
+static bool find_chat_job(StoreManager *store, const char *project, cJSON *chats, ObserverJob *j, bool *error)
+{
     ChatSummary *list = NULL;
     size_t nc = 0;
     if (!chat_store_list_checked(store, project, &list, &nc)) {
@@ -349,6 +419,7 @@ bool observer_job_find(StoreManager *store, const char *project, cJSON *st, Obse
         for (size_t i = 0; i < nc && !present; i++) present = !strcmp(list[i].id, it->string);
         if (!present) cJSON_DeleteItemFromObject(chats, it->string);
     }
+    bool found = false;
     for (size_t i = 0; i < nc && !found; i++) {
         if (list[i].observer_ignore) continue; /* the author said not to read it */
         ChatMessage *msgs = NULL;
@@ -357,15 +428,8 @@ bool observer_job_find(StoreManager *store, const char *project, cJSON *st, Obse
             *error = true;
             break;
         }
-        cJSON *pos = cJSON_GetObjectItem(chats, list[i].id);
-        size_t from = 0, from_off = 0;
-        if (cJSON_IsNumber(pos) && pos->valuedouble >= 0 && pos->valuedouble < 0x1p64)
-            from = (size_t)pos->valuedouble; /* older state */
-        if (cJSON_IsObject(pos)) {
-            cJSON *a = cJSON_GetObjectItem(pos, "n"), *b = cJSON_GetObjectItem(pos, "off");
-            if (cJSON_IsNumber(a) && a->valuedouble >= 0 && a->valuedouble < 0x1p64) from = (size_t)a->valuedouble;
-            if (cJSON_IsNumber(b) && b->valuedouble >= 0 && b->valuedouble < 0x1p64) from_off = (size_t)b->valuedouble;
-        }
+        size_t from, from_off;
+        chat_position(cJSON_GetObjectItem(chats, list[i].id), &from, &from_off);
         if (from < n) {
             j->msgs = calloc(n, sizeof(char *));
             j->nmsgs = j->msgs ? n : 0;
@@ -379,28 +443,7 @@ bool observer_job_find(StoreManager *store, const char *project, cJSON *st, Obse
                 chat_store_free_messages(msgs, n);
                 break;
             }
-            size_t k = from, off = from_off;
-            bool full = false;
-            for (; k < j->nmsgs && !full; k++, off = 0) {
-                /* Failed replies, and AI rewrites (which may have been
-                 * rejected), are not story text. */
-                bool skip = msgs[k].error || !j->msgs[k] || !j->msgs[k][0] || (msgs[k].role == CHAT_ASSISTANT && msgs[k].is_edit);
-                if (skip) continue;
-                const char *label = msgs[k].role == CHAT_USER ? "AUTHOR: " : "ASSISTANT: ";
-                size_t mlen = strlen(j->msgs[k]);
-                if (off > mlen) off = mlen;
-                while (off < mlen) {
-                    size_t plen = piece_len(j->msgs[k] + off, mlen - off);
-                    if (!chunk_add(j, off == 0 ? label : NULL, j->msgs[k], off, plen, (long)k)) {
-                        full = true;
-                        break;
-                    }
-                    off += plen;
-                }
-                if (full) break;
-            }
-            j->msg_to = k;
-            j->off_to = full ? off : 0;
+            chat_pieces(j, msgs, from, from_off);
             snprintf(j->name, sizeof(j->name), "%s", list[i].id);
             found = true;
             if (!j->nsegs) { /* only failed/empty/rewrite messages: just mark them read */
@@ -414,4 +457,14 @@ bool observer_job_find(StoreManager *store, const char *project, cJSON *st, Obse
     free(list);
     if (*error) observer_job_free(j);
     return found;
+}
+
+bool observer_job_find(StoreManager *store, const char *project, cJSON *st, ObserverJob *j, bool *error)
+{
+    memset(j, 0, sizeof(*j));
+    *error = false;
+    cJSON *docs = cJSON_GetObjectItem(st, "docs"), *chats = cJSON_GetObjectItem(st, "chats");
+    if (find_document_job(project, docs, j, error)) return true;
+    if (*error) return false;
+    return find_chat_job(store, project, chats, j, error);
 }
