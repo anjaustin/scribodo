@@ -84,6 +84,11 @@ reach the retirement gives up, measured: two designated passages on the first
 novel, none on the second (the layer was never on for it). `pp-retire` is the
 default-path baseline for the first novel from here.
 
+## Hosted verdicts
+
+CI and Trusted acceptance both passed on `1be51c9` (runs 43279965053 and
+43279965047).
+
 ## Records
 
 TECHNICAL-DEBT (the flag-lifecycle entry, closed), AUDIT-003 (F4 note),
