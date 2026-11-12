@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include "../src/core/doc_io.h"
+#include "../src/core/file_text.h"
 #include "test_util.h"
 
 static char g_dir[512];
@@ -206,6 +207,35 @@ static void test_failed_save_leaves_original(void)
 
 /* Review finding R4: a FIFO must be refused, not block forever. main()
  * arms an alarm so a regression fails the run instead of hanging it. */
+/* The one atomic writer for the app's small files (core/file_text.h): whole content, requested mode, no temp
+ * left, the original kept when the write cannot happen. */
+static void test_file_text_write_atomic(void)
+{
+    const char *p = tmp_path("atomic.json");
+    CHECK(file_text_write_atomic(p, "first", 5, 0644));
+    uint8_t buf[64];
+    CHECK(read_bytes(p, buf, sizeof(buf)) == 5 && memcmp(buf, "first", 5) == 0);
+    struct stat st;
+    CHECK(stat(p, &st) == 0 && (st.st_mode & 0777) == 0644);
+    CHECK(file_text_write_atomic(p, "second, longer", 14, 0600));
+    CHECK(read_bytes(p, buf, sizeof(buf)) == 14 && memcmp(buf, "second, longer", 14) == 0);
+    CHECK(stat(p, &st) == 0 && (st.st_mode & 0777) == 0600);
+    CHECK(file_text_write_atomic(p, NULL, 0, 0644) && read_bytes(p, buf, sizeof(buf)) == 0); /* an empty file is a write */
+    CHECK(count_temp_files() == 0);
+    CHECK(!file_text_write_atomic(NULL, "x", 1, 0644) && !file_text_write_atomic(p, NULL, 1, 0644));
+    if (geteuid() != 0) {
+        const char *sub = tmp_path("atomic-locked");
+        mkdir(sub, 0755);
+        char file[1024];
+        snprintf(file, sizeof(file), "%s/settings.json", sub);
+        CHECK(file_text_write_atomic(file, "kept", 4, 0644));
+        chmod(sub, 0555);
+        CHECK(!file_text_write_atomic(file, "lost", 4, 0644));
+        CHECK(read_bytes(file, buf, sizeof(buf)) == 4 && memcmp(buf, "kept", 4) == 0);
+        chmod(sub, 0755);
+    }
+}
+
 static void test_fifo_does_not_block(void)
 {
     const char *p = tmp_path("pipe.md");
@@ -296,7 +326,7 @@ int main(void)
         { "save_preserves_mode", test_save_preserves_mode },
         { "refuses_external_change", test_refuses_external_change },
         { "failed_save_leaves_original", test_failed_save_leaves_original },
-        { "fifo_does_not_block", test_fifo_does_not_block },
+        { "file_text_write_atomic", test_file_text_write_atomic }, { "fifo_does_not_block", test_fifo_does_not_block },
         { "write_protected", test_write_protected },
         { "large_roundtrip", test_large_roundtrip },
     };

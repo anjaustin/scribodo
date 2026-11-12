@@ -1,5 +1,6 @@
 #define _DARWIN_C_SOURCE
 #include "observer_store_internal.h"
+#include "core/file_text.h"
 
 #include <fcntl.h>
 #include <errno.h>
@@ -159,20 +160,11 @@ static double state_version(cJSON *state)
 
 static bool state_write_files(const char *project, cJSON *st)
 {
-    char path[PATH_MAX + 128], tmp[PATH_MAX + 160];
+    char path[PATH_MAX + 128];
     state_path(project, path, sizeof(path), true);
-    snprintf(tmp, sizeof(tmp), "%s.tmp-XXXXXX", path);
     char *s = cJSON_PrintUnformatted(st);
     if (!s) return false;
-    int fd = mkstemp(tmp);
-    bool ok = fd >= 0;
-    size_t n = strlen(s);
-    if (ok) {
-        ok = fchmod(fd, 0644) == 0 && write(fd, s, n) == (ssize_t)n && fsync(fd) == 0;
-        ok = close(fd) == 0 && ok;
-        ok = ok && rename(tmp, path) == 0;
-        if (!ok) unlink(tmp);
-    }
+    bool ok = file_text_write_atomic(path, s, strlen(s), 0644);
     free(s);
     return ok;
 }
@@ -461,19 +453,11 @@ bool observer_rules_import_files(const char *project, char out[17])
 
 bool observer_rules_set_files(const char *project, const char *sig)
 {
-    char dir[PATH_MAX + 32], path[PATH_MAX + 64], tmp[PATH_MAX + 96];
+    char dir[PATH_MAX + 32], path[PATH_MAX + 64];
     snprintf(dir, sizeof(dir), "%s/.scribodo", project);
     if (mkdir(dir, 0755) != 0 && access(dir, F_OK) != 0) return false;
     snprintf(path, sizeof(path), "%s/observer-rules", dir);
-    snprintf(tmp, sizeof(tmp), "%s.tmp-XXXXXX", path);
-    int fd = mkstemp(tmp);
-    if (fd < 0) return false;
-    size_t n = strlen(sig);
-    bool ok = fchmod(fd, 0644) == 0 && write(fd, sig, n) == (ssize_t)n && fsync(fd) == 0;
-    ok = close(fd) == 0 && ok;
-    ok = ok && rename(tmp, path) == 0;
-    if (!ok) unlink(tmp);
-    return ok;
+    return file_text_write_atomic(path, sig, strlen(sig), 0644);
 }
 
 bool observer_rules_get_db(Db *db, const char *pid, char out[17])

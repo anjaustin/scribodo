@@ -1,5 +1,6 @@
 #define _DARWIN_C_SOURCE
 #include "recent.h"
+#include "core/file_text.h"
 
 #include <errno.h>
 #include <stdbool.h>
@@ -198,15 +199,8 @@ static void save_list(RecentStore *store, RecentProject *list, size_t n)
     cJSON_Delete(j);
     if (!s) return;
     mkdir_p(store->dir);
-    char path[PATH_MAX + 32], tmp[PATH_MAX + 64];
+    char path[PATH_MAX + 32];
     snprintf(path, sizeof(path), "%s/recent.json", store->dir);
-    snprintf(tmp, sizeof(tmp), "%s.tmp-XXXXXX", path);
-    int fd = mkstemp(tmp);
-    if (fd >= 0) {
-        size_t len = strlen(s);
-        bool ok = fchmod(fd, 0644) == 0 && write(fd, s, len) == (ssize_t)len && fsync(fd) == 0;
-        ok = close(fd) == 0 && ok;
-        if (!ok || rename(tmp, path) != 0) unlink(tmp);
-    }
+    file_text_write_atomic(path, s, strlen(s), 0644);
     free(s);
 }

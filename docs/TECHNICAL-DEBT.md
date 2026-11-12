@@ -145,7 +145,7 @@ per environment under `tools/` with the Makefile target that creates it; a
 
 | Duplication | Evidence | When touched |
 |---|---|---|
-| Atomic file write | Seven hand-rolled copies (`observer_store.c:164,468`, `recent.c:203`, `store_import.c:658`, `store.c:419`, `revisions.c:53`, `core/doc_io.c:304`); parent `fsync` in three, `EINTR` loop in one; `profile.c:61` and `model_settings.c:119` use a fixed `.tmp` name | One writer in `src/core`, with the `fsync` and `EINTR` behaviour of the strictest copy |
+| Atomic file write | **Done 2026-11-12:** `file_text_write_atomic` (`core/file_text.c`) is the one writer, with the strictest copy's behaviour (mkstemp beside the target, `EINTR` loop, fsync, rename, directory fsync) and the GAP-004 kill points; the eight call sites in `observer_store.c`, `recent.c`, `store_import.c`, `store.c`, `revisions.c`, `profile.c` and `model_settings.c` call it (the two fixed `.tmp` names are gone). `core/doc_io.c` keeps its own because it revalidates the target's identity between the write and the rename. Unit test in `test_doc_io`; `make crashtest` drives it at both moments (`journal/gap004-cycle7_atomic.md`) | Done |
 | Unit size | `MEMORY_UNIT_BYTES 2000u` plus about 15 literal `2000`/`2003`/`2004` across `memory_store.c`, `memory_document_store.c`, `recall.c`, `db.c:755`, `semantic.c:744,777`, `rerank.c:16`, `memory_brief.c:323`; the window arithmetic duplicated between the chat and document ingesters; `slot_ctx - MAX_REPLY_TOKENS - 256` five times in `chat.c` | Use the name; one window function |
 | Model requests | Chat-completion bodies built in five files with timeout literals of 15, 30, 60, 120 and 180 s; `http.c:332` substitutes 30 s for a non-positive timeout silently; one connection per request at 14 call sites | One request builder; connection reuse (see the loopback entry) |
 | Headers | `store.h` (28 exports) included by 37 files; `chat.h` (50 exports, 10 for tests) by 16 across `ui/`, `app/` and `main.c`; `memory_store.h` includes `llm/chat.h` for one enum | Move `ChatRole` to `core`; split `chat.h` test exports |
@@ -234,8 +234,8 @@ every filesystem operation, nor every filesystem/hardware durability behavior.
 - **Progress (2026-11-12):** the interruption points exist (`core/crash_point.h`,
   compiled away in the product) and `make crashtest` kills a process after
   every migration statement and receipt, at both moments of a document save
-  on both sides of a store commit, at five moments of a legacy import and at
-  three of a fork (120 deaths, each recovered; the import and fork rows each
+  on both sides of a store commit, at five moments of a legacy import, at three
+  of a fork and at both moments of the app's small-file writer (122 deaths, each recovered; the import and fork rows each
   found a move that was never finished after a death past its marker, both
   repaired by `store_finish_import`), and a full or read-only volume is
   refused with its cause (a misleading refusal repaired). The matrix of transitions, points, invariants and open rows

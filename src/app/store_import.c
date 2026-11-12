@@ -668,29 +668,9 @@ static bool import_once(Db *db, const char *project_dir, const char *data_dir, c
 
 static bool project_atomic_text(const char *project, const char *name, const char *text)
 {
-    char dir[PATH_MAX + 32], path[PATH_MAX + 64], tmp[PATH_MAX + 80];
-    snprintf(dir, sizeof(dir), "%s/.scribodo", project);
-    snprintf(path, sizeof(path), "%s/%s", dir, name);
-    snprintf(tmp, sizeof(tmp), "%s.tmp-XXXXXX", path);
-    int fd = mkstemp(tmp);
-    bool ok = fd >= 0;
-    size_t n = strlen(text), off = 0;
-    while (ok && off < n) {
-        ssize_t wrote = write(fd, text + off, n - off);
-        if (wrote < 0 && errno == EINTR) continue;
-        ok = wrote > 0;
-        if (ok) off += (size_t)wrote;
-    }
-    if (ok) ok = fsync(fd) == 0;
-    if (fd >= 0 && close(fd) != 0) ok = false;
-    if (ok) ok = rename(tmp, path) == 0;
-    if (!ok && fd >= 0) unlink(tmp);
-    if (ok) {
-        int parent = open(dir, O_RDONLY);
-        ok = parent >= 0 && fsync(parent) == 0;
-        if (parent >= 0) close(parent);
-    }
-    return ok;
+    char path[PATH_MAX + 96];
+    snprintf(path, sizeof(path), "%s/.scribodo/%s", project, name);
+    return file_text_write_atomic(path, text, strlen(text), 0644);
 }
 
 /* The project row this folder imports into. A crashed import's id is

@@ -1,5 +1,6 @@
 #define _DARWIN_C_SOURCE
 #include "store.h"
+#include "core/file_text.h"
 
 #include <CommonCrypto/CommonDigest.h>
 #include <errno.h>
@@ -412,28 +413,14 @@ static bool write_marker(const char *project_dir, const char *project_id)
 {
     struct stat st;
     if (stat(project_dir, &st) != 0) return false;
-    char dir[PATH_MAX + 32], path[PATH_MAX + 64], tmp[PATH_MAX + 96];
+    char dir[PATH_MAX + 32], path[PATH_MAX + 64];
     snprintf(dir, sizeof(dir), "%s/.scribodo", project_dir);
     mkdir(dir, 0755);
     snprintf(path, sizeof(path), "%s/store.json", dir);
-    snprintf(tmp, sizeof(tmp), "%s.tmp-XXXXXX", path);
-    int fd = mkstemp(tmp);
-    if (fd < 0) return false;
     char buf[256];
     int n = snprintf(buf, sizeof(buf), "{\"project_id\":\"%s\",\"version\":2,\"dev\":%llu,\"ino\":%llu}\n", project_id,
                      (unsigned long long)st.st_dev, (unsigned long long)st.st_ino);
-    bool ok = fchmod(fd, 0644) == 0 && write(fd, buf, (size_t)n) == n && fsync(fd) == 0;
-    ok = close(fd) == 0 && ok;
-    ok = ok && rename(tmp, path) == 0;
-    if (!ok) unlink(tmp);
-    if (ok) { /* make the rename durable too */
-        int dfd = open(dir, O_RDONLY);
-        if (dfd >= 0) {
-            fsync(dfd);
-            close(dfd);
-        }
-    }
-    return ok;
+    return n > 0 && file_text_write_atomic(path, buf, (size_t)n, 0644); /* the directory entry is fsynced by the writer */
 }
 
 bool store_mark_imported(const char *project_dir, const char *project_id) { return write_marker(project_dir, project_id); }

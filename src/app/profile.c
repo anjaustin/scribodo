@@ -1,6 +1,7 @@
 /* Who is who: stored names. See profile.h. */
 #define _DARWIN_C_SOURCE
 #include "profile.h"
+#include "core/file_text.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -56,9 +57,8 @@ void profile_load(Profile *p)
 
 bool profile_save(const Profile *p)
 {
-    char path[1024], tmp[1100];
+    char path[1024];
     path_of(path, sizeof(path));
-    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
     char dir[1024];
     snprintf(dir, sizeof(dir), "%s", path);
     char *sl = strrchr(dir, '/');
@@ -73,12 +73,8 @@ bool profile_save(const Profile *p)
     char *s = cJSON_PrintUnformatted(j);
     cJSON_Delete(j);
     if (!s) return false;
-    FILE *f = fopen(tmp, "wb");
-    bool ok = f && fputs(s, f) >= 0;
-    if (f) ok = fflush(f) == 0 && fsync(fileno(f)) == 0 && ok, fclose(f);
+    bool ok = file_text_write_atomic(path, s, strlen(s), 0644);
     free(s);
-    ok = ok && rename(tmp, path) == 0; /* atomic */
-    if (!ok) unlink(tmp);
     return ok;
 }
 

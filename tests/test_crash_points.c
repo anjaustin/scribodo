@@ -32,6 +32,7 @@
 #include "app/store_backends.h"
 #include "core/crash_point.h"
 #include "core/doc_io.h"
+#include "core/file_text.h"
 #include "core/utf8.h"
 #include "test_util.h"
 
@@ -552,6 +553,15 @@ static bool save_text(const char *path, const char *text, char *err, size_t errl
     return n && doc_save(path, cps, n, false, false, NULL, NULL, err, errlen) == DOC_OK;
 }
 
+/* The app's small-file writer (core/file_text.h), the same shape as the save with one shared implementation. */
+static int child_atomic_main(const char *path)
+{
+    bool ok = file_text_write_atomic(path, k_replacement, strlen(k_replacement), 0644);
+    printf("DONE ok=%d version=0 hits=%ld\n", ok, crash_point_hits());
+    fflush(stdout);
+    return ok ? 0 : 2;
+}
+
 static int child_save_main(const char *path)
 {
     char err[512] = "";
@@ -592,7 +602,19 @@ static const char *content_name(const char *buf, size_t n)
     return "OTHER";
 }
 
-static void run_save_point(const char *point)
+static int count_pattern(const char *dir, const char *pattern)
+{
+    DIR *d = opendir(dir);
+    if (!d) return -1;
+    int n = 0;
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL)
+        if (strstr(ent->d_name, pattern)) n++;
+    closedir(d);
+    return n;
+}
+
+static void run_save_point_with(const char *point, const char *mode, const char *temp_pattern)
 {
     const char *base = getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp";
     for (long k = 1; k < 100; k++) {
@@ -603,7 +625,7 @@ static void run_save_point(const char *point)
         CHECK(save_text(path, k_original, err, sizeof(err)));
         snprintf(spec, sizeof(spec), "%s#%ld", point, k);
         ChildResult r;
-        CHECK(run_child(g_self, spec, "--child-save", path, &r));
+        CHECK(run_child(g_self, spec, mode, path, &r));
         if (r.exited) {
             CHECK(r.code == 0 && r.hits == k - 1);
             fprintf(g_matrix, "%s\t%ld\tnone\t-\t-\t-\t%ld hits in all\n", point, k, r.hits);
@@ -615,15 +637,16 @@ static void run_save_point(const char *point)
         const char *found = n == (size_t)-1 ? "MISSING" : content_name(buf, n);
         /* The target is whole: the original or the new text, never a mix, a truncation or nothing. */
         CHECK(!strcmp(found, "original") || !strcmp(found, "new"));
-        int temps_at_death = count_temps(dir);
-        /* The next save (the next process) succeeds and the target holds it whole. */
-        bool next = save_text(path, k_third, err, sizeof(err));
+        int temps_at_death = count_pattern(dir, temp_pattern);
+        /* The next write (the next process) succeeds and the target holds it whole. */
+        bool next = !strcmp(mode, "--child-save") ? save_text(path, k_third, err, sizeof(err))
+                                                  : file_text_write_atomic(path, k_third, strlen(k_third), 0644);
         if (!next) fprintf(stderr, "    %s#%ld: %s\n", point, k, err);
         CHECK(next);
         n = read_whole(path, buf, sizeof(buf));
         CHECK(n != (size_t)-1 && !strcmp(content_name(buf, n), "third"));
-        int temps_after = count_temps(dir);
-        fprintf(g_matrix, "%s\t%ld\tSIGKILL\t%s at death\tnext save ok\t%d temp at death, %d after\t%s\n", point, k, found,
+        int temps_after = count_pattern(dir, temp_pattern);
+        fprintf(g_matrix, "%s\t%ld\tSIGKILL\t%s at death\tnext write ok\t%d temp at death, %d after\t%s\n", point, k, found,
                 temps_at_death, temps_after, !strcmp(found, "new") || !strcmp(found, "original") ? "target whole" : "TARGET DAMAGED");
         g_rows++;
         /* Leave nothing behind: the temp files are the test's, named by mkstemp under dir. */
@@ -633,10 +656,18 @@ static void run_save_point(const char *point)
     }
 }
 
+static void run_save_point(const char *point) { run_save_point_with(point, "--child-save", ".scribodo-"); }
+
 static void test_save_points(void)
 {
     run_save_point("save.temp_written");
     run_save_point("save.renamed");
+}
+
+static void test_atomic_points(void)
+{
+    run_save_point_with("atomic.temp_written", "--child-atomic", ".tmp-");
+    run_save_point_with("atomic.renamed", "--child-atomic", ".tmp-");
 }
 
 /* ---- the disk row: full and read-only volumes ------------------------------ */
@@ -758,6 +789,7 @@ int main(int argc, char **argv)
 {
     if (argc == 3 && !strcmp(argv[1], "--child")) return child_main(argv[2]);
     if (argc == 3 && !strcmp(argv[1], "--child-save")) return child_save_main(argv[2]);
+    if (argc == 3 && !strcmp(argv[1], "--child-atomic")) return child_atomic_main(argv[2]);
     if (argc == 3 && !strcmp(argv[1], "--child-append")) return child_append_main(argv[2]);
     if (argc == 4 && !strcmp(argv[1], "--child-import")) return child_import_main(argv[2], argv[3]);
     if (argc == 4 && !strcmp(argv[1], "--child-fork")) return child_fork_main(argv[2], argv[3]);
@@ -769,8 +801,9 @@ int main(int argc, char **argv)
     time_t t0 = time(NULL);
     TestCase tests[] = { { "migration_points", test_migration_points }, { "save_points", test_save_points },
                          { "store_points", test_store_points }, { "import_points", test_import_points },
-                         { "fork_points", test_fork_points }, { "disk_row", test_disk_row } };
-    int rc = run_tests(tests, 6);
+                         { "fork_points", test_fork_points }, { "disk_row", test_disk_row },
+                         { "atomic_points", test_atomic_points } };
+    int rc = run_tests(tests, 7);
     fclose(g_matrix);
     printf("%d matrix rows in build/crash/matrix.tsv, %ld s\n", g_rows, (long)(time(NULL) - t0));
     free(g_reference);

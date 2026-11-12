@@ -47,25 +47,7 @@ static bool doc_dir(const char *project_dir, const char *doc_path, bool create, 
     return true;
 }
 
-static bool write_atomic(const char *path, const char *data, size_t n)
-{
-    char tmp[1500];
-    snprintf(tmp, sizeof(tmp), "%s.tmp-XXXXXX", path);
-    int fd = mkstemp(tmp);
-    if (fd < 0) return false;
-    bool ok = true;
-    for (size_t off = 0; ok && off < n;) {
-        ssize_t w = write(fd, data + off, n - off);
-        if (w < 0 && errno == EINTR) continue;
-        ok = w > 0;
-        if (ok) off += (size_t)w;
-    }
-    ok = ok && fchmod(fd, 0644) == 0 && fsync(fd) == 0;
-    ok = close(fd) == 0 && ok;
-    ok = ok && rename(tmp, path) == 0;
-    if (!ok) unlink(tmp);
-    return ok;
-}
+static bool write_atomic(const char *path, const char *data, size_t n) { return file_text_write_atomic(path, data, n, 0644); }
 
 static char *slurp(const char *path)
 {
