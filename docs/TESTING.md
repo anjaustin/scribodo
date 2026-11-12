@@ -219,6 +219,17 @@ modify a database while any Scribodo process is running.
   with the two slots assigned as a matching, against today's selection;
   `test_answer_admission_arm` (in `make test`) pins the parts, pools,
   matching and fusion without a model. See `journal/answer-cycle3_relation.md`.
+  `tools/answer_margin_arm.py` (embedder, then reranker, both pinned)
+  replays recorded live runs of any number of novels: production's own pools
+  and reranker scores from the trace lines, the embedder's score for every
+  pooled unit, the best three-sentence window of every unit in the reranker's
+  tie, and the designated unit's place among the units mentioning the
+  question's name in manuscript order; it evaluates margin, fusion and
+  window rules confined to the tie against today's slots, and reports
+  whether its replay of today's rule reproduces the run's slots (its
+  calibration). `test_answer_margin_arm` (in `make test`) pins the tie, the
+  slot rules, the fusion, the name phrase, the first-mention rank and the
+  scoring without a model. See `journal/answer-cycle4_margin.md`.
   `tools/answer_coref_arm.py` (fastcoref FCoref or LingMess with spaCy in
   `build/venv-coref`, then the admission arm on the derived units) rewrites
   third-person pronouns in the document units of a live run to their

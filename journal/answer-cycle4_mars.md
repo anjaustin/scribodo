@@ -291,6 +291,9 @@ Two things this run records that the first did not:
    naming the entity outscore the one that states the attribute, by 0.006.
    The index layer does not address it (the stating sentence already names
    him). It is a reranker saturation case and belongs with MODEL-002.
+   Measured on 2026-11-11 (journal/answer-cycle4_margin.md): the embedder
+   places the unit 32nd, windows within the tie 10th of 14; no deterministic
+   rule over the two rankers gains a slot on either novel without a loss.
 
 Evidence for this cycle is archived per [EVIDENCE](../docs/EVIDENCE.md)
 (`scribodo-evidence-2026-11-11-mars.tar.gz`).

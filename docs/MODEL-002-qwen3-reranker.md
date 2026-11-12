@@ -61,6 +61,24 @@ reply. That is why the pipeline is an experiment behind
 foreground default: the live measurement records the wall time with the
 answers.
 
+## Saturation
+
+The reranker's scores saturate near 1.0 when several passages carry the
+question's names and content words, and the one that states the asked
+attribute can rank under them by a few thousandths. Two instances are
+measured, one per novel: the sisters' fortune (first novel; the stating
+clause has a pronoun subject, the unit ranks 5 to 7) and Kantos Kan's rank
+(second novel; the stating sentence names him in an appositive, the unit
+ranks 7th at 0.9913 under six units within 0.006 of the top). Every local
+route is measured and closed: per-part reranking, a named-entity admission
+filter, sentence windows, embedder order within the reranker's tie, rank
+fusion, and a larger reranker (not possible beside the chat model on the
+MVP machine). The embedder is right where the reranker is wrong on the first
+instance and wrong on the second (32nd of 43); windows reach neither.
+`journal/answer-cycle3_relation.md` and `journal/answer-cycle4_margin.md`
+hold the tables; `tools/answer_margin_arm.py` reruns the second on any
+recorded run. The fixture cases are permanent regression probes.
+
 ## Not claimed
 
 Reranker quality beyond the measured eight questions; two-value questions
