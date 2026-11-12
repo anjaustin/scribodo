@@ -126,3 +126,28 @@ instrumented live-capture builds' manifests and logs (`build/answer-live-flags`,
 `-flags2`, `-receipt`, `-relation`). Binaries, objects and the work copies'
 databases are excluded. Archive SHA-256:
 `dfcc8e9a8530c015b90946a5b38fd4445be35014fb8f98dcb10719ae5b03984d`.
+
+The rest of 2026-11-12 (journals `answer-cycle4_builder`, `_exact_span`,
+`_retire_index`, `_tolerance`, `_relation_split`, `_note_turns`, the third
+novel's reach section of `_heights`, `observer-cycle1_replay`,
+`observer-cycle1_split`, `debt-script_host`) is in
+`scribodo-evidence-2026-11-12-loose-ends.tar.gz` in the same folder, with
+`manifest-scribodo-evidence-2026-11-12-loose-ends.txt` and an entry in
+`SHA256SUMS`. It contains 6,362 files: every live run under
+`build/product-memory-use` that no earlier archive holds (41 runs: the
+pipeline, coreference, relation, builder, exact-span and retire runs on the
+three novels, with their exported messages, units, manifests, logs and work
+copies), the live captures and comparison outputs of the relation, builder,
+exact-span and retire steps (`build/relation`, `build/builder`, `build/exact`,
+`build/retire`), the tolerance and relation-split measurements
+(`build/tolerance`), the observer replay baselines and split comparisons with
+the seeded project copies and every gate log (`build/observer`), the third
+novel's reach run and the first novel's control
+(`build/memory-reach/runs/scribodo_test_reach_84012_*`, `..._91611_*`,
+`build/reach-heights`), the review sheets and gate replay sheets
+(`build/answer-pipe-capture`, `build/gate-replay-*.json`), and the
+instrumented live-capture builds' generated sources, manifests and logs
+(`build/answer-live-builder`, `-final`, `-exact`, `-retire`, `-ca908bd`).
+Binaries, objects, dependency files and the frozen app copies are excluded.
+Archive SHA-256:
+`4016a1ff5e67639a24f3db62665d356653295b71f96899ed388870365a4f0465`.
