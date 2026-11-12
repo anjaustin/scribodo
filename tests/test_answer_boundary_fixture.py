@@ -10,6 +10,7 @@ FIXTURE = ROOT / 'tests/fixtures/answer_boundary/questions.json'
 FIXTURE_SCRIPTS = {
     FIXTURE: ROOT / 'tests/ui/store/21_boundary_questions.scribo',
     ROOT / 'tests/fixtures/answer_boundary/princess-of-mars.json': ROOT / 'tests/ui/store/22_mars_boundary_questions.scribo',
+    ROOT / 'tests/fixtures/answer_boundary/wuthering-heights.json': ROOT / 'tests/ui/store/23_heights_boundary_questions.scribo',
 }
 spec = importlib.util.spec_from_file_location('answer_boundary_bind', ROOT / 'tools/answer_boundary_bind.py')
 binder = importlib.util.module_from_spec(spec); spec.loader.exec_module(binder)

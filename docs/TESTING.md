@@ -113,8 +113,11 @@ modify a database while any Scribodo process is running.
   through the real app with source-delivery checks only. A second, held-out
   fixture over *A Princess of Mars*,
   `tests/fixtures/answer_boundary/princess-of-mars.json`, has its own script
-  `22_mars_boundary_questions.scribo`; both scripts are generated from their
-  fixtures by `tools/answer_boundary_script.py FIXTURE SCRIPT` (`--check`
+  `22_mars_boundary_questions.scribo`, and a third over *Wuthering Heights*
+  (`wuthering-heights.json`, `23_heights_boundary_questions.scribo`; pronoun-
+  subject and relation questions by construction, journal/answer-cycle4_heights.md);
+  the scripts are generated from their fixtures by
+  `tools/answer_boundary_script.py FIXTURE SCRIPT` (`--check`
   compares without writing). The bind, review and gate-replay tools read the
   fixture named by `SCRIBODO_BOUNDARY_FIXTURE` (default the first), and
   `tools/answer_product_run.py` attaches the parts directory named by

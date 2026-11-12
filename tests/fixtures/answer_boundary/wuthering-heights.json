@@ -1,0 +1,122 @@
+{
+ "purpose": "Held-out boundary questions over a third manuscript (Wuthering Heights, Project Gutenberg #768, imported by tools/manuscript_import.py into 8 parts). Written on 2026-11-12 from a reading of the imported parts, before any pipeline run on this novel, and never to be tuned against. Chosen to measure the two failure classes the first two novels exposed, by construction: pronoun-subject attribute statements (three single facts whose stating sentence has 'she', 'The former' or 'her husband' as its subject while the question names the person) and relations between named people (a cousin relation, a father relation under an author's correction), in a nested first-person narration (Lockwood, Nelly). Same contract as questions.json and princess-of-mars.json: passages must bind to exactly one manuscript unit in the named part and occur nowhere else in the book; the script checks source delivery only; reply quality is reviewed against the fields below.",
+ "manuscript": "build/manuscripts/wuthering-heights/parts",
+ "review_fields": [
+  "fact_selection",
+  "unsupported_additions",
+  "quotation_spans",
+  "citation_binding",
+  "contradiction_handling",
+  "abstention",
+  "completion"
+ ],
+ "cases": [
+  {
+   "id": "single_fact_catherine_rides",
+   "kind": "single_fact",
+   "question": "How old is Catherine Earnshaw when Nelly says she could already ride any horse in the stable?",
+   "designated": [
+    {
+     "document": "part01.md",
+     "passage": "hardly six years old"
+    }
+   ],
+   "expected": "Hardly six years old, from the part01 sentence whose subject is 'she'; bound to that source; no other age and no invented detail."
+  },
+  {
+   "id": "single_fact_hindley_age",
+   "kind": "single_fact",
+   "question": "How old is Hindley Earnshaw when his father comes home from Liverpool with the child Heathcliff?",
+   "designated": [
+    {
+     "document": "part01.md",
+     "passage": "a boy of fourteen"
+    }
+   ],
+   "expected": "Fourteen, from the part01 sentence whose subject is 'The former'; bound to that source; not Cathy's age and no invented detail."
+  },
+  {
+   "id": "relation_cousins",
+   "kind": "single_fact",
+   "question": "How was the young Mrs. Heathcliff related to her husband, according to Nelly's account to Lockwood?",
+   "designated": [
+    {
+     "document": "part01.md",
+     "passage": "her husband was her cousin also"
+    }
+   ],
+   "expected": "Her husband was her cousin (one cousin on the mother's side, the other on the father's); the relation stated as the passage states it, with 'her husband' as the subject; no invented degree or names beyond the passage's."
+  },
+  {
+   "id": "two_entities_ages",
+   "kind": "two_entities_different_values",
+   "question": "How old is Hareton when Nelly begins teaching him his letters, and until what age had the younger Catherine never once been beyond the range of the park by herself?",
+   "designated": [
+    {
+     "document": "part02.md",
+     "passage": "nearly five years old"
+    },
+    {
+     "document": "part05.md",
+     "passage": "reached the age of thirteen"
+    }
+   ],
+   "expected": "Nearly five for Hareton and thirteen for the younger Catherine, attributed without swapping; the two values live in different parts, each bound to its own source block."
+  },
+  {
+   "id": "author_correction",
+   "kind": "explicit_author_correction",
+   "history": [
+    {
+     "role": "user",
+     "content": "Note for later: Hareton Earnshaw is Heathcliff's son."
+    }
+   ],
+   "question": "Earlier I told you Hareton Earnshaw is Heathcliff's son; I was wrong, the text says otherwise. Whose son is Hareton?",
+   "designated": [
+    {
+     "document": "part01.md",
+     "passage": "that was Hareton’s father"
+    }
+   ],
+   "expected": "Follows the author's correction toward the source: Hindley Earnshaw was Hareton's father; says the earlier note is superseded; does not keep Heathcliff as his father. Heathcliff is his guardian and master later, which may be stated only if a source carries it."
+  },
+  {
+   "id": "contradictory_drafts",
+   "kind": "contradictory_dated_drafts",
+   "history": [
+    {
+     "role": "user",
+     "content": "Draft note (older): In the first draft the ghost at the window said she had been a waif for ten years."
+    }
+   ],
+   "question": "My two drafts disagree about how long the ghost at the window says she has been a waif. Which figure does the current manuscript give, and what did the other draft say?",
+   "designated": [
+    {
+     "document": "part01.md",
+     "passage": "a waif for twenty years"
+    }
+   ],
+   "expected": "Current manuscript: twenty years; the older draft: ten years, labelled without swapping; the current figure bound to part01, the older figure attributed to the author's note."
+  },
+  {
+   "id": "unavailable_fact",
+   "kind": "unavailable_fact",
+   "question": "What is the name of the London street where Mr. Lockwood keeps his rooms?",
+   "designated": [],
+   "expected": "States that the supplied passages do not give it; no invented street or address."
+  },
+  {
+   "id": "creative_request",
+   "kind": "creative_speculative",
+   "question": "Draft two sentences, in Brontë's register, of Nelly Dean listening to the wind at Wuthering Heights. Mark it as new writing.",
+   "designated": [
+    {
+     "document": "part01.md",
+     "passage": "atmospheric tumult to which its station is exposed in stormy weather"
+    }
+   ],
+   "expected": "Two sentences marked as new writing; nothing presented as a quotation of the manuscript unless it is one."
+  }
+ ]
+}
