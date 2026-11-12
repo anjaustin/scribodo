@@ -109,9 +109,11 @@ byte-identical to the previous run (`mars-pipe7` against `mars-pipe6`).
 
 ## Open — worker monoliths and the compiled-in script host (P2)
 
-**Recorded:** 2026-11-11 (AUDIT-003 F5). **Status:** Open.
+**Recorded:** 2026-11-11 (AUDIT-003 F5). **Status:** Open; `build_in_worker` split 2026-11-12
+(`journal/answer-cycle4_builder.md`: eleven staged functions over `ChatBuild` and `MemoryStage`, the base stage
+public and unit-tested, bytes identical on two live runs); the observer functions and the script-host decision remain.
 
-`build_in_worker` (`src/llm/chat.c:1082-1389`) is 308 lines with about 176
+`build_in_worker` (`src/llm/chat.c:1082-1389`) was 308 lines with about 176
 decision points and no unit test of its orchestration (`chat_answer_pipeline_configure`
 has no test caller; `answer_pipeline_run` has no C test). `run_job`
 (`observer.c:534-818`, 285 lines) and `observer_job_find`

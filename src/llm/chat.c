@@ -1098,297 +1098,391 @@ static bool memory_identity_current(ChatSession *s)
            now.inode == s->memory_identity.inode && !strcmp(now.project_id, s->memory_identity.project_id);
 }
 
-static bool build_in_worker(ChatSession *s)
-{
-    double preparation_started = memory_budget_now_ms();
+/* ---- the request builder, in stages ---------------------------------------
+ * One turn's request is built by the worker in the stages below, which share
+ * one ChatBuild and run in order (register, "functions too large to review":
+ * build_in_worker was one 300-line body; each stage is the section it had
+ * under a comment, and the product's bytes are the same, measured live on two
+ * novels in journal/answer-cycle4_builder.md). The base stage is a plain
+ * function over copied state, chat_build_base_request, which the unit test
+ * calls without a session; the other stages read the session. */
+
+typedef struct {
+    double preparation_started, base_finished;
     MemoryBudget budget;
-    bool budget_started = s->memory_enabled && !s->via_remote &&
-        memory_budget_begin(&budget, &s->cancel, MEMORY_PREPARE_BUDGET_MS);
-    s->prepare_budget = budget_started ? &budget : NULL;
+    bool budget_started;
+    ChatRequestHistory history;
+    bool history_ok;
+    ChatContext ctx;
+    char author[64], assistant[64];
+    ChatNames names;
+    int slot_ctx, base_ctx;
+    ChatSampling samp;
+    bool use_samp;
+    ChatTokenCount counter;
+    bool truncated;
+    size_t first_history;
+    char *req;
+    char memory_notice[256];
+} ChatBuild;
+
+/* Stage 1: the budget, and a copy of everything the stages read from the session, taken under the lock. */
+static void build_begin(ChatSession *s, ChatBuild *b)
+{
+    memset(b, 0, sizeof(*b));
+    b->preparation_started = memory_budget_now_ms();
+    b->budget_started = s->memory_enabled && !s->via_remote &&
+        memory_budget_begin(&b->budget, &s->cancel, MEMORY_PREPARE_BUDGET_MS);
+    s->prepare_budget = b->budget_started ? &b->budget : NULL;
     pthread_mutex_lock(&s->mu);
     size_t total = s->target; /* everything before the in-progress reply */
-    ChatRequestHistory history = {0};
     /* Edits use the protected instruction/passage, not chat history. */
-    bool ok = s->edit_passage || chat_request_history_copy(s->msgs, total, s->via_remote, &history);
-    if (!s->edit_passage && s->windowed && (s->older || s->newer)) history.limited = true;
-    s->history_stats = (ChatHistoryStats){ history.count, history.content_bytes, history.scanned, history.limited };
-    ChatContext ctx = { s->ctx_title, s->ctx_text, s->ctx_docs, s->nctx_docs };
-    char an[64], sn[64];
-    snprintf(an, sizeof(an), "%s", s->author_name);
-    snprintf(sn, sizeof(sn), "%s", s->assistant_name);
-    ChatNames names = { an, sn };
+    b->history_ok = s->edit_passage || chat_request_history_copy(s->msgs, total, s->via_remote, &b->history);
+    if (!s->edit_passage && s->windowed && (s->older || s->newer)) b->history.limited = true;
+    s->history_stats = (ChatHistoryStats){ b->history.count, b->history.content_bytes, b->history.scanned, b->history.limited };
+    b->ctx = (ChatContext){ s->ctx_title, s->ctx_text, s->ctx_docs, s->nctx_docs };
+    snprintf(b->author, sizeof(b->author), "%s", s->author_name);
+    snprintf(b->assistant, sizeof(b->assistant), "%s", s->assistant_name);
+    b->names = (ChatNames){ b->author, b->assistant };
     pthread_mutex_unlock(&s->mu);
-    bool truncated = false;
     /* Budget from the server's real per-slot context, not an assumption
      * (red-team 003: a mismatch overflowed the context despite trimming). */
-    int slot_ctx = s->via_remote ? s->remote.context_tokens : s->server ? llm_server_slot_ctx(s->server) : SLOT_CTX_TOKENS;
+    b->slot_ctx = s->via_remote ? s->remote.context_tokens : s->server ? llm_server_slot_ctx(s->server) : SLOT_CTX_TOKENS;
     /* The reply's room in the budget follows the author's max reply length
      * (the builders reserve MAX_REPLY_TOKENS). */
-    ChatSampling samp = s->sampling;
-    bool use_samp = s->has_sampling;
-    if (use_samp) slot_ctx -= samp.max_reply - MAX_REPLY_TOKENS;
+    b->samp = s->sampling;
+    b->use_samp = s->has_sampling;
+    if (b->use_samp) b->slot_ctx -= b->samp.max_reply - MAX_REPLY_TOKENS;
     /* The local tokenizer counts only for the local model; remote budgets are estimated. */
-    ChatTokenCount counter = !s->via_remote && (s->server || (s->memory_enabled && !s->edit_passage)) ? server_count : NULL;
-    int base_ctx = slot_ctx;
-    bool protected_document = s->has_doc && !ctx.ndocs && ctx.doc_text;
-    for (size_t i = 0; i < ctx.ndocs; i++) protected_document = protected_document || ctx.docs[i].unsaved;
+    b->counter = !s->via_remote && (s->server || (s->memory_enabled && !s->edit_passage)) ? server_count : NULL;
+    b->base_ctx = b->slot_ctx;
+    bool protected_document = s->has_doc && !b->ctx.ndocs && b->ctx.doc_text;
+    for (size_t i = 0; i < b->ctx.ndocs; i++) protected_document = protected_document || b->ctx.docs[i].unsaved;
     /* Older history and saved-document heads are optional context. Do not
      * fill the physical window with them before trying to add recall. The
      * current author turn is still protected by the builder, and the complete
      * request is recounted against slot_ctx at admission. Unsaved buffers,
      * reviewed edits and remote requests keep their existing foreground policy. */
     if (s->memory_enabled && !s->via_remote && !s->edit_passage && !protected_document &&
-        slot_ctx > (int)MEMORY_PLAN_TOKENS + MAX_REPLY_TOKENS + 256)
-        base_ctx -= (int)MEMORY_PLAN_TOKENS;
-    size_t first_history = 0;
-    char *req = NULL;
+        b->slot_ctx > (int)MEMORY_PLAN_TOKENS + MAX_REPLY_TOKENS + 256)
+        b->base_ctx -= (int)MEMORY_PLAN_TOKENS;
+}
+
+char *chat_build_base_request(const ChatRequestHistory *history, const ChatContext *ctx, const ChatNames *names,
+                              int slot_ctx, int base_ctx, ChatTokenCount counter, void *counter_ctx,
+                              const char *edit_instruction, const char *edit_passage, bool *truncated,
+                              size_t *first_history, char *error, size_t errlen)
+{
+    if (edit_passage) {
+        /* The passage and its rewrite must both fit in one request. */
+        long pt = count_tokens(counter, counter_ctx, edit_passage);
+        if (pt * 3 > slot_ctx - 512) {
+            snprintf(error, errlen, "The selection is too long to edit in one go (about %ld tokens). Select a shorter passage.", pt);
+            return NULL;
+        }
+        return chat_build_edit_request(edit_instruction, edit_passage, ctx, slot_ctx, counter, counter_ctx, truncated);
+    }
+    return chat_build_request_selected(history->messages, history->count, ctx, names, base_ctx, counter, counter_ctx, truncated,
+                                       first_history);
+}
+
+/* Stage 2: the base request, before any memory. */
+static void build_base(ChatSession *s, ChatBuild *b)
+{
     s->build_error[0] = '\0';
-    if (!ok)
+    if (!b->history_ok)
         snprintf(s->build_error, sizeof(s->build_error),
                  "Could not prepare bounded chat history (current request must be at most 64 KiB); shorten it or retry");
-    if (ok && s->edit_passage) {
-        /* The passage and its rewrite must both fit in one request. */
-        long pt = count_tokens(counter, s, s->edit_passage);
-        if (pt * 3 > slot_ctx - 512) {
-            snprintf(s->build_error, sizeof(s->build_error),
-                     "The selection is too long to edit in one go (about %ld tokens). Select a shorter passage.", pt);
-            ok = false;
+    else
+        b->req = chat_build_base_request(&b->history, s->has_doc ? &b->ctx : NULL, &b->names, b->slot_ctx, b->base_ctx, b->counter, s,
+                                         s->edit_instruction, s->edit_passage, &b->truncated, &b->first_history, s->build_error,
+                                         sizeof(s->build_error));
+    b->base_finished = memory_budget_now_ms();
+}
+
+/* The memory stages' shared state: what the store, the vectors and the plan give one turn. */
+typedef struct {
+    SemanticClient *bounded_vectors;
+    MemoryPlan plan;
+    bool briefs_unavailable;
+    MemoryDocumentSet documents;
+    MemoryDocumentName attachment_names[MEMORY_DOCUMENTS_MAX];
+    size_t nattachments;
+    MemoryTokenizer tokenizer;
+    char fingerprint[65];
+    Db *db;
+    char project_id[64];
+    bool available;
+    int64_t before;
+    const char *query;
+    bool pipeline_done;
+    double recall_started, recall_finished;
+    size_t recalled;
+    bool packet_prepared;
+} MemoryStage;
+
+/* Stage 3a: is memory available for this turn (store, vectors, identity, scope, documents)? */
+static void memory_begin(ChatSession *s, ChatBuild *b, MemoryStage *m)
+{
+    memset(m, 0, sizeof(*m));
+    m->bounded_vectors = b->budget_started
+        ? semantic_client_bounded(s->memory_vectors, &b->budget.stop, b->budget.deadline_ms) : NULL;
+    for (size_t i = 0; i < s->nctx_docs && m->nattachments < MEMORY_DOCUMENTS_MAX; i++)
+        if (memory_document_name_copy(s->ctx_docs[i].title, s->ctx_docs[i].unsaved, &m->attachment_names[m->nattachments]))
+            m->nattachments++;
+    m->tokenizer = (MemoryTokenizer){ .server = s->server, .cancel = &b->budget.stop, .timeout_ms = MEMORY_PREPARE_BUDGET_MS,
+                                      .deadline_ms = b->budget.deadline_ms };
+    m->db = b->budget_started ? store_db_until(s->memory_store, &b->budget.stop, b->budget.deadline_ms) : NULL;
+    m->available = m->bounded_vectors && m->db && memory_budget_bind_db(&b->budget, m->db) &&
+        db_run(m->db, "SET SESSION max_statement_time=0.1", NULL, 0, NULL) &&
+        memory_tokenizer_fingerprint(&m->tokenizer, m->fingerprint) && memory_identity_current(s) &&
+        store_mode_borrowed(s->memory_store, s->memory_project, &s->memory_identity, m->db,
+            &b->budget.stop, b->budget.deadline_ms, m->project_id, sizeof(m->project_id)) == STORE_DB &&
+        !strcmp(m->project_id, s->memory_identity.project_id);
+    m->before = INT64_MAX;
+    for (size_t i = b->first_history; i < b->history.count; i++)
+        if (b->history.messages[i].sequence_known && b->history.messages[i].sequence < m->before) m->before = b->history.messages[i].sequence;
+    m->query = b->history.count ? b->history.messages[b->history.count - 1].content : "";
+    MemoryScope scope;
+    if (m->available && memory_scope_get(m->db, m->project_id, s->memory_conversation, &scope) && scope.enabled)
+        m->available = s->document_cache
+            ? memory_documents_capture_cached_on_db(s->document_cache, m->db, s->memory_store, s->memory_project, &s->memory_identity,
+                m->attachment_names, m->nattachments, false, &b->budget.stop, b->budget.deadline_ms, &m->documents)
+            : !m->nattachments; /* no uncached manuscript hashing in foreground preparation */
+}
+
+/* Arm the answer-in-span gate for this turn: a question, its verified spans, and the author's earlier turns in the
+ * composer window. */
+static void gate_arm(ChatSession *s, const AnswerPipelineResult *pipeline, const ChatRequestHistory *history, size_t first_history,
+                     const char *query)
+{
+    s->gate_question = strdup(query);
+    const MemoryUnit *gate_units[ANSWER_SPANS] = { pipeline->has_top ? &pipeline->top : NULL, pipeline->has_second ? &pipeline->second : NULL };
+    const char *gate_text[ANSWER_SPANS] = { pipeline->has_top ? pipeline->span : NULL, pipeline->has_second ? pipeline->second_span : NULL };
+    for (size_t i = 0; i < ANSWER_SPANS; i++) {
+        if (!gate_units[i] || !gate_text[i]) continue;
+        const char *nm = gate_units[i]->kind == MEMORY_SOURCE_DOCUMENT && gate_units[i]->document_name[0] ? gate_units[i]->document_name : "an earlier note";
+        s->gate_names[s->gate_nspans] = strdup(nm);
+        s->gate_spans[s->gate_nspans] = strdup(gate_text[i]);
+        if (s->gate_names[s->gate_nspans] && s->gate_spans[s->gate_nspans]) s->gate_nspans++;
+    }
+    for (size_t i = first_history; i + 1 < history->count && s->gate_nauthor < ANSWER_HISTORY_MESSAGES; i++)
+        if (history->messages[i].role == CHAT_USER && !history->messages[i].error && history->messages[i].content) {
+            s->gate_author[s->gate_nauthor] = strdup(history->messages[i].content);
+            if (s->gate_author[s->gate_nauthor]) s->gate_nauthor++;
+        }
+    s->gate_armed = s->gate_question != NULL;
+}
+
+/* Stage 3b: the verified-answer pipeline (experiment): one byte-verified span from the cross-encoder's top unit
+ * replaces the packet and the previews. SQL runs inside the store budget; scoring and extraction have their own
+ * deadline. When it runs, the plan stage below is not taken. */
+static void memory_pipeline(ChatSession *s, ChatBuild *b, MemoryStage *m)
+{
+    if (!(m->available && s->answer_pipeline && s->rerank)) return;
+    AnswerPipelineResult pipeline = {0};
+    MemoryScope pscope;
+    double pipeline_deadline = memory_budget_now_ms() + ANSWER_PIPELINE_BUDGET_MS;
+    /* The vector search is bounded by the pipeline's own deadline and the
+     * session's cancel, not the 500 ms preparation budget (REDTEAM-021 R1). */
+    SemanticClient *pipeline_vectors = semantic_client_bounded(s->memory_vectors, &s->cancel, pipeline_deadline);
+    if (pipeline_vectors && memory_scope_get(m->db, m->project_id, s->memory_conversation, &pscope) && pscope.enabled)
+        answer_pipeline_run(m->db, pipeline_vectors, s->rerank, s->server, &pscope, &m->documents, m->query, m->before,
+                            &s->cancel, pipeline_deadline, &pipeline);
+    semantic_client_destroy(pipeline_vectors);
+    char *preface = answer_verified_block(&pipeline);
+    char *rebuilt = preface ? chat_build_request_pipeline(b->history.messages, b->history.count, &b->names, b->slot_ctx, b->counter, s,
+                                                          &b->first_history, preface) : NULL;
+    gate_clear(s);
+    if (rebuilt && answer_gate_applies(m->query)) gate_arm(s, &pipeline, &b->history, b->first_history, m->query);
+    free(preface);
+    free(b->req);
+    b->req = rebuilt;
+    if (!b->req) snprintf(s->build_error, sizeof(s->build_error), "Verified pipeline could not build the request; nothing was sent.");
+    char *receipt = answer_receipt(&pipeline);
+    if (receipt) {
+        pthread_mutex_lock(&s->mu);
+        free(s->msgs[s->target].memory_sources);
+        s->msgs[s->target].memory_sources = receipt;
+        pthread_mutex_unlock(&s->mu);
+    }
+    snprintf(b->memory_notice, sizeof(b->memory_notice), "Verified pipeline: %zu candidates, %zu scored, top %.2f %s, second %.2f %s. Exact spans or none; not canon.",
+             pipeline.candidates, pipeline.scored, pipeline.top_score, pipeline.status, pipeline.second_score,
+             pipeline.has_second ? pipeline.second_status : "-");
+    if (experiments()->memory_trace)
+        answer_trace_pipeline(stderr, &pipeline, b->req ? strlen(b->req) : 0, b->first_history, memory_index_text_enabled());
+    answer_pipeline_result_free(&pipeline);
+    m->pipeline_done = true;
+    m->available = false;
+}
+
+/* Stage 3c: recall through the plan, its presentation and briefs, and admission of the result into the request. */
+static void memory_recall(ChatSession *s, ChatBuild *b, MemoryStage *m)
+{
+    m->recall_started = memory_budget_now_ms();
+    m->available = m->available && s->request_attachment_epoch == chat_memory_attachment_version(s) &&
+        memory_plan_build_with_documents(m->db, m->bounded_vectors, m->project_id, s->memory_conversation,
+            m->query, m->before, false, memory_reference_tokens, &m->tokenizer, m->fingerprint, &b->budget.stop, &m->plan, &m->documents);
+    m->recall_finished = memory_budget_now_ms();
+    m->recalled = m->plan.count;
+    if (m->available && m->plan.scope.enabled) {
+        m->plan.compact_sources = s->memory_presentation != CHAT_MEMORY_LEGACY;
+        if (s->memory_presentation == CHAT_MEMORY_EPISODE) {
+            char *packed = chat_pack_history_request(b->req);
+            long room = (long)b->slot_ctx - MAX_REPLY_TOKENS - 256;
+            long tokens = packed ? memory_request_tokens(packed, &m->tokenizer) : -1;
+            if (tokens >= 0 && tokens <= room) { free(b->req); b->req = packed; }
+            else free(packed); /* representation is optional; never clip author content */
         }
     }
-    if (ok && s->edit_passage)
-        req = chat_build_edit_request(s->edit_instruction, s->edit_passage, s->has_doc ? &ctx : NULL, slot_ctx,
-                                      counter, s, &truncated);
-    else if (ok)
-        req = chat_build_request_selected(history.messages, history.count, s->has_doc ? &ctx : NULL, &names, base_ctx,
-                                          counter, s, &truncated, &first_history);
-    char memory_notice[256] = "";
-    double base_finished = memory_budget_now_ms();
-    /* This branch precedes all store/vector work: switching to remote never
-     * exports local retrieval material, including through the edit path. */
-    if (req && s->memory_enabled && !s->via_remote && !s->edit_passage) {
-        SemanticClient *bounded_vectors = budget_started
-            ? semantic_client_bounded(s->memory_vectors, &budget.stop, budget.deadline_ms) : NULL;
-        MemoryPlan plan = {0};
-        bool briefs_unavailable = false;
-        MemoryDocumentSet documents = {0};
-        MemoryDocumentName attachment_names[MEMORY_DOCUMENTS_MAX] = {0};
-        size_t nattachments = 0;
-        for (size_t i = 0; i < s->nctx_docs && nattachments < MEMORY_DOCUMENTS_MAX; i++)
-            if (memory_document_name_copy(s->ctx_docs[i].title, s->ctx_docs[i].unsaved, &attachment_names[nattachments]))
-                nattachments++;
-        MemoryTokenizer tokenizer = { .server = s->server, .cancel = &budget.stop, .timeout_ms = MEMORY_PREPARE_BUDGET_MS,
-                                      .deadline_ms = budget.deadline_ms };
-        char fingerprint[65];
-        Db *db = budget_started ? store_db_until(s->memory_store, &budget.stop, budget.deadline_ms) : NULL;
-        char project_id[64];
-        bool available = bounded_vectors && db && memory_budget_bind_db(&budget, db) &&
-            db_run(db, "SET SESSION max_statement_time=0.1", NULL, 0, NULL) &&
-            memory_tokenizer_fingerprint(&tokenizer, fingerprint) && memory_identity_current(s) &&
-            store_mode_borrowed(s->memory_store, s->memory_project, &s->memory_identity, db,
-                &budget.stop, budget.deadline_ms, project_id, sizeof(project_id)) == STORE_DB &&
-            !strcmp(project_id, s->memory_identity.project_id);
-        int64_t before = INT64_MAX;
-        for (size_t i = first_history; i < history.count; i++)
-            if (history.messages[i].sequence_known && history.messages[i].sequence < before) before = history.messages[i].sequence;
-        const char *query = history.count ? history.messages[history.count - 1].content : "";
-        MemoryScope scope;
-        if (available && memory_scope_get(db, project_id, s->memory_conversation, &scope) && scope.enabled)
-            available = s->document_cache
-                ? memory_documents_capture_cached_on_db(s->document_cache, db, s->memory_store, s->memory_project, &s->memory_identity,
-                    attachment_names, nattachments, false, &budget.stop, budget.deadline_ms, &documents)
-                : !nattachments; /* no uncached manuscript hashing in foreground preparation */
-        /* Verified-answer pipeline (experiment): one byte-verified span from
-         * the cross-encoder's top unit replaces the packet and the previews.
-         * SQL runs inside the store budget; scoring and extraction have their
-         * own deadline. The plan path below is not taken. */
-        bool pipeline_done = false;
-        if (available && s->answer_pipeline && s->rerank) {
-            AnswerPipelineResult pipeline = {0};
-            MemoryScope pscope;
-            double pipeline_deadline = memory_budget_now_ms() + ANSWER_PIPELINE_BUDGET_MS;
-            /* The vector search is bounded by the pipeline's own deadline and the
-             * session's cancel, not the 500 ms preparation budget (REDTEAM-021 R1). */
-            SemanticClient *pipeline_vectors = semantic_client_bounded(s->memory_vectors, &s->cancel, pipeline_deadline);
-            if (pipeline_vectors && memory_scope_get(db, project_id, s->memory_conversation, &pscope) && pscope.enabled)
-                answer_pipeline_run(db, pipeline_vectors, s->rerank, s->server, &pscope, &documents, query, before,
-                                    &s->cancel, pipeline_deadline, &pipeline);
-            semantic_client_destroy(pipeline_vectors);
-            char *preface = answer_verified_block(&pipeline);
-            char *rebuilt = preface ? chat_build_request_pipeline(history.messages, history.count, &names, slot_ctx, counter, s,
-                                                                  &first_history, preface) : NULL;
-            /* Arm the answer-in-span gate for this turn: a question, its verified
-             * spans, and the author's earlier turns in the composer window. */
-            gate_clear(s);
-            if (rebuilt && answer_gate_applies(query)) {
-                s->gate_question = strdup(query);
-                const MemoryUnit *gate_units[ANSWER_SPANS] = { pipeline.has_top ? &pipeline.top : NULL, pipeline.has_second ? &pipeline.second : NULL };
-                const char *gate_text[ANSWER_SPANS] = { pipeline.has_top ? pipeline.span : NULL, pipeline.has_second ? pipeline.second_span : NULL };
-                for (size_t i = 0; i < ANSWER_SPANS; i++) {
-                    if (!gate_units[i] || !gate_text[i]) continue;
-                    const char *nm = gate_units[i]->kind == MEMORY_SOURCE_DOCUMENT && gate_units[i]->document_name[0] ? gate_units[i]->document_name : "an earlier note";
-                    s->gate_names[s->gate_nspans] = strdup(nm);
-                    s->gate_spans[s->gate_nspans] = strdup(gate_text[i]);
-                    if (s->gate_names[s->gate_nspans] && s->gate_spans[s->gate_nspans]) s->gate_nspans++;
-                }
-                for (size_t i = first_history; i + 1 < history.count && s->gate_nauthor < ANSWER_HISTORY_MESSAGES; i++)
-                    if (history.messages[i].role == CHAT_USER && !history.messages[i].error && history.messages[i].content) {
-                        s->gate_author[s->gate_nauthor] = strdup(history.messages[i].content);
-                        if (s->gate_author[s->gate_nauthor]) s->gate_nauthor++;
-                    }
-                s->gate_armed = s->gate_question != NULL;
-            }
-            free(preface);
-            free(req);
-            req = rebuilt;
-            if (!req) snprintf(s->build_error, sizeof(s->build_error), "Verified pipeline could not build the request; nothing was sent.");
-            char *receipt = answer_receipt(&pipeline);
-            if (receipt) {
+    if (m->available && s->memory_briefs && m->plan.scope.enabled) {
+        char model[65];
+        /* Brief addition is staged: a brief-only failure leaves the raw
+         * plan intact. Original scope/source admission below is still
+         * mandatory; optional derived data must not suppress valid recall. */
+        m->briefs_unavailable = !memory_brief_model_fingerprint(&m->tokenizer, model) ||
+            !memory_plan_add_briefs(m->db, &m->plan, m->before, model, memory_reference_tokens, &m->tokenizer);
+    }
+    if (m->available && (m->plan.count || m->plan.brief_count)) {
+        char *with_memory = NULL;
+        MemoryDocumentSet admission_documents = {0};
+        long prompt_room = (long)b->slot_ctx - MAX_REPLY_TOKENS - 256;
+        bool admitted = prompt_room > 0 && memory_plan_apply(&m->plan, b->req, false, (size_t)prompt_room,
+            memory_request_tokens, &m->tokenizer, &with_memory) && memory_identity_current(s) &&
+            s->request_attachment_epoch == chat_memory_attachment_version(s) &&
+            (s->document_cache ? memory_documents_capture_cached_on_db(s->document_cache, m->db, s->memory_store, s->memory_project, &s->memory_identity,
+                m->attachment_names, m->nattachments, false, &b->budget.stop, b->budget.deadline_ms, &admission_documents) : !m->nattachments) &&
+            memory_documents_same(&m->documents, &admission_documents) &&
+            memory_plan_admit_with_documents(m->db, &m->plan, &admission_documents, false) &&
+            s->request_attachment_epoch == chat_memory_attachment_version(s) && !atomic_load(&s->cancel) &&
+            !atomic_load(&b->budget.stop) && !memory_budget_expired(&b->budget);
+        if (admitted) {
+            const char *receipt = m->plan.provenance ? m->plan.provenance : m->plan.reference;
+            char *sources = (m->plan.count || m->plan.brief_count) && receipt ? strdup(receipt) : NULL;
+            if ((m->plan.count || m->plan.brief_count) && !sources) admitted = false;
+            else {
                 pthread_mutex_lock(&s->mu);
                 free(s->msgs[s->target].memory_sources);
-                s->msgs[s->target].memory_sources = receipt;
+                s->msgs[s->target].memory_sources = sources;
                 pthread_mutex_unlock(&s->mu);
             }
-            snprintf(memory_notice, sizeof(memory_notice), "Verified pipeline: %zu candidates, %zu scored, top %.2f %s, second %.2f %s. Exact spans or none; not canon.",
-                     pipeline.candidates, pipeline.scored, pipeline.top_score, pipeline.status, pipeline.second_score,
-                     pipeline.has_second ? pipeline.second_status : "-");
-            if (experiments()->memory_trace)
-                answer_trace_pipeline(stderr, &pipeline, req ? strlen(req) : 0, first_history, memory_index_text_enabled());
-            answer_pipeline_result_free(&pipeline);
-            pipeline_done = true;
-            available = false;
         }
-        double recall_started = memory_budget_now_ms();
-        available = available && s->request_attachment_epoch == chat_memory_attachment_version(s) &&
-            memory_plan_build_with_documents(db, bounded_vectors, project_id, s->memory_conversation,
-                query, before, false, memory_reference_tokens, &tokenizer, fingerprint, &budget.stop, &plan, &documents);
-        double recall_finished = memory_budget_now_ms();
-        size_t recalled = plan.count;
-        bool packet_prepared = false;
-        if (available && plan.scope.enabled) {
-            plan.compact_sources = s->memory_presentation != CHAT_MEMORY_LEGACY;
-            if (s->memory_presentation == CHAT_MEMORY_EPISODE) {
-                char *packed = chat_pack_history_request(req);
-                long room = (long)slot_ctx - MAX_REPLY_TOKENS - 256;
-                long tokens = packed ? memory_request_tokens(packed, &tokenizer) : -1;
-                if (tokens >= 0 && tokens <= room) { free(req); req = packed; }
-                else free(packed); /* representation is optional; never clip author content */
-            }
-        }
-        if (available && s->memory_briefs && plan.scope.enabled) {
-            char model[65];
-            /* Brief addition is staged: a brief-only failure leaves the raw
-             * plan intact. Original scope/source admission below is still
-             * mandatory; optional derived data must not suppress valid recall. */
-            briefs_unavailable = !memory_brief_model_fingerprint(&tokenizer, model) ||
-                !memory_plan_add_briefs(db, &plan, before, model, memory_reference_tokens, &tokenizer);
-        }
-        if (available && (plan.count || plan.brief_count)) {
-            char *with_memory = NULL;
-            MemoryDocumentSet admission_documents = {0};
-            long prompt_room = (long)slot_ctx - MAX_REPLY_TOKENS - 256;
-            bool admitted = prompt_room > 0 && memory_plan_apply(&plan, req, false, (size_t)prompt_room,
-                memory_request_tokens, &tokenizer, &with_memory) && memory_identity_current(s) &&
-                s->request_attachment_epoch == chat_memory_attachment_version(s) &&
-                (s->document_cache ? memory_documents_capture_cached_on_db(s->document_cache, db, s->memory_store, s->memory_project, &s->memory_identity,
-                    attachment_names, nattachments, false, &budget.stop, budget.deadline_ms, &admission_documents) : !nattachments) &&
-                memory_documents_same(&documents, &admission_documents) &&
-                memory_plan_admit_with_documents(db, &plan, &admission_documents, false) &&
-                s->request_attachment_epoch == chat_memory_attachment_version(s) && !atomic_load(&s->cancel) &&
-                !atomic_load(&budget.stop) && !memory_budget_expired(&budget);
-            if (admitted) {
-                const char *receipt = plan.provenance ? plan.provenance : plan.reference;
-                char *sources = (plan.count || plan.brief_count) && receipt ? strdup(receipt) : NULL;
-                if ((plan.count || plan.brief_count) && !sources) admitted = false;
-                else {
-                    pthread_mutex_lock(&s->mu);
-                    free(s->msgs[s->target].memory_sources);
-                    s->msgs[s->target].memory_sources = sources;
-                    pthread_mutex_unlock(&s->mu);
-                }
-            }
-            bool timed_out = memory_budget_expired(&budget) && !atomic_load(&s->cancel);
-            if (admitted) { free(req); req = with_memory; packet_prepared = plan.count || plan.brief_count; }
-            else if (!timed_out) { free(req); req = NULL; }
-            if (!admitted) {
-                free(with_memory);
-                if (timed_out) snprintf(memory_notice, sizeof(memory_notice), "Local memory budget exhausted; recent context only, no older references sent.");
-                else snprintf(s->build_error, sizeof(s->build_error), "Memory admission changed or exact context budgeting failed; nothing was sent. Retry or narrow the request.");
-            } else if (briefs_unavailable)
-                snprintf(memory_notice, sizeof(memory_notice), "Local memory: %zu validated original excerpts; T1 briefs unavailable. Partial recall; Sources are as-of this reply, not canon.", plan.count);
-            else snprintf(memory_notice, sizeof(memory_notice), "Local memory: %zu excerpts, %zu generated T1 briefs; partial recall. Sources are as-of this reply, not canon.", plan.count, plan.brief_count);
-        } else if (!pipeline_done) snprintf(memory_notice, sizeof(memory_notice), "%s",
-            available && plan.readiness == MEMORY_DISABLED ? "Local memory disabled for this conversation; recent context only"
-            : "Local memory warming, partial or unavailable: no older excerpts admitted; recent context only");
-        /* Canon-aware chat (experiment): the author's matching committed canon
-         * as its own reference class, placed before the evidence. The whole
-         * request is recounted; if it does not fit, the block is dropped and
-         * the author's request is never clipped. */
-        if (req && s->canon_reference && !pipeline_done && !atomic_load(&s->cancel)) {
-            size_t canon_count = 0;
-            char *block = canon_reference_build(s->memory_store, s->memory_project, query, CANON_REFERENCE_ENTRIES,
-                                                CANON_REFERENCE_BYTES, &canon_count);
-            char *with_canon = block ? canon_reference_apply(block, req) : NULL;
-            long room = (long)slot_ctx - MAX_REPLY_TOKENS - 256;
-            long tokens = with_canon ? memory_request_tokens(with_canon, &tokenizer) : -1;
-            if (with_canon && tokens >= 0 && tokens <= room) {
-                free(req);
-                req = with_canon;
-                size_t used = strnlen(memory_notice, sizeof(memory_notice));
-                snprintf(memory_notice + used, sizeof(memory_notice) - used, " Canon: %zu committed entries supplied as exact reference.", canon_count);
-            } else free(with_canon);
-            free(block);
-        }
-        if (experiments()->memory_trace) {
-            double prepared_at = memory_budget_now_ms();
-            fprintf(stderr, "MEMORY_PREPARE base_ms=%.3f setup_ms=%.3f recall_ms=%.3f admission_ms=%.3f total_ms=%.3f history_messages=%zu history_bytes=%zu history_first=%zu reserved_tokens=%d request_bytes=%zu available=%d readiness=%d documents=%zu recalled=%zu retained=%zu packet_prepared=%d expired=%d notice=%s\n",
-                base_finished - preparation_started, recall_started - base_finished, recall_finished - recall_started,
-                prepared_at - recall_finished, prepared_at - preparation_started,
-                history.count, history.content_bytes, first_history, slot_ctx - base_ctx, req ? strlen(req) : 0,
-                available, plan.readiness, documents.count, recalled, plan.count, packet_prepared, memory_budget_expired(&budget), memory_notice);
-        }
-        memory_plan_free(&plan);
-        semantic_client_destroy(bounded_vectors);
-        if (budget_started) memory_budget_end(&budget);
-        budget_started = false;
-        s->prepare_budget = NULL;
-        store_thread_done(s->memory_store);
+        bool timed_out = memory_budget_expired(&b->budget) && !atomic_load(&s->cancel);
+        if (admitted) { free(b->req); b->req = with_memory; m->packet_prepared = m->plan.count || m->plan.brief_count; }
+        else if (!timed_out) { free(b->req); b->req = NULL; }
+        if (!admitted) {
+            free(with_memory);
+            if (timed_out) snprintf(b->memory_notice, sizeof(b->memory_notice), "Local memory budget exhausted; recent context only, no older references sent.");
+            else snprintf(s->build_error, sizeof(s->build_error), "Memory admission changed or exact context budgeting failed; nothing was sent. Retry or narrow the request.");
+        } else if (m->briefs_unavailable)
+            snprintf(b->memory_notice, sizeof(b->memory_notice), "Local memory: %zu validated original excerpts; T1 briefs unavailable. Partial recall; Sources are as-of this reply, not canon.", m->plan.count);
+        else snprintf(b->memory_notice, sizeof(b->memory_notice), "Local memory: %zu excerpts, %zu generated T1 briefs; partial recall. Sources are as-of this reply, not canon.", m->plan.count, m->plan.brief_count);
+    } else if (!m->pipeline_done) snprintf(b->memory_notice, sizeof(b->memory_notice), "%s",
+        m->available && m->plan.readiness == MEMORY_DISABLED ? "Local memory disabled for this conversation; recent context only"
+        : "Local memory warming, partial or unavailable: no older excerpts admitted; recent context only");
+}
+
+/* Stage 3d: canon-aware chat (experiment): the author's matching committed canon as its own reference class, placed
+ * before the evidence. The whole request is recounted; if it does not fit, the block is dropped and the author's
+ * request is never clipped. */
+static void memory_canon(ChatSession *s, ChatBuild *b, MemoryStage *m)
+{
+    if (!(b->req && s->canon_reference && !m->pipeline_done && !atomic_load(&s->cancel))) return;
+    size_t canon_count = 0;
+    char *block = canon_reference_build(s->memory_store, s->memory_project, m->query, CANON_REFERENCE_ENTRIES,
+                                        CANON_REFERENCE_BYTES, &canon_count);
+    char *with_canon = block ? canon_reference_apply(block, b->req) : NULL;
+    long room = (long)b->slot_ctx - MAX_REPLY_TOKENS - 256;
+    long tokens = with_canon ? memory_request_tokens(with_canon, &m->tokenizer) : -1;
+    if (with_canon && tokens >= 0 && tokens <= room) {
+        free(b->req);
+        b->req = with_canon;
+        size_t used = strnlen(b->memory_notice, sizeof(b->memory_notice));
+        snprintf(b->memory_notice + used, sizeof(b->memory_notice) - used, " Canon: %zu committed entries supplied as exact reference.", canon_count);
+    } else free(with_canon);
+    free(block);
+}
+
+/* Stage 3e: the preparation trace, and the memory stages' resources released. */
+static void memory_end(ChatSession *s, ChatBuild *b, MemoryStage *m)
+{
+    if (experiments()->memory_trace) {
+        double prepared_at = memory_budget_now_ms();
+        fprintf(stderr, "MEMORY_PREPARE base_ms=%.3f setup_ms=%.3f recall_ms=%.3f admission_ms=%.3f total_ms=%.3f history_messages=%zu history_bytes=%zu history_first=%zu reserved_tokens=%d request_bytes=%zu available=%d readiness=%d documents=%zu recalled=%zu retained=%zu packet_prepared=%d expired=%d notice=%s\n",
+            b->base_finished - b->preparation_started, m->recall_started - b->base_finished, m->recall_finished - m->recall_started,
+            prepared_at - m->recall_finished, prepared_at - b->preparation_started,
+            b->history.count, b->history.content_bytes, b->first_history, b->slot_ctx - b->base_ctx, b->req ? strlen(b->req) : 0,
+            m->available, m->plan.readiness, m->documents.count, m->recalled, m->plan.count, m->packet_prepared, memory_budget_expired(&b->budget), b->memory_notice);
     }
-    if (req && use_samp) {
-        char *tuned = chat_apply_sampling(req, &samp, s->edit_passage != NULL);
-        free(req);
-        req = tuned;
+    memory_plan_free(&m->plan);
+    semantic_client_destroy(m->bounded_vectors);
+    if (b->budget_started) memory_budget_end(&b->budget);
+    b->budget_started = false;
+    s->prepare_budget = NULL;
+    store_thread_done(s->memory_store);
+}
+
+/* Stage 3: local memory, when the turn has it. This stage precedes all store/vector work: switching to remote never
+ * exports local retrieval material, including through the edit path. */
+static void build_memory(ChatSession *s, ChatBuild *b)
+{
+    if (!(b->req && s->memory_enabled && !s->via_remote && !s->edit_passage)) return;
+    MemoryStage m;
+    memory_begin(s, b, &m);
+    memory_pipeline(s, b, &m);
+    memory_recall(s, b, &m);
+    memory_canon(s, b, &m);
+    memory_end(s, b, &m);
+}
+
+/* Stage 4: the author's sampling and the remote adaptation, then the request and its notices into the session. */
+static bool build_finish(ChatSession *s, ChatBuild *b)
+{
+    if (b->req && b->use_samp) {
+        char *tuned = chat_apply_sampling(b->req, &b->samp, s->edit_passage != NULL);
+        free(b->req);
+        b->req = tuned;
     }
-    if (req && s->via_remote) {
-        char *adapted = remote_adapt_request(&s->remote, req);
-        free(req);
-        req = adapted;
+    if (b->req && s->via_remote) {
+        char *adapted = remote_adapt_request(&s->remote, b->req);
+        free(b->req);
+        b->req = adapted;
     }
-    if (!req) {
+    if (!b->req) {
         pthread_mutex_lock(&s->mu);
         free(s->msgs[s->target].memory_sources);
         s->msgs[s->target].memory_sources = NULL;
         pthread_mutex_unlock(&s->mu);
     }
-    bool history_limited = history.limited;
-    chat_request_history_free(&history);
+    bool history_limited = b->history.limited;
+    chat_request_history_free(&b->history);
     pthread_mutex_lock(&s->mu);
     free(s->request);
-    s->request = req;
-    if (req && truncated)
+    s->request = b->req;
+    if (b->req && b->truncated)
         snprintf(s->notice, sizeof(s->notice), "%s",
                  history_limited ? "Attached document text was cut off; older conversation history was also omitted from this request"
                  : s->nctx_docs > 1 ? "Attached document text was cut off for this bounded request"
                                     : "The document text was cut off for this bounded request");
-    else if (req && history_limited)
+    else if (b->req && history_limited)
         snprintf(s->notice, sizeof(s->notice), "Only recent conversation history was prepared; older history was omitted from this request");
-    if (req && memory_notice[0]) {
+    if (b->req && b->memory_notice[0]) {
         size_t used = strlen(s->notice);
-        snprintf(s->notice + used, sizeof(s->notice) - used, "%s%s", used ? ". " : "", memory_notice);
+        snprintf(s->notice + used, sizeof(s->notice) - used, "%s%s", used ? ". " : "", b->memory_notice);
     }
     pthread_mutex_unlock(&s->mu);
     s->prepare_budget = NULL;
-    if (budget_started) memory_budget_end(&budget);
-    return req != NULL;
+    if (b->budget_started) memory_budget_end(&b->budget);
+    return b->req != NULL;
+}
+
+static bool build_in_worker(ChatSession *s)
+{
+    ChatBuild b;
+    build_begin(s, &b);
+    build_base(s, &b);
+    build_memory(s, &b);
+    return build_finish(s, &b);
 }
 
 static void *fake_worker(void *arg)

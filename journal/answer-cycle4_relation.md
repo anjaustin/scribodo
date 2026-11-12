@@ -296,6 +296,45 @@ with unit cases; `test_answer_gate` pins the question-name rule;
 `build/relation/gate-replay-before.json` and `gate-replay-after2.json`;
 quotation replay `build/relation/quote-replay-after.txt`.
 
+### Found live on the first novel after the remediations: a sixth defect
+
+The builder step's live runs (`journal/answer-cycle4_builder.md`) were the
+first runs of the tree with the five remediations above, and on the first
+novel they withheld a correct answer that every earlier tree had shown. The
+author-correction question ("How old is my youngest Bennet daughter?") got the
+right reply, "The author's youngest Bennet daughter is Lydia, and she is
+**fifteen**", and the relation check flagged "Bennet daughter is Lydia": the
+third pattern accepted a bare name as the subject of "<subject> <kin> is
+<Name>", and "Bennet" there is the family name used as an adjective, not a
+possessor. The pattern now takes a pronoun or a possessive name
+("Lydia's father is Mr. Bennet", checked whole with both names); the bare-name
+form matched nothing grammatical. Measured on 110 recorded visible replies (the
+90 above plus the builder step's two runs): 13 flagged before, 12 after; the
+one reply released is this one, and the one phrase added, "Mr. Bingley's
+estate is Netherfield Park" in a reply already flagged, is wrong. The parity
+fixture now holds the 110 (12 flagged); the unit cases on both sides changed
+from the bare-name form to the possessive one. Confirmed live: on the final tree
+(`pp-final-index`) the same reply is shown, `withheld=0`, `relations=0`
+(`journal/answer-cycle4_builder.md`, the final run).
+
+How the reply came to differ at all is worth recording. On the relation tree
+(`pp-relation-index`) the same question's second verified span was one
+sentence with status `verified_prefix`: the extraction model had returned two
+sentences whose quotation marks did not match the unit's, so the byte check
+failed and the longest sentence prefix was kept. Under the quotation-mark rule
+above, the same two sentences verify whole, the composer saw a longer passage,
+wrote a different reply, and that reply held the phrase. Two things follow.
+The quotation-mark rule changes what the author is shown as a verified span,
+not only what the quotation check accepts, and the span shown is the model's
+text, with its quotation marks, not the unit's bytes: that was already so for
+case, emphasis, dashes and whitespace, and is now so for quotation marks. A
+verified block that displays the unit's own bytes at the matched position
+would make "exact spans" exact by construction; that is a change to the
+extraction's output, recorded here as the next item for the author's decision.
+And a live baseline must be built from the parent commit: the relation tree's
+capture app was the wrong baseline for the builder step for the same reason
+the window run was the wrong baseline above.
+
 ### Gates for the remediations
 
 `make test` 95,943 C checks and 168 Python tests, 0 failures; `make dbtest`
@@ -323,7 +362,7 @@ each at "Run scripted UI acceptance" with the console still locked
 passed. `9097df3` failed CI at `make test` (the link error recorded in
 journal/gap004-cycle7_atomic.md); `de82f6d` carries the fix. After the console
 unlocked, Trusted acceptance passed on `6913d70` (the tree holding every
-commit above) and both workflows passed on `0f2e36b`.
+commit above) and both workflows passed on `0f2e36b` and on `ca908bd` (the live runs and the remediations above).
 
 ## Gates
 

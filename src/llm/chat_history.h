@@ -8,7 +8,7 @@
 #define CHAT_HISTORY_MAX_BYTES (64u * 1024u)
 #define CHAT_HISTORY_MAX_SCAN 256u
 
-typedef struct {
+typedef struct ChatRequestHistory {
     ChatMessage *messages; /* only content is owned; docs/via are not copied */
     size_t count, content_bytes, scanned;
     bool limited;

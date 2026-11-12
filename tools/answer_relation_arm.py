@@ -36,7 +36,9 @@ NAME = r"(?:(?:Mr\.|Mrs\.|Miss|Dr\.|Sir|Lady) )?[A-Z][a-z]+(?: [A-Z][a-z]+)*"
 PHRASES = [
     re.compile(rf"\b({KIN}) of ({NAME})"),
     re.compile(rf"\b({NAME})['’]s ({KIN})\b"),
-    re.compile(rf"\b([Hh]is|[Hh]er|[Tt]heir|{NAME}) ({KIN}) is (?:the |a )?({NAME})"),
+    # The subject is a pronoun or a possessive name: "the youngest Bennet daughter is Lydia" (a family name as an
+    # adjective) is not a relation statement; "Lydia's father is Mr. Bennet" is one, checked whole.
+    re.compile(rf"\b([Hh]is|[Hh]er|[Tt]heir|{NAME}['’]s) ({KIN}) is (?:the |a )?({NAME})"),
     re.compile(rf"\b({NAME}) is (?:the |a |not the )?({KIN}) of ({NAME})"),
 ]
 NEGATION = re.compile(r"\b(?:not|never|neither|nor|wrong|instead|isn't|aren't|wasn't)\b", re.I)
@@ -108,8 +110,8 @@ def phrases(reply):
                 if rx is not PHRASES[1] and re.match(r"['’]s", s[m.end():]):
                     continue  # "daughter of Mr. Bingley's cousin" is not "daughter of Mr. Bingley": the name goes on
                 negated = negated_at(s, bounds, m.start())
-                names = [g for g in m.groups() if g and re.match(r'^(?:(?:Mr\.|Mrs\.|Miss|Dr\.|Sir|Lady) )?[A-Z]', g) and not re.match(KIN + '$', g)
-                         and g.lower() not in ('his', 'her', 'their')]
+                names = [re.sub(r"['’]s$", '', g) for g in m.groups() if g and re.match(r'^(?:(?:Mr\.|Mrs\.|Miss|Dr\.|Sir|Lady) )?[A-Z]', g)
+                         and not re.match(KIN + '$', g) and g.lower() not in ('his', 'her', 'their')]
                 if names and all(real_name(n) for n in names):
                     found.append((m.group(0), negated))
     return found

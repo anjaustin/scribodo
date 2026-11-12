@@ -300,12 +300,18 @@ static void test_relations(void)
     CHECK(n == 2 && bad && !strcmp(bad, "Mr. Bennet's estate"));
     free(bad); bad = NULL;
     CHECK(answer_relations(NULL, NULL, 0, NULL, 0, NULL, &bad) == 0 && bad == NULL);
-    /* A name as the subject of "<Name> <kin> is <Name>": both names are checked; a label subject is no name. */
-    n = answer_relations("Elizabeth father is Mr. Bennet. The father is Mr. Bennet.", NULL, 0, NULL, 0, "q", &bad);
-    CHECK(n == 1 && bad && !strcmp(bad, "Elizabeth father is Mr. Bennet"));
+    /* The subject of "<subject> <kin> is <Name>" is a pronoun or a possessive name, checked whole with both names; a
+     * family name used as an adjective ("the youngest Bennet daughter is Lydia", live on the first novel) is not a
+     * relation statement, and a label subject is no name. */
+    n = answer_relations("Elizabeth's father is Mr. Bennet. The father is Mr. Bennet. The youngest Bennet daughter is Lydia.", NULL, 0, NULL, 0, "q", &bad);
+    CHECK(n == 2 && bad && !strcmp(bad, "Elizabeth's father"));
     free(bad); bad = NULL;
-    n = answer_relations("Elizabeth father is Mr. Bennet.", NULL, 0, NULL, 0, "Is Elizabeth father is Mr. Bennet?", &bad);
-    CHECK(n == 1 && bad == NULL);
+    const char *liz[] = { "Elizabeth's father, Mr. Bennet, was a man of wit." };
+    n = answer_relations("Elizabeth's father is Mr. Bennet.", liz, 1, NULL, 0, "q", &bad);
+    CHECK(n == 2 && bad && !strcmp(bad, "Elizabeth's father is Mr. Bennet")); /* the possessive alone is supported; the whole statement is not */
+    free(bad); bad = NULL;
+    n = answer_relations("Elizabeth's father is Mr. Bennet.", NULL, 0, NULL, 0, "Is Elizabeth's father is Mr. Bennet?", &bad);
+    CHECK(n == 2 && bad == NULL);
     /* Measured on the third novel (journal/answer-cycle4_heights.md): a question the composer asks back states nothing;
      * a negation reaches its own clause, not the sentence; the kinship list has nephew; a curly apostrophe is the
      * straight one; "daughter of Mr. Bingley's cousin" is not "daughter of Mr. Bingley". */
@@ -347,7 +353,7 @@ static void test_relations(void)
     }
     cJSON_Delete(j);
     free(text);
-    CHECK(agree == total && flagged == 10);
+    CHECK(agree == total && flagged == 12);
 }
 
 static void test_receipt_contract(void)

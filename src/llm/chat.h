@@ -207,6 +207,18 @@ char *chat_build_request_pipeline(const ChatMessage *msgs, size_t n, const ChatN
 char *chat_build_edit_request(const char *instruction, const char *passage, const ChatContext *ctx, int ctx_tokens,
                               ChatTokenCount count, void *count_ctx, bool *doc_truncated);
 
+/* The base request of one turn, the request builder's second stage (the
+ * worker's stages are in chat.c): the edit request when `edit_passage` is
+ * set, the selected history with `ctx` otherwise (NULL when no document is
+ * open). `slot_ctx` is the whole slot, `base_ctx` the part the history may
+ * fill; `counter`/`counter_ctx` count tokens (NULL estimates). Returns NULL
+ * with `error` set when the passage is too long to edit in one go. */
+struct ChatRequestHistory; /* chat_history.h */
+char *chat_build_base_request(const struct ChatRequestHistory *history, const ChatContext *ctx, const ChatNames *names,
+                              int slot_ctx, int base_ctx, ChatTokenCount counter, void *counter_ctx,
+                              const char *edit_instruction, const char *edit_passage, bool *truncated,
+                              size_t *first_history, char *error, size_t errlen);
+
 /* Conservative token estimate (bytes / 1.5: denser than any text measured,
  * including code, numbers, emoji and CJK; see docs/REDTEAM-003). */
 long chat_estimate_tokens(const char *text);

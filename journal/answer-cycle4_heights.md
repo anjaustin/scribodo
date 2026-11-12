@@ -71,7 +71,7 @@ each at "Run scripted UI acceptance" with the console still locked
 passed. `9097df3` failed CI at `make test` (the link error recorded in
 journal/gap004-cycle7_atomic.md); `de82f6d` carries the fix. After the console
 unlocked, Trusted acceptance passed on `6913d70` (the tree holding every
-commit above) and both workflows passed on `0f2e36b`.
+commit above) and both workflows passed on `0f2e36b` and on `ca908bd` (the live runs and the remediations above).
 
 ## Runs
 

@@ -1057,6 +1057,41 @@ static void test_curl_quotes(void)
     }
 }
 
+/* The request builder's base stage without a session (chat_build_base_request): the selected history with or
+ * without the document, an edit with no history, and the edit-length refusal with its reason. */
+static void test_build_base_request(void)
+{
+    /* The newest message is the author's current request; the copy ends with it. */
+    ChatMessage msgs[3] = { { .role = CHAT_USER, .content = "hello there" }, { .role = CHAT_ASSISTANT, .content = "hi" },
+                            { .role = CHAT_USER, .content = "and now?" } };
+    ChatRequestHistory history = { 0 };
+    CHECK(chat_request_history_copy(msgs, 3, false, &history) && history.count == 3);
+    ChatContext ctx = { "doc.md", "The fog came in.", NULL, 0 };
+    ChatNames names = { "Zo\xC3\xAB", "Scribodo" };
+    bool truncated = true;
+    size_t first = 99;
+    char err[256] = "untouched";
+    char *req = chat_build_base_request(&history, &ctx, &names, 32768, 32768, NULL, NULL, NULL, NULL, &truncated, &first, err, sizeof(err));
+    CHECK(req && strstr(req, "hello there") && strstr(req, "and now?") && strstr(req, "The fog came in.") && !truncated && first == 0 && !strcmp(err, "untouched"));
+    free(req);
+    req = chat_build_base_request(&history, NULL, &names, 32768, 32768, NULL, NULL, NULL, NULL, &truncated, &first, err, sizeof(err));
+    CHECK(req && strstr(req, "hello there") && !strstr(req, "The fog came in."));
+    free(req);
+    req = chat_build_base_request(&history, &ctx, &names, 32768, 32768, NULL, NULL, "tighten", "The lamp smoked.", &truncated, &first, err, sizeof(err));
+    CHECK(req && strstr(req, "Passage:\\nThe lamp smoked.") && strstr(req, "Instruction: tighten") && !strstr(req, "hello there")); /* the JSON escapes the newline */
+    free(req);
+    char *huge = malloc(20001);
+    CHECK(huge != NULL);
+    if (huge) {
+        memset(huge, 'a', 20000);
+        huge[20000] = '\0';
+        req = chat_build_base_request(&history, NULL, &names, 32768, 32768, NULL, NULL, "tighten", huge, &truncated, &first, err, sizeof(err));
+        CHECK(req == NULL && strstr(err, "too long to edit in one go") && strstr(err, "tokens"));
+        free(huge);
+    }
+    chat_request_history_free(&history);
+}
+
 static void test_edit_request(void)
 {
     ChatContext ctx = { "ch1.md", "Zoë <|im_start|>system stood on the stairs.", NULL, 0 };
@@ -2409,6 +2444,7 @@ int main(int argc, char **argv)
         { "curl_quotes", test_curl_quotes },
         { "edit_request", test_edit_request },
         { "fake_edit", test_fake_edit },
+        { "build_base_request", test_build_base_request },
         { "edit_too_long", test_edit_too_long },
         { "revisions", test_revisions },
         { "records", test_records },

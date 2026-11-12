@@ -45,11 +45,13 @@ class RelationArmTests(unittest.TestCase):
         rows = ra.check('Her father is Tardos Mors.', [], [], 'Earlier I told you her father is Tardos Mors; whose daughter is she?')
         self.assertFalse(rows[0]['flag'])
 
-    def test_a_name_subject_counts_both_names_and_a_label_subject_is_dropped(self):
-        rows = ra.check('Elizabeth father is Mr. Bennet. The father is Mr. Bennet.', [], [], 'q')
-        self.assertEqual([(r['phrase'], r['flag']) for r in rows], [('Elizabeth father is Mr. Bennet', True)])
-        rows = ra.check('Elizabeth father is Mr. Bennet.', [], [], 'Is Elizabeth father is Mr. Bennet?')
-        self.assertEqual([(r['phrase'], r['flag']) for r in rows], [('Elizabeth father is Mr. Bennet', False)])
+    def test_a_possessive_subject_is_checked_whole_and_an_adjective_name_is_not_a_subject(self):
+        rows = ra.check("Elizabeth's father is Mr. Bennet. The father is Mr. Bennet. The youngest Bennet daughter is Lydia.", [], [], 'q')
+        self.assertEqual([(r['phrase'], r['flag']) for r in rows], [("Elizabeth's father", True), ("Elizabeth's father is Mr. Bennet", True)])
+        rows = ra.check("Elizabeth's father is Mr. Bennet.", ["Elizabeth's father, Mr. Bennet, was a man of wit."], [], 'q')
+        self.assertEqual([(r['phrase'], r['flag']) for r in rows], [("Elizabeth's father", False), ("Elizabeth's father is Mr. Bennet", True)])
+        rows = ra.check("Elizabeth's father is Mr. Bennet.", [], [], "Is Elizabeth's father is Mr. Bennet?")
+        self.assertEqual([r['flag'] for r in rows], [False, False])
 
     def test_third_novel_rules(self):
         """A question the composer asks back states nothing; a negation reaches its own clause; nephew is kin; a
@@ -81,7 +83,7 @@ class RelationArmTests(unittest.TestCase):
             self.assertEqual(len(got), row['checked'], row['question'])
             self.assertEqual(flags[0] if flags else '', row['unsupported'], row['question'])
             flagged += bool(flags)
-        self.assertEqual(flagged, 10)
+        self.assertEqual(flagged, 12)
 
 
 if __name__ == '__main__':

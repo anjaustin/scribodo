@@ -976,16 +976,22 @@ static bool rel_match_at(const char *s, size_t len, size_t i, int which, RelMatc
         }
         return false;
     }
-    if (which == 3) { /* (his|her|their|NAME) KIN is (the |a )?NAME */
+    if (which == 3) { /* (his|her|their|NAME's) KIN is (the |a )?NAME */
+        /* The subject is a pronoun or a possessive name: "the youngest Bennet daughter is Lydia" (a family name as an
+         * adjective) is not a relation statement; "Lydia's father is Mr. Bennet" is one, checked whole (found live on the
+         * first novel, journal/answer-cycle4_builder.md). */
         static const char *const pron[] = { "His", "his", "Her", "her", "Their", "their" };
-        size_t subj_ends[REL_MAX_ENDS + 1], sn = 0;
+        size_t subj_ends[REL_MAX_ENDS + 1], name_ends[REL_MAX_ENDS + 1], sn = 0;
         bool subj_is_pronoun[REL_MAX_ENDS + 1];
         for (size_t k = 0; k < 6; k++) {
             size_t pl = strlen(pron[k]);
-            if (rel_lit(s, len, i, pron[k])) { subj_ends[sn] = i + pl; subj_is_pronoun[sn++] = true; break; }
+            if (rel_lit(s, len, i, pron[k])) { subj_ends[sn] = i + pl; name_ends[sn] = i + pl; subj_is_pronoun[sn++] = true; break; }
         }
         n = rel_name_ends(s, len, i, ends);
-        for (size_t k = 0; k < n; k++) { subj_ends[sn] = ends[k]; subj_is_pronoun[sn++] = false; }
+        for (size_t k = 0; k < n; k++) {
+            if (rel_lit(s, len, ends[k], "'s")) { subj_ends[sn] = ends[k] + 2; name_ends[sn] = ends[k]; subj_is_pronoun[sn++] = false; }
+            else if (rel_lit(s, len, ends[k], "\xE2\x80\x99s")) { subj_ends[sn] = ends[k] + 4; name_ends[sn] = ends[k]; subj_is_pronoun[sn++] = false; }
+        }
         for (size_t k = 0; k < sn; k++) {
             size_t e = subj_ends[k];
             if (!rel_lit(s, len, e, " ")) continue;
@@ -1000,7 +1006,7 @@ static bool rel_match_at(const char *s, size_t len, size_t i, int which, RelMatc
                 if (n2) obj = j + strlen(art[a]);
             }
             if (!n2 || rel_possessive_follows(s, len, ends2[0])) continue;
-            if (!subj_is_pronoun[k]) { m->name_start[0] = i; m->name_len[0] = e - i; m->nnames = 1; }
+            if (!subj_is_pronoun[k]) { m->name_start[0] = i; m->name_len[0] = name_ends[k] - i; m->nnames = 1; }
             m->name_start[m->nnames] = obj; m->name_len[m->nnames] = ends2[0] - obj; m->nnames++;
             m->kin_start = e + 1; m->kin_len = kl;
             m->end = ends2[0];

@@ -183,7 +183,8 @@ modify a database while any Scribodo process is running.
   shape and the reranker pin without torch; see `journal/answer-cycle2_rerank.md`.
   `tools/answer_rerank_runtime.py` (also from the venv) scores a fixed pair
   set through llama-server and the PyTorch reference for parity and speed
-  (`build/rr1`). `test_answer_pipeline` (in `make test`) covers the verified
+  (`build/rr1`). `test_llm: build_base_request` covers the request builder's base stage without a session
+  (`chat_build_base_request`, journal/answer-cycle4_builder.md). `test_answer_pipeline` (in `make test`) covers the verified
   pipeline's pure parts: normalization, byte verification with the sentence
   cut, the extraction request and reply, the reranker prompt, request and
   probability parsing, the fixture scorer, the verified block and receipt, and
@@ -191,12 +192,13 @@ modify a database while any Scribodo process is running.
   question splitter and the slot matching (cycle 3), the gate's number
   anchors as whole words and compounds, and the relation check
   (`answer_relations`) against `tests/fixtures/answer_relation/replies.json`,
-  90 recorded visible replies from three novels on which the C check must
+  110 recorded visible replies from three novels on which the C check must
   agree with `tools/answer_relation_arm.py` row for row
   (`test_answer_relation_arm` re-checks the same fixture from Python; the arm
   strips the composer's think block as the product does, skips questions,
-  scopes a negation to its clause and stops a name at a possessive, all
-  measured in journal/answer-cycle4_relation.md); see
+  scopes a negation to its clause, stops a name at a possessive and takes
+  only a pronoun or a possessive as a relation's subject, all measured in
+  journal/answer-cycle4_relation.md); see
   `journal/answer-cycle2_pipeline_live.md`, `docs/MODEL-002-qwen3-reranker.md`
   and `journal/answer-cycle4_relation.md`.
   `tools/answer_pipeline_review.py` joins a pipeline live run's messages, units
