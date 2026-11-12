@@ -11,6 +11,7 @@
  */
 #define _DARWIN_C_SOURCE
 #include "store_backends.h"
+#include "core/crash_point.h"
 #include "memory_store.h"
 #include "store_entities.h"
 #include "revisions_internal.h"
@@ -522,17 +523,32 @@ static bool legacy_path(const char *project_dir, char *out, size_t outlen)
     return n >= 0 && (size_t)n < outlen && mkdtemp(out) != NULL;
 }
 
+static const char *const k_legacy_items[] = { "chats", "revisions", "notes.jsonl", "canon.jsonl", "findings.jsonl",
+                                              "observer", "observer-rules", "renames.jsonl" };
+
+/* Any legacy item still live under .scribodo/ (an interrupted set_aside leaves some). */
+static bool legacy_items_live(const char *project_dir)
+{
+    for (size_t i = 0; i < sizeof(k_legacy_items) / sizeof(k_legacy_items[0]); i++) {
+        char path[PATH_MAX + 64];
+        struct stat st;
+        snprintf(path, sizeof(path), "%s/.scribodo/%s", project_dir, k_legacy_items[i]);
+        if (lstat(path, &st) == 0) return true;
+    }
+    return false;
+}
+
 static void set_aside(const char *project_dir)
 {
     char legacy[PATH_MAX + 100];
     if (!legacy_path(project_dir, legacy, sizeof(legacy))) return;
-    static const char *const items[] = { "chats", "revisions", "notes.jsonl", "canon.jsonl", "findings.jsonl",
-                                         "observer", "observer-rules", "renames.jsonl" };
-    for (size_t i = 0; i < sizeof(items) / sizeof(items[0]); i++) {
+    const char *const *items = k_legacy_items;
+    for (size_t i = 0; i < sizeof(k_legacy_items) / sizeof(k_legacy_items[0]); i++) {
         char from[PATH_MAX + 64], to[PATH_MAX + 128];
         snprintf(from, sizeof(from), "%s/.scribodo/%s", project_dir, items[i]);
         snprintf(to, sizeof(to), "%s/%s", legacy, items[i]);
         rename(from, to);
+        crash_point("import.aside_item"); /* one hit per item, moved or absent */
     }
 }
 
@@ -815,6 +831,8 @@ static bool import_locked_from(StoreManager *manager, Db *db, const char *projec
                    : store_mode(manager, project_dir, NULL, 0, NULL) == STORE_FILES;
     char pid[40] = "";
     if (ok) ok = import_project(db, project_dir, pid, sizeof(pid), why, whylen);
+    /* The project row and the import-pending witness exist; nothing of the folder is imported yet (GAP-004 matrix). */
+    if (ok) crash_point("import.registered");
     if (ok && strcmp(project_dir, data_dir)) {
         ForkSnapshot snapshot;
         ok = fork_snapshot_read(project_dir, &snapshot) == FILE_TEXT_OK && snapshot.ready;
@@ -838,12 +856,18 @@ static bool import_locked_from(StoreManager *manager, Db *db, const char *projec
             snprintf(why, whylen, "The project's files kept changing; it stays on its files for now");
         }
     }
+    /* The folder's data is committed under pid; the marker is not written, so the files are still authoritative and a
+     * restart resumes the import through the witness. */
+    if (ok) crash_point("import.committed");
     if (ok && !store_mark_imported(project_dir, pid)) {
         snprintf(why, whylen, "Couldn't write .scribodo/store.json; the project stays on its files for now");
         ok = false;
     }
     if (ok) {
+        /* The marker is durable: the store is authoritative; the legacy files are still in place. */
+        crash_point("import.marked");
         set_aside(project_dir);
+        crash_point("import.set_aside");
         char pending[PATH_MAX + 64];
         snprintf(pending, sizeof(pending), "%s/import-pending", dir);
         if (!strcmp(project_dir, data_dir)) unlink(pending); /* fork cleanup retains its commit witness until archived */
@@ -857,10 +881,33 @@ static bool import_locked(StoreManager *manager, Db *db, const char *project_dir
     return import_locked_from(manager, db, project_dir, project_dir, dir, why, whylen);
 }
 
+/* A plain import that died after writing its marker (GAP-004 matrix, import row, 2026-11-12) left the legacy
+ * files live under .scribodo/ and the import-pending witness in place; the store was authoritative, so nothing
+ * ever finished the move. Finishing is idempotent and acts only when the witness names the marker's project and
+ * no fork is in progress (a fork keeps its witness until its own cleanup, fork_snapshot_finish). True when the
+ * move was finished here. */
+bool store_finish_import(StoreManager *manager, const char *project_dir)
+{
+    char pid[40] = "", pending[PATH_MAX + 64], *id = NULL;
+    if (!project_dir || !project_dir[0] || store_mode(manager, project_dir, pid, sizeof(pid), NULL) != STORE_DB) return false;
+    snprintf(pending, sizeof(pending), "%s/.scribodo/import-pending", project_dir);
+    if (file_text_read(pending, &id) != FILE_TEXT_OK) { free(id); return false; }
+    id[strcspn(id, "\r\n")] = '\0';
+    bool ours = !strcmp(id, pid);
+    free(id);
+    ForkSnapshot snapshot;
+    if (!ours || fork_snapshot_read(project_dir, &snapshot) != FILE_TEXT_MISSING) return false;
+    if (legacy_items_live(project_dir)) set_aside(project_dir); /* no empty archive when the items were already moved */
+    return unlink(pending) == 0 || errno == ENOENT;
+}
+
 bool store_import(StoreManager *manager, const char *project_dir, char *why, size_t whylen)
 {
     if (why && whylen) why[0] = '\0';
-    if (store_mode(manager, project_dir, NULL, 0, NULL) == STORE_DB) return true; /* already moved */
+    if (store_mode(manager, project_dir, NULL, 0, NULL) == STORE_DB) { /* already moved; finish an interrupted move */
+        store_finish_import(manager, project_dir);
+        return true;
+    }
     Db *db = store_db(manager);
     if (!db) {
         snprintf(why, whylen, "The project store is offline");

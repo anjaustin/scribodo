@@ -231,7 +231,9 @@ every filesystem operation, nor every filesystem/hardware durability behavior.
 - **Progress (2026-11-11):** the interruption points exist (`core/crash_point.h`,
   compiled away in the product) and `make crashtest` kills a process after
   every migration statement and receipt, at both moments of a document save
-  and on both sides of a store commit (101 deaths, each recovered). The matrix of transitions, points, invariants and open rows
+  on both sides of a store commit and at five moments of a legacy import (113
+  deaths, each recovered; the import row found a move that was never finished
+  after a death past its marker, repaired by `store_finish_import`). The matrix of transitions, points, invariants and open rows
   is `GAP-004-interruption-matrix.md`; the distinction from power loss is
   stated there and this entry stays until the matrix is complete.
 

@@ -706,7 +706,10 @@ static void store_begin(App *app)
  * Returns true when a move for the current project was started now. */
 static bool store_adopt_project(App *app)
 {
-    if (!app->project_dir[0] || !store_online(app->store) || !store_needs_import(app->store, app->project_dir)) return false;
+    if (!app->project_dir[0] || !store_online(app->store)) return false;
+    /* A move that died after its marker is finished here, once, on open (GAP-004 matrix, import row). */
+    if (store_finish_import(app->store, app->project_dir)) set_status(app, "Finished moving this project into the project store (its old files are in .scribodo/legacy-\xE2\x80\xA6)");
+    if (!store_needs_import(app->store, app->project_dir)) return false;
     if (!app->import_job_initialized || import_job_busy(&app->import_job)) return false; /* one at a time; retried when it ends */
     if (!import_job_start(&app->import_job, app->project_dir)) {
         set_status(app, "Could not start moving the project into the store");

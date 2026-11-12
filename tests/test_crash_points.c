@@ -25,6 +25,9 @@
 #include <dirent.h>
 
 #include "app/db.h"
+#include "app/chat_store.h"
+#include "app/records.h"
+#include "app/store.h"
 #include "app/store_backends.h"
 #include "core/crash_point.h"
 #include "core/doc_io.h"
@@ -100,7 +103,7 @@ typedef struct { bool exited, killed; int code, sig; long hits; int version; } C
 
 /* Runs this binary as a child under one selected point (mode --child or --child-save); its stdout's DONE line is
  * parsed when it finishes. */
-static bool run_child(const char *self, const char *spec, const char *mode, const char *name, ChildResult *out)
+static bool run_child2(const char *self, const char *spec, const char *mode, const char *name, const char *extra, ChildResult *out)
 {
     memset(out, 0, sizeof(*out));
     out->hits = -1; out->version = -1;
@@ -112,7 +115,7 @@ static bool run_child(const char *self, const char *spec, const char *mode, cons
         setenv("SCRIBODO_CRASH_POINT", spec, 1);
         dup2(pipefd[1], STDOUT_FILENO);
         close(pipefd[0]); close(pipefd[1]);
-        execl(self, self, mode, name, (char *)NULL);
+        execl(self, self, mode, name, extra, (char *)NULL);
         _exit(127);
     }
     close(pipefd[1]);
@@ -133,6 +136,11 @@ static bool run_child(const char *self, const char *spec, const char *mode, cons
     int ok = 0;
     if (out->exited) sscanf(buf, "DONE ok=%d version=%d hits=%ld", &ok, &out->version, &out->hits);
     return true;
+}
+
+static bool run_child(const char *self, const char *spec, const char *mode, const char *name, ChildResult *out)
+{
+    return run_child2(self, spec, mode, name, NULL, out);
 }
 
 static FILE *g_matrix;
@@ -285,6 +293,137 @@ static void test_store_points(void)
     run_store_point("store.after_commit", true);
 }
 
+/* ---- the legacy import row ------------------------------------------------- */
+
+/* A legacy file-store project: one document, a chat of two messages, two note versions and a canon record. */
+static bool make_legacy_project(StoreManager *manager, const char *dir, char *chat_id, size_t idlen)
+{
+    char doc[1100];
+    snprintf(doc, sizeof(doc), "%s/ch1.md", dir);
+    FILE *f = fopen(doc, "wb");
+    if (!f) return false;
+    fputs("# Chapter one\n\nText.\n", f);
+    fclose(f);
+    chat_store_new_id(chat_id, idlen);
+    ChatMessage user = { .role = CHAT_USER, .content = "First message" };
+    ChatMessage assistant = { .role = CHAT_ASSISTANT, .content = "Second message" };
+    return chat_store_append(manager, dir, chat_id, "Two messages", &user) &&
+           chat_store_append(manager, dir, chat_id, "Two messages", &assistant) &&
+           records_append(manager, dir, REC_NOTE, "n-crash", "active", "v1", NULL, 0, NULL) &&
+           records_append(manager, dir, REC_NOTE, "n-crash", "active", "v2", NULL, 0, NULL) &&
+           records_append(manager, dir, REC_CANON, "c-crash", "committed", "Canon", NULL, 0, NULL);
+}
+
+static int child_import_main(const char *name, const char *dir)
+{
+    char why[256] = "";
+    StoreManager *manager = store_manager_create();
+    bool ok = manager && store_start(manager, name, why, sizeof(why));
+    if (ok) ok = store_import(manager, dir, why, sizeof(why));
+    if (!ok) fprintf(stderr, "child: %s\n", why);
+    printf("DONE ok=%d version=0 hits=%ld\n", ok, crash_point_hits());
+    fflush(stdout);
+    if (manager) store_manager_destroy(manager);
+    return ok ? 0 : 2;
+}
+
+static int count_entries(const char *dir, const char *prefix)
+{
+    DIR *d = opendir(dir);
+    if (!d) return -1;
+    int n = 0;
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL)
+        if (!strncmp(ent->d_name, prefix, strlen(prefix))) n++;
+    closedir(d);
+    return n;
+}
+
+static bool exists(const char *path)
+{
+    struct stat st;
+    return lstat(path, &st) == 0;
+}
+
+/* What the next process finds and does: the mode, a second import, the data once, the files set aside once. */
+static void run_import_point(const char *point)
+{
+    const char *base = getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp";
+    for (long k = 1; k < 100; k++) {
+        char name[64], spec[160], why[256] = "", dir[1024], chat_id[40], scribodo[1100], pending[1200], marker[1200];
+        snprintf(name, sizeof(name), "scribodo_crash_%d_i%ld", (int)getpid(), k);
+        snprintf(spec, sizeof(spec), "%s#%ld", point, k);
+        snprintf(dir, sizeof(dir), "%s/scribodo-crash-import-XXXXXX", base);
+        CHECK(mkdtemp(dir) != NULL);
+        snprintf(scribodo, sizeof(scribodo), "%s/.scribodo", dir);
+        snprintf(pending, sizeof(pending), "%s/import-pending", scribodo);
+        snprintf(marker, sizeof(marker), "%s/store.json", scribodo);
+        CHECK(admin_name("CREATE DATABASE %s CHARACTER SET utf8mb4", name) && admin_name("GRANT ALL ON %s.* TO 'scribodo'@'%%'", name));
+        StoreManager *manager = store_manager_create();
+        CHECK(manager && store_start(manager, name, why, sizeof(why)));
+        CHECK(make_legacy_project(manager, dir, chat_id, sizeof(chat_id)));
+        CHECK(store_mode(manager, dir, NULL, 0, NULL) == STORE_FILES);
+        ChildResult r;
+        CHECK(run_child2(g_self, spec, "--child-import", name, dir, &r));
+        if (r.exited) {
+            CHECK(r.code == 0 && r.hits == k - 1);
+            fprintf(g_matrix, "%s\t%ld\tnone\t-\t-\t-\t%ld hits in all\n", point, k, r.hits);
+            printf("%s: %ld points\n", point, k - 1);
+            store_manager_destroy(manager);
+            admin_name("DROP DATABASE %s", name);
+            char cmd[1200]; snprintf(cmd, sizeof(cmd), "rm -rf '%s'", dir); CHECK(system(cmd) == 0);
+            break;
+        }
+        CHECK(r.killed && r.sig == SIGKILL);
+        /* The next process: a fresh manager on the same database and folder. */
+        store_manager_destroy(manager);
+        manager = store_manager_create();
+        CHECK(manager && store_start(manager, name, why, sizeof(why)));
+        StoreMode at_death = store_mode(manager, dir, NULL, 0, NULL);
+        bool marker_at_death = exists(marker), pending_at_death = exists(pending);
+        int legacy_at_death = count_entries(scribodo, "legacy-");
+        /* The marker decides authority: no marker, the files (resumable); a marker, the store. Never paused. */
+        CHECK(at_death == (marker_at_death ? STORE_DB : STORE_FILES));
+        bool again = store_import(manager, dir, why, sizeof(why));
+        if (!again) fprintf(stderr, "    %s#%ld: %s\n", point, k, why);
+        CHECK(again);
+        char pid[40] = "";
+        CHECK(store_mode(manager, dir, pid, sizeof(pid), NULL) == STORE_DB && pid[0] == 'p');
+        ChatMessage *msgs = NULL;
+        size_t nm = 0;
+        bool loaded = chat_store_load(manager, dir, chat_id, &msgs, &nm);
+        CHECK(loaded && nm == 2 && msgs && !strcmp(msgs[0].content, "First message") && !strcmp(msgs[1].content, "Second message"));
+        if (msgs) chat_store_free_messages(msgs, nm);
+        Record *notes = NULL, *canon = NULL;
+        size_t nn = records_list(manager, dir, REC_NOTE, &notes), nc = records_list(manager, dir, REC_CANON, &canon);
+        CHECK(nn == 1 && notes && notes[0].nversions == 2 && nc == 1);
+        records_free(notes, nn); records_free(canon, nc);
+        /* Every legacy item is out of .scribodo/ (in one stamped archive, or two when the death split the move), the
+         * witness is gone, and nothing legacy is left live. */
+        int legacy_after = count_entries(scribodo, "legacy-");
+        char chats_dir[1200]; snprintf(chats_dir, sizeof(chats_dir), "%s/chats", scribodo);
+        char notes_file[1200]; snprintf(notes_file, sizeof(notes_file), "%s/notes.jsonl", scribodo);
+        bool finished = legacy_after >= 1 && legacy_after <= 2 && !exists(pending) && !exists(chats_dir) && !exists(notes_file);
+        CHECK(finished);
+        fprintf(g_matrix, "%s\t%ld\tSIGKILL\tmode %s, marker %d, witness %d, legacy dirs %d\treimport ok, mode db, legacy dirs %d\t2 messages, 1 note (2 versions), 1 canon\t%s\n",
+                point, k, at_death == STORE_DB ? "db" : at_death == STORE_FILES ? "files" : "PAUSED", marker_at_death, pending_at_death, legacy_at_death,
+                legacy_after, finished ? "authority held, data once, move finished" : "INVARIANT BROKEN");
+        g_rows++;
+        store_manager_destroy(manager);
+        admin_name("DROP DATABASE %s", name);
+        char cmd[1200]; snprintf(cmd, sizeof(cmd), "rm -rf '%s'", dir); CHECK(system(cmd) == 0);
+    }
+}
+
+static void test_import_points(void)
+{
+    run_import_point("import.registered");
+    run_import_point("import.committed");
+    run_import_point("import.marked");
+    run_import_point("import.aside_item");
+    run_import_point("import.set_aside");
+}
+
 /* ---- the document save row ------------------------------------------------ */
 
 static const char k_original[] = "The original text, saved whole before the crash.\n";
@@ -415,6 +554,7 @@ int main(int argc, char **argv)
     if (argc == 3 && !strcmp(argv[1], "--child")) return child_main(argv[2]);
     if (argc == 3 && !strcmp(argv[1], "--child-save")) return child_save_main(argv[2]);
     if (argc == 3 && !strcmp(argv[1], "--child-append")) return child_append_main(argv[2]);
+    if (argc == 4 && !strcmp(argv[1], "--child-import")) return child_import_main(argv[2], argv[3]);
     g_self = argv[0];
     mkdir("build", 0755); mkdir("build/crash", 0755);
     g_matrix = fopen("build/crash/matrix.tsv", "w");
@@ -422,8 +562,8 @@ int main(int argc, char **argv)
     fprintf(g_matrix, "point\thit\tdeath\tstate_at_death\trecovery\tdetail\tinvariant\n");
     time_t t0 = time(NULL);
     TestCase tests[] = { { "migration_points", test_migration_points }, { "save_points", test_save_points },
-                         { "store_points", test_store_points } };
-    int rc = run_tests(tests, 3);
+                         { "store_points", test_store_points }, { "import_points", test_import_points } };
+    int rc = run_tests(tests, 4);
     fclose(g_matrix);
     printf("%d death rows in build/crash/matrix.tsv, %ld s\n", g_rows, (long)(time(NULL) - t0));
     free(g_reference);

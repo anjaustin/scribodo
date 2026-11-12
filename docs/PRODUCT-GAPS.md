@@ -15,7 +15,7 @@ features are absent. Keep the original numbering for future follow-up.
 | GAP-001 | Broad AI usefulness and accuracy evaluation | **P0** (2026-11-11) | Started: a second, held-out manuscript (A Princess of Mars) with questions written before any run; see the 2026-11-11 section |
 | GAP-002 | Turnkey installation and release distribution | **P0** (2026-11-11) | Not started |
 | GAP-003 | Whole-manuscript scale and sustained-use evidence | **P0** | Implementation underway; bounded-history foundation first; memory contract in MEMORY-015 |
-| GAP-004 | Deterministic crash/recovery interruption coverage | **P0** (2026-11-11) | In progress: kill-point harness and the migration, document-save and store-write rows done 2026-11-11 (`GAP-004-interruption-matrix.md`, 101 deaths, 0 failures, one finding awaiting a decision); marker, cleanup and disk rows open |
+| GAP-004 | Deterministic crash/recovery interruption coverage | **P0** (2026-11-11) | In progress: kill-point harness and the migration, document-save, store-write and legacy-import rows done 2026-11-12 (`GAP-004-interruption-matrix.md`, 113 deaths, 0 failures; one finding repaired, one awaiting a decision); fork cleanup and disk rows open |
 | GAP-005 | Real macOS input, accessibility and author usability | **P0** (2026-11-11) | Not started |
 
 The user selected **#3 as P0** on 2026-11-06 and made the remaining four P0 on
@@ -46,7 +46,8 @@ measurement that closes it. Items run one at a time unless marked otherwise.
    commits, marker replacement, archival cleanup and migration receipts;
    disk-full and read-only cases. Closes with the transition/failure matrix. *Started
    2026-11-11* (`journal/gap004-cycle1_migration.md`): `core/crash_point.h`
-   and `make crashtest`; the migration, save and store-write rows hold at every one of 101 deaths.
+   and `make crashtest`; the migration, save, store-write and import rows hold at every one of 113
+   deaths; the import row found and repaired an unfinished move.
    The matrix is `GAP-004-interruption-matrix.md`.
 5. **GAP-003 budgets and soak.** Workload sizes and budgets agreed, then the
    soak, restart and repeatability runs on the M4; the single MEMORY-019
@@ -148,8 +149,10 @@ process-death tests and explicit limits separating them from hardware durability
 **Progress (2026-11-11):** the matrix exists ([GAP-004-interruption-matrix](GAP-004-interruption-matrix.md))
 with its method and limits; the migration rows (a process killed after every DDL statement and every
 receipt recovers to the clean schema) the save row (the document is whole
-at either death) and the store-write row (a message is absent or present once
-at either side of the commit) are held by `make crashtest`; the other rows are open and
+at either death) the store-write row (a message is absent or present once
+at either side of the commit) and the import row (authority and data held at
+every death; a move that died after its marker is now finished at the next
+open) are held by `make crashtest`; the other rows are open and
 listed there, with one finding awaiting a decision (stray save temps).
 
 ## GAP-005 — Real macOS input, accessibility and author usability

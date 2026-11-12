@@ -74,6 +74,8 @@ bool sdb_chat_set_observer(Db *db, const char *project_id, const char *id, bool 
  * True if it is in the store afterwards (or already was). */
 bool store_import(StoreManager *manager, const char *project_dir, char *why, size_t whylen);
 bool store_needs_import(StoreManager *manager, const char *project_dir);
+/* Finish a move that died after its marker: legacy files set aside, witness removed (store_import.c). */
+bool store_finish_import(StoreManager *manager, const char *project_dir);
 /* The document file `name` in `project_dir` gets a saved revision holding its
  * on-disk text (reusing a revision with that content, else an "import" one).
  * import=true runs inside an import's transaction and makes both pointers
