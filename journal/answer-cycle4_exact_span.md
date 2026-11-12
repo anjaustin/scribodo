@@ -83,6 +83,11 @@ than the previous tree: `test_verify`); `make dbtest` 18,000, 0; `make analyze`
 `make tsan` 48,585, 0, 0 diagnostics. Every exit status 0
 (`build/exact/gates-*.log`; the tally sums every `N checks` line).
 
+## Hosted verdicts
+
+CI and Trusted acceptance both passed on `b752592` (runs 43261904802 and
+43261904934).
+
 ## What remains
 
 The span shown is now the manuscript's bytes wherever the verifier matches. The
