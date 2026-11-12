@@ -931,8 +931,13 @@ bool store_import(StoreManager *manager, const char *project_dir, char *why, siz
     mkdir(dir, 0755);
     snprintf(ownerp, sizeof(ownerp), "%s/import.owner.lock", dir);
     int ownerfd = open(ownerp, O_RDWR | O_CREAT, 0644);
-    if (ownerfd < 0 || flock(ownerfd, LOCK_EX | LOCK_NB) != 0) {
-        if (ownerfd >= 0) close(ownerfd);
+    if (ownerfd < 0) {
+        /* A lock file that cannot be created (a full or read-only disk) is not another window (GAP-004 matrix, disk row). */
+        snprintf(why, whylen, "Couldn't create the project's import lock: %s", strerror(errno));
+        return false;
+    }
+    if (flock(ownerfd, LOCK_EX | LOCK_NB) != 0) {
+        close(ownerfd);
         snprintf(why, whylen, "This project is being moved into the store by another window");
         return false;
     }
@@ -1221,8 +1226,13 @@ bool store_fork(StoreManager *manager, const char *project_dir, char *why, size_
     snprintf(ownerp, sizeof(ownerp), "%s/import.owner.lock", dir);
     snprintf(lockp, sizeof(lockp), "%s/import.lock", dir);
     int ownerfd = open(ownerp, O_RDWR | O_CREAT, 0644);
-    if (ownerfd < 0 || flock(ownerfd, LOCK_EX | LOCK_NB) != 0) {
-        if (ownerfd >= 0) close(ownerfd);
+    if (ownerfd < 0) {
+        /* A lock file that cannot be created (a full or read-only disk) is not another window (GAP-004 matrix, disk row). */
+        snprintf(why, whylen, "Couldn't create the project's import lock: %s", strerror(errno));
+        return false;
+    }
+    if (flock(ownerfd, LOCK_EX | LOCK_NB) != 0) {
+        close(ownerfd);
         snprintf(why, whylen, "This project is being moved into the store by another window");
         return false;
     }

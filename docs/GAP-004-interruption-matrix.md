@@ -1,7 +1,10 @@
 # GAP-004 — Interruption matrix
 
-**Date:** 2026-11-11. **Status:** in progress; the harness and the migration, save, store-write,
-import and fork rows are done; the disk-full and read-only row is open.
+**Date:** 2026-11-11. **Status:** complete for the six transitions the gap named (2026-11-12):
+124 matrix rows, 120 of them process deaths, 0 failures; two unfinished-move
+defects and one misleading refusal found and repaired; one finding awaits a
+decision. The limits below stay, and the register's residual-risk entry with
+them.
 
 The gap ([PRODUCT-GAPS](PRODUCT-GAPS.md), GAP-004): the restart and
 fault-injection tests model a crash by editing state (a deleted receipt, a
@@ -33,7 +36,7 @@ invariant. One line per death goes to `build/crash/matrix.tsv`.
 | Store writes (chat append, records, revisions, memory ingest: one transaction each, through `db_commit`) | `store.before_commit` (the transaction's statements sent, COMMIT not), `store.after_commit` | the message is absent or present once with its conversation; `seq` runs 0..n-1 with no gap or duplicate; the next process's append continues the sequence | **Done 2026-11-11** on the chat append: 4 deaths (two appends, each point), 0 or 1 or 2 messages exactly as the commit count says, next append continues (`journal/gap004-cycle3_store.md`). The points sit in `db_commit`, so every store transaction has them; the driver drives the chat append |
 | Legacy import (`store_import`): register the project and write the witness, import in one transaction, write the marker, set the legacy files aside, remove the witness | `import.registered`, `import.committed`, `import.marked`, `import.aside_item` (after each of the 8 items), `import.set_aside` | the folder is never unmarked with empty live metadata: without a marker the files stay authoritative and the next import resumes under the witness's project; with a marker the store is authoritative; the data is read once (2 messages, 1 note with 2 versions, 1 canon), every legacy item ends up in a stamped archive and the witness is gone | **Done 2026-11-12**: 12 deaths, 0 failures after a repair. **Finding, repaired:** a death after the marker left the legacy files live and the witness in place, and the next open never finished the move (the store was authoritative, so nothing asked); `store_finish_import` now finishes it at open and on a repeated import, only when the witness names the marker's project and no fork is in progress (`journal/gap004-cycle4_import.md`) |
 | Fork of a copied folder (`store_fork`): open the journal, export the store's data to a staging folder, import it as a new project (the import row's points), close the journal (archive the staging, remove witness and journal) | `fork.journal_opened`, `fork.exported`, the import points, `fork.imported` (marker written, journal still open) | a copy stays a paused copy until its marker is replaced, then it is a project in the store with its own id, never a plain file store; the copy's data is read once and the original is untouched; the journal is closed (no staging, witness or `fork.json`) after the next process acts as the app would (fork a copy again; open a project) | **Done 2026-11-12**: 7 deaths, 0 failures after a repair. **Finding, repaired:** a death after the marker left the staging, witness and journal in place, and a plain open never closed them (only a further fork of a copy did); `store_finish_import` now closes a journal whose target is the marker's project (`journal/gap004-cycle5_fork.md`) |
-| Disk full and read-only targets | ENOSPC on a small RAM disk; a write-protected target | the save reports and the original is intact | Open |
+| Disk full and read-only targets (not a death: a 2 MB RAM disk filled to the last byte, then a write-protected target) | `disk.full` save and import, `disk.read_only` save | the save is refused with the cause and the document is intact with no temp left; the import is refused with its cause and the files stay authoritative with their data intact; once space is back the same import succeeds with the data once; a write-protected target is refused as such | **Done 2026-11-12**: 4 rows, all held. **Finding, repaired:** an import on a full disk was refused as "being moved into the store by another window" because its lock file could not be created; the refusal now names the cause (`journal/gap004-cycle6_disk.md`) |
 
 ## Findings awaiting a decision
 
@@ -65,6 +68,13 @@ nothing, only archive) argues against the first.
   the 80 statements by dying after it.
 - **One process at a time.** The driver never has two processes in the same
   transition; concurrent import ownership is the lock tests' job.
+- **Four more writers share the save row's shape and are not driven.** The
+  author profile, the recent-projects list, the model settings and the saved
+  revisions each write a temp file, fsync and rename (`profile.c`, `recent.c`,
+  `model_settings.c`, `revisions.c`); the save row's result (whole at either
+  death, a temp left after the first) is expected to hold for them by
+  construction, and that expectation is not a measurement. A point in each
+  and a child per writer would add four rows to this matrix.
 - **The points are in the product code.** They cost nothing in the product
   build (a macro to `(void)0`), and a transition without a point is not in the
   matrix. Adding a row starts by naming its points.

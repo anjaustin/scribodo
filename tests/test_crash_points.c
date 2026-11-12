@@ -23,6 +23,7 @@
 #include <unistd.h>
 
 #include <dirent.h>
+#include <errno.h>
 
 #include "app/db.h"
 #include "app/chat_store.h"
@@ -638,6 +639,104 @@ static void test_save_points(void)
     run_save_point("save.renamed");
 }
 
+/* ---- the disk row: full and read-only volumes ------------------------------ */
+
+/* First line of a command's output, trimmed; "" when it produced none. */
+static bool first_line(const char *cmd, char *out, size_t outlen)
+{
+    out[0] = '\0';
+    FILE *f = popen(cmd, "r");
+    if (!f) return false;
+    bool got = fgets(out, (int)outlen, f) != NULL;
+    pclose(f);
+    if (got) out[strcspn(out, " \t\r\n")] = '\0';
+    return got && out[0];
+}
+
+/* Fill the volume to the last byte with ever smaller writes; true when a one-byte write fails with ENOSPC. */
+static bool fill_volume(const char *dir)
+{
+    char path[1200];
+    snprintf(path, sizeof(path), "%s/fill", dir);
+    static const size_t sizes[] = { 65536, 4096, 512, 1 };
+    static char zeros[65536];
+    bool enospc = false;
+    for (size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]) && !enospc; i++) {
+        FILE *f = fopen(path, "ab");
+        if (!f) return false;
+        for (;;) {
+            if (fwrite(zeros, 1, sizes[i], f) != sizes[i] || fflush(f) != 0) { enospc = errno == ENOSPC && sizes[i] == 1; break; }
+        }
+        fclose(f);
+    }
+    return enospc;
+}
+
+static void test_disk_row(void)
+{
+    char dev[64], mount[128] = "/Volumes/scribodo-crash-disk", cmd[1200], why[256] = "", err[512] = "", buf[1024];
+    snprintf(cmd, sizeof(cmd), "hdiutil detach %s >/dev/null 2>&1; hdiutil attach -nomount ram://4096 2>/dev/null", mount);
+    if (!first_line(cmd, dev, sizeof(dev)) || strncmp(dev, "/dev/disk", 9)) {
+        printf("disk row: no RAM disk could be attached; skipped\n");
+        fprintf(g_matrix, "disk.full\t-\tskipped\tno RAM disk\t-\t-\t-\n");
+        return;
+    }
+    snprintf(cmd, sizeof(cmd), "diskutil eraseVolume HFS+ scribodo-crash-disk %s >/dev/null 2>&1", dev);
+    bool mounted = system(cmd) == 0 && exists(mount);
+    CHECK(mounted);
+    if (!mounted) { snprintf(cmd, sizeof(cmd), "hdiutil detach %s >/dev/null 2>&1", dev); system(cmd); return; }
+    char name[64], dir[256], doc[300], chat_id[40];
+    snprintf(name, sizeof(name), "scribodo_crash_%d_disk", (int)getpid());
+    snprintf(dir, sizeof(dir), "%s/project", mount);
+    snprintf(doc, sizeof(doc), "%s/ch1.md", dir);
+    CHECK(mkdir(dir, 0755) == 0);
+    CHECK(admin_name("CREATE DATABASE %s CHARACTER SET utf8mb4", name) && admin_name("GRANT ALL ON %s.* TO 'scribodo'@'%%'", name));
+    StoreManager *manager = store_manager_create();
+    CHECK(manager && store_start(manager, name, why, sizeof(why)));
+    CHECK(make_legacy_project(manager, dir, chat_id, sizeof(chat_id)));
+    CHECK(save_text(doc, k_original, err, sizeof(err)));
+    /* Full. */
+    bool full = fill_volume(dir);
+    CHECK(full);
+    DocStatus st = full ? doc_save(doc, (uint32_t[]){ 'x' }, 1, false, false, NULL, NULL, err, sizeof(err)) : DOC_OK;
+    size_t n = read_whole(doc, buf, sizeof(buf));
+    bool save_refused = st == DOC_ERR_IO && n != (size_t)-1 && !strcmp(content_name(buf, n), "original") && count_temps(dir) == 0;
+    CHECK(save_refused);
+    fprintf(g_matrix, "disk.full\tsave\tENOSPC\toriginal whole\trefused: %s\tno temp left\t%s\n", err, save_refused ? "original intact" : "DAMAGED");
+    bool import_refused = full && !store_import(manager, dir, why, sizeof(why));
+    StoreMode mode_full = store_mode(manager, dir, NULL, 0, NULL);
+    ChatMessage *msgs = NULL; size_t nm = 0;
+    bool files_intact = chat_store_load(manager, dir, chat_id, &msgs, &nm) && nm == 2;
+    if (msgs) chat_store_free_messages(msgs, nm);
+    CHECK(import_refused && mode_full == STORE_FILES && files_intact);
+    fprintf(g_matrix, "disk.full\timport\tENOSPC\tmode %s, 2 messages in files\trefused: %s\t-\t%s\n", mode_full == STORE_FILES ? "files" : mode_full == STORE_DB ? "db" : "PAUSED", why,
+            import_refused && mode_full == STORE_FILES && files_intact ? "files stay authoritative" : "INVARIANT BROKEN");
+    /* Space back: the same import succeeds, the data once. */
+    snprintf(cmd, sizeof(cmd), "%s/fill", dir);
+    CHECK(unlink(cmd) == 0);
+    bool again = store_import(manager, dir, why, sizeof(why));
+    if (!again) fprintf(stderr, "    import after space freed: %s\n", why);
+    msgs = NULL; nm = 0;
+    bool once = chat_store_load(manager, dir, chat_id, &msgs, &nm) && nm == 2;
+    if (msgs) chat_store_free_messages(msgs, nm);
+    char pending[400]; snprintf(pending, sizeof(pending), "%s/.scribodo/import-pending", dir);
+    CHECK(again && store_mode(manager, dir, NULL, 0, NULL) == STORE_DB && once && !exists(pending));
+    fprintf(g_matrix, "disk.full\timport again\tspace freed\t-\tok, mode db\t2 messages, witness gone\t%s\n", again && once ? "data once" : "INVARIANT BROKEN");
+    /* Read-only target: refused with the right status, original intact. */
+    CHECK(chmod(doc, 0444) == 0);
+    st = doc_save(doc, (uint32_t[]){ 'x' }, 1, false, false, NULL, NULL, err, sizeof(err));
+    n = read_whole(doc, buf, sizeof(buf));
+    bool ro = st == DOC_ERR_READ_ONLY && n != (size_t)-1 && !strcmp(content_name(buf, n), "original") && count_temps(dir) == 0;
+    CHECK(ro);
+    chmod(doc, 0644);
+    fprintf(g_matrix, "disk.read_only\tsave\tEACCES\toriginal whole\trefused: %s\tno temp left\t%s\n", err, ro ? "original intact" : "DAMAGED");
+    g_rows += 4;
+    store_manager_destroy(manager);
+    admin_name("DROP DATABASE %s", name);
+    snprintf(cmd, sizeof(cmd), "hdiutil detach %s >/dev/null 2>&1", dev);
+    CHECK(system(cmd) == 0);
+}
+
 static void test_migration_points(void)
 {
     char ref[64], err[512] = "";
@@ -670,10 +769,10 @@ int main(int argc, char **argv)
     time_t t0 = time(NULL);
     TestCase tests[] = { { "migration_points", test_migration_points }, { "save_points", test_save_points },
                          { "store_points", test_store_points }, { "import_points", test_import_points },
-                         { "fork_points", test_fork_points } };
-    int rc = run_tests(tests, 5);
+                         { "fork_points", test_fork_points }, { "disk_row", test_disk_row } };
+    int rc = run_tests(tests, 6);
     fclose(g_matrix);
-    printf("%d death rows in build/crash/matrix.tsv, %ld s\n", g_rows, (long)(time(NULL) - t0));
+    printf("%d matrix rows in build/crash/matrix.tsv, %ld s\n", g_rows, (long)(time(NULL) - t0));
     free(g_reference);
     return rc;
 }
