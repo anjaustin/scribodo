@@ -267,10 +267,14 @@ bool db_begin(Db *db)
 bool db_commit(Db *db)
 {
     db->in_tx = false;
+    /* Every store write is one transaction (chat append, record, revision, memory ingest): a process that dies
+     * here has written nothing visible, one that dies after the commit has written all of it (GAP-004 matrix). */
+    crash_point("store.before_commit");
     if (mysql_commit(db->m) != 0) {
         set_err(db, "commit", mysql_error(db->m));
         return false;
     }
+    crash_point("store.after_commit");
     return true;
 }
 

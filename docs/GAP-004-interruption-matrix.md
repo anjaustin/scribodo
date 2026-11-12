@@ -1,7 +1,7 @@
 # GAP-004 — Interruption matrix
 
-**Date:** 2026-11-11. **Status:** in progress; the harness, the migration rows and the save row
-are done, every other row is open.
+**Date:** 2026-11-11. **Status:** in progress; the harness, the migration rows, the save row and
+the store-write row are done; the marker, cleanup and disk rows are open.
 
 The gap ([PRODUCT-GAPS](PRODUCT-GAPS.md), GAP-004): the restart and
 fault-injection tests model a crash by editing state (a deleted receipt, a
@@ -30,7 +30,7 @@ invariant. One line per death goes to `build/crash/matrix.tsv`.
 |---|---|---|---|
 | Schema migration (`db_migrate`): DDL statements, then one receipt per version | `migration.statement` (after each of the 80 statements), `migration.receipt` (after each of the 15 receipts) | `db_migrate` completes to schema 15; `schema_migrations` holds exactly one row per version 1 to 15; every column, index, constraint, check and table (information_schema) is identical to a database migrated once without interruption; a further `db_migrate` changes nothing | **Done 2026-11-11**: 95 deaths, 864 checks, 0 failures, 31 s (`journal/gap004-cycle1_migration.md`) |
 | Document save (`doc_io`: temp file, fsync, rename over the target, fsync of the directory) | `save.temp_written` (the new content complete and fsynced in the temp, target untouched), `save.renamed` (target replaced, directory not yet fsynced) | the target holds the previous or the new content whole, never a mix, a truncation or nothing; the next save succeeds and the target holds it whole | **Done 2026-11-11**: 2 deaths, both whole, next save fine. **Finding:** a death after `save.temp_written` leaves `doc.md.scribodo-XXXXXX` (mode 0600, the complete new text) beside the document, and nothing removes or reads it afterwards; see below (`journal/gap004-cycle2_save.md`) |
-| Store writes (chat append, records, revisions, observer state: one transaction each) | before commit, after commit | the row is absent or present once; a reply is never duplicated | Open |
+| Store writes (chat append, records, revisions, memory ingest: one transaction each, through `db_commit`) | `store.before_commit` (the transaction's statements sent, COMMIT not), `store.after_commit` | the message is absent or present once with its conversation; `seq` runs 0..n-1 with no gap or duplicate; the next process's append continues the sequence | **Done 2026-11-11** on the chat append: 4 deaths (two appends, each point), 0 or 1 or 2 messages exactly as the commit count says, next append continues (`journal/gap004-cycle3_store.md`). The points sit in `db_commit`, so every store transaction has them; the driver drives the chat append |
 | Legacy import: export, import, marker replacement | before the marker replaces the file-store marker, after | the folder is never unmarked with empty live metadata; the import resumes or the file store stays authoritative | Open; modelled today by file edits (`test_db`, `fork_retry_snapshot`) |
 | Fork snapshot archive and cleanup | after the marker commits, before cleanup finishes | the journal is finished on the next open; the sentinel-protected staging is kept | Open; modelled today |
 | Disk full and read-only targets | ENOSPC on a small RAM disk; a write-protected target | the save reports and the original is intact | Open |

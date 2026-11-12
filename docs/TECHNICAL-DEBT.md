@@ -209,6 +209,14 @@ protections remain enabled.
   dispatching the acceptance workflow on that branch (`workflow_dispatch`);
   see `journal/answer-cycle4_flags.md`. When a run shows `queued` with no jobs
   after the next push's run has completed, do this rather than wait.
+- **Observed 2026-11-12:** Trusted acceptance failed for `fcf30ba`, `bb0a88e`
+  and `98a22a6` at "Run scripted UI acceptance" while CI passed: every script
+  exited within a second because the self-hosted runner's console was locked
+  (`ioreg -n Root -d1 -a | grep -A1 IOConsoleLocked` reports true), and the
+  app cannot create a window on a locked console. None of the three commits
+  touched UI code. Remedy: rerun the failed jobs once the console is unlocked
+  (`gh run rerun <id> --failed`); the database and crash steps had passed.
+  A runner whose console can lock is a limit of this acceptance lane.
 
 ### Power-loss recovery testing is not exhaustive
 
@@ -222,8 +230,8 @@ every filesystem operation, nor every filesystem/hardware durability behavior.
   termination tests from actual power-loss/durability testing.
 - **Progress (2026-11-11):** the interruption points exist (`core/crash_point.h`,
   compiled away in the product) and `make crashtest` kills a process after
-  every migration statement and receipt and at both moments of a document
-  save (97 deaths, each recovered). The matrix of transitions, points, invariants and open rows
+  every migration statement and receipt, at both moments of a document save
+  and on both sides of a store commit (101 deaths, each recovered). The matrix of transitions, points, invariants and open rows
   is `GAP-004-interruption-matrix.md`; the distinction from power loss is
   stated there and this entry stays until the matrix is complete.
 

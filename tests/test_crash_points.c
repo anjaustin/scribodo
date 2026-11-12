@@ -25,6 +25,7 @@
 #include <dirent.h>
 
 #include "app/db.h"
+#include "app/store_backends.h"
 #include "core/crash_point.h"
 #include "core/doc_io.h"
 #include "core/utf8.h"
@@ -193,6 +194,97 @@ static void run_point(const char *point)
     }
 }
 
+/* ---- the store write row --------------------------------------------------- */
+
+#define CONVERSATION "20261111-120000-crsh"
+
+static bool seed_project(Db *db)
+{
+    DbArg p[6] = { DB_S("p-crash"), DB_S("Book"), DB_S("/crash/Book"), DB_S("crash-hash"), DB_D(1.0), DB_D(1.0) };
+    return db_run(db, "INSERT INTO projects (id, name, path, path_hash, created_at, updated_at) VALUES (?,?,?,?,?,?)", p, 6, NULL);
+}
+
+static bool append_message(Db *db, const char *content, bool assistant)
+{
+    ChatMessage m = { .role = assistant ? CHAT_ASSISTANT : CHAT_USER, .content = (char *)content };
+    return sdb_chat_append(db, "p-crash", CONVERSATION, "Crash chat", &m);
+}
+
+/* Two appends, each one transaction: the commit points are hit twice. */
+static int child_append_main(const char *name)
+{
+    char err[512] = "";
+    Db *db = open_named(name, err, sizeof(err));
+    if (!db) { fprintf(stderr, "child: %s\n", err); return 2; }
+    bool ok = db_migrate(db, err, sizeof(err)) && seed_project(db) && append_message(db, "First message", false) &&
+              append_message(db, "Second message", true);
+    printf("DONE ok=%d version=%d hits=%ld\n", ok, db_schema_version(db), crash_point_hits());
+    fflush(stdout);
+    db_close(db);
+    return ok ? 0 : 2;
+}
+
+/* Messages of the crash conversation: count, and whether seq runs 0..count-1 without a gap or a duplicate. */
+static bool message_state(Db *db, long *count, bool *contiguous, long *conversations)
+{
+    DbRows r;
+    if (!db_query(db, "SELECT COUNT(*), COUNT(DISTINCT seq), COALESCE(MIN(seq), 0), COALESCE(MAX(seq), -1) FROM messages WHERE conversation_id = ?",
+                  (DbArg[1]){ DB_S(CONVERSATION) }, 1, &r) || r.nrows != 1) return false;
+    *count = atol(db_cell(&r, 0, 0));
+    *contiguous = atol(db_cell(&r, 0, 1)) == *count && atol(db_cell(&r, 0, 2)) == 0 && atol(db_cell(&r, 0, 3)) == *count - 1;
+    db_rows_free(&r);
+    if (!db_query(db, "SELECT COUNT(*) FROM conversations WHERE id = ?", (DbArg[1]){ DB_S(CONVERSATION) }, 1, &r) || r.nrows != 1) return false;
+    *conversations = atol(db_cell(&r, 0, 0));
+    db_rows_free(&r);
+    return true;
+}
+
+static void run_store_point(const char *point, bool after)
+{
+    for (long k = 1; k < 100; k++) {
+        char name[64], spec[160], err[512] = "";
+        snprintf(name, sizeof(name), "scribodo_crash_%d_s%ld", (int)getpid(), k);
+        snprintf(spec, sizeof(spec), "%s#%ld", point, k);
+        CHECK(admin_name("CREATE DATABASE %s CHARACTER SET utf8mb4", name) && admin_name("GRANT ALL ON %s.* TO 'scribodo'@'%%'", name));
+        ChildResult r;
+        CHECK(run_child(g_self, spec, "--child-append", name, &r));
+        if (r.exited) {
+            CHECK(r.code == 0 && r.hits == 2 && k == 3); /* two appends, two commits, no other transaction on the path */
+            fprintf(g_matrix, "%s\t%ld\tnone\t-\t-\t-\t%ld hits in all\n", point, k, r.hits);
+            printf("%s: %ld points\n", point, k - 1);
+            admin_name("DROP DATABASE %s", name);
+            break;
+        }
+        CHECK(r.killed && r.sig == SIGKILL);
+        Db *db = open_named(name, err, sizeof(err));
+        CHECK(db != NULL);
+        if (!db) { admin_name("DROP DATABASE %s", name); break; }
+        long count = -1, conversations = -1;
+        bool contiguous = false;
+        CHECK(message_state(db, &count, &contiguous, &conversations));
+        /* Death before commit k: k-1 messages; after commit k: k messages. Never a partial message, never a duplicate. */
+        long expected = after ? k : k - 1;
+        CHECK(count == expected && contiguous && conversations == (expected ? 1 : 0));
+        /* The next process appends; the sequence continues from what was committed. */
+        bool next = append_message(db, "Third message, after recovery", false);
+        CHECK(next);
+        long count2 = -1, conv2 = -1;
+        bool contiguous2 = false;
+        CHECK(message_state(db, &count2, &contiguous2, &conv2) && count2 == expected + 1 && contiguous2 && conv2 == 1);
+        fprintf(g_matrix, "%s\t%ld\tSIGKILL\t%ld messages, %s\tnext append ok, %ld\tconversation rows %ld\t%s\n", point, k, count,
+                contiguous ? "seq contiguous" : "SEQ BROKEN", count2, conversations, count == expected && contiguous ? "no partial, no duplicate" : "INVARIANT BROKEN");
+        g_rows++;
+        db_close(db);
+        admin_name("DROP DATABASE %s", name);
+    }
+}
+
+static void test_store_points(void)
+{
+    run_store_point("store.before_commit", false);
+    run_store_point("store.after_commit", true);
+}
+
 /* ---- the document save row ------------------------------------------------ */
 
 static const char k_original[] = "The original text, saved whole before the crash.\n";
@@ -322,14 +414,16 @@ int main(int argc, char **argv)
 {
     if (argc == 3 && !strcmp(argv[1], "--child")) return child_main(argv[2]);
     if (argc == 3 && !strcmp(argv[1], "--child-save")) return child_save_main(argv[2]);
+    if (argc == 3 && !strcmp(argv[1], "--child-append")) return child_append_main(argv[2]);
     g_self = argv[0];
     mkdir("build", 0755); mkdir("build/crash", 0755);
     g_matrix = fopen("build/crash/matrix.tsv", "w");
     if (!g_matrix) { perror("build/crash/matrix.tsv"); return 1; }
     fprintf(g_matrix, "point\thit\tdeath\tstate_at_death\trecovery\tdetail\tinvariant\n");
     time_t t0 = time(NULL);
-    TestCase tests[] = { { "migration_points", test_migration_points }, { "save_points", test_save_points } };
-    int rc = run_tests(tests, 2);
+    TestCase tests[] = { { "migration_points", test_migration_points }, { "save_points", test_save_points },
+                         { "store_points", test_store_points } };
+    int rc = run_tests(tests, 3);
     fclose(g_matrix);
     printf("%d death rows in build/crash/matrix.tsv, %ld s\n", g_rows, (long)(time(NULL) - t0));
     free(g_reference);
