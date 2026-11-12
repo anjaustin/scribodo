@@ -44,7 +44,7 @@ changes nothing.
 
 ## Measurement
 
-`make crashtest` (`build/crash/crashtest.log`, `build/crash/migration-matrix.tsv`):
+`make crashtest` (`build/crash/crashtest.log`, `build/crash/matrix.tsv`):
 
 | Point | Deaths | Schema version found at death | Recovered to 15 | Receipts 1..15 | Schema identical |
 |---|---:|---|---:|---:|---:|

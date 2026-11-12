@@ -553,7 +553,7 @@ hit, and the driver recovers in its own process and checks the row's
 invariant (for the migration rows: `db_migrate` completes, one receipt per
 version, the schema fingerprint from `information_schema` equals a clean
 migration's). It stops when a child finishes without dying, which counts the
-points. Rows go to `build/crash/migration-matrix.tsv`. The product build
+points. Rows go to `build/crash/matrix.tsv`. The product build
 compiles the points to nothing; the environment variable is read only in
 `tests/crash_point.c`.
 

@@ -3,6 +3,7 @@
 #define _DEFAULT_SOURCE
 
 #include "doc_io.h"
+#include "core/crash_point.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -315,6 +316,8 @@ DocStatus doc_save(const char *path, const uint32_t *cps, size_t n, bool bom, bo
         ok = false;
         saved_errno = errno;
     }
+    /* The new content is complete and durable in the temp file; the target is untouched (GAP-004 matrix, save row). */
+    if (ok) crash_point("save.temp_written");
     /* Encoding, writing and fsync can take long enough for another program
      * to save after our first check. Revalidate at the last possible point
      * before the atomic replacement. This cannot make an uncooperative
@@ -332,6 +335,8 @@ DocStatus doc_save(const char *path, const uint32_t *cps, size_t n, bool bom, bo
         ok = false;
         saved_errno = errno;
     }
+    /* The target now holds the new content; the directory entry is not yet fsynced. */
+    if (ok) crash_point("save.renamed");
 
     if (!ok) {
         if (fd >= 0) unlink(tmp);
