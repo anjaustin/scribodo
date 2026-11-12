@@ -884,8 +884,8 @@ static bool import_locked(StoreManager *manager, Db *db, const char *project_dir
 /* A plain import that died after writing its marker (GAP-004 matrix, import row, 2026-11-12) left the legacy
  * files live under .scribodo/ and the import-pending witness in place; the store was authoritative, so nothing
  * ever finished the move. Finishing is idempotent and acts only when the witness names the marker's project and
- * no fork is in progress (a fork keeps its witness until its own cleanup, fork_snapshot_finish). True when the
- * move was finished here. */
+ * either no fork journal is present or the journal's target is that project (a fork that died after its marker;
+ * its cleanup is fork_snapshot_finish). True when the move was finished here. */
 bool store_finish_import(StoreManager *manager, const char *project_dir)
 {
     char pid[40] = "", pending[PATH_MAX + 64], *id = NULL;
@@ -895,8 +895,18 @@ bool store_finish_import(StoreManager *manager, const char *project_dir)
     id[strcspn(id, "\r\n")] = '\0';
     bool ours = !strcmp(id, pid);
     free(id);
+    if (!ours) return false;
     ForkSnapshot snapshot;
-    if (!ours || fork_snapshot_read(project_dir, &snapshot) != FILE_TEXT_MISSING) return false;
+    FileTextStatus forked = fork_snapshot_read(project_dir, &snapshot);
+    if (forked == FILE_TEXT_OK) {
+        /* A fork that died after its marker (GAP-004 matrix, fork row): the journal names this marker as its target, so
+         * its staging snapshot is archived and the journal closed, as the next fork of a copy would do. */
+        if (strcmp(snapshot.target, pid)) return false;
+        char stage[PATH_MAX + 80];
+        snprintf(stage, sizeof(stage), "%s/.scribodo/fork-snapshot", project_dir);
+        return fork_snapshot_finish(project_dir, stage);
+    }
+    if (forked != FILE_TEXT_MISSING) return false;
     if (legacy_items_live(project_dir)) set_aside(project_dir); /* no empty archive when the items were already moved */
     return unlink(pending) == 0 || errno == ENOENT;
 }
@@ -1158,6 +1168,7 @@ static bool fork_snapshot_prepare(StoreManager *manager, Db *db, const char *pro
         memset(&snapshot, 0, sizeof(snapshot));
         snprintf(snapshot.source, sizeof(snapshot.source), "%s", id);
         if (!fork_snapshot_write(project, &snapshot)) goto failed;
+        crash_point("fork.journal_opened"); /* fork.json names the source; no staging yet (GAP-004 matrix, fork row) */
     }
     if (snapshot.ready) {
         if (lstat(stage, &st) != 0 || !S_ISDIR(st.st_mode) || fingerprint(stage) != snapshot.signature) goto damaged;
@@ -1170,6 +1181,7 @@ static bool fork_snapshot_prepare(StoreManager *manager, Db *db, const char *pro
     snapshot.ready = true;
     snapshot.signature = fingerprint(stage);
     if (!fork_snapshot_write(project, &snapshot)) goto failed;
+    crash_point("fork.exported"); /* the staging export is complete and signed; nothing imported */
     return true;
 damaged:
     snprintf(why, whylen, "The pending fork snapshot is missing, changed or unrecognized; it was preserved, not imported");
@@ -1250,6 +1262,7 @@ bool store_fork(StoreManager *manager, const char *project_dir, char *why, size_
         ok = import_locked_from(manager, db, project_dir, stage, dir, why, whylen);
     }
     if (ok) {
+        crash_point("fork.imported"); /* marker written for the new project; staging, witness and fork.json still present */
         if (!fork_snapshot_finish(project_dir, stage))
             snprintf(why, whylen, "The fork is complete; its staging snapshot was retained because archiving couldn't finish");
     }

@@ -415,6 +415,112 @@ static void run_import_point(const char *point)
     }
 }
 
+/* ---- the fork row ---------------------------------------------------------- */
+
+static int child_fork_main(const char *name, const char *dir)
+{
+    char why[256] = "";
+    StoreManager *manager = store_manager_create();
+    bool ok = manager && store_start(manager, name, why, sizeof(why));
+    if (ok) ok = store_fork(manager, dir, why, sizeof(why));
+    if (!ok) fprintf(stderr, "child: %s\n", why);
+    printf("DONE ok=%d version=0 hits=%ld\n", ok, crash_point_hits());
+    fflush(stdout);
+    if (manager) store_manager_destroy(manager);
+    return ok ? 0 : 2;
+}
+
+/* An imported project and a copy of its folder; the child forks the copy and dies. The next process does what the
+ * app does with the folder it finds: a copy is forked again, a project in the store is opened (store_finish_import). */
+static void run_fork_point(const char *point)
+{
+    const char *base = getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp";
+    for (long k = 1; k < 100; k++) {
+        char name[64], spec[160], why[256] = "", root[1024], original[1100], copy[1100], chat_id[40], cmd[2400];
+        snprintf(name, sizeof(name), "scribodo_crash_%d_f%ld", (int)getpid(), k);
+        snprintf(spec, sizeof(spec), "%s#%ld", point, k);
+        snprintf(root, sizeof(root), "%s/scribodo-crash-fork-XXXXXX", base);
+        CHECK(mkdtemp(root) != NULL);
+        snprintf(original, sizeof(original), "%s/original", root);
+        snprintf(copy, sizeof(copy), "%s/copy", root);
+        CHECK(mkdir(original, 0755) == 0);
+        CHECK(admin_name("CREATE DATABASE %s CHARACTER SET utf8mb4", name) && admin_name("GRANT ALL ON %s.* TO 'scribodo'@'%%'", name));
+        StoreManager *manager = store_manager_create();
+        CHECK(manager && store_start(manager, name, why, sizeof(why)));
+        CHECK(make_legacy_project(manager, original, chat_id, sizeof(chat_id)));
+        CHECK(store_import(manager, original, why, sizeof(why)));
+        char original_id[40] = "";
+        CHECK(store_mode(manager, original, original_id, sizeof(original_id), NULL) == STORE_DB);
+        snprintf(cmd, sizeof(cmd), "cp -R '%s' '%s'", original, copy);
+        CHECK(system(cmd) == 0);
+        CHECK(store_problem(manager, copy, NULL, 0) == STORE_PROBLEM_COPY);
+        ChildResult r;
+        CHECK(run_child2(g_self, spec, "--child-fork", name, copy, &r));
+        if (r.exited) {
+            CHECK(r.code == 0 && r.hits == k - 1);
+            fprintf(g_matrix, "%s\t%ld\tnone\t-\t-\t-\t%ld hits in all\n", point, k, r.hits);
+            printf("%s: %ld points\n", point, k - 1);
+            store_manager_destroy(manager);
+            admin_name("DROP DATABASE %s", name);
+            snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root); CHECK(system(cmd) == 0);
+            break;
+        }
+        CHECK(r.killed && r.sig == SIGKILL);
+        store_manager_destroy(manager);
+        manager = store_manager_create();
+        CHECK(manager && store_start(manager, name, why, sizeof(why)));
+        /* What the next process finds. */
+        char scribodo[1200], stage[1300], pending[1300], forkjson[1300];
+        snprintf(scribodo, sizeof(scribodo), "%s/.scribodo", copy);
+        snprintf(stage, sizeof(stage), "%s/fork-snapshot", scribodo);
+        snprintf(pending, sizeof(pending), "%s/import-pending", scribodo);
+        snprintf(forkjson, sizeof(forkjson), "%s/fork.json", scribodo);
+        bool is_copy = store_problem(manager, copy, NULL, 0) == STORE_PROBLEM_COPY;
+        StoreMode mode_at_death = store_mode(manager, copy, NULL, 0, NULL);
+        bool stage_at_death = exists(stage), pending_at_death = exists(pending), fork_at_death = exists(forkjson);
+        /* A copy stays a copy until its marker is replaced; then it is a project in the store. Never a plain file store. */
+        CHECK(is_copy ? mode_at_death == STORE_PAUSED : mode_at_death == STORE_DB);
+        /* What the app would do next. */
+        bool acted;
+        if (is_copy) acted = store_fork(manager, copy, why, sizeof(why));
+        else acted = store_finish_import(manager, copy), acted = true;
+        if (!acted) fprintf(stderr, "    %s#%ld: %s\n", point, k, why);
+        CHECK(acted);
+        char copy_id[40] = "";
+        CHECK(store_mode(manager, copy, copy_id, sizeof(copy_id), NULL) == STORE_DB && copy_id[0] == 'p' && strcmp(copy_id, original_id));
+        /* The copy's chat has a rebased id (the original project owns the old one): list, then load the one chat. */
+        ChatSummary *list = NULL;
+        size_t nl = chat_store_list(manager, copy, &list);
+        ChatMessage *msgs = NULL;
+        size_t nm = 0;
+        CHECK(nl == 1 && list && chat_store_load(manager, copy, list[0].id, &msgs, &nm) && nm == 2);
+        free(list);
+        if (msgs) chat_store_free_messages(msgs, nm);
+        msgs = NULL; nm = 0;
+        CHECK(chat_store_load(manager, original, chat_id, &msgs, &nm) && nm == 2); /* the original is untouched */
+        if (msgs) chat_store_free_messages(msgs, nm);
+        char oid2[40] = "";
+        CHECK(store_mode(manager, original, oid2, sizeof(oid2), NULL) == STORE_DB && !strcmp(oid2, original_id));
+        /* The fork's journal is closed: no staging, no witness, no fork.json. */
+        bool closed = !exists(stage) && !exists(pending) && !exists(forkjson);
+        CHECK(closed);
+        fprintf(g_matrix, "%s\t%ld\tSIGKILL\t%s, stage %d, witness %d, fork.json %d\t%s, mode db, new project\tcopy 2 messages, original 2 messages\t%s\n",
+                point, k, is_copy ? "copy (paused)" : mode_at_death == STORE_DB ? "db" : "OTHER", stage_at_death, pending_at_death, fork_at_death,
+                is_copy ? "fork again ok" : "open finished", closed ? "data once, original intact, journal closed" : "JOURNAL LEFT OPEN");
+        g_rows++;
+        store_manager_destroy(manager);
+        admin_name("DROP DATABASE %s", name);
+        snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root); CHECK(system(cmd) == 0);
+    }
+}
+
+static void test_fork_points(void)
+{
+    static const char *const points[] = { "fork.journal_opened", "fork.exported", "import.registered", "import.committed",
+                                          "import.marked", "import.set_aside", "fork.imported" };
+    for (size_t i = 0; i < sizeof(points) / sizeof(points[0]); i++) run_fork_point(points[i]);
+}
+
 static void test_import_points(void)
 {
     run_import_point("import.registered");
@@ -555,6 +661,7 @@ int main(int argc, char **argv)
     if (argc == 3 && !strcmp(argv[1], "--child-save")) return child_save_main(argv[2]);
     if (argc == 3 && !strcmp(argv[1], "--child-append")) return child_append_main(argv[2]);
     if (argc == 4 && !strcmp(argv[1], "--child-import")) return child_import_main(argv[2], argv[3]);
+    if (argc == 4 && !strcmp(argv[1], "--child-fork")) return child_fork_main(argv[2], argv[3]);
     g_self = argv[0];
     mkdir("build", 0755); mkdir("build/crash", 0755);
     g_matrix = fopen("build/crash/matrix.tsv", "w");
@@ -562,8 +669,9 @@ int main(int argc, char **argv)
     fprintf(g_matrix, "point\thit\tdeath\tstate_at_death\trecovery\tdetail\tinvariant\n");
     time_t t0 = time(NULL);
     TestCase tests[] = { { "migration_points", test_migration_points }, { "save_points", test_save_points },
-                         { "store_points", test_store_points }, { "import_points", test_import_points } };
-    int rc = run_tests(tests, 4);
+                         { "store_points", test_store_points }, { "import_points", test_import_points },
+                         { "fork_points", test_fork_points } };
+    int rc = run_tests(tests, 5);
     fclose(g_matrix);
     printf("%d death rows in build/crash/matrix.tsv, %ld s\n", g_rows, (long)(time(NULL) - t0));
     free(g_reference);
