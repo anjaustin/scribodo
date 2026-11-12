@@ -143,7 +143,10 @@ misquotation was shown.
   embellished it. The relation check would not have helped: the author's own
   turn states the relation, and the author's turns are support by design. A
   decision for the author: whether an acknowledgement of a note should be
-  checked at all, and against what.
+  checked at all, and against what. Measured on 2026-11-12 over every
+  recorded note and creative reply: `journal/answer-cycle4_note_turns.md`
+  (the existing checks would not see the embellishment and would withhold
+  new writing; the structural fix is an author-declared turn kind).
 
 The first three are software, measured and remediated in the relation record;
 the fourth is recorded as a finding.

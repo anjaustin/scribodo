@@ -32,7 +32,15 @@ measurement that closes it. Items run one at a time unless marked otherwise.
    the captured requests (72 generations, exact reproduction of recorded
    replies) and live on both novels. The walk turn answers correctly; the
    Charlotte turn still declines, for a misread relation, not the window. The
-   successor item on faithful use is a relation check on the reply.
+   successor item on faithful use is a relation check on the reply. *Done
+   2026-11-12* on three novels (`journal/answer-cycle4_relation.md`), with
+   the verifier's tolerance and the check's two classes measured apart
+   (`answer-cycle4_tolerance.md`, `answer-cycle4_relation_split.md`). **Open
+   for the author:** a note turn is not gated; measured
+   (`answer-cycle4_note_turns.md`), the existing checks would not catch the
+   recorded embellishment and would withhold new writing, so the fix is an
+   author-declared turn kind in the composer (a note the author marks as a
+   note), a product affordance to decide, not a rule on the author's wording.
 2. **Generalisation: the second manuscript** (GAP-001, LANDSCAPE rows 12 and
    20). *A Princess of Mars*, imported, with 8 boundary cases and 15 reach
    tasks written before any run. Run reach and the verified pipeline once at
