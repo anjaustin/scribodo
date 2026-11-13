@@ -43,11 +43,34 @@ static void test_paragraphs_and_overlap(void)
     CHECK(obs_overlap("The fog came in.", "Dvo\xC5\x99\xC3\xA1k lost his hand.") == 0);
 }
 
+static bool first_sentence_is(const char *text, const char *want)
+{
+    char buf[400];
+    snprintf(buf, sizeof(buf), "%s", text);
+    obs_first_sentence(buf);
+    if (strcmp(buf, want)) fprintf(stderr, "    first sentence of [%s] got [%s]\n", text, buf);
+    return !strcmp(buf, want);
+}
+
+static void test_first_sentence(void)
+{
+    CHECK(first_sentence_is("Canon states Captain James K. Powell is of Richmond. The new text says Boston.",
+                            "Canon states Captain James K. Powell is of Richmond."));
+    CHECK(first_sentence_is("Mr. Darcy is tall. He is rich.", "Mr. Darcy is tall."));
+    CHECK(first_sentence_is("Blue. Then red.", "Blue."));
+    CHECK(first_sentence_is("Powell left on March 3. The text says May.", "Powell left on March 3."));
+    CHECK(first_sentence_is("Her eyes are blue. the text says brown.", "Her eyes are blue. the text says brown."));
+    CHECK(first_sentence_is("No period at all", "No period at all"));
+    CHECK(first_sentence_is("It ends with K.", "It ends with K."));
+    CHECK(first_sentence_is("Capt. Powell rode. Then he fell.", "Capt. Powell rode."));
+}
+
 int main(void)
 {
     const TestCase tests[] = {
         { "locate", test_locate },
         { "paragraphs_and_overlap", test_paragraphs_and_overlap },
+        { "first_sentence", test_first_sentence },
     };
     return run_tests(tests, sizeof(tests) / sizeof(tests[0]));
 }

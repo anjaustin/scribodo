@@ -88,6 +88,10 @@ int obs_overlap(const char *a, const char *b);
 /* Paragraphs of a document: byte ranges split on blank lines. */
 size_t obs_paragraphs(const char *text, size_t *starts, size_t *lens, size_t max);
 
+/* Cuts a text at the end of its first sentence (a period ending the text or followed by a space and a capital); a
+ * period after an initial or a title does not end one. */
+void obs_first_sentence(char *s);
+
 /* The fake backend's answers (deterministic; same JSON as the model). */
 char *obs_fake_extract(const char *chunk);
 char *obs_fake_judge(const char *canon, const char *statement);

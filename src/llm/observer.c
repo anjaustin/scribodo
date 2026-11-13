@@ -487,8 +487,8 @@ static size_t parse_candidates(const ObserverJob *j, const char *json, const cha
     return k;
 }
 
-/* The judge's explanation, readable on its own: its first sentence, with
- * the prompt's CANON/NEW labels in plain words. */
+/* The judge's explanation, readable on its own: its first sentence (obs_first_sentence, so "Captain James K. Powell"
+ * is not cut at the initial), with the prompt's CANON/NEW labels in plain words. */
 static void plain_check(const char *check, char *out, size_t outlen)
 {
     if (!check[0]) {
@@ -517,15 +517,7 @@ static void plain_check(const char *check, char *out, size_t outlen)
         p--;
     }
     buf[k] = '\0';
-    /* first sentence (a period followed by a space and a capital, or the end) */
-    char *end = buf;
-    while ((end = strchr(end, '.')) != NULL) {
-        if (end[1] == '\0' || (end[1] == ' ' && end[2] >= 'A' && end[2] <= 'Z')) {
-            end[1] = '\0';
-            break;
-        }
-        end++;
-    }
+    obs_first_sentence(buf); /* a period after an initial or a title does not end it */
     if (buf[0] >= 'a' && buf[0] <= 'z') buf[0] = (char)(buf[0] - 32);
     utf8_clip(out, outlen, buf, SIZE_MAX);
 }
