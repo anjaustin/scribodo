@@ -3,7 +3,8 @@
 Every verified span a recorded run showed is taken with its unit's text from the same run's unit export. Each pair
 is then mutated the ways a model's rendering could differ from the manuscript, in three families:
 
-  orthographic   case, quotation marks, dashes, whitespace, emphasis markers: differences in rendering, not in words;
+  orthographic   case, quotation marks, dashes, whitespace (doubled, or no-break), emphasis markers: differences in
+                 rendering, not in words;
                  the verifier is meant to accept these and show the manuscript's bytes;
   meaning        a negation added or removed, a name replaced, a word dropped, two words swapped, an apostrophe lost
                  inside a word (it's -> its), a hyphen joined (well-known -> wellknown), a number changed: differences
@@ -100,6 +101,11 @@ def m_spaced_hyphen_for_dash(span, unit):
 
 def m_doubled_spaces(span, unit):
     return span.replace(' ', '  ') if ' ' in span else None
+
+
+def m_no_break_spaces(span, unit):
+    # A word processor's no-break spaces where the model quotes plain ones (or the reverse): a rendering difference.
+    return span.replace(' ', '\u00a0') if ' ' in span else None
 
 
 def m_drop_emphasis(span, unit):
@@ -225,7 +231,7 @@ def m_negate_last_sentence(span, unit):
 FAMILIES = OrderedDict([
     ('orthographic', [('upper case', m_upper), ('straight quotes', m_straight_quotes), ('double quotes removed', m_no_double_quotes),
                       ('spaced hyphen for a dash', m_spaced_hyphen_for_dash), ('doubled spaces', m_doubled_spaces),
-                      ('emphasis markers removed', m_drop_emphasis)]),
+                      ('no-break spaces', m_no_break_spaces), ('emphasis markers removed', m_drop_emphasis)]),
     ('meaning', [('negation added or removed', m_negate), ('name replaced', m_replace_name), ('word dropped', m_drop_word),
                  ('adjacent words swapped', m_swap_words), ('apostrophe lost inside a word', m_lose_inner_apostrophe),
                  ('hyphen joined', m_join_hyphen), ('number changed', m_change_number)]),

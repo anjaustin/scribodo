@@ -42,6 +42,22 @@ static bool emphasis_mark_at(const char *text, size_t n, size_t i)
     return !(before && after);
 }
 
+/* A Unicode space starting at byte `i` of `text`: its byte length, else 0. U+00A0 no-break space, U+2000-U+200A (the
+ * en, em, thin, hair and other typographic spaces), U+2028/U+2029 line and paragraph separators, U+202F narrow no-break
+ * space, U+205F medium mathematical space, U+3000 ideographic space. A manuscript from a word processor carries
+ * no-break spaces where a model quotes a plain space; the normalization reads both as a blank (measured with the
+ * tolerance tool, journal/redteam-loose_ends.md). The Python mirror (tools/answer_citation_binding.py) lists the same set. */
+static size_t unicode_space_at(const char *text, size_t n, size_t i)
+{
+    const unsigned char *p = (const unsigned char *)text + i;
+    if (i + 1 < n && p[0] == 0xC2 && p[1] == 0xA0) return 2;
+    if (i + 2 >= n) return 0;
+    if (p[0] == 0xE2 && p[1] == 0x80 && ((p[2] >= 0x80 && p[2] <= 0x8A) || p[2] == 0xA8 || p[2] == 0xA9 || p[2] == 0xAF)) return 3;
+    if (p[0] == 0xE2 && p[1] == 0x81 && p[2] == 0x9F) return 3;
+    if (p[0] == 0xE3 && p[1] == 0x80 && p[2] == 0x80) return 3;
+    return 0;
+}
+
 /* The normalization, with an optional map from every normalized byte to the source bytes that produced it
  * ([starts[k], ends[k]) in `text`), so a match found in normalized space can be read back as the source's own bytes. */
 static char *normalize_map(const char *text, size_t **starts, size_t **ends)
@@ -58,7 +74,11 @@ static char *normalize_map(const char *text, size_t **starts, size_t **ends)
         char c = 0;
         size_t step = 1;
         bool blank = false;
-        if (p[0] == 0xE2 && i + 2 < n && p[1] == 0x80) {
+        size_t sp = unicode_space_at(text, n, i);
+        if (sp) {
+            blank = true;
+            step = sp;
+        } else if (p[0] == 0xE2 && i + 2 < n && p[1] == 0x80) {
             /* U+201C/201D double quotes, U+2018/2019 single quotes, U+2013/2014 dashes. */
             if (p[2] == 0x9C || p[2] == 0x9D) c = '"';
             else if (p[2] == 0x98 || p[2] == 0x99) c = '\'';

@@ -274,14 +274,19 @@ modify a database while any Scribodo process is running.
   way, and against the committed gate's binary, before it ships.
   `test_answer_gate_replay` (in `make test`) pins the claim extraction.
   `tools/answer_span_tolerance.py` runs the same binary's span verifier over
-  every verified span the recorded runs showed, unchanged and under eighteen
+  every verified span the recorded runs showed, unchanged and under nineteen
   mutations in three families (rendering, which must verify; meaning, which must
   be rejected; and the edge cases the rules cannot tell from rendering), and
   tabulates the verifier's answer per mutation; this is how the normalization's
   tolerance is measured (journal/answer-cycle4_tolerance.md: 681 spans, every
-  meaning mutation rejected, in-word markers closed). `test_answer_span_tolerance`
+  meaning mutation rejected, in-word markers closed; journal/redteam-loose_ends.md:
+  no-break spaces accepted as rendering). `test_answer_span_tolerance`
   (in `make test`) pins that each mutation changes what it claims and lands
-  inside the first sentence.
+  inside the first sentence. The Python mirror of the normalization
+  (`normalize` in `tools/answer_citation_binding.py`, used by the relation arm
+  and the citation-binding classifier) is a port of the C loop, kept equal to it
+  by a differential fuzz (0 differences in 600,000 strings) and pinned on the C
+  test's strings by `test_answer_citation_binding`.
   The same replay runs the quotation check (`answer_quotations`: every
   quotation in a composed reply must be a substring of a verified span, an
   author turn or the question under the gate's normalization) over every

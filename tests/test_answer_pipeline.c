@@ -38,6 +38,11 @@ static void test_normalize(void)
     n = answer_normalize("A-B--C");
     CHECK(n && !strcmp(n, "a b c"));
     free(n);
+    /* A word processor's no-break space (U+00A0), a thin space (U+2009), a narrow no-break space (U+202F) and an
+     * ideographic space (U+3000) are blanks like a space (journal/redteam-loose_ends.md); a zero-width space is not. */
+    n = answer_normalize("Mr.\xC2\xA0" "Darcy\xE2\x80\x89said\xE2\x80\xAF\xE3\x80\x80so\xE2\x80\x8Bon.\xC2\xA0");
+    CHECK(n && !strcmp(n, "mr. darcy said so\xE2\x80\x8Bon."));
+    free(n);
     n = answer_normalize("");
     CHECK(n && !n[0]);
     free(n);

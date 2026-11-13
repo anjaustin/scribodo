@@ -44,6 +44,8 @@ class ToleranceToolTests(unittest.TestCase):
         self.assertEqual(st.m_split_hyphen('twenty-five communities. Yes.', UNIT), 'twenty five communities. Yes.')
         self.assertEqual(st.m_lose_plural_possessive('the officers’ wives', UNIT), 'the officers wives')
         self.assertEqual(st.m_marker_inside_word('property consisted', UNIT), 'pro_perty consisted')
+        self.assertEqual(st.m_no_break_spaces('a year. More.', UNIT), 'a\u00a0year.\u00a0More.')
+        self.assertIsNone(st.m_no_break_spaces('Bingley.', UNIT))
         self.assertEqual(st.m_append_sentence('He slept.', UNIT), 'He slept. Nobody in the house knew of it.')
         self.assertIsNone(st.m_append_sentence('He slept', UNIT))
         self.assertEqual(st.m_negate_last_sentence('He slept. He was tired.', UNIT), 'He slept. He was not tired.')

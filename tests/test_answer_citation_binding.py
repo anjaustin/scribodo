@@ -41,6 +41,18 @@ class CitationBindingTests(unittest.TestCase):
         r = self.run_case(reply, s1)
         self.assertEqual((r['pieces'], r['bound_to_cited_source'], r['in_no_supplied_text']), (2, 2, 0))
 
+    def test_normalize_mirrors_the_c_normalization(self):
+        # The pins of test_normalize in tests/test_answer_pipeline.c, byte for byte; the differential fuzz over the two
+        # (journal/redteam-loose_ends.md) found 0 differences in 600,000 strings.
+        self.assertEqual(cb.normalize('  “Mr. Bennet’s **property**—was_entailed  \n on a distant\trelation.” '),
+                         "mr. bennet's property was_entailed on a distant relation.")
+        self.assertEqual(cb.normalize('me—“The clown” said \'Now.\' O\'Neill’s "tis"'), "me the clown said now. o'neill's tis")
+        self.assertEqual(cb.normalize('A-B--C'), 'a b c')
+        self.assertEqual(cb.normalize('Mr.\u00a0Darcy\u2009said\u202f\u3000so\u200bon.\u00a0'), 'mr. darcy said so\u200bon.')
+        self.assertEqual(cb.normalize("a'*b"), 'ab')  # the C rule: the quote looks at the next byte, the marker at its neighbours
+        self.assertEqual(cb.normalize('ÉCOLE'), 'École')  # only ASCII letters fold, as C tolower does
+        self.assertEqual(cb.normalize(''), '')
+
     def test_a_marker_inside_a_word_is_part_of_the_word(self):
         # The C normalization's rule (emphasis_mark_at): markers fold at a word's edge and stay between letters.
         self.assertEqual(cb.normalize('har_dly *six* _years_ a*b'), 'har_dly six years a*b')

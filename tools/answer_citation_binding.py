@@ -23,19 +23,56 @@ QUOTE = re.compile(r'“([^“”]{12,})”|"([^"]{12,})"')
 LABEL = re.compile(r'source (\d+)', re.IGNORECASE)
 
 
+# The C normalization's alphabet (answer_normalize, src/llm/answer_pipeline.c): ASCII letters and digits are the word
+# characters (C isalnum in the C locale), ASCII whitespace plus the Unicode spaces unicode_space_at lists are blanks,
+# and only ASCII letters fold case (C tolower).
+ALNUM = frozenset('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789')
+BLANKS = frozenset(' \t\n\v\f\r\u00a0\u2028\u2029\u202f\u205f\u3000\u2013\u2014-') | frozenset(chr(c) for c in range(0x2000, 0x200b))
+LOWER = str.maketrans('ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')
+
+
 def normalize(text):
-    """Fold typographic variants so a quotation is judged on words, not glyphs."""
-    text = text.replace('\u201c', '"').replace('\u201d', '"').replace('\u2018', "'").replace('\u2019', "'")
-    # Dashes become spaces on both sides so em-dash, spaced-hyphen and hyphen spellings agree.
-    text = text.replace('\u2014', ' ').replace('\u2013', ' ').replace('-', ' ')
-    # Markdown emphasis inside a quotation is not a wording change; a marker between two letters or digits (har_dly)
-    # is part of the word and stays (emphasis_mark_at in C).
-    text = re.sub(r'(?<![A-Za-z0-9])[_*]|[_*](?![A-Za-z0-9])', '', text)
-    # Quotation marks are not words (answer_normalize in C): double quotes go; a single quote stays only as an
-    # apostrophe inside a word.
-    text = text.replace('"', '')
-    text = re.sub(r"(?<![A-Za-z0-9])'|'(?![A-Za-z0-9])", '', text)
-    return re.sub(r'\s+', ' ', text).strip().lower()
+    """Fold typographic variants so a quotation is judged on words, not glyphs: a character-for-character port of the
+    C normalization, kept equal to it by a differential fuzz (journal/redteam-loose_ends.md). Curly quotes become
+    straight, dashes and Unicode spaces become one blank, a Markdown marker folds at a word's edge and stays between
+    two word characters (har_dly), double quotes go, a single quote stays only as an apostrophe inside a word."""
+    out = []
+    space = True  # leading whitespace is dropped
+    n = len(text)
+    i = 0
+    while i < n:
+        ch = text[i]
+        c = None
+        if ch in BLANKS:
+            blank = True
+        else:
+            blank = False
+            if ch in '\u201c\u201d':
+                c = '"'
+            elif ch in '\u2018\u2019':
+                c = "'"
+            elif ch in '_*' and not (i > 0 and text[i - 1] in ALNUM and i + 1 < n and text[i + 1] in ALNUM):
+                i += 1
+                continue
+            else:
+                c = ch.translate(LOWER)
+        if c == '"':
+            i += 1
+            continue
+        if c == "'" and not (out and out[-1] in ALNUM and i + 1 < n and text[i + 1] in ALNUM):
+            i += 1
+            continue
+        if blank:
+            if not space:
+                out.append(' ')
+                space = True
+        else:
+            out.append(c)
+            space = False
+        i += 1
+    while out and out[-1] == ' ':
+        out.pop()
+    return ''.join(out)
 
 
 def pieces(span, min_chars):
