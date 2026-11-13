@@ -88,7 +88,13 @@ measurement that closes it. Items run one at a time unless marked otherwise.
    author's agreement on the budgets (the worst-frame row as an absolute or
    a rate).
 6. **GAP-001 beyond selection.** Observer precision and recall by finding type
-   on both novels; author-rated usefulness on complete sessions.
+   on both novels; author-rated usefulness on complete sessions. *Started
+   2026-11-13* (`journal/observer-cycle2_quality.md`): the observer replay
+   takes the real model (`--real`); a one-chapter smoke gave 30 findings (17
+   entity, 13 event, none of relationship or question) in 6 jobs at about
+   22 s each; the harness (planted faults for recall by type, an audited
+   fixed-seed sample for precision, thresholds agreed before tuning) is
+   written before any scored run.
 7. **GAP-002 distribution.** Signed app, guided model and service setup,
    upgrade and uninstall, proven on a clean Mac.
 8. **GAP-005 real input and accessibility.** The IME, dead-key, layout,

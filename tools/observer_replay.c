@@ -3,9 +3,13 @@
  * the timestamped ids, so two builds can be compared byte for byte on the same manuscript. The folder is written to
  * (.scribodo/ records and observer state), so run it on a copy.
  *
- * usage: observer_replay <project-dir> [seconds] [--canon TEXT]... [--note TEXT]... [--chat TEXT]...
+ * usage: observer_replay <project-dir> [seconds] [--canon TEXT]... [--note TEXT]... [--chat TEXT]... [--real]
  *        --canon and --note seed committed canon and active notes before the run (the conflict and overlap paths);
- *        --chat appends an author message to one chat, "20261112-120000-ab12" (the chat job path).
+ *        --chat appends an author message to one chat, "20261112-120000-ab12" (the chat job path);
+ *        --real starts the pinned local model (the app's default configuration, 16K context over two slots, its run
+ *        folder, log and hash cache under <project-dir>/.scribodo/replay-run) and the observer reads with it instead
+ *        of the fake backend, so the real model's findings over a manuscript can be measured headlessly (GAP-001).
+ *        The lines are then not byte-comparable between runs; the counts and the per-type sets are the measurement.
  * stdout: one line per finding: type|subject|relation|object|status|content|source kind|doc or chat|start|len|quote|related text
  *         then "# N findings, J jobs" on stderr. Exit 0 when the observer finished, 2 when it did not within the limit. */
 #include <stdio.h>
@@ -17,6 +21,9 @@
 #include "app/records.h"
 #include "app/store.h"
 #include "llm/observer.h"
+#include "llm/server.h"
+#include <sys/stat.h>
+#include <limits.h>
 
 static int cmp_lines(const void *a, const void *b) { return strcmp(*(char *const *)a, *(char *const *)b); }
 
@@ -57,19 +64,61 @@ int main(int argc, char **argv)
         if (!ok) { fprintf(stderr, "could not seed %s\n", argv[a]); store_manager_destroy(store); return 1; }
         a++;
     }
-    Observer *o = observer_create(store, NULL, NULL);
-    if (!o) { fprintf(stderr, "no observer\n"); store_manager_destroy(store); return 1; }
+    LlmServer *server = NULL;
+    bool real = false;
+    for (int a = 2; a < argc; a++) real = real || !strcmp(argv[a], "--real");
+    if (real) {
+        /* The app's layout relative to this binary (build/observer_replay beside build/llama/bin/llama-server). */
+        char self[PATH_MAX] = "", app_dir[PATH_MAX] = "";
+        if (realpath(argv[0], self)) {
+            char *slash = strrchr(self, '/');
+            if (slash) snprintf(app_dir, sizeof(app_dir), "%.*s/", (int)(slash - self), self);
+        }
+        LlmServerConfig cfg;
+        llm_server_default_config(&cfg, app_dir);
+        char run[1024];
+        snprintf(run, sizeof(run), "%s/.scribodo", project);
+        mkdir(run, 0700);
+        snprintf(run, sizeof(run), "%s/.scribodo/replay-run", project);
+        mkdir(run, 0700);
+        snprintf(cfg.run_dir, sizeof(cfg.run_dir), "%s", run);
+        snprintf(cfg.log_path, sizeof(cfg.log_path), "%s/server.log", run);
+        snprintf(cfg.cache_path, sizeof(cfg.cache_path), "%s/model-verified.txt", run);
+        cfg.ctx_total = 16384;
+        cfg.slots = 2;
+        server = llm_server_create(&cfg);
+        if (!server) { fprintf(stderr, "no model server\n"); store_manager_destroy(store); return 1; }
+        llm_server_start(server);
+        for (int i = 0; i < 180 * 20; i++) {
+            LlmState st = llm_server_state(server, NULL, 0);
+            if (st == LLM_READY || st == LLM_FAILED) break;
+            usleep(50000);
+            llm_server_tick(server);
+        }
+        char why[200] = "";
+        if (llm_server_state(server, why, sizeof(why)) != LLM_READY) {
+            fprintf(stderr, "model did not become ready: %s\n", why);
+            llm_server_destroy(server);
+            store_manager_destroy(store);
+            return 1;
+        }
+        fprintf(stderr, "# model ready: slot context %d, %s\n", llm_server_slot_ctx(server), cfg.sha256);
+    }
+    Observer *o = observer_create(store, server, NULL);
+    if (!o) { fprintf(stderr, "no observer\n"); if (server) llm_server_destroy(server); store_manager_destroy(store); return 1; }
     observer_set_project(o, project);
     observer_poke(o);
     bool finished = false;
     char status[200] = "";
     for (int i = 0; i < (int)(limit * 20) && !finished; i++) {
         usleep(50000);
+        if (server) llm_server_tick(server);
         observer_status(o, status, sizeof(status));
         finished = !strcmp(status, "Up to date");
     }
     unsigned jobs = observer_jobs_done(o);
     observer_destroy(o);
+    if (server) llm_server_destroy(server);
     Record *list = NULL;
     size_t n = 0, nlines = 0;
     records_list_checked(store, project, REC_FINDING, &list, &n);
