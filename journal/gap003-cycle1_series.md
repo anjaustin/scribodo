@@ -498,4 +498,5 @@ returns the memory over a longer idle is in the same log's later samples
 (recorded in the follow-up). The remedies are the author's: pin the VM's
 memory lower in Docker Desktop (the containers need under 2 GB), or accept
 the smaller context after store work, with the fit's low-memory line as the
-disclosure it already is.
+disclosure it already is. Hosted: CI and Trusted acceptance passed on
+`c25cd08` (runs 43478074346 and 43478074276).
