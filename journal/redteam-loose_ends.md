@@ -82,3 +82,37 @@ files; `make sanitize` 95,964, 0, 0 diagnostics; `make tsan` 48,594, 0, 0
 diagnostics; `make dbtest` 18,000, 0. Every exit status 0
 (`build/tolerance/nbsp-gates-*.log`, `nbsp-gates-exit.txt`).
 
+## 2. A finding id is drawn against the log just read
+
+`records_new_id_unused` (`src/app/records.c`) draws with `records_new_id` and
+moves on while the id is one of a list of records; `job_create` in the observer
+passes the findings it re-read under the write lock (`job_revalidate`), so the
+id it writes with `records_create_ex` (which writes without reading, red-team
+005 #12) is never one the log already holds: not another process's, not one
+from a log written before the per-second count. Within the job the count keeps
+the ids apart as before. The cost is a string comparison per stored finding per
+new id (24 ids at most per job; the comparison fails on the stamp's first
+differing byte). The generator's comment no longer claims what the lock alone
+did not give.
+
+Measured: the replay yardstick is byte-identical to the baseline on the three
+novels (`build/observer/idcheck-{pp,mars,heights}.txt` equal `base1-*`); the id
+check changes no finding when no id is taken. `test_llm: records` draws an id,
+lists the next three as taken and checks the fourth is drawn, well formed, and
+in the same second exactly four past the first.
+
+The database store was already safe by a different route: `record_versions` has
+a primary key on (record_id, ver), so a reused id fails the insert, the job
+reports `io_failed` and the text is read again (red-team 008). The file store
+had no such key; it has the check now. A log written before the fix may still
+hold a collided id; that entry stays in TECHNICAL-DEBT (the repair is the
+author's).
+
+## Gates (section 2)
+
+`make test` 95,967 C checks and 176 Python tests, 0 failures (three C checks
+more than `a6a216a`: the taken-id draw); `make analyze` 0 warnings across 87
+source files; `make sanitize` 95,967, 0, 0 diagnostics; `make tsan` 48,597, 0,
+0 diagnostics; `make dbtest` 18,000, 0. Every exit status 0
+(`build/observer/idcheck-gates-*.log`, `idcheck-gates-exit.txt`).
+

@@ -75,6 +75,9 @@ static inline const RecordVersion *record_current(const Record *r) { return &r->
 
 /* New id: "n-YYYYMMDD-HHMMSS-xxxx" (note), "c-…" (canon) or "f-…" (finding). */
 void records_new_id(RecordKind kind, char *out, size_t outlen);
+/* As records_new_id, but never an id in `taken` (the log the writer has just read under its lock): the count moves
+ * past any id already there, so a new record cannot land on an existing one and hide it as its next version. */
+void records_new_id_unused(RecordKind kind, const Record *taken, size_t ntaken, char *out, size_t outlen);
 
 /* Append a new version of record `id` (its number is one past the newest).
  * Returns false on I/O failure or an invalid id; *ver_out gets the number. */

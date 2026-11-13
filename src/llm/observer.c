@@ -766,14 +766,17 @@ static void job_revalidate(JobRun *r)
     }
 }
 
-/* The kept candidates and the conflicts become findings, each a new record; stops at a generation change. */
+/* The kept candidates and the conflicts become findings, each a new record; stops at a generation change. Each id is
+ * drawn against the findings re-read under the lock, so it is never one another process (or a log written before the
+ * per-second count) already holds: records_create_ex writes without reading, and a reused id would hide the earlier
+ * finding as a version of the new one (red-team 2026-11-12, journal/redteam-loose_ends.md). */
 static void job_create(JobRun *r, int findings_fd)
 {
     for (size_t i = 0; !r->io_failed && findings_fd >= 0 && i < r->nc; i++) {
         if (!generation_current(r->o, r->fence)) { r->ok = false; break; }
         if (!r->cands[i].keep) continue;
         char id[40];
-        records_new_id(REC_FINDING, id, sizeof(id));
+        records_new_id_unused(REC_FINDING, r->existing, r->ne, id, sizeof(id));
         if (!records_create_ex(r->o->store, r->project, REC_FINDING, id, "new", r->cands[i].desc, &r->cands[i].src, 1, &r->cands[i].info))
             r->io_failed = true;
     }
@@ -787,7 +790,7 @@ static void job_create(JobRun *r, int findings_fd)
         snprintf(fi.related, sizeof(fi.related), "%s", r->conflicts[c].canon_id);
         fi.related_text = r->conflicts[c].canon_text;
         char id[40];
-        records_new_id(REC_FINDING, id, sizeof(id));
+        records_new_id_unused(REC_FINDING, r->existing, r->ne, id, sizeof(id));
         if (!records_create_ex(r->o->store, r->project, REC_FINDING, id, "new", r->conflicts[c].check, &cd->src, 1, &fi)) r->io_failed = true;
     }
 }

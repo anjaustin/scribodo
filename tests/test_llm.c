@@ -1222,6 +1222,24 @@ static void test_records(void)
         }
         CHECK(distinct && shaped);
     }
+    /* An id is never one the log already holds: the count moves past the taken ids (records_new_id_unused; the observer
+     * draws against the findings it re-read under the lock, journal/redteam-loose_ends.md). */
+    {
+        char first[40], next[40];
+        records_new_id(REC_FINDING, first, sizeof(first));
+        unsigned suffix = (unsigned)strtoul(first + 18, NULL, 16);
+        Record taken[3];
+        memset(taken, 0, sizeof(taken));
+        for (unsigned k = 0; k < 3; k++) snprintf(taken[k].id, sizeof(taken[k].id), "%.18s%04x", first, (suffix + 1 + k) & 0xffffu);
+        records_new_id_unused(REC_FINDING, taken, 3, next, sizeof(next));
+        bool fresh = strlen(next) == 22 && next[0] == 'f';
+        for (unsigned k = 0; k < 3; k++) fresh = fresh && strcmp(next, taken[k].id) != 0;
+        CHECK(fresh);
+        /* In the same second the count lands just past the three taken ids; across a second boundary the stamp differs. */
+        if (!strncmp(next, first, 18)) CHECK((unsigned)strtoul(next + 18, NULL, 16) == ((suffix + 4) & 0xffffu));
+        records_new_id_unused(REC_FINDING, NULL, 0, next, sizeof(next));
+        CHECK(strlen(next) == 22 && strcmp(next, first) != 0);
+    }
     int ver = 0;
     CHECK(records_append(g_store, proj, REC_NOTE, nid, "active", "Check the letter's date.", &src, 1, &ver) && ver == 1);
     CHECK(records_append(g_store, proj, REC_NOTE, nid, "active", "Check the letter's date (1911?).", &src, 1, &ver) && ver == 2);
