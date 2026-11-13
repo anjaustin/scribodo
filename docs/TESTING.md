@@ -369,7 +369,14 @@ modify a database while any Scribodo process is running.
   ingested and indexed behind the UI; `--real` sends to the pinned model and
   sizes the run with the measured send (`--cycle-seconds`, default 90);
   `--observer` turns the observer on before the cycles (UI scripts start with
-  it off), so `observer_lag` in the store samples measures its backlog.
+  it off), so the store samples measure its progress: `observer_lag` is the
+  number of chat messages the observer has not read, and since the observer
+  reads every document before any chat (`observer_job_find`), `records` and
+  the `observer_pieces` table are where its progress shows on a fixture with
+  unread chapters. One observer call is about 26 s on the pinned model, so a
+  soak whose holds are shorter measures starvation (every call cancelled by
+  the next send), not drain rate; an uncontended drain is the fixture open
+  with `observer on` and no sends (journal `gap003-cycle1_series.md`).
   Throughout, `tools/store_growth_sample.sh` prints one `STORE_GROWTH` line per
   minute (`--sample-seconds`): the database's data and index bytes, its
   message, unit, record and revision counts, the outbox's pending deliveries,

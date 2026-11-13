@@ -6,7 +6,7 @@ usage() {
     echo 'usage: tools/history_frame_soak.sh [--manuscript] [--memory] [--real] [--cycle-seconds N] [--sample-seconds N] [--seconds N | --minutes N]'
     echo '--manuscript soaks the 100K-word fixture project (tests/ui/store/17_manuscript_soak.scribo) instead of the window book.'
     echo '--memory (with --manuscript) enables memory over the whole chat first (24_manuscript_soak_memory.scribo), so every send is ingested and indexed.'
-    echo '--observer turns the observer on before the cycles (UI scripts start with it off), so observer backlog is measured too (STORE_GROWTH observer_lag).'
+    echo '--observer turns the observer on before the cycles (UI scripts start with it off), so its progress is measured too (STORE_GROWTH observer_lag counts unread chat messages; documents are read first, see records).'
     echo '--real uses the pinned local model for the sends (needs make llama and make model); the default is the fake model.'
     echo '--cycle-seconds N is the measured work of one cycle without its hold, used to size the run (default 2 fake, 90 real: MEMORY-019 phase 5).'
     echo '--sample-seconds N samples the store (tools/store_growth_sample.sh: bytes, rows, outbox, observer lag, points) every N s (default 60, 0 off).'
