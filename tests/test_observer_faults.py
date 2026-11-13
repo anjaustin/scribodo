@@ -1,4 +1,5 @@
-"""tools/observer_plant.py and tools/observer_score.py: the planted-fault recall measurement's tooling."""
+"""tools/observer_plant.py, observer_score.py, observer_sample.py and observer_lines.py: the planted-fault recall
+measurement's tooling."""
 import json
 import os
 from pathlib import Path
@@ -46,10 +47,14 @@ class PlantTests(unittest.TestCase):
         for a in applied:
             data = (dst / a["file"]).read_bytes()
             self.assertEqual(data[a["offset"]:a["offset"] + a["length"]].decode("utf-8"), a["insert"], a["id"])
+            text = data.decode("utf-8")
+            self.assertEqual(text[a["char_offset"]:a["char_offset"] + a["char_length"]], a["insert"], a["id"])
         # the curly quotes are three bytes each: the byte offset is past the character offset
         a1 = next(a for a in applied if a["id"] == "A1")
         self.assertEqual(a1["offset"], CH1.encode("utf-8").index(b"The road ran north.") + len("The road ran north.") + 1)
         self.assertGreater(a1["offset"], CH1.index("The road ran north.") + len("The road ran north.") + 1)
+        self.assertEqual(a1["char_offset"], CH1.index("The road ran north.") + len("The road ran north.") + 1)
+        self.assertEqual(a1["offset"] - a1["char_offset"], 4)  # two curly quotes, two extra bytes each
         self.assertEqual(r.stdout, "--canon\tHer eyes are blue.\n--canon\tIt was the same year.\n--canon\tThe road runs north.\n")
 
     def test_an_ambiguous_or_missing_anchor_writes_nothing(self):
@@ -70,12 +75,13 @@ class ScoreTests(unittest.TestCase):
 
         def line(t, doc, start, length, quote="q"):
             return f"{t}|s|r|o|new|content|doc|{doc}|{start}|{length}|{quote}|canon\n"
-        findings = (line("conflict", "ch1.md", a1["offset"] + 4, 9)       # overlaps A1
-                    + line("conflict", "ch1.md", a1["offset"] + 4, 9)     # a second on A1 counts for nothing else
-                    + line("conflict", "ch2.md", 0, 5)                     # ch2 but before B1: not on a fault
-                    + line("conflict", "ch2.md", b1["offset"] + b1["length"] - 1, 3)  # last byte of B1 overlaps
-                    + line("entity", "ch1.md", a1["offset"], 5)           # not a conflict
-                    + "# 5 findings\n")
+        findings = (line("conflict", "ch1.md", a1["char_offset"] + 4, 9)       # overlaps A1 (spans are characters)
+                    + line("conflict", "ch1.md", a1["char_offset"] + 4, 9)     # a second on A1 counts for nothing else
+                    + line("conflict", "ch2.md", 0, 5)                          # ch2 but before B1: not on a fault
+                    + line("conflict", "ch2.md", b1["char_offset"] + b1["char_length"] - 1, 3)  # last char overlaps
+                    + line("entity", "ch1.md", a1["char_offset"], 5)           # not a conflict
+                    + line("conflict", "ch1.md", a1["offset"] + 4, 9)          # the byte offset: 4 past A1, no overlap
+                    + "# 6 findings\n")
         base = line("entity", "ch1.md", 0, 5) + line("entity", "ch1.md", 6, 5)
         d = Path(tempfile.mkdtemp())
         (d / "f.txt").write_text(findings, encoding="utf-8")
@@ -87,9 +93,31 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(out[0], "RECALL planted=3 found=2 appearance=1/1 timeline=0/1 place=1/1")
         self.assertEqual(out[1], "found: A1 B1")
         self.assertEqual(out[2], "missed: A2")
-        self.assertIn("FINDINGS conflict=4 entity=1 total=5", r.stdout)
-        self.assertIn("conflicts not on a planted fault: 2", r.stdout)
-        self.assertIn("ADDED over the unplanted run: conflict=4 entity=-1", r.stdout)
+        self.assertIn("FINDINGS conflict=5 entity=1 total=6", r.stdout)
+        self.assertIn("LINES physical=7 records=6 joined=0 malformed=0", r.stdout)
+        self.assertIn("conflicts not on a planted fault: 3", r.stdout)
+        self.assertIn("ADDED over the unplanted run: conflict=5 entity=-1", r.stdout)
+
+    def test_findings_written_across_lines_are_joined_and_escapes_are_read(self):
+        r, dst = plant(FAULTS, {"ch1.md": CH1, "ch2.md": CH2})
+        applied = {a["id"]: a for a in json.loads((dst / "faults-applied.json").read_text(encoding="utf-8"))["faults"]}
+        a1 = applied["A1"]
+        text = ("conflict|Eyes: brown\n\nversus blue|||new|Two facts:\n\n1. **Eyes**: brown here.\n"
+                f"2. Blue before.|doc|ch1.md|{a1['char_offset']}|{a1['char_length']}|Her eyes were brown.|Her eyes are blue.\n"
+                "entity|A\\|B|||new|The sign reads A\\|B.\\nSecond line.|doc|ch1.md|0|3|A\\|B|\n"
+                "# 2 findings\n")
+        d = Path(tempfile.mkdtemp())
+        (d / "f.txt").write_text(text, encoding="utf-8")
+        r = subprocess.run([str(SCORE), str(dst / "faults-applied.json"), str(d / "f.txt")], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("found: A1", r.stdout)
+        self.assertIn("FINDINGS conflict=1 entity=1 total=2", r.stdout)
+        self.assertIn("LINES physical=8 records=2 joined=1 malformed=0", r.stdout)
+        s = subprocess.run([str(SAMPLE), "1", "5", str(d / "f.txt")], capture_output=True, text=True)
+        self.assertEqual(s.returncode, 0, s.stderr)
+        rows = [l.split("\t") for l in s.stdout.splitlines()[1:]]
+        self.assertEqual(rows[0][5], "Eyes: brown  versus blue")
+        self.assertEqual(rows[1][5:], ["A|B", "The sign reads A|B. Second line.", "A|B"])
 
 
 class SampleTests(unittest.TestCase):
@@ -104,7 +132,8 @@ class SampleTests(unittest.TestCase):
         self.assertEqual(a.returncode, 0, a.stderr)
         self.assertEqual(a.stdout, b.stdout)
         rows = [l.split("\t") for l in a.stdout.splitlines()[1:]]
-        self.assertEqual(a.stdout.splitlines()[0], "# seed=7 per_type=3 entity=10 event=2")
+        self.assertEqual(a.stdout.splitlines()[0],
+                         "# seed=7 per_type=3 entity=10 event=2 LINES physical=13 records=12 joined=0 malformed=0")
         self.assertEqual([r[0] for r in rows], ["entity"] * 3 + ["event"] * 2)
         idx = [int(r[1]) for r in rows[:3]]
         self.assertEqual(idx, sorted(idx))

@@ -5,8 +5,9 @@ usage: tools/observer_plant.py FAULTS.json SRC_DIR DST_DIR
 
 Each fault names a file, an anchor sentence that must occur exactly once in it, and a sentence to insert right after
 the anchor (the original text is kept whole: a planted fault is an addition that contradicts a fact stated elsewhere).
-Writes DST_DIR/<file> for every .md in SRC_DIR, DST_DIR/faults-applied.json with the byte offset and length of each
-inserted sentence in its file, and prints the `--canon` arguments the replay needs (one per distinct canon statement),
+Writes DST_DIR/<file> for every .md in SRC_DIR, DST_DIR/faults-applied.json with the offset and length of each
+inserted sentence in its file in bytes (offset, length: for slicing the file) and in characters (char_offset,
+char_length: the unit of the observer's source spans, which the scorer compares against), and prints the `--canon` arguments the replay needs (one per distinct canon statement),
 so the judge path has the original facts to compare against. Exit 2 if any anchor is missing or ambiguous: the list
 is then wrong and nothing is written."""
 import json
@@ -32,8 +33,9 @@ def plan(faults, src):
 
 
 def apply(faults, texts):
-    """Insert in one forward pass per file, in order of anchor position (list order at a shared anchor); offsets and
-    lengths are bytes of UTF-8, which is how the observer's source spans count (SourceRef start, len)."""
+    """Insert in one forward pass per file, in order of anchor position (list order at a shared anchor). offset and
+    length are bytes of UTF-8; char_offset and char_length are code points, the unit of the observer's source spans
+    (SourceRef start, len: measured 2026-11-13, every real-model finding slices to its quote by characters)."""
     applied = []
     by_file = {}
     for f in faults:
@@ -56,7 +58,12 @@ def apply(faults, texts):
                             "offset": offset, "length": len(insert)})
             last = end
         pieces.append(data[last:])
-        out[name] = b"".join(pieces).decode("utf-8")
+        joined = b"".join(pieces)
+        out[name] = joined.decode("utf-8")
+        for a in applied:
+            if a["file"] == name:
+                a["char_offset"] = len(joined[:a["offset"]].decode("utf-8"))
+                a["char_length"] = len(a["insert"])
     applied.sort(key=lambda a: (a["file"], a["offset"]))
     return out, applied
 
@@ -80,9 +87,10 @@ def main():
     for name, text in out.items():
         with open(os.path.join(dst, name), "w", encoding="utf-8") as fh:
             fh.write(text)
-    for a in applied:  # the recorded byte offset must point at the inserted sentence
+    for a in applied:  # both recorded offsets must point at the inserted sentence
         data = out[a["file"]].encode("utf-8")
         assert data[a["offset"]:a["offset"] + a["length"]] == a["insert"].encode("utf-8"), a["id"]
+        assert out[a["file"]][a["char_offset"]:a["char_offset"] + a["char_length"]] == a["insert"], a["id"]
     with open(os.path.join(dst, "faults-applied.json"), "w", encoding="utf-8") as fh:
         json.dump({"novel": spec.get("novel"), "faults": applied}, fh, indent=1, ensure_ascii=False)
     canon = []

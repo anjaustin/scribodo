@@ -11,11 +11,15 @@
  *        of the fake backend, so the real model's findings over a manuscript can be measured headlessly (GAP-001).
  *        The lines are then not byte-comparable between runs; the counts and the per-type sets are the measurement.
  * stdout: one line per finding: type|subject|relation|object|status|content|source kind|doc or chat|start|len|quote|related text
- *         then "# N findings, J jobs" on stderr. Exit 0 when the observer finished, 2 when it did not within the limit. */
+ *         (a newline, carriage return, tab, pipe or backslash inside a text field is written as \n, \r, \t, \| or \\,
+ *         so a finding is always one line of twelve fields; the real model writes subjects and contents across lines)
+ *         then "# N findings, J jobs, status: S, T s" on stderr. [seconds] is wall time; exit 0 when the observer
+ *         finished, 2 when it did not within the limit. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
 
 #include "app/chat_store.h"
 #include "app/records.h"
@@ -27,18 +31,36 @@
 
 static int cmp_lines(const void *a, const void *b) { return strcmp(*(char *const *)a, *(char *const *)b); }
 
+/* A text field escaped so the line stays one line of twelve fields: \n \r \t \| and \\ (see the header). */
+static char *escaped(const char *s)
+{
+    if (!s) s = "";
+    char *out = malloc(strlen(s) * 2 + 1), *p = out;
+    if (!out) return NULL;
+    for (; *s; s++) {
+        char c = *s == '\n' ? 'n' : *s == '\r' ? 'r' : *s == '\t' ? 't' : *s == '|' ? '|' : *s == '\\' ? '\\' : 0;
+        if (c) { *p++ = '\\'; *p++ = c; } else *p++ = *s;
+    }
+    *p = 0;
+    return out;
+}
+
 static char *line_for(const RecordVersion *v)
 {
     const SourceRef *s = v->nsources ? &v->sources[0] : NULL;
     const char *src_kind = !s ? "" : s->kind == SRC_DOC ? "doc" : "chat";
     const char *src_name = !s ? "" : s->kind == SRC_DOC ? s->doc : s->chat;
-    size_t cap = 2048 + strlen(v->content) + (s && s->quote ? strlen(s->quote) : 0) +
-                 (v->finding.related_text ? strlen(v->finding.related_text) : 0);
-    char *line = malloc(cap);
-    if (!line) return NULL;
-    snprintf(line, cap, "%s|%s|%s|%s|%s|%s|%s|%s|%zu|%zu|%s|%s", v->finding.type, v->finding.subject, v->finding.relation,
-             v->finding.object, v->status, v->content, src_kind, src_name, s ? s->start : 0, s ? s->len : 0,
-             s && s->quote ? s->quote : "", v->finding.related_text ? v->finding.related_text : "");
+    char *f[9] = { escaped(v->finding.type), escaped(v->finding.subject), escaped(v->finding.relation),
+                   escaped(v->finding.object), escaped(v->status), escaped(v->content), escaped(src_name),
+                   escaped(s ? s->quote : ""), escaped(v->finding.related_text) };
+    size_t cap = 64;
+    bool ok = true;
+    for (int i = 0; i < 9; i++) { ok = ok && f[i]; cap += f[i] ? strlen(f[i]) : 0; }
+    char *line = ok ? malloc(cap) : NULL;
+    if (line)
+        snprintf(line, cap, "%s|%s|%s|%s|%s|%s|%s|%s|%zu|%zu|%s|%s", f[0], f[1], f[2], f[3], f[4], f[5], src_kind, f[6],
+                 s ? s->start : 0, s ? s->len : 0, f[7], f[8]);
+    for (int i = 0; i < 9; i++) free(f[i]);
     return line;
 }
 
@@ -110,7 +132,8 @@ int main(int argc, char **argv)
     observer_poke(o);
     bool finished = false;
     char status[200] = "";
-    for (int i = 0; i < (int)(limit * 20) && !finished; i++) {
+    time_t t0 = time(NULL);
+    while (!finished && difftime(time(NULL), t0) < limit) {
         usleep(50000);
         if (server) llm_server_tick(server);
         observer_status(o, status, sizeof(status));
@@ -132,6 +155,6 @@ int main(int argc, char **argv)
     free(lines);
     records_free(list, n);
     store_manager_destroy(store);
-    fprintf(stderr, "# %zu findings, %u jobs, status: %s\n", nlines, jobs, status);
+    fprintf(stderr, "# %zu findings, %u jobs, status: %s, %.0f s\n", nlines, jobs, status, difftime(time(NULL), t0));
     return finished ? 0 : 2;
 }

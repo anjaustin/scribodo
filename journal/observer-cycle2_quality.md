@@ -119,8 +119,9 @@ and P9, P7 and P10), so two faults sit in one chunk and the extraction's
 "at most 8 findings" cap is exercised.
 
 `tools/observer_plant.py` writes the planted copy and `faults-applied.json`
-with each insertion's byte offset and length (the observer's source spans are
-bytes; the novels have three-byte quotation marks before most anchors);
+with each insertion's byte offset and length (written believing the observer's
+source spans were bytes; they count characters, found and fixed in step 3
+below, the novels having three-byte quotation marks before most anchors);
 `tools/observer_score.py` reads the replay's lines and counts a fault found
 when a `conflict` finding's span overlaps the inserted sentence, one finding
 per fault, and reports recall by fault type beside the finding counts by type
@@ -136,6 +137,179 @@ a copy for *Mars* and two for *Pride and Prejudice* at 22 s a job. Recall by
 type comes from the planted copies; the precision audit's fixed-seed sample
 comes from the unplanted ones.
 
+## Step 3, done: *A Princess of Mars*, scored
+
+**Runs** (2026-11-13, M4 on AC power, nothing else of ours running; the
+model's slot context 8192). The unplanted copy ran 18:36:46Z to 19:35:04Z,
+3,498 s: 569 findings, 143 jobs, 143 model calls, status "Up to date". The
+planted copy with its ten canon statements started 19:35:34Z and stopped at
+the limit after 6,066 s with status "Reading ch27.md…": 595 findings, 140
+jobs, 898 model calls (140 extractions and 758 judge calls, 5.4 a job: each
+statement is judged against up to three canon entries in two passes). It
+had read ch01 to ch26 whole and three findings into ch27 (the unplanted run:
+13 in ch27, 10 in ch28). All ten faults lie in ch02 to ch21, so recall is
+scored on finished chapters; the "added" counts below are not comparable for
+ch27 and ch28 and are read with that. The hosted acceptance run for `452a6ae`
+shared the machine from 20:28Z to 20:36Z, inside the planted run; the limit
+it hit was 5,400 ticks of at least 50 ms, which ran 12% over the 5,400 s it
+was meant to be.
+
+**Three harness defects, found by the first scoring and fixed before a number
+was trusted.** None touches the fixture, which is unchanged.
+
+1. The scorer crashed: the real model writes subjects and contents with
+   newlines in them, and the replay printed them raw, so two findings of the
+   unplanted run and three of the planted spanned several physical lines.
+   `observer_replay.c` now escapes a newline, carriage return, tab, pipe or
+   backslash inside a field, and the two tools read through
+   `tools/observer_lines.py`, which unescapes and joins the physical lines of
+   a finding written before the escaping, reporting what it joined (LINES
+   lines in the scorer's output: 571 physical lines, 569 records, 2 joined;
+   599, 595, 3). The fake path is byte-identical with the new emitter
+   (`observer_replay_run.sh escfix`: pp, mars, heights identical).
+2. The units did not match. The planter recorded byte offsets, believing the
+   observer's source spans were bytes. A conflict finding quoting the M8
+   sentence word for word scored as "not on a fault"; checked over every
+   finding of the planted run, all 595 slice to their quote by characters and
+   491 of them would not by bytes (the novel's curly quotation marks are
+   three bytes each). `SourceRef.start` and `len` count code points. The
+   planter now records both (`offset`/`length` in bytes for slicing the
+   file, `char_offset`/`char_length` for the spans) and the scorer compares
+   characters; the test plants after curly quotes so the two differ by four
+   and pins that the byte offset does not match. With bytes the first
+   reading was 3 of 10; with characters it is 5 of 10. The record was
+   regenerated from the committed fixture and the planted files compared
+   byte for byte with the run's copies before rescoring.
+3. The replay's limit counted ticks, not seconds; it is wall time now and
+   the summary line ends with the elapsed seconds.
+
+**Recall by type, planted copy: 5 of 10.**
+
+| type | found / planted | found | missed |
+|---|---|---|---|
+| place | 3 / 3 | M3, M6, M9 | |
+| event-order | 1 / 1 | M10 | |
+| kinship | 1 / 2 | M8 | M2 |
+| timeline | 0 / 2 | | M4, M5 |
+| appearance | 0 / 2 | | M1, M7 |
+
+Why the five were missed, from the findings on each planted sentence:
+
+- **M4** (timeline, "the third of May", ch02) shares its anchor with M3. One
+  conflict finding covers both inserted sentences in its quote and is
+  credited to M3 only, as the scorer's one-finding-one-fault rule requires;
+  its content read `Canon states Captain James K.`: the judge's explanation
+  cut at the initial by the first-sentence rule (fixed below). The judge saw
+  the pair and fired once.
+- **M2** (kinship, "Dejah Thoris was the daughter of Tardos Mors himself",
+  ch17): an entity finding on the sentence records "Tardos Mors — the
+  grandfather of Dejah Thoris" (true of the book, from the canon or the
+  chapter), but no statement about her parentage reached the judge as a
+  conflict.
+- **M1** (appearance, the green Martians' eyes, ch07), **M7** (appearance,
+  "her golden hair", ch13) and **M5** (timeline, "two years after that
+  night", ch19): no finding of any type on the sentence. The extraction did
+  not produce a statement from these sentences, so the judge never saw them.
+  Appearance and timeline faults sit in subordinate descriptive sentences;
+  the extraction's "at most 8 findings" a chunk goes to events and names.
+
+Recall's limit on this novel is extraction, not the judge: four of the five
+misses never reached a judge call.
+
+**The conflict path's precision, on the planted copy.** 49 conflict findings,
+where the unplanted copy (no canon) had none: 5 on a planted fault, 44 on no
+fault. By canon entry cited: Kantos Kan's thirty days to Helium 25, the
+Princess of Helium 15, the padwar of Helium 3, Powell's March 3 3, Sola's
+parentage, Powell of Richmond and the Apaches' terror 1 each. Twelve of the
+44 read in full: every one is the judge calling "conflict" on a statement
+that *adds* something about the canon entry's subject (Dejah Thoris wears
+silks; Kantos Kan is imprisoned beneath the palace; Tardos Mors greets John
+Carter) and none is a contradiction. Both passes agreed in all 49, since the
+two-vote rule is the only route to a finding. On this copy the conflict
+path's precision is 5 of 49, about 0.10: an author with ten canon entries
+over this novel would be shown 44 false alarms beside 5 true ones, each with
+its canon entry and quote. That is the finding of this step for the product,
+and the remedy is structural, to be chosen and then measured on both novels:
+
+- the judge's verdict carries the two values it says disagree, and software
+  accepts the conflict only when each value occurs in its side's text (the
+  fake judge already works this way, by attribute pattern);
+- or a software gate before the model: the statement and the canon entry
+  must share a subject and an attribute word before a judge call is spent
+  (this also cuts the 758 judge calls, 84% of the planted run's model time);
+- or the pane shows conflicts under a "possible" heading with the number of
+  canon checks behind them, which discloses but does not fix.
+
+None of these is a prompt tweak; each is measured by this harness before it
+ships (the per-type recall must not fall, the off-fault count must).
+
+**One product change, small, from this step.** The conflict content's
+first-sentence cut (`plain_check`) ended a sentence at any period followed by
+a space and a capital, so `Canon states Captain James K. Powell is of
+Richmond.` became `Canon states Captain James K.`. `obs_first_sentence`
+(observer_text.c) now skips a period after an initial or a title (Mr, Mrs,
+Dr, Capt, …); `test_observer_text` pins eight cases. The fake path's findings
+are byte-identical with the change (`observer_replay_run.sh firstsent`, see
+Gates).
+
+**Precision by type, audited (unplanted copy).** Seed 20261113, 40 a type
+where that many exist: 40 entity of 302, 40 event of 262, the 1 question,
+the 4 relationships; 85 lines (`tools/observer_sample.py 20261113 40
+build/observer/real-mars-base.txt`, the sheet reproduced by that command).
+Audited by Claude from each line's quote and the novel's text, two claims
+beyond their quote checked by search in the chapter (no gold anklet in ch13;
+"ten thousand soldiers of Helium" in ch27). The author can re-audit from the
+same seed; the verdicts are below, line by line.
+
+| type | sampled | right | wrong | empty | precision (right / sampled) |
+|---|---|---|---|---|---|
+| entity | 40 | 19 | 12 | 9 | 0.48 |
+| event | 40 | 34 | 6 | 0 | 0.85 |
+| question | 1 | 0 | 1 | 0 | 0.00 |
+| relationship | 4 | 3 | 0 | 1 | 0.75 |
+
+Entity verdicts by record index (the sheet's second column): right 4, 7, 9,
+15, 25, 26, 66, 68, 84, 91, 133, 155, 156, 160, 182, 186, 202, 225, 282.
+Wrong 24 (Dejah Thoris conflated with the palace, "possibly dead in an
+incubator"), 33 (Helium as John Carter's home, Sola a princess), 36 (Helium
+"five hundred miles from Barsoom"), 48 ("John Carter (mother of the further
+moon)", an oath read as a name), 56 ("too astute to be caught by a caravan",
+meaning inverted), 67 (a people and one warrior conflated), 153 (braves
+"regard the narrator with awe", not in the text), 170 ("cowardice… a cause
+of the paralysis"), 234 ("her fifty Tharks"), 246 (the jailer "does not vouch
+for" the food: "vouchsafe" misread), 249 ("the mount is a replica of little
+devils"), 263 ("the narrator's grandfather's territory": Dejah Thoris's).
+Empty 138, 144, 200, 201, 222, 255, 258, 265, 268 (the narrator under a
+pronoun twice, a sentence fragment as a description, "the other buildings",
+"the nineteen others").
+
+Event verdicts: wrong 315 ("she leaves Dejah Thoris": she is Dejah Thoris),
+338 ("ten warriors": six), 343 ("searches the upper rim of the sun"), 355
+("strikes the narrator's breast": the point was at his breast; "Kaor" is a
+greeting), 400 ("I draw back my sword": sheathing it and advancing), 442 (a
+gold anklet the chapter does not contain). The other 34 right, five of them
+with a clumsy or garbled subject (338, 397, 448, 495 carry a stray CJK
+character or a cut word) and a true description.
+
+Question 564 wrong: the text asks why she is happy when he is with her; the
+finding says "whether she feels safe and will soon return to her father's
+court". Relationships: 566, 567, 568 right; 565 empty (a relationship with
+no second entity named).
+
+Reading the wrong ones: pronoun and attribution errors (whose grandfather,
+whose Tharks, who leaves whom) are the largest class, then a phrase read as
+a name or a thing (the oath; "cowardice"), then a clause misread against the
+quote. Events, which the model copies closely from a sentence, are right
+seven times in eight; entities, which it must name and characterise, under
+one in two with a further quarter empty.
+
+**Thresholds.** These are the first scored numbers, the author sets the line
+(the harness section above). What they say as they stand: planted-fault
+recall 0.50 over all types, 1.00 for place and event order, 0.00 for
+appearance and timeline; conflict precision about 0.10 with ten canon
+entries; entity precision 0.48, event precision 0.85. *Pride and Prejudice*
+runs next, same harness, before anything is tuned.
+
 ## Gates
 
 On this tree (`build/observer/realflag-gates/gates-*.log`, `gates-exit.txt`):
@@ -147,3 +321,10 @@ Step 2 (Python tools and their test, no C change): `make test` 95,994 C
 checks and 189 Python tests, 0 failures, exit 0 (`build/observer/faults-gates/`);
 hosted: CI and Trusted acceptance passed on `9bcfe0b` (runs 43482838534 and
 43482838639).
+Step 3 (harness tools in Python, the replay's emitter and limit, the first-sentence fix in C), on the tree
+with all of it (`build/observer/cycle2-gates/`, `summary.txt`): `make test` exit 0, per-binary tallies summed
+95,707 C checks and 192 Python tests, 0 failures (this sum is of the "N checks, M failures" lines; it is the
+method of this entry, 8 more than the step 2 tree by the same method for `test_first_sentence`); `make analyze`
+0 warnings across 87 source files; `make sanitize` 95,707, 0; `make tsan` 48,329, 0; `make dbtest` 18,000, 0;
+every exit status 0. Yardsticks: `observer_replay_run.sh escfix` (the escaping emitter) and `firstsent` (the
+first-sentence fix) both byte-identical with `realflag` on pp, mars and heights (717, 348, 948).

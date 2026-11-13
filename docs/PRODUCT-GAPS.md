@@ -94,7 +94,19 @@ measurement that closes it. Items run one at a time unless marked otherwise.
    entity, 13 event, none of relationship or question) in 6 jobs at about
    22 s each; the harness (planted faults for recall by type, an audited
    fixed-seed sample for precision, thresholds agreed before tuning) is
-   written before any scored run.
+   written before any scored run. *Mars scored 2026-11-13* (journal step 3):
+   recall 5 of 10 planted faults (place 3/3, event-order 1/1, kinship 1/2,
+   timeline 0/2, appearance 0/2; four of the misses never reached a judge
+   call, extraction is the limit); the conflict path fired 49 times with ten
+   canon entries, 5 on a fault, 44 on statements that add to a canon
+   entry's subject without contradicting it (precision about 0.10, the
+   product finding of the step; three structural remedies listed for the
+   author, none a prompt tweak); audited precision over 85 sampled findings:
+   entity 0.48 with 9 of 40 empty, event 0.85, question 0 of 1, relationship
+   3 of 4. Three harness defects (newlines in fields, spans in characters
+   not bytes, a tick limit) found and fixed before the numbers were read;
+   one small product fix (the conflict content's first sentence no longer
+   cut at an initial). *Pride and Prejudice* runs next on the same harness.
 7. **GAP-002 distribution.** Signed app, guided model and service setup,
    upgrade and uninstall, proven on a clean Mac.
 8. **GAP-005 real input and accessibility.** The IME, dead-key, layout,

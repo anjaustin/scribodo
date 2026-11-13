@@ -3,28 +3,25 @@
 
 usage: tools/observer_score.py DST_DIR/faults-applied.json FINDINGS.txt [UNPLANTED_FINDINGS.txt]
 
-A planted fault is found when a `conflict` finding's source is the fault's file and its span (start, len) overlaps
-the inserted sentence; the same finding counts for one fault only. Prints recall by fault type and in all, the found
+A planted fault is found when a `conflict` finding's source is the fault's file and its span (start, len, in
+characters like the fault's char_offset and char_length) overlaps the inserted sentence; the same finding counts for
+one fault only. Prints recall by fault type and in all, the found
 and missed ids, and the finding counts by type; with the unplanted run's findings, also how many findings the planted
 copy added beyond them. The line format is observer_replay's:
-type|subject|relation|object|status|content|source kind|doc or chat|start|len|quote|related text."""
+type|subject|relation|object|status|content|source kind|doc or chat|start|len|quote|related text, read through
+observer_lines.py (escaped fields; findings written across lines before the escaping are joined and counted)."""
 import collections
 import json
+import os
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import observer_lines  # noqa: E402
 
 
 def read(path):
-    rows = []
-    for line in open(path, encoding="utf-8"):
-        line = line.rstrip("\n")
-        if not line or line.startswith("#"):
-            continue
-        parts = line.split("|")
-        if len(parts) < 10:
-            continue
-        rows.append({"type": parts[0], "kind": parts[6], "doc": parts[7], "start": int(parts[8] or 0), "len": int(parts[9] or 0),
-                     "quote": parts[10] if len(parts) > 10 else "", "line": line})
-    return rows
+    rows, stats = observer_lines.read(path)
+    return rows, stats
 
 
 def main():
@@ -32,12 +29,12 @@ def main():
         print(__doc__, file=sys.stderr)
         return 1
     faults = json.load(open(sys.argv[1], encoding="utf-8"))["faults"]
-    rows = read(sys.argv[2])
+    rows, stats = read(sys.argv[2])
     conflicts = [r for r in rows if r["type"] == "conflict" and r["kind"] == "doc"]
     used = set()
     found = {}
     for f in faults:
-        lo, hi = f["offset"], f["offset"] + f["length"]
+        lo, hi = f["char_offset"], f["char_offset"] + f["char_length"]
         for i, r in enumerate(conflicts):
             if i in used or r["doc"] != f["file"]:
                 continue
@@ -57,11 +54,14 @@ def main():
         print(f"  {fid}: {line[:200]}")
     counts = collections.Counter(r["type"] for r in rows)
     print("FINDINGS " + " ".join(f"{t}={n}" for t, n in sorted(counts.items())) + f" total={len(rows)}")
+    print(observer_lines.stats_line(stats))
     unmatched = [r for i, r in enumerate(conflicts) if i not in used]
     print(f"conflicts not on a planted fault: {len(unmatched)}")
     if len(sys.argv) == 4:
-        base = collections.Counter(r["type"] for r in read(sys.argv[3]))
+        base_rows, base_stats = read(sys.argv[3])
+        base = collections.Counter(r["type"] for r in base_rows)
         print("ADDED over the unplanted run: " + " ".join(f"{t}={counts[t] - base.get(t, 0)}" for t in sorted(set(counts) | set(base))))
+        print("unplanted " + observer_lines.stats_line(base_stats))
     return 0
 
 
