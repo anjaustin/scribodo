@@ -227,9 +227,84 @@ not an SLA.
 The budgets that bind today are the worst frame (48 of 50 ms on the save)
 and the Qdrant anonymous memory if a soak grows it. The author's agreement
 turns the column into the acceptance line; until then it is a proposal read
-off the series.
+off the series. The two-hour soak below adds one reading against the first
+row: a worst frame of 115.6 ms in 389,420 frames, with no count of how many
+crossed 50 ms (the report carries the maximum only); before that row is
+agreed, `FRAME_METRICS` should count frames above a threshold so the budget
+can be an absolute or a rate per hour on evidence.
+
+## Soak and restart (2026-11-13)
+
+The soak and restart tooling (TESTING.md: `tools/history_frame_soak.sh
+--manuscript --memory`, `tools/manuscript_restart.sh`,
+`tools/store_growth_sample.sh`) ran as a chain on the `0534adc` build, each
+run on a disposable database and project, the store sampled every minute.
+The journal (`journal/gap003-cycle1_series.md`) has the per-run figures; the
+findings:
+
+- **Two hours of the full cycle with memory on, fake model: steady.** 424
+  cycles (page, chapter edit and save, send; every send ingested and
+  indexed), 2,129 of 2,129 checks. 389,420 frames at p50 17.5, p95 18.0, p99
+  18.75 ms and a worst of 115.6 ms. App RSS peak 177.6 MB (the import), final
+  111.7 MB. The store grew from 1,116 messages, 1,906 units and 4.6 MB to
+  1,964 messages, 2,754 units, 432 revisions and 49.7 MB (about 106 KB per
+  cycle), the memory cursor at the last sequence and the outbox empty at
+  every one of 116 samples. MariaDB peaked at 494 MB and Qdrant at 887 MB by
+  `docker stats` (cache included), inside their limits. The fake model
+  reviews nothing, so observer backlog is not measured by this run.
+- **Restart with the fake model: the store is the truth.** Killed with
+  SIGKILL mid-cycle at 1,124 messages, the same database and folder reopened
+  in 0.19 s (worst frame 29.0 ms), recall in 0.30 s, a send in 0.85 s, memory
+  settled on its own, and the message count was the kill's plus the
+  resume's two. Three cycles before the kill; 11 of 11 checks.
+- **Restart with the real model found a product defect, now fixed.** The
+  relaunch never got the model: the supervisor's instance lock (an `flock`)
+  was inherited by the killed app's two `llama-server` processes and
+  outlived it, so every later window reported "Another Scribodo window is
+  using the model" and the orphans kept their 4.2 GB. An author who
+  force-quits or crashes with the model loaded had no model until the servers
+  were killed by hand. The lock descriptor is now close-on-exec and the
+  server is spawned with a clean descriptor table; the next launch reaps the
+  orphan as designed. Pinned by `test_llm: orphan_after_owner_kill` (fails
+  against the old code with that status line). `wait_ready` in the UI
+  scripts now reports the supervisor's status when it times out.
+- **The real soak was void:** it started against the same held lock (memory
+  ingested nothing) and the Mac, on battery at 1%, hibernated for 97 minutes
+  in the middle of it. The long-run tools now refuse to start on battery
+  (`tools/power_source.sh`) and log the power source at both ends.
+
+Both real-model runs again on the fixed build, idle machine, AC power
+(`build/gap003/restart-real-2b`, `soak-real-memory-60b.log`):
+
+- **Restart with the real model, fixed: pass.** Killed at 1,120 messages,
+  the relaunch took the lock, reaped the orphans, had the model ready,
+  reopened the chat in 0.18 s, recalled in 0.29 s, sent (1.3 s to first
+  token at 1,082 prompt tokens, 985 tokens at 25.9 per second) and settled
+  memory on its own; 1,120 messages before and after the kill, 1,122 after
+  the resume. One thing the relaunch does worse than a clean launch: it
+  sized its context with the orphan's 4.2 GB still counted as taken and ran
+  an 8K slot where a clean launch ran 32K; the fit runs before the orphan is
+  reaped. The next step.
+- **A real-model soak with memory on: steady, and the prompt is the
+  context.** 35 cycles, 184 of 184 checks, 121,725 frames at p50 18.0, p95
+  30.25, p99 37.0 ms and a worst of 87.8 ms with the streaming sends
+  included; app RSS peak 117.9 MB; the store from 1,116 to 1,186 messages
+  and 12.5 MB, settled at every sample. The 35 sends carried 3,138 to 13,179
+  prompt tokens (median 9,217) and reached the first token in 3.7 to 20.5 s
+  (median 12.0) at 630 to 850 prompt tokens per second, then generated 82 to
+  2,048 tokens at 21.7 to 25.5 per second. The series' 2.3 to 2.5 s to first
+  token was memory off at about 2,000 tokens; memory on needs its own budget
+  row, per prompt size or as a cap on the layout's prompt tokens.
+- **Observer backlog is unmeasured** by all of these runs: the UI scripts
+  start with the observer off and none turns it on.
 
 ## What is next in S4
 
-- An hours-long soak (the 34-minute run above is the first point), and a
-  soak with the real model's sends.
+- The author's agreement on the budgets, with the worst-frame row restated
+  once `FRAME_METRICS` counts frames above a threshold.
+- Reap an orphaned server before the launch-time memory fit, so a relaunch
+  after a crash gets the author's context, not the smallest; measured with
+  the restart run (the resumed app's slot context is the number).
+- A time-to-first-token row for memory on (the soak's 35 sends: 3.7 to 20.5 s
+  at 3,138 to 13,179 prompt tokens), the author's decision on its form.
+- Observer backlog under a soak with `observer on`; no run so far has it on.

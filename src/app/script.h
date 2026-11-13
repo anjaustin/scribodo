@@ -117,6 +117,10 @@ typedef struct {
     bool (*memory_briefs_ready)(void *ctx, long count);
     char *(*recall_text)(void *ctx); /* owned: "busy|idle" then the deterministic recall result */
     bool (*recall_busy)(void *ctx);
+    /* The model supervisor's status line (owned), so a wait_ready that times
+     * out reports why ("Another Scribodo window is using the model", a crash
+     * loop, a missing model) instead of only that it did. */
+    char *(*model_status)(void *ctx);
 } ScriptHost;
 
 typedef struct Script Script;

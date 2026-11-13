@@ -879,7 +879,11 @@ bool script_frame(Script *s, ScriptHost *h)
                 continue;
             }
             if (--s->wait_ready == 0) {
-                report(s, false, "model did not become ready");
+                char detail[640] = "model did not become ready";
+                char *why = h->model_status ? h->model_status(h->ctx) : NULL;
+                if (why && *why) snprintf(detail, sizeof(detail), "model did not become ready: %s", why);
+                free(why);
+                report(s, false, detail);
                 s->pc++;
                 continue;
             }

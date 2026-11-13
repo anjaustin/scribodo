@@ -272,6 +272,7 @@ test: $(TESTS)
 	$(WATCHDOG) $(TEST_TIMEOUT) test_backup python3 tests/test_backup.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_frame_soak python3 tests/test_frame_soak.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_manuscript_series python3 tests/test_manuscript_series.py
+	$(WATCHDOG) $(TEST_TIMEOUT) test_power_source python3 tests/test_power_source.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_probes python3 tests/test_answer_probes.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_live_capture python3 tests/test_answer_live_capture.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_live_audit python3 tests/test_answer_live_audit.py

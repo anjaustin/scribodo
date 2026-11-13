@@ -7,6 +7,8 @@
 #include <math.h>
 #include <sched.h>
 #include <signal.h>
+#include <spawn.h>
+#include <sys/wait.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
@@ -46,6 +48,8 @@
 #include "core/deadline_clock.h"
 
 static char g_dir[512];
+static char g_self[1024]; /* this test binary, respawned as the first window in orphan_after_owner_kill */
+extern char **environ;
 static StoreManager *g_store;
 
 typedef struct {
@@ -2284,6 +2288,89 @@ static void test_instance_lock(void)
     llm_server_destroy(a);
 }
 
+/* The owner-kill scenario's configuration: a run dir of its own and a fake
+ * server whose name carries "llama-server" (kill_orphan only kills a pid whose
+ * command line names llama-server and this run directory's socket). */
+static void orphan_config(LlmServerConfig *cfg, const char *dir)
+{
+    llm_server_default_config(cfg, "");
+    snprintf(cfg->run_dir, sizeof(cfg->run_dir), "%s/orphanrun", dir);
+    snprintf(cfg->log_path, sizeof(cfg->log_path), "%s/orphan.log", dir);
+    snprintf(cfg->model_path, sizeof(cfg->model_path), "%s/fake.gguf", dir);
+    snprintf(cfg->server_bin, sizeof(cfg->server_bin), "%s/fake-llama-server.sh", dir);
+    cfg->sha256[0] = '\0';
+}
+
+/* `test_llm --orphan-owner DIR`: the first window. Starts its server and then
+ * does nothing until it is killed from outside. */
+static int orphan_owner_main(const char *dir)
+{
+    LlmServerConfig cfg;
+    orphan_config(&cfg, dir);
+    LlmServer *a = llm_server_create(&cfg);
+    llm_server_start(a);
+    for (;;) pause();
+}
+
+static int read_pidfile(const char *path)
+{
+    int pid = 0;
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;
+    if (fscanf(f, "%d", &pid) != 1) pid = 0;
+    fclose(f);
+    return pid;
+}
+
+static void test_orphan_after_owner_kill(void)
+{
+    /* GAP-003 restart (2026-11-13): the window that owns the server dies with
+     * SIGKILL. Its server must not keep the instance lock alive, or every
+     * later window reports "Another Scribodo window is using the model" and
+     * never kills the orphan nor starts its own. The next window has to take
+     * the lock, reap the orphan through the pid file and start a server. */
+    LlmServerConfig cfg;
+    orphan_config(&cfg, g_dir);
+    FILE *script = fopen(cfg.server_bin, "wb");
+    CHECK(script != NULL);
+    if (!script) return;
+    fputs("#!/bin/sh\nwhile :; do sleep 1; done\n", script);
+    fclose(script);
+    chmod(cfg.server_bin, 0700);
+    FILE *f = fopen(cfg.model_path, "w");
+    if (f) { fputs("x", f); fclose(f); }
+    char pidfile[600];
+    snprintf(pidfile, sizeof(pidfile), "%s/llama-server.pid", cfg.run_dir);
+    unlink(pidfile);
+    char *argv[] = { g_self, "--orphan-owner", g_dir, NULL };
+    pid_t owner = 0;
+    fflush(stdout);
+    CHECK(posix_spawn(&owner, g_self, NULL, NULL, argv, environ) == 0);
+    int orphan = 0;
+    for (int i = 0; i < 1000 && (orphan = read_pidfile(pidfile)) <= 1; i++) usleep(20000);
+    CHECK(orphan > 1 && kill(orphan, 0) == 0);
+    kill(owner, SIGKILL);
+    waitpid(owner, NULL, 0);
+    CHECK(kill(orphan, 0) == 0); /* the server outlives its owner; the next start reaps it */
+
+    LlmServer *b = llm_server_create(&cfg);
+    llm_server_start(b);
+    char msg[512] = "";
+    LlmState st = LLM_STOPPED;
+    for (int i = 0; i < 1000 && llm_server_pid(b) == 0 && (st = llm_server_state(b, msg, sizeof(msg))) != LLM_FAILED; i++)
+        usleep(20000);
+    st = llm_server_state(b, msg, sizeof(msg));
+    CHECK(st != LLM_FAILED);
+    if (st == LLM_FAILED) printf("    second window: %s\n", msg);
+    CHECK(llm_server_pid(b) > 1 && llm_server_pid(b) != orphan);
+    bool gone = false;
+    for (int i = 0; i < 200 && !(gone = kill(orphan, 0) != 0); i++) usleep(50000);
+    CHECK(gone); /* kill_orphan: SIGTERM through the pid file */
+    CHECK(read_pidfile(pidfile) == llm_server_pid(b));
+    llm_server_destroy(b);
+    if (!gone) kill(orphan, SIGKILL);
+}
+
 /* ---- live: the real llama-server ------------------------------------------- */
 
 static void test_live(void)
@@ -2449,6 +2536,8 @@ static void test_live(void)
 
 int main(int argc, char **argv)
 {
+    if (argc > 2 && !strcmp(argv[1], "--orphan-owner")) return orphan_owner_main(argv[2]);
+    if (!realpath(argv[0], g_self)) snprintf(g_self, sizeof(g_self), "%s", argv[0]);
     if (!test_state_fixture_init(g_dir, sizeof(g_dir), &g_store)) return 1;
     bool live = argc > 1 && !strcmp(argv[1], "--live");
     TestCase unit[] = {
@@ -2493,6 +2582,7 @@ int main(int argc, char **argv)
         { "stop_never_hangs", test_stop_never_hangs },
         { "torn_line_recovery", test_torn_line_recovery },
         { "instance_lock", test_instance_lock },
+        { "orphan_after_owner_kill", test_orphan_after_owner_kill },
     };
     TestCase livet[] = { { "live_llama_server", test_live } };
     int rc = live ? run_tests(livet, 1) : run_tests(unit, sizeof(unit) / sizeof(unit[0]));

@@ -220,6 +220,19 @@ servers running. Remediation: measure the reranker at `-c 2048 -b 2048` the
 way the embedder was measured and replace the constant; required before the
 pipeline is anything but an experiment flag.
 
+## Open — spawned tools inherit the app's descriptors (P3)
+
+**Recorded:** 2026-11-13 (GAP-003 restart finding). The model-server spawn in
+`src/llm/server.c` now closes every descriptor the file actions did not create
+(`POSIX_SPAWN_CLOEXEC_DEFAULT`), after an inherited `flock` descriptor let a
+killed app's servers keep the instance lock and deny every later window the
+model. Two other spawn sites still inherit the whole descriptor table:
+`src/app/service_supervisor.c` (`tools/services.sh up`) and `src/app/backup.c`
+(the backup pipeline, which closes only its own pipe ends). Both run
+short-lived tools and neither holds a lock, so nothing is known to break;
+the class is the same. Remediation when touched: the same spawn attribute,
+with a test that lists the child's descriptors.
+
 ## Accepted residual risks — persistence review and direct-push workflow
 
 **Recorded:** 2026-11-06

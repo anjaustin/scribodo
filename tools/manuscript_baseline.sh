@@ -33,6 +33,7 @@ if [[ -n $context && $context != 8192 && $context != 16384 && $context != 24576 
     echo 'context must be 8192, 16384, 24576 or 32768' >&2; exit 2
 fi
 cd "$here"
+tools/power_source.sh # measured on battery is measured on a throttled, sleep-prone Mac (2026-11-13); exit 3 unless SCRIBODO_SOAK_ON_BATTERY=1
 app=${SCRIBODO_SOAK_APP:-build/scribodo}
 [[ -x $app ]] || { echo "Build an executable app first: $app" >&2; exit 1; }
 [[ $app == /* ]] || app="$here/$app"

@@ -376,6 +376,23 @@ modify a database while any Scribodo process is running.
   send, each bracketed by `measure_frames`); the runner then waits for memory
   to settle on its own (cursor at the last sequence, outbox empty) and checks
   the message count is the kill's plus the resume's two.
+- `tools/power_source.sh` guards the three long runs above: one `POWER
+  source=... charge=...` line, exit 3 on battery unless
+  `SCRIBODO_SOAK_ON_BATTERY=1` (a run on battery hibernates at 1% and measures
+  a throttled Mac; 2026-11-13). The soak and restart runners print it again at
+  the end. `test_power_source` (in `make test`) pins the readings from saved
+  `pmset -g batt` output.
+- A UI script's `wait_ready` that times out reports the model supervisor's own
+  status line ("model did not become ready: Another Scribodo window is using
+  the model..."), through the script host's `model_status` hook.
+- `test_llm: orphan_after_owner_kill` is the restart defect's pin: the test
+  spawns itself as a first window over a fake `llama-server`, kills that
+  window with SIGKILL, and requires the next supervisor on the same run
+  directory to take the instance lock, reap the orphan through the pid file
+  and start its own server (the lock descriptor is close-on-exec and the
+  server is spawned with `POSIX_SPAWN_CLOEXEC_DEFAULT`; before, the server
+  inherited the lock and every later window reported "Another Scribodo
+  window"). `instance_lock` keeps the live second window refusing.
 - `python3 tools/memory_native_eval.py FILE` now accepts the exported episodes
   so the model's use of admitted sources is measured on the same fixture;
   `tools/memory_use_score.py EVENTS ANSWER_KEY` gives a coarse alias/openness

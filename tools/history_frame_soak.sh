@@ -35,6 +35,7 @@ done
 if (( memory && !manuscript )); then echo '--memory needs --manuscript' >&2; exit 2; fi
 [[ -n $cycle ]] || cycle=$([[ $llm == real ]] && echo 90 || echo 2)
 cd "$here"
+tools/power_source.sh # a long run on battery hibernates mid-way (2026-11-13); exit 3 unless SCRIBODO_SOAK_ON_BATTERY=1
 app=${SCRIBODO_SOAK_APP:-build/scribodo}
 [[ -x $app ]] || { echo "Build an executable app first: $app" >&2; exit 1; }
 [[ $app == /* ]] || app="$here/$app"
@@ -114,6 +115,7 @@ SCRIBODO_STORE=db SCRIBODO_DB_NAME="$name" SCRIBODO_DB_PORT="$port" SCRIBODO_SOA
     SCRIBODO_SHOT_DIR="$temp" caffeinate -i tools/watchdog.sh "$((seconds * 3 + 180 + memory * 600))" \
     frame-soak python3 tools/frame_soak_run.py "$app"
 echo "frame_soak: process_wall_seconds=$((SECONDS - start)) requested_wait_seconds=$seconds model=$llm memory=$memory cycle_seconds=$cycle"
+SCRIBODO_SOAK_ON_BATTERY=1 tools/power_source.sh # the source at the end, so a run that lost AC power says so
 if [[ -n $sampler ]]; then
     kill "$sampler" 2>/dev/null || true; wait "$sampler" 2>/dev/null || true; sampler=
     tools/store_growth_sample.sh "$name" final || true

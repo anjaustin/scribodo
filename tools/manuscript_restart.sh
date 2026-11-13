@@ -32,6 +32,7 @@ app=${SCRIBODO_SOAK_APP:-build/scribodo}
 port=${SCRIBODO_DB_PORT-33061}
 [[ -n $out ]] || out="build/gap003/restart-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$out"
+tools/power_source.sh | tee -a "$out/restart.log" # on battery the run hibernates mid-way (2026-11-13); exit 3 unless SCRIBODO_SOAK_ON_BATTERY=1
 name="scribodo_test_restart_$$_$(openssl rand -hex 8)"
 temp=$(mktemp -d "${TMPDIR:-/tmp}/scribodo-restart.XXXXXXXX")
 created=0; app_pid=
@@ -110,4 +111,5 @@ else echo "manuscript_restart: memory NOT settled within ${settle}s: $final" | t
 # Conservation: the resume added exactly the resume script's two messages (its question and the reply).
 mb=$(messages_of "$after"); mf=$(messages_of "$final")
 echo "manuscript_restart: messages before_kill=$(messages_of "$before") after_kill=$mb after_resume=$mf (expected after_resume = after_kill + 2)" | tee -a "$out/restart.log"
+SCRIBODO_SOAK_ON_BATTERY=1 tools/power_source.sh | tee -a "$out/restart.log"
 [[ $mf == $((mb + 2)) ]] && settled "$final" && grep -q "0 failed" "$out/resume.log"

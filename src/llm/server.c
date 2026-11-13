@@ -279,11 +279,16 @@ static bool verify_model(LlmServer *s)
 /* One window owns the model server at a time (red-team 003: a second
  * window used to kill the first one's server as an "orphan"). The lock is
  * released automatically if this process dies, so a crashed owner's server
- * really is an orphan once we hold it. */
+ * really is an orphan once we hold it. That holds only while nothing else
+ * shares the descriptor: a flock belongs to the open file, and a child that
+ * inherited the descriptor keeps the lock alive after the owner is gone
+ * (GAP-003 restart, 2026-11-13: an app killed with SIGKILL left its two
+ * servers holding both locks, and every later launch reported "Another
+ * Scribodo window"). Close-on-exec here and a descriptor-clean spawn below. */
 static bool acquire_instance_lock(LlmServer *s)
 {
     if (s->lock_fd >= 0) return true;
-    int fd = open(s->lockfile, O_RDWR | O_CREAT, 0600);
+    int fd = open(s->lockfile, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
     if (fd < 0) return false;
     if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
         close(fd);
@@ -399,8 +404,16 @@ static bool spawn_server(LlmServer *s)
     posix_spawn_file_actions_addopen(&fa, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
     posix_spawn_file_actions_addopen(&fa, STDOUT_FILENO, s->cfg.log_path, O_WRONLY | O_CREAT | O_APPEND, 0644);
     posix_spawn_file_actions_adddup2(&fa, STDOUT_FILENO, STDERR_FILENO);
+    /* The server gets stdin, stdout and stderr and nothing else of ours: not
+     * the instance lock, not the database or vector connections, not another
+     * server's log. (POSIX_SPAWN_CLOEXEC_DEFAULT: every descriptor the file
+     * actions did not create is closed in the child.) */
+    posix_spawnattr_t attr;
+    bool attr_ok = posix_spawnattr_init(&attr) == 0;
+    if (attr_ok) attr_ok = posix_spawnattr_setflags(&attr, POSIX_SPAWN_CLOEXEC_DEFAULT) == 0;
     pid_t pid;
-    int rc = posix_spawn(&pid, s->cfg.server_bin, &fa, NULL, argv, environ);
+    int rc = attr_ok ? posix_spawn(&pid, s->cfg.server_bin, &fa, &attr, argv, environ) : EINVAL;
+    if (attr_ok) posix_spawnattr_destroy(&attr);
     posix_spawn_file_actions_destroy(&fa);
     if (rc != 0) {
         set_state(s, LLM_FAILED, "Cannot start llama-server: %s", strerror(rc));

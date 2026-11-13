@@ -109,9 +109,10 @@ smoke; the measured restart runs follow in this cycle.
 
 Two observations recorded, not acted on:
 
-- With the fake model the observer reviews nothing (`observer_lag` stays at
-  the message count throughout), so the fake soak measures ingestion and
-  indexing backlog, not observer backlog; the real soak measures both.
+- `observer_lag` stays at the message count throughout, so the soak measures
+  ingestion and indexing backlog, not observer backlog. (Written at the time
+  as the fake model's doing; the reruns below show it is the scripts': every
+  UI script runs with the observer off.)
 - MariaDB holds nine `scribodo_test_*` databases from earlier runs that were
   killed before their cleanup (about 25 MB in all) and Qdrant one leftover
   test collection; disposable state on the development Mac, listed here so
@@ -125,5 +126,198 @@ gained the new Python test. `make test` 95,975 C checks and 179 Python tests,
 0 failures (three Python tests more than `0d95ad2`: `test_manuscript_series`);
 `make analyze` 0 warnings across 87 source files; `make sanitize` 95,975, 0,
 0 diagnostics; `make tsan` 48,605, 0, 0 diagnostics; `make dbtest` 18,000, 0.
-Every exit status 0 (`build/gap003/gates-*.log`, `gates-exit.txt`). Hosted
-verdicts are appended when the runs finish.
+Every exit status 0 (`build/gap003/gates-*.log`, `gates-exit.txt`). Hosted:
+CI and Trusted acceptance passed on `0534adc` (runs 43405278696 and
+43405278581).
+
+## The measured runs: restart and soak (2026-11-13, 10:04 to 14:20 UTC)
+
+Four runs were chained on the `0534adc` build, each on its own disposable
+database and project, the store sampled every minute
+(`build/gap003/runs.log`, the run directories and logs beside it). Two
+passed; two failed, and the failures are the cycle's findings.
+
+| Run | Verdict | What it measured |
+|---|---|---|
+| `restart-fake-3` (three cycles, fake model) | pass | SIGKILL at 1,124 messages mid-cycle; the same database and folder reopened in 0.19 s (10 frames, worst 29.0 ms), recall 0.30 s (worst 18.4 ms), send 0.85 s (47 frames, worst 38.2 ms), 11 of 11 checks, resume wall 2 s; memory settled on its own (cursor 1125 at the last sequence, outbox empty, 1,916 units, 11.8 MB); messages 1,124 before and after the kill, 1,126 after the resume's question and reply. |
+| `restart-real-2` (two cycles, real model) | **fail** | SIGKILL at 1,121 messages; the relaunch said "the model needs about 4.2 GB and 0.0 GB is free for it", `wait_ready` failed after its 600 s, the send produced nothing (messages stayed 1,121), memory stopped one sequence short (cursor 1119, last sequence 1120, the question in flight at the kill never ingested), 10 of 11 checks. The finding below. |
+| `soak-fake-memory-120` (120 min, fake model, memory on) | pass | 424 cycles, 2,129 of 2,129 checks; 389,420 frames at p50 17.5, p95 18.0, p99 18.75 ms, worst 115.6 ms; app RSS peak 177.6 MB, final 111.7 MB; MariaDB peak 494 MB and Qdrant peak 887 MB by `docker stats` (cache included); the store grew from 1,116 messages, 1,906 units and 4.6 MB to 1,964 messages, 2,754 units, 432 revisions and 49.7 MB (about 106 KB per cycle of a send and a chapter save with its revision), 2,754 points, the cursor at the last sequence and the outbox empty at the end and at every one of the 116 samples; no gap between samples above 90 s. |
+| `soak-real-memory-60` (60 min, real model, memory on) | **void** | Memory enable ingested nothing in 17 minutes (units stayed 0 with memory enabled) and `wait_memory` failed; then at 12:43:05 UTC the Mac, on battery at 1%, entered low-power sleep and hibernated until 14:19:42 UTC when it was plugged in (`pmset -g log`: "Entering Sleep state due to 'Low Power Sleep'", "Wake from Hibernate"). The process clock saw 1,107 s of a 6,890 s wall; one measured frame interval was 14,144 ms. Nothing from this run is a measurement. |
+
+The fake soak is the cycle's sustained-use evidence: two hours of the full
+cycle with memory on, the store settling after every cycle, the app's RSS
+flat (its peak is the import's, the final figure 66 MB under it) and the
+services' figures inside their limits. Its worst frame is the one number
+against the proposed budgets: 115.6 ms in 389,420 frames, where the proposal
+says 50 ms. The report carries only the maximum, so how many frames crossed
+50 ms in two hours is unknown; a count above a threshold belongs in
+`FRAME_METRICS` before the worst-frame budget is agreed as an absolute or
+restated as a rate (open, below).
+
+## Finding: the instance lock outlives a killed owner (product defect, fixed)
+
+`restart-real-2`'s relaunch never got the model. At 07:30 local, four and a
+half hours after that app was killed, its two `llama-server` processes (chat
+and embedder, started 03:05:41, parent pid 1) were still running, still
+listening on both sockets, and `lsof` showed each holding descriptor 6 on
+`run/server.lock` and descriptor 9 on `run-embed/server.lock`; a direct
+`flock(LOCK_EX | LOCK_NB)` on either file returned `EWOULDBLOCK`. The
+supervisor (`src/llm/server.c`) takes the instance lock with `flock` on a
+descriptor opened without close-on-exec and then `posix_spawn`s the server
+with default inheritance, so the server inherits the descriptor; a flock
+belongs to the open file, not the process, and the server's copy keeps the
+lock alive after its owner is gone. Every later window then fails
+`acquire_instance_lock`, reports "Another Scribodo window is using the model.
+Close it to use the model here", and never reaches `kill_orphan` (the pid-file
+reaper that exists for exactly this case). The chat model is gone for good,
+memory ingestion and indexing stop with the embedder, and the orphans hold
+their 4.2 GB and the embedder's memory. Red-team 003 finding 9 added the
+lock so a second window would not kill the first one's server; the lock did
+that and also, unseen until a SIGKILL under measurement, survived its owner.
+
+For an author: force-quit the app, or let it crash, while the model is
+loaded, and no relaunch has a model until the two servers are killed by hand
+or the Mac restarts. The restart scenario in the P0 list is there to find
+this.
+
+**Fix (`src/llm/server.c`).** The lock descriptor is opened with `O_CLOEXEC`,
+and the server is spawned with `POSIX_SPAWN_CLOEXEC_DEFAULT`, so it gets
+stdin, stdout and stderr from the file actions and nothing else of the app's:
+not the lock, not the database or vector connections, not another server's
+log. The lock now dies with its owner, and the next window's
+`acquire_instance_lock` succeeds, `kill_orphan` reaps the orphan through the
+pid file (SIGTERM, then SIGKILL after 5 s), and a fresh server starts. The
+window between the crash and the next launch, in which the orphan still holds
+its memory, is unchanged (there is no parent-death signal on macOS); the next
+launch recovers.
+
+**Pin (`test_llm: orphan_after_owner_kill`).** The test spawns itself as the
+first window (`test_llm --orphan-owner DIR`: a supervisor over a fake server
+script named `fake-llama-server.sh`, so `kill_orphan`'s command-line check
+applies), waits for the pid file, kills that window with SIGKILL, checks the
+server outlived it, then starts a second supervisor on the same run
+directory and requires: not `LLM_FAILED`, a new pid in the pid file, the
+orphan gone. Against the old `server.c` (`build/gap003/orphan/test_llm-old.log`,
+the old object linked in place of the new): four checks fail and the second
+window's status is "Another Scribodo window is using the model. Close it to
+use the model here." Against the fix (`test_llm-new.log`): 4,708 checks, 0
+failures. `instance_lock` (a live second window still refuses) passes on both.
+
+**The harness says why (`src/app/script.c`, `src/app/script.h`, `src/main.c`).**
+`wait_ready`'s failure line read "model did not become ready" and nothing
+else, which is why the first reading of `restart-real-2` was a memory
+question. The script host gained a `model_status` hook and the failure now
+carries the supervisor's own status line. Run against the live orphans
+before they were killed (`build/gap003/orphan/resume-diagnostic.log`, the
+fixed app, a script of `wait_ready` alone):
+
+```
+  FAIL   2  wait_ready 1800
+             model did not become ready: Another Scribodo window is using the model. Close it to use the model here.
+```
+
+The two orphans from the pre-fix app were then terminated by hand (the one
+case the fix cannot reach: a lock inherited before it) and both locks probed
+free.
+
+## Finding: the soak ran into low-power sleep (tooling, fixed)
+
+The Mac was on battery for the chain. `caffeinate -i` holds off idle sleep,
+not the low-power sleep macOS forces at 1%, and a run on battery is in any
+case a run on a throttled machine. `tools/power_source.sh` prints one
+`POWER source=... charge=...` line and exits 3 on battery unless
+`SCRIBODO_SOAK_ON_BATTERY=1`; the baseline, the soak and the restart runner
+call it before they create anything, and the soak and restart runners print
+it again at the end so a run that lost AC power says so.
+`test_power_source` (four tests, `make test`) pins the AC, battery, opt-in and
+no-battery readings from saved `pmset -g batt` output. A sleep inside a run
+also shows in the store samples (`STORE_GROWTH ... at=` jumps) and in a
+process wall far short of the clock; both are in this run's log.
+
+## The reruns
+
+Both real-model runs again, on the fixed build (the tree is `0534adc` plus
+this fix, uncommitted at run time, which is why the runner's `tree=` line
+says `0534adc`), the machine idle and on AC power (18% charging at the
+start, 34% at the end), the orphans gone, `build/gap003/reruns.log`:
+
+| Run | Verdict | What it measured |
+|---|---|---|
+| `restart-real-2b` (two cycles, real model) | pass | SIGKILL at 1,120 messages mid-cycle; the relaunch took the lock, reaped the orphans and had the model ready (`wait_ready` passed), reopened the chat in 0.18 s (10 frames, worst 20.1 ms), recall 0.29 s (worst 18.3 ms), the send 39.6 s (2,197 frames, p99 22.5 ms, worst 38.4 ms: 1,082 prompt tokens, 1.3 s to first token, 985 tokens at 25.9 per second), 11 of 11 checks, resume wall 42 s; memory settled on its own (cursor 1121 at the last sequence, outbox empty); messages 1,120 before and after the kill, 1,122 after the resume's question and reply. |
+| `soak-real-memory-60b` (real model, memory on) | pass | 35 cycles in 2,447 s (the run sizes itself by the assumed 90 s send; the cycles averaged 58 s), 184 of 184 checks; 121,725 frames at p50 18.0, p95 30.25, p99 37.0 ms, worst 87.8 ms, streaming included; app RSS peak 117.9 MB, final 68.3 MB; MariaDB peak 504 MB, Qdrant 877 MB by `docker stats`; the store from 1,116 messages to 1,186, units 1,198 and points 1,198, 43 revisions, 12.5 MB, the cursor at the last sequence and the outbox empty at the end and no gap between its 42 samples; 35 sends with prompts of 3,138 to 13,179 tokens (median 9,217), time to first token 3.7 to 20.5 s (median 12.0; 628 to 853 prompt tokens per second), 82 to 2,048 tokens generated at 21.7 to 25.5 per second, 15.3 to 112.9 s a send. |
+
+The restart's own numbers are the fix's end-to-end measurement: the first
+real-model relaunch failed `wait_ready` after 600 s; this one passed it and
+settled memory in a 42 s resume. Three things the reruns show that the
+earlier runs could not:
+
+- **With memory on, the prompt is the context.** The baseline series' sends
+  (memory off) carried 1,854 to 1,975 prompt tokens and reached the first
+  token in 2.3 to 2.5 s. The soak's sends, memory on and a 32K context,
+  carried a median 9,217 tokens and reached the first token in a median
+  12.0 s, 20.5 s at 13,179 tokens; the rate is the same 630 to 850 prompt
+  tokens per second. The proposed "4 s to first token at about 2,000 prompt
+  tokens" is a budget for memory off. Memory on needs its own row, stated
+  per prompt size or as a cap on the layout's prompt tokens; the author's
+  decision.
+- **The relaunch after a crash sizes its context while the orphan still
+  holds memory.** The resumed app printed "the model needs about 4.2 GB and
+  0.2 GB is free for it. It's starting with a 8K context anyway" and ran its
+  server with an 8K slot, where the soak's app, launched clean, ran 32K.
+  `main.c` computes the memory fit (`memfit_context(sysmem_available(), ...)`)
+  before `llm_server_start`, and the orphan is reaped inside the start; the
+  fit counts the orphan's 4.2 GB as taken. The relaunch works, with the
+  smaller context until the author applies the model settings again. Open,
+  below; the next step.
+- **The observer is off in every UI script** (`script.h`: scripts start with
+  it off; none of the four scripts turns it on), so `observer_lag` equal to
+  the message count is the scripts' doing, not the fake model's as the
+  smoke's observation above said. Observer backlog under load is unmeasured
+  by every run here; a soak with `observer on` is the measurement.
+
+One more difference between the fake and real runs, explained by the code:
+the fake soak made 1.70 units per message and the real runs 1.01. Units are
+split at `MEMORY_UNIT_TOKENS` by the tokenizer in use (`memory_store.c`,
+`memory_job.c`), and the fake backend's tokenizer is not LFM3's; the fake
+soak's unit and point counts overstate what the real model's store holds for
+the same turns. Growth per cycle is in the same range on both (70 to 106 KB
+of data and index).
+
+## What stays open after this cycle
+
+- **The launch-time memory fit counts the orphan.** After a crash the
+  relaunch runs with the smallest context (8K here) until the author applies
+  the model settings again, because the fit runs before the orphan is
+  reaped. The fix is to reap before the fit (a public reap over the pid file
+  under a non-blocking lock attempt), pinned, and measured with the restart
+  run again: the resumed app's `n_ctx_slot` is the number. The next step.
+- **A time-to-first-token budget for memory on**, per prompt size or as a cap
+  on the layout's prompt tokens: the author's decision, with the soak's 35
+  sends as the evidence.
+- **Observer backlog under load** is unmeasured: every UI script runs with
+  the observer off. A soak with `observer on` is the measurement.
+- **Frames above the budget are not counted.** `FRAME_METRICS` reports p50,
+  p95, p99 and the maximum; the two-hour soak's 115.6 ms maximum says the
+  proposed 50 ms worst-frame budget was crossed at least once in 389,420
+  frames and no more. A `count above N ms` field (the histogram already holds
+  it) is the next tooling step, and the budget is then agreed as an absolute
+  or restated as a rate per hour; the parsers (`tools/manuscript_series.py`,
+  `tests/test_manuscript_series.py`) anchor on the current field order and
+  change with it.
+- **The orphan's memory between a crash and the next launch** stays held;
+  there is no parent-death signal on macOS. Recovery is at the next launch.
+- **Two other spawn sites inherit descriptors** (`src/app/service_supervisor.c`
+  for `tools/services.sh up`, `src/app/backup.c` for the backup pipeline);
+  both are short-lived tools, neither takes a lock, and neither is changed
+  here. Recorded in TECHNICAL-DEBT.
+- **Housekeeping** (the leftover test databases and collection) is unchanged.
+
+## Gates and verdicts for the fix
+
+On the fixed tree (`build/gap003/orphan/gates-*.log`, `gates-exit.txt`):
+`make test` 95,983 C checks and 183 Python tests, 0 failures (eight C checks
+and four Python tests more than `0534adc`: `orphan_after_owner_kill` and
+`test_power_source`); `make analyze` 0 warnings across 87 source files;
+`make sanitize` 95,983, 0, no sanitizer diagnostic; `make tsan` 48,613, 0, no
+diagnostic (the new test's spawned first window runs under TSan too);
+`make dbtest` 18,000, 0. Every exit status 0. Hosted verdicts are appended when the runs finish.

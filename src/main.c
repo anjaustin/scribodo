@@ -3513,6 +3513,13 @@ static bool host_model_ready(void *ctx)
     App *app = ctx;
     return !app->llm || llm_server_state(app->llm, NULL, 0) == LLM_READY;
 }
+static char *host_model_status(void *ctx)
+{
+    App *app = ctx;
+    char msg[512] = "";
+    if (app->llm) llm_server_state(app->llm, msg, sizeof(msg));
+    return strdup(msg);
+}
 static void host_drop(void *ctx, const char *path)
 {
     App *app = ctx; /* the same rule as a real drop: ignored behind a prompt or menu */
@@ -3873,7 +3880,7 @@ int main(int argc, char **argv)
                         host_attached_text, host_explorer_text, host_observer_status, host_history_cache_bytes, host_store_offline,
                         host_history_busy, host_history_hold, host_history_worker_busy, host_store_restart,
                         host_memory_settled, host_memory_enabled, host_memory_sources, host_memory_documents_settled,
-                        host_memory_briefs_ready, host_recall_text, host_recall_busy };
+                        host_memory_briefs_ready, host_recall_text, host_recall_busy, host_model_status };
     if (script_path) {
         char err[256];
         app.script = script_load(script_path, getenv("SCRIBODO_SCRIPT_DIR"), getenv("SCRIBODO_SHOT_DIR"), err, sizeof(err));

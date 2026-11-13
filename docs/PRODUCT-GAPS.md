@@ -65,8 +65,17 @@ measurement that closes it. Items run one at a time unless marked otherwise.
    the real one, every phase but the send repeatable to a few percent, the
    send's wall shown to be the reply's length (time to first token and
    tokens per second repeatable); budgets proposed from the series, awaiting
-   the author. Soak with memory enabled and store sampling, restart and
-   resume: in progress.
+   the author. Soak with memory enabled and store sampling: two hours of the
+   full cycle with the fake model steady (store settled at every sample, RSS
+   flat). Restart and resume: the fake-model run clean; the real-model run
+   found that a killed app's model servers kept the instance lock and no
+   relaunch got the model (fixed, pinned, MEMORY-019 soak section); on the
+   fixed build the real-model restart passes and a real-model soak with
+   memory on is steady, with the first token 3.7 to 20.5 s away at 3,138 to
+   13,179 prompt tokens. Still open: the relaunch after a crash sizes its
+   context before the orphan is reaped (next step), a count of frames above
+   the budget, a time-to-first-token row for memory on, observer backlog
+   with the observer on, and the author's agreement.
 6. **GAP-001 beyond selection.** Observer precision and recall by finding type
    on both novels; author-rated usefulness on complete sessions.
 7. **GAP-002 distribution.** Signed app, guided model and service setup,
