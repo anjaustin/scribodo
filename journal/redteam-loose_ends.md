@@ -150,3 +150,20 @@ sanitize` 95,968, 0, 0 diagnostics; `make tsan` 48,598, 0, 0 diagnostics;
 `make dbtest` 18,000, 0. Every exit status 0 (`build/relation/tense-gates-*.log`,
 `tense-gates-exit.txt`).
 
+## Hosted verdicts
+
+CI and Trusted acceptance both passed on each of the three commits: `a6a216a`
+(runs 43337258107 and 43337258238), `c979df5` (43338288483 and 43338288556)
+and `bec575f` (43339299053 and 43339299187).
+
+## What stays open
+
+- A findings log written before 2026-11-12 may hold a collided id
+  (TECHNICAL-DEBT, open P2); the repair is the author's.
+- The relation check's sentence and clause splitting, the verifier's prefix
+  cut and the question splitter read ASCII whitespace only; case folds for
+  ASCII letters only. Nothing in the evidence measures either (finding 7).
+- The notes and canon an author creates draw ids with `records_new_id` and
+  append through the log-reading path, one per click; a collision there needs
+  two apps on one project in one second with the same random start, and is not
+  checked.
