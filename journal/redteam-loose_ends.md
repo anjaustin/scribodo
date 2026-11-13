@@ -39,7 +39,7 @@ where reading is not proof:
 | 4 | relation check | **A side effect of the inheritance rule:** "Mr. Bingley's inheritance was Netherfield Park" now passes. The possessive is supported by "inherited" and the whole statement is checked only in the present tense (patterns 3 and 4 know "is"). Before the rule it was flagged, by accident of the possessive. Measured on the 230 recorded replies: 11 relation statements in the past tense, every one already flagged by its possessive phrase, so no recorded verdict depends on it. | Remediated below: "is" and "was" alike, C and arm; zero verdicts change. |
 | 5 | observer split | `run_job` and `observer_job_find` read stage by stage against the originals: the lock order, the generation checks, the `io_failed` paths (a list that cannot be read, a backend that returns nothing leaves `io_out` untouched as before, a chat whose unread messages are all skipped is marked read) and the frees are the originals'. | No change; the replay had already shown byte-identical findings. |
 | 6 | replay tool | `records_list_checked`'s result is not checked before the findings are printed; the finding fields it prints are fixed-size arrays and never NULL. | Diagnostic; no change. |
-| 7 | normalization, recorded | The relation check's sentence and clause splitting, the prefix cut in the verifier and the sentence splitter of the question use ASCII `isspace`, so a Unicode space after a period is not a sentence end there; and case folds for ASCII letters only. Measured: the three manuscripts and the 38 recorded runs contain no Unicode space and no non-ASCII letter at all, so no recorded case depends on either. | Recorded here, not changed: no measurement to make them against. |
+| 7 | normalization, recorded then fixed | The relation check's sentence and clause splitting, the prefix cut in the verifier and the sentence splitter of the question use ASCII `isspace`, so a Unicode space after a period is not a sentence end there; and case folds for ASCII letters only. Measured: the three manuscripts and the 38 recorded runs contain no Unicode space and no non-ASCII letter at all, so no recorded case depends on either. | The whitespace half fixed in section 4 on the second day: two of the sites weakened a gate (a no-break-space-padded span passed the length floor; a question ending in one escaped the gate). The case fold stays ASCII in C and mirror alike. |
 
 ## 1. Unicode spaces are blanks, and the mirror is a port
 
@@ -150,19 +150,80 @@ sanitize` 95,968, 0, 0 diagnostics; `make tsan` 48,598, 0, 0 diagnostics;
 `make dbtest` 18,000, 0. Every exit status 0 (`build/relation/tense-gates-*.log`,
 `tense-gates-exit.txt`).
 
+## 4. Unicode spaces are blanks for the scans too (2026-11-13)
+
+Re-reading finding 7 before moving on: the Python mirrors already read a
+Unicode space as whitespace (`\s`, `strip`), the C scans did not, so the
+mirror and the product disagreed exactly where the normalization had just been
+made to agree. Four sites read ASCII whitespace: `trimmed_length` and the
+prefix cut in `answer_verify_span`, the trailing-blank scan in
+`answer_gate_applies`, the sentence and clause scans behind `rel_prose`, and
+the sentence and conjunction scans behind `answer_question_parts`. Each site's
+consequence, measured with a probe linked against the previous commit's
+`answer_pipeline.c` and against the new one (`build/tolerance/uspace-pins-old-new.txt`):
+
+| Site | Input | Before (`d849de6`) | After |
+|---|---|---|---|
+| verifier length floor | `"\u00a0\u00a0 lucky idea \u00a0\u00a0"` (ten letters) | `verified`, span "lucky idea" shown | `too_short` |
+| verifier prefix rule | `"…only three miles.\u00a0Then she took the carriage."` | `rejected_not_in_unit` | `verified_prefix`, the manuscript's sentence |
+| gate applies | `"Why?\u00a0"`, `"Why?\u202f\n"` | gate off | gate on |
+| relation check | `"Mr.\u00a0Bingley's\u00a0estate\u00a0is\u00a0large."` | 0 phrases found | 1, unsupported, "Mr. Bingley's estate" |
+| question splitter | `"Who is Jane?\u00a0Who is Bingley?"` | 1 part | 2 parts |
+
+The first and third rows are gate weakenings: a model that writes no-break
+spaces could pass a span shorter than the floor, and a question pasted with a
+trailing no-break space was not gated at all. The second and fifth are
+tolerance the normalization already granted and the scans withheld; the
+fourth is the relation check skipping a statement it checks when spaced
+plainly.
+
+The fix is one helper, `ascii_spaces`, a copy of the text with every Unicode
+space of `unicode_space_at` written as a plain space (zeroed buffer: a
+multi-byte space shrinks to one byte), taken at the entry of the four
+functions; the ASCII scans then see the blank the normalization sees. The
+arm's `prose` makes the same substitution (`UNICODE_SPACES`) so its literal
+spaces match a no-break space as the C does; the question-parts mirror
+already split on `\s`. Measured on the evidence, before and after,
+byte-identical as the zero count of Unicode spaces predicts: the tolerance
+table (`build/tolerance/uspace-before.txt`, `uspace-after.txt`, 681 spans,
+nineteen mutations), the gate replay (`uspace-gate-before/after.txt|json`),
+the relation arm over the 24 captures (`build/relation/arm-uspace-before.json`,
+`arm-uspace-after.json`, 21 of 230 flagged, 66/10/23 and 13/8/44). The
+relation probe agrees with the arm on 32 of 32 cases, six of them with
+no-break, narrow no-break and ideographic spaces around "is", after a period,
+before a clause's "not" and inside "but"; the normalizer fuzz, re-run because
+the probes were relinked, is 0 of 200,029 (seed 11). Pins: `test_verify`,
+`test_answer_gate`, `test_relations` and `test_question_parts` carry the
+table's rows (each fails against the previous object, the probe's "before"
+column); `test_answer_relation_arm` and `test_answer_question_parts` the
+mirrors'. The first analyzer run flagged the helper's `malloc` tail as
+possibly read uninitialized through `strlen`; the buffer is zeroed and the
+gates were run again on the final tree.
+
+## Gates (section 4)
+
+`make test` TEST C checks and 176 Python tests, 0 failures (seven C checks
+more than `bec575f`); `make analyze` 0 warnings across 87 source files (second
+run, after the `calloc`); `make sanitize` TEST, 0, 0 diagnostics; `make tsan`
+TSAN, 0, 0 diagnostics; `make dbtest` 18,000, 0. Every exit status 0
+(`build/tolerance/uspace-gates-*.log`, `uspace-gates-exit.txt`).
+
 ## Hosted verdicts
 
 CI and Trusted acceptance both passed on each of the three commits: `a6a216a`
 (runs 43337258107 and 43337258238), `c979df5` (43338288483 and 43338288556)
-and `bec575f` (43339299053 and 43339299187).
+and `bec575f` (43339299053 and 43339299187), and on the journal commit
+`d849de6` (43340371114 and 43340371251).
 
 ## What stays open
 
 - A findings log written before 2026-11-12 may hold a collided id
   (TECHNICAL-DEBT, open P2); the repair is the author's.
-- The relation check's sentence and clause splitting, the verifier's prefix
-  cut and the question splitter read ASCII whitespace only; case folds for
-  ASCII letters only. Nothing in the evidence measures either (finding 7).
+- Case folds for ASCII letters only, in the C and the mirror alike; the
+  evidence holds no non-ASCII letter to measure it against (finding 7; its
+  whitespace half is section 4). Python's `\s` also covers U+0085 and the
+  C0 separators U+001C to U+001F, which `unicode_space_at` does not; neither
+  appears in the evidence.
 - The notes and canon an author creates draw ids with `records_new_id` and
   append through the log-reading path, one per click; a collision there needs
   two apps on one project in one second with the same random start, and is not

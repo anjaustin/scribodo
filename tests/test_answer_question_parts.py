@@ -18,6 +18,10 @@ class QuestionPartsTests(unittest.TestCase):
         self.assertEqual(qp.question_parts('Which figure does the current manuscript give, and what did the other draft say?'),
                          ['Which figure does the current manuscript give?', 'what did the other draft say?'])
 
+    def test_a_no_break_space_after_the_question_mark_ends_the_sentence(self):
+        # The C splitter reads Unicode spaces as spaces (test_question_parts); the mirror's \s already did.
+        self.assertEqual(qp.question_parts('Who is Jane?\u00a0Who is Bingley?'), ['Who is Jane?', 'Who is Bingley?'])
+
     def test_honorific_periods_do_not_end_a_sentence(self):
         q = "In my manuscript, on whom is Mr. Bennet's estate entailed, and why is that unfortunate for his daughters?"
         self.assertEqual(qp.question_parts(q), ["In my manuscript, on whom is Mr. Bennet's estate entailed?",

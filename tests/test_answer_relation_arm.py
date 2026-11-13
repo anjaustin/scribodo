@@ -38,6 +38,9 @@ class RelationArmTests(unittest.TestCase):
         self.assertNotIn('The estate is Netherfield', by)  # "The" is not a name
         rows = ra.check("Mr. Bingley's estate is large.", ['Mr. Bingley inherited property'], [], 'q')
         self.assertEqual([r['phrase'] for r in rows if r['flag']], ["Mr. Bingley's estate"])
+        # No-break spaces in the prose are spaces (the C's rel_prose and test_relations read the same statement).
+        rows = ra.check("Mr.\u00a0Bingley's\u00a0estate\u00a0is\u00a0large.", ['Mr. Bingley inherited property'], [], 'q')
+        self.assertEqual([r['phrase'] for r in rows if r['flag']], ["Mr. Bingley's estate"])
 
     def test_inheritance_is_supported_by_inherited_and_phrases_carry_their_class(self):
         span = ['Mr. Bingley inherited property to the amount of nearly a hundred thousand pounds from his father']

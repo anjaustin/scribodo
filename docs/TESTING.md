@@ -288,7 +288,12 @@ modify a database while any Scribodo process is running.
   (`normalize` in `tools/answer_citation_binding.py`, used by the relation arm
   and the citation-binding classifier) is a port of the C loop, kept equal to it
   by a differential fuzz (0 differences in 600,000 strings) and pinned on the C
-  test's strings by `test_answer_citation_binding`.
+  test's strings by `test_answer_citation_binding`. The scans around the
+  normalization (the verifier's length floor and prefix cut, the gate's
+  trailing question mark, the relation check's sentences and clauses, the
+  question splitter) read Unicode spaces as spaces too, pinned with no-break
+  spaces in `test_verify`, `test_answer_gate`, `test_relations`,
+  `test_question_parts` and the two mirrors' tests (journal/redteam-loose_ends.md §4).
   The same replay runs the quotation check (`answer_quotations`: every
   quotation in a composed reply must be a substring of a verified span, an
   author turn or the question under the gate's normalization) over every

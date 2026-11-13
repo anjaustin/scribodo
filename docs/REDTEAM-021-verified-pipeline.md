@@ -105,7 +105,10 @@ the guarded line and still kills.
   accepted as rendering (the words are unchanged and the manuscript's bytes
   are shown). A nineteenth mutation the same day (no-break spaces for spaces,
   the rendering a word processor's manuscript brings) was rejected 681 of 681
-  before Unicode spaces were made blanks, and verified 681 of 681 after.
+  before Unicode spaces were made blanks, and verified 681 of 681 after. On
+  2026-11-13 the scans around the normalization followed: before, a
+  ten-letter span padded with no-break spaces passed the verifier's length
+  floor and a question ending in one escaped the gate (journal/redteam-loose_ends.md §4).
 - **Fixture scorer with the fake backend.** With the flag set and no real
   servers, `rerank_client_create(NULL)` scores by content-word overlap and
   the extraction call is not attempted (no chat server), so the request

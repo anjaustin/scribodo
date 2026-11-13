@@ -58,6 +58,23 @@ static size_t unicode_space_at(const char *text, size_t n, size_t i)
     return 0;
 }
 
+/* A copy of `text` with every Unicode space written as a plain space, for the scans below that read ASCII whitespace
+ * (sentence ends, clause breaks, the prefix cut, the trailing question mark): they then see the blank the
+ * normalization sees, so a no-break space in a model's prose or an author's question is a space, not a letter. */
+static char *ascii_spaces(const char *text)
+{
+    size_t n = strlen(text), o = 0;
+    char *out = calloc(n + 1, 1); /* zeroed: a multi-byte space shrinks to one byte, so the tail stays defined */
+    if (!out) return NULL;
+    for (size_t i = 0; i < n;) {
+        size_t sp = unicode_space_at(text, n, i);
+        if (sp) { out[o++] = ' '; i += sp; }
+        else out[o++] = text[i++];
+    }
+    out[o] = '\0';
+    return out;
+}
+
 /* The normalization, with an optional map from every normalized byte to the source bytes that produced it
  * ([starts[k], ends[k]) in `text`), so a match found in normalized space can be read back as the source's own bytes. */
 static char *normalize_map(const char *text, size_t **starts, size_t **ends)
@@ -157,15 +174,20 @@ static size_t trimmed_length(const char *s)
     return end - start;
 }
 
-bool answer_verify_span(const char *span, const char *unit_text, char **verified, const char **status)
+bool answer_verify_span(const char *span_text, const char *unit_text, char **verified, const char **status)
 {
     if (verified) *verified = NULL;
     if (status) *status = "none";
-    if (!span || !unit_text || !verified) return false;
-    if (trimmed_length(span) < ANSWER_MIN_SPAN) { if (status) *status = "too_short"; return false; }
+    if (!span_text || !unit_text || !verified) return false;
+    /* The span's Unicode spaces as plain spaces: a span padded with no-break spaces is as short as its words, and a
+     * no-break space after a period is a sentence boundary for the prefix rule (the unit goes through normalize_map,
+     * which reads them the same way). */
+    char *span = ascii_spaces(span_text);
+    if (!span) return false;
+    if (trimmed_length(span) < ANSWER_MIN_SPAN) { if (status) *status = "too_short"; free(span); return false; }
     size_t *st = NULL, *en = NULL;
     char *unit = normalize_map(unit_text, &st, &en);
-    if (!unit) return false;
+    if (!unit) { free(span); return false; }
     bool ok = false;
     /* What is returned is the unit's own bytes at the match, never the model's rendering of them: the normalization
      * tolerates case, emphasis, dashes, whitespace and quotation marks, and the author is shown the manuscript's text
@@ -204,7 +226,7 @@ bool answer_verify_span(const char *span, const char *unit_text, char **verified
         }
         if (!ok && status) *status = "rejected_not_in_unit";
     }
-    free(unit); free(st); free(en);
+    free(unit); free(st); free(en); free(span);
     return ok;
 }
 
@@ -305,9 +327,15 @@ static const char k_claim_schema[] =
 bool answer_gate_applies(const char *question)
 {
     if (!question) return false;
-    size_t n = strlen(question);
-    while (n && isspace((unsigned char)question[n - 1])) n--;
-    return n && question[n - 1] == '?';
+    /* The last byte that is not whitespace, Unicode spaces included. */
+    size_t n = strlen(question), last = 0;
+    for (size_t i = 0; i < n;) {
+        size_t sp = unicode_space_at(question, n, i);
+        if (sp) { i += sp; continue; }
+        if (!isspace((unsigned char)question[i])) last = i + 1;
+        i++;
+    }
+    return last && question[last - 1] == '?';
 }
 
 char *answer_claim_request(const char *question, const char *reply)
@@ -819,11 +847,13 @@ static bool rel_boundary(const char *s, size_t i) { return i == 0 || !rel_word_c
 
 /* The reply without blockquote lines and without the text between a pair of double quotes on one line (straight
  * pairs first, then curly), each replaced by one space: the quotation check's territory. */
-static char *rel_prose(const char *reply)
+static char *rel_prose(const char *reply_text)
 {
+    char *reply = ascii_spaces(reply_text); /* Unicode spaces as plain spaces: the scans below read ASCII whitespace */
+    if (!reply) return NULL;
     size_t n = strlen(reply);
     char *out = calloc(n + 2, 1), *o = out; /* zeroed: every byte the sentence scan reads is defined */
-    if (!out) return NULL;
+    if (!out) { free(reply); return NULL; }
     const char *p = reply;
     while (*p) {
         const char *e = strchr(p, '\n');
@@ -833,7 +863,7 @@ static char *rel_prose(const char *reply)
         if (q < p + len && *q == '>') { p += len; if (*p) p++; continue; }
         /* Straight pairs, then curly pairs, within the line. */
         char *line = calloc(len + 1, 1);
-        if (!line) { free(out); return NULL; }
+        if (!line) { free(out); free(reply); return NULL; }
         memcpy(line, p, len);
         for (int pass = 0; pass < 2; pass++) {
             const char *open = pass ? "\xE2\x80\x9C" : "\"", *close = pass ? "\xE2\x80\x9D" : "\"";
@@ -857,6 +887,7 @@ static char *rel_prose(const char *reply)
         if (*p) { *o++ = '\n'; p++; }
     }
     *o = '\0';
+    free(reply);
     return out;
 }
 
@@ -1276,9 +1307,11 @@ static char *piece(const char *s, size_t n)
     return out;
 }
 
-size_t answer_question_parts(const char *question, char *parts[ANSWER_SPANS])
+size_t answer_question_parts(const char *question_text, char *parts[ANSWER_SPANS])
 {
     for (size_t i = 0; i < ANSWER_SPANS; i++) parts[i] = NULL;
+    if (!question_text) return 0;
+    char *question = ascii_spaces(question_text); /* Unicode spaces as plain spaces for the sentence and conjunction scans */
     if (!question) return 0;
     char *sent[64];
     size_t ns = sentences(question, sent, sizeof(sent) / sizeof(sent[0]));
@@ -1322,10 +1355,11 @@ size_t answer_question_parts(const char *question, char *parts[ANSWER_SPANS])
         /* No question sentence (a drafting request), or question sentences that reduce to nothing: one part, the
          * request itself. */
         char *whole = trimmed_copy(question, strlen(question));
-        if (!whole || !whole[0]) { free(whole); return 0; }
+        if (!whole || !whole[0]) { free(whole); free(question); return 0; }
         parts[0] = whole;
         np = 1;
     }
+    free(question);
     return np;
 }
 

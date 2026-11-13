@@ -56,6 +56,12 @@ static void test_verify(void)
     CHECK(answer_verify_span("Elizabeth said it was *only three miles*.", k_unit, &v, &status) && !strcmp(status, "verified"));
     CHECK(v && !strcmp(v, "Elizabeth said it was only three miles."));
     free(v); v = NULL;
+    /* Unicode spaces are blanks for the length and the prefix rule too: a span padded with no-break spaces is as short
+     * as its words, and a no-break space after the period is a sentence boundary. */
+    CHECK(!answer_verify_span("\xC2\xA0\xC2\xA0 lucky idea \xC2\xA0\xC2\xA0", k_unit, &v, &status) && !strcmp(status, "too_short") && !v);
+    CHECK(answer_verify_span("Elizabeth said it was only three miles.\xC2\xA0Then she took the carriage.", k_unit, &v, &status) && !strcmp(status, "verified_prefix"));
+    CHECK(v && !strcmp(v, "Elizabeth said it was only three miles."));
+    free(v); v = NULL;
     /* Straight quotes and a spaced hyphen in the model's text: the manuscript's curly apostrophe and em dash come back. */
     CHECK(answer_verify_span("Her mother's fortune, though ample for her situation in life, could but ill supply the deficiency of his - so they walked.",
                              k_unit, &v, &status) && !strcmp(status, "verified"));
@@ -321,6 +327,10 @@ static void test_relations(void)
                          spans2, 1, NULL, 0, "What fortune?", &bad);
     CHECK(n == 1 && bad == NULL);
     n = answer_relations("Mr. Bingley's estate is large.", spans2, 1, NULL, 0, "q", &bad);
+    CHECK(n == 1 && bad && !strcmp(bad, "Mr. Bingley's estate"));
+    free(bad); bad = NULL;
+    /* No-break spaces in the model's prose are spaces: the same statement is found and checked. */
+    n = answer_relations("Mr.\xC2\xA0" "Bingley's\xC2\xA0" "estate\xC2\xA0is\xC2\xA0large.", spans2, 1, NULL, 0, "q", &bad);
     CHECK(n == 1 && bad && !strcmp(bad, "Mr. Bingley's estate"));
     free(bad); bad = NULL;
     /* "X's inheritance" is supported by "X inherited" (the composer's paraphrase of the first novel's passage,
@@ -607,6 +617,10 @@ static void test_question_parts(void)
     CHECK(!strcmp(parts[0], "In my manuscript, on whom is Mr. Bennet's estate entailed?")); /* the honorific's period is not a sentence end */
     CHECK(!strcmp(parts[1], "why is that unfortunate for his daughters?"));
     free(parts[0]); free(parts[1]);
+    /* A no-break space after the question mark ends the sentence as a space does. */
+    CHECK(answer_question_parts("Who is Jane?\xC2\xA0Who is Bingley?", parts) == 2);
+    CHECK(!strcmp(parts[0], "Who is Jane?") && !strcmp(parts[1], "Who is Bingley?"));
+    free(parts[0]); free(parts[1]);
     /* Context sentences are prefixed to every part. */
     CHECK(answer_question_parts("My two drafts disagree about how many miles Elizabeth walks to Netherfield. Which figure does the current manuscript give, and what did the other draft say?", parts) == 2);
     CHECK(!strcmp(parts[0], "My two drafts disagree about how many miles Elizabeth walks to Netherfield. Which figure does the current manuscript give?"));
@@ -665,6 +679,8 @@ static void test_answer_gate(void)
     const char *names[] = { "part01.md", "part01.md" };
     const char *author[] = { "Draft note (older): In the first draft Elizabeth walked five miles to Netherfield." };
     CHECK(answer_gate_applies("How far is it?") && answer_gate_applies("  Why?  \n") && !answer_gate_applies("Draft two sentences.") && !answer_gate_applies("") && !answer_gate_applies(NULL));
+    /* Trailing Unicode spaces are whitespace: the gate still applies. */
+    CHECK(answer_gate_applies("Why?\xC2\xA0") && answer_gate_applies("Why?\xE2\x80\xAF\n") && !answer_gate_applies("Why\xC2\xA0"));
     CHECK(!strcmp(answer_gate("three miles", "How far does Elizabeth say the walk is?", spans, 2, author, 1), "pass"));
     CHECK(!strcmp(answer_gate("**Three miles**", "How far?", spans, 2, author, 1), "pass"));           /* emphasis and case folded */
     {   /* Numbers are whole words: "ten" inside "often" and "7" inside "27" do not support an answer (pass 7 check). */

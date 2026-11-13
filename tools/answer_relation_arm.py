@@ -64,10 +64,14 @@ def negated_at(s, bounds, pos):
 SPAN = re.compile(r'Source (\d+) \(([^)]+)\): "(.*?)"\n', re.S)
 
 
+UNICODE_SPACES = re.compile('[\u00a0\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]')  # the C's unicode_space_at
+
+
 def prose(reply):
-    """The reply outside quotations and block quotes (the quotation check's territory)."""
+    """The reply outside quotations and block quotes (the quotation check's territory). Unicode spaces are plain
+    spaces, as the C's rel_prose reads them, so the patterns' literal spaces match a no-break space."""
     out = []
-    for line in reply.split('\n'):
+    for line in UNICODE_SPACES.sub(' ', reply).split('\n'):
         if line.lstrip().startswith('>'):
             continue
         line = re.sub(r'"[^"\n]*"', ' ', line)
