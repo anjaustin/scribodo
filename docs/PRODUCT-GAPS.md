@@ -74,10 +74,18 @@ measurement that closes it. Items run one at a time unless marked otherwise.
    memory on is steady, with the first token 3.7 to 20.5 s away at 3,138 to
    13,179 prompt tokens; the relaunch after a crash now reaps the dead
    window's servers before sizing its context (measured: a 32K slot where
-   it had run 8K). Still open: a count of frames above the budget, a
-   time-to-first-token row for memory on, what the launch-time fit counts as
-   free memory, observer backlog with the observer on, and the author's
-   agreement.
+   it had run 8K). Frames above 50 ms are counted since 2026-11-13 (196 in
+   97,492 with the fake model, 17 in 123,455 with the real one). Observer
+   backlog measured with the observer on: none of it drained in 40 minutes
+   of a send every 68 s, because the next send cancels the observer's first
+   model call 12 s in and the job restarts from its beginning (journal
+   `gap003-cycle1_series.md`, "the observer starves under continuous
+   chat"); one observer call is about 26 s uncontended, so the remedy is a
+   scheduling change for the author to choose (disclosure, cadence-aware
+   starts, or a bounded hold on the send). Still open: that remedy, a time-to-first-token row
+   for memory on, what the launch-time fit counts as free memory, and the
+   author's agreement on the budgets (the worst-frame row as an absolute or
+   a rate).
 6. **GAP-001 beyond selection.** Observer precision and recall by finding type
    on both novels; author-rated usefulness on complete sessions.
 7. **GAP-002 distribution.** Signed app, guided model and service setup,
@@ -139,6 +147,15 @@ latency, memory, storage and observer-backlog budgets.
 repeatable measurements; bounded active-context and background-work costs; and
 regressions covering any implemented improvements. Persistent storage is not a
 claim of infinite attention or perfect recall.
+
+**Measured 2026-11-13, open:** the observer yields to chat by cancelling its
+job and retrying it from the beginning once the chat is idle; with a send
+every 68 s and 12 s pauses on the real model it completed nothing in 40
+minutes and the 1,116-turn backlog stayed whole. Uncontended, one observer
+call is 16.5 to 29.7 s (median 26.2) and the documents are read before the
+chat. The gate is exclusive by contract, so the fix is one of three
+scheduling changes for the author to choose (a disclosed interruption count,
+cadence-aware starts, a bounded hold on the send), measured before adoption.
 
 **Design investigation:** `billion-context` adoption versus a native equivalent.
 Keep the existing local-first, BF16 runtime, provenance and author-authority

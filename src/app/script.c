@@ -659,8 +659,9 @@ static bool run_line(Script *s, ScriptHost *h)
         } else if (!strcmp(t.tok[1], "stop")) {
             FrameMetricsReport r = frame_metrics_report(&s->frame_metrics);
             s->measuring_frames = false;
-            printf("FRAME_METRICS interframe_ms count=%" PRIu64 " p50=%.3f p95=%.3f p99=%.3f max=%.3f sample_seconds=%.3f (includes waits/vsync; not input latency, isolated CPU time, or an SLA)\n",
-                   r.count, r.p50_ms, r.p95_ms, r.p99_ms, r.max_ms, r.sample_s);
+            printf("FRAME_METRICS interframe_ms count=%" PRIu64 " p50=%.3f p95=%.3f p99=%.3f max=%.3f sample_seconds=%.3f over_50ms=%" PRIu64
+                   " (includes waits/vsync; not input latency, isolated CPU time, or an SLA)\n",
+                   r.count, r.p50_ms, r.p95_ms, r.p99_ms, r.max_ms, r.sample_s, r.over_budget);
         } else report(s, false, "measure_frames needs start or stop");
         return false;
     }

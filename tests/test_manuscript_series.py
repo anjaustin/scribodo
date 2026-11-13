@@ -6,12 +6,13 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
 import manuscript_series as ms  # noqa: E402
 
-METRIC = ("FRAME_METRICS interframe_ms count={count} p50=17.250 p95=17.500 p99={p99} max={mx} sample_seconds={wall} "
+METRIC = ("FRAME_METRICS interframe_ms count={count} p50=17.250 p95=17.500 p99={p99} max={mx} sample_seconds={wall}{over} "
           "(includes waits/vsync; not input latency, isolated CPU time, or an SLA)")
 
 
-def run_log(walls, p99=18.0, mx=25.0, failed=0, rss=180000):
-    lines = [METRIC.format(count=int(w * 60) or 1, p99=p99, mx=mx, wall=w) for w in walls]
+def run_log(walls, p99=18.0, mx=25.0, failed=0, rss=180000, over=0):
+    over_field = "" if over is None else f" over_50ms={over}"
+    lines = [METRIC.format(count=int(w * 60) or 1, p99=p99, mx=mx, wall=w, over=over_field) for w in walls]
     lines.append(f"FRAME_SOAK_RSS pid=1 initial_rss_kib=1600 final_rss_kib={rss} peak_rss_kib={rss} count=60 attempts=60 errors=0 "
                  "sample_seconds=60.0 final_sample_age_seconds=0.1 process_wall_seconds=61.0 sample_cap=86400 sample_cap_reached=no exit_code=0 ")
     lines.append("FRAME_SOAK_SERVICES samples=12 errors=0 scribodo-mariadb-1:peak_kib=526336:final_kib=520000 "
@@ -45,6 +46,20 @@ class ManuscriptSeriesTests(unittest.TestCase):
         self.assertIn("2 complete of 4 runs", text)
         self.assertIn("| import | 1.00 / 2.00 / 3.00 |", text)
         self.assertIn("App peak RSS MB: 176 / 176 / 176", text)
+
+    def test_frames_over_the_budget_are_read_and_absent_in_older_logs(self):
+        new = ms.parse_run(run_log([1.0] * 7, over=3))
+        self.assertEqual(new["phases"][0]["over"], 3)
+        old = ms.parse_run(run_log([1.0] * 7, over=None))
+        self.assertIsNone(old["phases"][0]["over"])
+        self.assertIsNone(ms.incomplete(old))  # an older log is still a complete run
+        table = ms.tabulate([new, ms.parse_run(run_log([2.0] * 7, over=5))])
+        self.assertEqual(table["phases"][0]["over"], {"min": 3, "median": 4.0, "max": 5, "n": 2})
+        self.assertIn("| import | 1.00 / 1.50 / 2.00 | 18.00 / 18.00 / 18.00 | 25.00 / 25.00 / 25.00 | 3 / 4 / 5 |",
+                      ms.markdown(table, ["a", "b"]))
+        mixed = ms.tabulate([new, old])
+        self.assertIsNone(mixed["phases"][0]["over"])
+        self.assertIn("| not reported |", ms.markdown(mixed, ["a", "b"]))
 
     def test_no_complete_run_gives_an_empty_table(self):
         table = ms.tabulate([ms.parse_run("nothing here\n")])

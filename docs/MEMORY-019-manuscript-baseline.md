@@ -229,9 +229,14 @@ and the Qdrant anonymous memory if a soak grows it. The author's agreement
 turns the column into the acceptance line; until then it is a proposal read
 off the series. The two-hour soak below adds one reading against the first
 row: a worst frame of 115.6 ms in 389,420 frames, with no count of how many
-crossed 50 ms (the report carries the maximum only); before that row is
-agreed, `FRAME_METRICS` should count frames above a threshold so the budget
-can be an absolute or a rate per hour on evidence.
+crossed 50 ms (that report carried the maximum only). Since 2026-11-13
+`FRAME_METRICS` counts them (`over_50ms=N`): the 30-minute fake-model soak
+crossed 50 ms 196 times in 97,492 frames (0.20 percent, about 6.7 per
+minute, worst 70.6 ms) and the 40-minute real-model soak 17 times in 123,455
+(0.014 percent, about 0.4 per minute, worst 131.5 ms, streaming included).
+The row can now be agreed as an absolute (no frame above 50 ms, which the
+soaks fail) or restated as a rate, for which these two counts are the
+evidence; the author's call.
 
 ## Soak and restart (2026-11-13)
 
@@ -292,23 +297,50 @@ Both real-model runs again on the fixed build, idle machine, AC power
   context.** 35 cycles, 184 of 184 checks, 121,725 frames at p50 18.0, p95
   30.25, p99 37.0 ms and a worst of 87.8 ms with the streaming sends
   included; app RSS peak 117.9 MB; the store from 1,116 to 1,186 messages
-  and 12.5 MB, settled at every sample. The 35 sends carried 3,138 to 13,179
+  and 12.5 MB, the cursor caught up before every cycle's check and at the
+  final sample (during a send it waits one message behind: the memory job
+  pauses while the chat is busy, by design). The 35 sends carried 3,138 to 13,179
   prompt tokens (median 9,217) and reached the first token in 3.7 to 20.5 s
   (median 12.0) at 630 to 850 prompt tokens per second, then generated 82 to
   2,048 tokens at 21.7 to 25.5 per second. The series' 2.3 to 2.5 s to first
   token was memory off at about 2,000 tokens; memory on needs its own budget
   row, per prompt size or as a cap on the layout's prompt tokens.
-- **Observer backlog is unmeasured** by all of these runs: the UI scripts
-  start with the observer off and none turns it on.
+- **Frames above the budget, counted (2026-11-13, the third step).** With
+  `FRAME_METRICS` counting intervals above 50 ms, a 30-minute fake-model soak
+  with memory on (106 cycles, 539 of 539 checks) crossed it 196 times in
+  97,492 frames (0.20 percent, worst 70.6 ms) and a 40-minute real-model
+  soak with memory and the observer on (35 cycles, 184 of 184) 17 times in
+  123,455 (0.014 percent, worst 131.5 ms, streaming included); app RSS peaks
+  177.6 and 117.3 MB, MariaDB 523 MB and Qdrant 875 MB at most, the store
+  settled between sends and at the end of both. The real run's 35 sends,
+  on an 8K slot (the launch fit read 2.5 GB free after the fake soak),
+  carried 1,064 to 4,050 prompt tokens and reached the first token in 1.4
+  to 5.9 s (median 5.0), then generated 431 to 2,048 tokens at 24.1 to 25.8
+  per second.
+- **The observer makes no progress under continuous chat.** Measured with
+  `--observer` on the real model (journal, "the observer starves under
+  continuous chat"): a send every 68 s with a 12 s pause cancelled the
+  observer's first model call 35 times out of 35, 12.0 to 13.1 s after it
+  started, and the 1,116-turn backlog did not move in 40 minutes; the
+  design retries a cancelled job from its beginning once the chat is idle.
+  Uncontended, one observer call (the extraction over a 3,000-byte chunk) is
+  16.5 to 29.7 s on this model, median 26.2 (30 calls, `observer-drain-15`),
+  and the observer reads the eight chapters (about an hour and a half) before
+  the chat. The gate is exclusive by contract, so the remedy is one of: a
+  disclosed count of interruptions, not starting a call the cadence cannot
+  hold, or a bounded hold on the send after repeated starvation (the only one
+  that progresses under continuous chat, at up to 30 s on one send); the
+  author's decision, measured before adoption (journal).
 
 ## What is next in S4
 
-- The author's agreement on the budgets, with the worst-frame row restated
-  once `FRAME_METRICS` counts frames above a threshold.
+- The author's agreement on the budgets, the worst-frame row as an absolute
+  or a rate now that `FRAME_METRICS` counts frames above 50 ms.
 - What `sysmem_available` counts: with no orphan anywhere, one clean launch
   read 2.6 GB free and ran an 8K slot while another, an hour earlier, ran
   32K; the context an author gets should not depend on the moment of launch
   more than the machine's real state requires.
 - A time-to-first-token row for memory on (the soak's 35 sends: 3.7 to 20.5 s
   at 3,138 to 13,179 prompt tokens), the author's decision on its form.
-- Observer backlog under a soak with `observer on`; no run so far has it on.
+- The observer's scheduling under chat: the author's choice among the three
+  remedies, then the send's latency measured with it on.

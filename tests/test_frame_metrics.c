@@ -14,6 +14,7 @@ int main(void)
     for (int i = 1; i <= 100; i++) frame_metrics_record(&m, i * .010);
     r = frame_metrics_report(&m);
     assert(r.count == 100 && fabs(r.sample_s - 1) < 1e-9);
+    assert(r.over_budget == 0); /* 10 ms frames are under the 50 ms budget */
     assert(r.p50_ms >= 9.999 && r.p99_ms <= 10.16);
     assert(fabs(r.max_ms - 10) < 1e-9);
     frame_metrics_record(&m, 1); /* duplicate */
@@ -37,6 +38,15 @@ int main(void)
     assert(r.p95_ms >= 94.999 && r.p95_ms <= 96);
     assert(r.p99_ms >= 98.999 && r.p99_ms <= 100);
     assert(fabs(r.max_ms - 100) < 1e-8);
+    /* Intervals of 1..100 ms: those above 50 ms (51..100) count; the accumulated
+     * clock puts the 50 ms interval a rounding error either side of the line. */
+    assert(r.over_budget == 50 || r.over_budget == 51);
+    frame_metrics_clear(&m);
+    frame_metrics_record(&m, 0);
+    frame_metrics_record(&m, 0.050);
+    frame_metrics_record(&m, 0.1001); /* 50.1 ms */
+    r = frame_metrics_report(&m);
+    assert(r.count == 2 && r.over_budget == 1);
     frame_metrics_clear(&m);
     frame_metrics_record(&m, 0);
     frame_metrics_record(&m, 1e-15);

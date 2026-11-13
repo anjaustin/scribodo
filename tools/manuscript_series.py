@@ -21,7 +21,8 @@ import sys
 from pathlib import Path
 
 PHASES = ["import", "open chat", "page history", "chapter edit and save", "send", "enable memory", "recall"]
-METRICS = re.compile(r"^FRAME_METRICS interframe_ms count=(\d+) p50=([\d.]+) p95=([\d.]+) p99=([\d.]+) max=([\d.]+) sample_seconds=([\d.]+)")
+METRICS = re.compile(r"^FRAME_METRICS interframe_ms count=(\d+) p50=([\d.]+) p95=([\d.]+) p99=([\d.]+) max=([\d.]+) sample_seconds=([\d.]+)"
+                     r"(?: over_50ms=(\d+))?")  # the count above the budget: absent in logs from before 2026-11-13
 RSS = re.compile(r"^FRAME_SOAK_RSS .*?peak_rss_kib=(\d+|unavailable).*?process_wall_seconds=([\d.]+)")
 SERVICES = re.compile(r"^FRAME_SOAK_SERVICES .*?(scribodo-\S+?:peak_kib=\d+:final_kib=\d+(?: scribodo-\S+?:peak_kib=\d+:final_kib=\d+)*)")
 SERVICE = re.compile(r"(scribodo-[a-z]+)-\d+:peak_kib=(\d+):final_kib=(\d+)")
@@ -36,9 +37,9 @@ def parse_run(text):
     for line in text.splitlines():
         m = METRICS.match(line)
         if m:
-            count, p50, p95, p99, mx, wall = m.groups()
+            count, p50, p95, p99, mx, wall, over = m.groups()
             run["phases"].append({"count": int(count), "p50": float(p50), "p95": float(p95), "p99": float(p99),
-                                  "max": float(mx), "wall": float(wall)})
+                                  "max": float(mx), "wall": float(wall), "over": None if over is None else int(over)})
             continue
         m = RSS.match(line)
         if m:
@@ -85,7 +86,9 @@ def tabulate(runs):
                               "wall": spread([r["phases"][i]["wall"] for r in complete]),
                               "p99": spread([r["phases"][i]["p99"] for r in complete]),
                               "max": spread([r["phases"][i]["max"] for r in complete]),
-                              "frames": spread([r["phases"][i]["count"] for r in complete])})
+                              "frames": spread([r["phases"][i]["count"] for r in complete]),
+                              "over": spread([r["phases"][i]["over"] for r in complete]) if all(
+                                  r["phases"][i]["over"] is not None for r in complete) else None})
     rss = [r["peak_rss_kib"] for r in complete if r["peak_rss_kib"] is not None]
     out["peak_rss_kib"] = spread(rss) if rss else None
     for name in sorted({n for r in complete for n in r["services"]}):
@@ -102,9 +105,10 @@ def fmt(s, unit="", digits=2):
 
 def markdown(table, names):
     lines = [f"{table['complete']} complete of {table['runs']} runs ({', '.join(names)}); columns are min / median / max.", "",
-             "| Phase | Wall s | p99 ms | Worst frame ms | Frames |", "|---|---:|---:|---:|---:|"]
+             "| Phase | Wall s | p99 ms | Worst frame ms | Frames over 50 ms | Frames |", "|---|---:|---:|---:|---:|---:|"]
     for p in table["phases"]:
-        lines.append(f"| {p['phase']} | {fmt(p['wall'])} | {fmt(p['p99'])} | {fmt(p['max'])} | {fmt(p['frames'], digits=0)} |")
+        over = fmt(p["over"], digits=0) if p["over"] else "not reported"
+        lines.append(f"| {p['phase']} | {fmt(p['wall'])} | {fmt(p['p99'])} | {fmt(p['max'])} | {over} | {fmt(p['frames'], digits=0)} |")
     if table["peak_rss_kib"]:
         s = table["peak_rss_kib"]
         lines.append("")

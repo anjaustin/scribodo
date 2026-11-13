@@ -348,6 +348,12 @@ modify a database while any Scribodo process is running.
   eight chapter documents), opens it in the real app with the fake model, and
   reports one `FRAME_METRICS` line per phase (store import, chat open, paging,
   document edit and save, send) plus sampled RSS (`tests/ui/store/16_manuscript_baseline.scribo`).
+  Each line carries the interval count, p50, p95, p99, the worst interval,
+  the sampled seconds and, since 2026-11-13, `over_50ms=N`: the exact number
+  of intervals above the proposed 50 ms worst-frame budget
+  (`FRAME_METRICS_BUDGET_MS`), so a long run says how often the budget was
+  crossed and not only how badly once (`test_frame_metrics` pins the count;
+  the series parser reads it and prints "not reported" for older logs).
   `tools/manuscript_series.sh [--runs N] [--out DIR] [-- baseline arguments]`
   runs that baseline N times, each on a fresh disposable database and project,
   keeps every log and tabulates the spread per phase (minimum, median, maximum
@@ -361,7 +367,9 @@ modify a database while any Scribodo process is running.
   service containers sampled. `--memory` enables memory over the whole chat
   first (`tests/ui/store/24_manuscript_soak_memory.scribo`) so every send is
   ingested and indexed behind the UI; `--real` sends to the pinned model and
-  sizes the run with the measured send (`--cycle-seconds`, default 90).
+  sizes the run with the measured send (`--cycle-seconds`, default 90);
+  `--observer` turns the observer on before the cycles (UI scripts start with
+  it off), so `observer_lag` in the store samples measures its backlog.
   Throughout, `tools/store_growth_sample.sh` prints one `STORE_GROWTH` line per
   minute (`--sample-seconds`): the database's data and index bytes, its
   message, unit, record and revision counts, the outbox's pending deliveries,

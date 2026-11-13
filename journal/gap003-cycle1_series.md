@@ -338,8 +338,9 @@ resumed server had `n_ctx_slot = 8192` after "0.2 GB is free for it". The
 resume then passed 11 of 11 checks in a 10 s wall (open 0.18 s, recall
 0.28 s, a send of 8.1 s: 3,089 prompt tokens, 3.9 s to first token, 104
 tokens at 26.6 per second), memory settled, and the record held 1,121
-messages before and after the kill and 1,123 after the resume. Hosted
-verdicts are appended when the runs finish.
+messages before and after the kill and 1,123 after the resume. Hosted: CI
+and Trusted acceptance passed on `ee797e0` (runs 43456209062 and
+43456209122).
 
 ## Gates and verdicts for the fix
 
@@ -351,3 +352,113 @@ and four Python tests more than `0534adc`: `orphan_after_owner_kill` and
 diagnostic (the new test's spawned first window runs under TSan too);
 `make dbtest` 18,000, 0. Every exit status 0. Hosted: CI and Trusted acceptance passed on `e7511b9`
 (runs 43453865695 and 43453865553).
+
+## The third step: frames above the budget counted, and the observer under load
+
+`FRAME_METRICS` now carries `over_50ms=N`, the exact number of intervals
+above `FRAME_METRICS_BUDGET_MS` (50.0, `src/app/frame_metrics.h`), counted
+as the histogram is filled (`test_frame_metrics` pins it: none at 10 ms,
+50 or 51 for the 1 to 100 ms ramp, 50.0 itself not counted, 50.1 counted);
+the series parser reads the field and prints "not reported" for older logs
+(`tests/test_manuscript_series.py`). `tools/history_frame_soak.sh --observer`
+inserts `observer on` before the cycles, so `observer_lag` in the store
+samples measures the observer's backlog for the first time. Gates on this
+tree (`build/gap003/frames/gates-*.log`, `gates-exit.txt`): `make test`
+95,994 C checks and 184 Python tests, 0 failures; `make analyze` 0 warnings
+across 87 source files; `make sanitize` 95,994, 0; `make tsan` 48,624, 0;
+`make dbtest` 18,000, 0; every exit status 0.
+
+Two soaks on this build, chained after the gates (`build/gap003/frames/`,
+AC power throughout, machine otherwise idle, no `llama-server` alive at the
+start):
+
+| Run | Verdict | What was measured |
+|---|---|---|
+| `soak-fake-memory-30` (30 min, fake model, memory on) | pass | 106 cycles in 1,759 s, 539 of 539 checks; 97,492 frames at p50 17.5, p95 18.0, p99 18.25 ms, worst 70.6 ms, **196 above 50 ms** (0.20 percent, about 6.7 per minute); app RSS peak 177.6 MB (the import), final 152.1 MB; MariaDB and Qdrant unchanged in kind from the two-hour run; the store from 1,116 messages, 1,908 units and 11.4 MB to 1,328 messages, 2,118 units and points, 114 revisions, 21.7 MB; the cursor at the last sequence and the outbox empty at 29 of 31 samples and at the end. |
+| `soak-real-memory-observer-60` (real model, memory on, observer on) | pass, and a finding | 35 cycles in 2,379 s (the cycles averaged 68 s), 184 of 184 checks; 123,455 frames at p50 18.25, p95 18.75, p99 33.5 ms, worst 131.5 ms, **17 above 50 ms** (0.014 percent, about 0.4 per minute), streaming included; app RSS peak 117.3 MB, final 93.1 MB; MariaDB peak 523 MB, Qdrant 875 MB by `docker stats`; the store from 1,116 messages and 1,116 units to 1,186 messages, 1,249 units and points, 43 revisions, 12.5 MB; 35 sends with prompts of 1,064 to 4,050 tokens (median 3,371: the launch fit read 2.5 GB free after the fake soak and ran an 8K slot, which bounds the layout), 1.4 to 5.9 s to first token (median 5.0), 431 to 2,048 tokens generated at 24.1 to 25.8 per second, 20.5 to 84.6 s a send. **The observer made no progress: `observer_lag` equalled the message count at all 41 samples and `observer_chats` held no row at the end.** |
+
+Two readings of the store samples that are the design, not a defect: in the
+real run the memory cursor was one behind the last sequence at 27 of 41
+samples, every one taken during a send (the author's message of the send in
+flight; `main.c` pauses the memory job while the chat is busy, and the
+cursor caught up before each cycle's check and at the final sample, as in
+`soak-real-memory-60b`, whose samples read the same way); and the fake run's
+two unsettled samples are the same moment with the fake model's short send.
+
+### Finding: the observer starves under continuous chat
+
+The chat server's log for the real run (`~/Library/Logs/Scribodo/llama-server.log`
+from its last `load_model` line, 70 completed requests, 36 cancelled) shows
+one pattern 35 times:
+
+1. The send's reply finishes on slot 0.
+2. About 1.7 s later the observer, idle for `IDLE_DELAY` (1.5 s), launches
+   its first model call for its first job on slot 1 (about 900 prompt
+   tokens: the rules and a 3,000-byte chunk of the chat).
+3. The soak's hold (10 s) and navigation (about 2 s) pass; the next send
+   begins on slot 0, `observer_set_chat_active` sets `cancel`, and the
+   server logs `cancel task` for the observer's call 12.0 to 13.1 s after it
+   launched, with a few hundred tokens generated.
+4. The job is retried from its beginning once the chat is idle again, which
+   is step 2 of the next cycle.
+
+So the observer's first job never completed, `observer_chats` was never
+written, and the run spent 35 times about 12.5 s of the model's time on
+work it threw away. The yield is the design (`src/llm/observer.c`:
+"Waiting while you chat…"; a job that is cancelled "is retried once chat is
+idle"), and it protects the send's latency on a machine where both share one
+server. What it does not do is make progress when the quiet gaps are shorter
+than one job, and nothing tells the author that the observer has been
+cancelled before finishing anything for an hour. The soak's cadence (a send
+every 68 s with a 12 s pause) is harsher than an author's, but a quick
+exchange of short questions has the same shape, and the backlog an author
+most wants read is the one that accumulates while they chat.
+
+The remedy is a scheduling change, not a prompt change, and it needs one
+number first: how long one observer job takes on this model when nothing
+interrupts it. That is measured next (the fixture open, the observer on, no
+sends), and it decides between a floor on the idle window (the observer
+starts only when it can expect to finish) and a starvation guard (after N
+cancellations without progress one job runs to completion while the chat
+shares the server), each with the send's latency during the overlap measured
+before adoption. Until then the finding stands in PRODUCT-GAPS under GAP-003
+and in MEMORY-019.
+
+### The uncontended job time, measured
+
+`build/gap003/frames/observer-drain-15.log`: the fixture opened on a fresh
+database, `observer on`, no send, 15 minutes, store sampled every minute,
+AC power, machine idle (the launch fit read 5.2 GB free and ran a 24K slot).
+The observer reads every document before any chat (`observer_job_find`), so
+`observer_lag` stayed at 1,116 throughout and the progress is in `records`
+and `observer_pieces`: 36 findings written, 32 pieces of `ch01.md` read by
+minute six. The chat server completed 30 observer calls in the 12.6 minutes
+after the first job started (one `cancel task`, the app's exit), each the
+candidate extraction over one chunk: 706 to 878 prompt tokens (1.1 to 1.5 s
+of prompt evaluation), 384 to 737 tokens generated at 25.1 to 26.1 per
+second, **16.5 to 29.7 s a call, median 26.2 s**, 763 s of model time in
+all. One observer job is therefore about half a minute of quiet; the soak's
+12 s gaps could never hold one, and at this rate the eight chapters take
+about an hour and a half before the chat backlog is touched at all.
+
+The gate's contract settles one of the two remedies: the generative gate is
+physically exclusive (one request at the model; `generative_gate_foreground_begin`
+cancels the active background ticket), so "one job finishes while the chat
+shares the server" is not available without changing that contract. What
+remains for the author's decision, each a scheduling change measured before
+adoption:
+
+1. **Disclose and prefer chat.** Keep the yield; count consecutive
+   cancellations without progress and say so in the observer's status ("the
+   observer needs about 30 s of quiet; interrupted N times"). The limit is
+   then measured and disclosed, as MEMORY-015 asks; the starvation stays.
+2. **Do not start what cannot finish.** Start a call only when the author's
+   recent cadence (the gaps between sends) suggests room for one; this stops
+   the wasted model time (35 times 12.5 s in the soak) and not the
+   starvation.
+3. **A bounded hold on the send.** After N cancellations without progress,
+   the next send waits for the running observer call to finish, at most the
+   call's remaining time (under 30 s). Progress is guaranteed under any
+   cadence; one send in a while is slower by up to that much, which the
+   author feels, so this needs the author's agreement and the send's
+   latency measured with it on.

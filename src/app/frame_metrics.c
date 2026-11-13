@@ -23,6 +23,7 @@ void frame_metrics_record(FrameMetrics *m, double now)
     if (bin >= FRAME_METRICS_BINS) bin = FRAME_METRICS_BINS - 1;
     m->bins[bin]++;
     m->count++;
+    if (ms > FRAME_METRICS_BUDGET_MS) m->over_budget++;
     m->total_s += delta;
     if (ms > m->max_ms) m->max_ms = ms;
 }
@@ -46,7 +47,7 @@ static double quantile(const FrameMetrics *m, unsigned percent)
 
 FrameMetricsReport frame_metrics_report(const FrameMetrics *m)
 {
-    return (FrameMetricsReport){ .count = m->count, .p50_ms = quantile(m, 50),
+    return (FrameMetricsReport){ .count = m->count, .over_budget = m->over_budget, .p50_ms = quantile(m, 50),
         .p95_ms = quantile(m, 95), .p99_ms = quantile(m, 99),
         .max_ms = m->max_ms, .sample_s = m->total_s };
 }

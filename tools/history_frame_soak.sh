@@ -6,6 +6,7 @@ usage() {
     echo 'usage: tools/history_frame_soak.sh [--manuscript] [--memory] [--real] [--cycle-seconds N] [--sample-seconds N] [--seconds N | --minutes N]'
     echo '--manuscript soaks the 100K-word fixture project (tests/ui/store/17_manuscript_soak.scribo) instead of the window book.'
     echo '--memory (with --manuscript) enables memory over the whole chat first (24_manuscript_soak_memory.scribo), so every send is ingested and indexed.'
+    echo '--observer turns the observer on before the cycles (UI scripts start with it off), so observer backlog is measured too (STORE_GROWTH observer_lag).'
     echo '--real uses the pinned local model for the sends (needs make llama and make model); the default is the fake model.'
     echo '--cycle-seconds N is the measured work of one cycle without its hold, used to size the run (default 2 fake, 90 real: MEMORY-019 phase 5).'
     echo '--sample-seconds N samples the store (tools/store_growth_sample.sh: bytes, rows, outbox, observer lag, points) every N s (default 60, 0 off).'
@@ -15,12 +16,13 @@ usage() {
     echo 'Reports actual interframe/sample duration and sampled app-only RSS.'
     echo 'Fake backend unless --real; excludes service RSS from the app figure; not an input-latency SLA.'
 }
-seconds=30; manuscript=0; memory=0; llm=fake; cycle=; sample=60
+seconds=30; manuscript=0; memory=0; observer=0; llm=fake; cycle=; sample=60
 while (( $# )); do
     case "$1" in
         --help) usage; exit 0 ;;
         --manuscript) manuscript=1; shift ;;
         --memory) memory=1; shift ;;
+        --observer) observer=1; shift ;;
         --real) llm=real; shift ;;
         --cycle-seconds) [[ $# -ge 2 && $2 =~ ^[1-9][0-9]{0,3}$ ]] || { usage >&2; exit 2; }; cycle=$2; shift 2 ;;
         --sample-seconds) [[ $# -ge 2 && $2 =~ ^[0-9]{1,4}$ ]] || { usage >&2; exit 2; }; sample=$2; shift 2 ;;
@@ -78,13 +80,15 @@ else
     python3 tests/seed_chat_window.py "$temp/work/windowbook"
     soak_source=tests/ui/store/11_frame_soak.scribo
 fi
-python3 - "$seconds" "$temp/soak.scribo" "$soak_source" "$cycle" <<'PY'
+python3 - "$seconds" "$temp/soak.scribo" "$soak_source" "$cycle" "$observer" <<'PY'
 from pathlib import Path
 import math, sys
 seconds = int(sys.argv[1])
 text = Path(sys.argv[3]).read_text()
 prefix, rest = text.split('# SOAK_CYCLE_BEGIN\n')
 cycle, suffix = rest.split('# SOAK_CYCLE_END\n')
+if sys.argv[5] == '1':
+    prefix += 'observer on\n'  # scripts start with the observer off; the soak with --observer measures its backlog too
 # No script loops are needed. Keep roughly 10-second-or-shorter holds and
 # repeat the real editing/navigation/cancellation path throughout the run.
 # Measured cycle work: about 2 s for the manuscript cycle with the fake model
@@ -96,7 +100,7 @@ hold_seconds = 15
 repeats = max(1, math.ceil(seconds / (hold_seconds + cycle_work)))
 hold = max(1, (seconds // repeats - cycle_work) * 60)
 Path(sys.argv[2]).write_text(prefix + cycle.replace('wait 600', f'wait {hold}') * repeats + suffix)
-print(f'frame_soak: requested_wait_seconds={seconds} cycles={repeats} hold_frames={hold}', flush=True)
+print(f'frame_soak: requested_wait_seconds={seconds} cycles={repeats} hold_frames={hold} observer={sys.argv[5]}', flush=True)
 PY
 echo "frame_soak: disposable_database=$name"
 # Arm before create: creation can succeed even if a later grant fails.
@@ -114,7 +118,7 @@ SCRIBODO_STORE=db SCRIBODO_DB_NAME="$name" SCRIBODO_DB_PORT="$port" SCRIBODO_SOA
     SCRIBODO_SCRIPT="$temp/soak.scribo" SCRIBODO_SCRIPT_DIR="$temp/work" \
     SCRIBODO_SHOT_DIR="$temp" caffeinate -i tools/watchdog.sh "$((seconds * 3 + 180 + memory * 600))" \
     frame-soak python3 tools/frame_soak_run.py "$app"
-echo "frame_soak: process_wall_seconds=$((SECONDS - start)) requested_wait_seconds=$seconds model=$llm memory=$memory cycle_seconds=$cycle"
+echo "frame_soak: process_wall_seconds=$((SECONDS - start)) requested_wait_seconds=$seconds model=$llm memory=$memory observer=$observer cycle_seconds=$cycle"
 SCRIBODO_SOAK_ON_BATTERY=1 tools/power_source.sh # the source at the end, so a run that lost AC power says so
 if [[ -n $sampler ]]; then
     kill "$sampler" 2>/dev/null || true; wait "$sampler" 2>/dev/null || true; sampler=

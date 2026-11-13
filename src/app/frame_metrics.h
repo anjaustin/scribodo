@@ -8,15 +8,19 @@
  * bounds (at most 1/64 of a power-of-two interval above the sample), capped by
  * the exact maximum. Sub-microsecond intervals use the first bucket. */
 #define FRAME_METRICS_BINS 4096
+/* The proposed worst-frame budget (MEMORY-019): intervals above it are counted
+ * exactly, so a long run reports how often the budget was crossed, not only
+ * the single worst interval. */
+#define FRAME_METRICS_BUDGET_MS 50.0
 typedef struct {
     uint64_t bins[FRAME_METRICS_BINS];
-    uint64_t count;
+    uint64_t count, over_budget;
     double previous_s, total_s, max_ms;
     bool anchored;
 } FrameMetrics;
 
 typedef struct {
-    uint64_t count;
+    uint64_t count, over_budget; /* intervals above FRAME_METRICS_BUDGET_MS */
     double p50_ms, p95_ms, p99_ms, max_ms, sample_s;
 } FrameMetricsReport;
 
