@@ -9,6 +9,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 PLANT = ROOT / "tools/observer_plant.py"
 SCORE = ROOT / "tools/observer_score.py"
+SAMPLE = ROOT / "tools/observer_sample.py"
 CH1 = "“Her eyes were blue,” he said. The road ran north.\n\nNothing else happened that day.\n"
 CH2 = "The road ran north. Years passed.\n"
 FAULTS = {"novel": "t", "faults": [
@@ -89,6 +90,28 @@ class ScoreTests(unittest.TestCase):
         self.assertIn("FINDINGS conflict=4 entity=1 total=5", r.stdout)
         self.assertIn("conflicts not on a planted fault: 2", r.stdout)
         self.assertIn("ADDED over the unplanted run: conflict=4 entity=-1", r.stdout)
+
+
+class SampleTests(unittest.TestCase):
+    def test_fixed_seed_sample_per_type_is_repeatable_and_in_file_order(self):
+        def line(i, t):
+            return f"{t}|subj{i}|r|o|new|content{i}|doc|ch1.md|{i * 10}|5|quote{i}|\n"
+        text = "".join(line(i, "entity") for i in range(10)) + "".join(line(i, "event") for i in range(10, 12)) + "# 12 findings\n"
+        d = Path(tempfile.mkdtemp())
+        (d / "f.txt").write_text(text, encoding="utf-8")
+        a = subprocess.run([str(SAMPLE), "7", "3", str(d / "f.txt")], capture_output=True, text=True)
+        b = subprocess.run([str(SAMPLE), "7", "3", str(d / "f.txt")], capture_output=True, text=True)
+        self.assertEqual(a.returncode, 0, a.stderr)
+        self.assertEqual(a.stdout, b.stdout)
+        rows = [l.split("\t") for l in a.stdout.splitlines()[1:]]
+        self.assertEqual(a.stdout.splitlines()[0], "# seed=7 per_type=3 entity=10 event=2")
+        self.assertEqual([r[0] for r in rows], ["entity"] * 3 + ["event"] * 2)
+        idx = [int(r[1]) for r in rows[:3]]
+        self.assertEqual(idx, sorted(idx))
+        self.assertEqual(rows[0][2:5], ["ch1.md", str(idx[0] * 10), "5"])
+        self.assertEqual(rows[3][5:], ["subj10", "content10", "quote10"])
+        c = subprocess.run([str(SAMPLE), "8", "3", str(d / "f.txt")], capture_output=True, text=True)
+        self.assertNotEqual(a.stdout, c.stdout)
 
 
 if __name__ == "__main__":
