@@ -144,4 +144,6 @@ On this tree (`build/observer/realflag-gates/gates-*.log`, `gates-exit.txt`):
 48,624, 0; `make dbtest` 18,000, 0; every exit status 0. Hosted: CI and
 Trusted acceptance passed on `7622319` (runs 43481524642 and 43481524637).
 Step 2 (Python tools and their test, no C change): `make test` 95,994 C
-checks and 189 Python tests, 0 failures, exit 0 (`build/observer/faults-gates/`).
+checks and 189 Python tests, 0 failures, exit 0 (`build/observer/faults-gates/`);
+hosted: CI and Trusted acceptance passed on `9bcfe0b` (runs 43482838534 and
+43482838639).
