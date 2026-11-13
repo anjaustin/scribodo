@@ -366,7 +366,8 @@ samples measures the observer's backlog for the first time. Gates on this
 tree (`build/gap003/frames/gates-*.log`, `gates-exit.txt`): `make test`
 95,994 C checks and 184 Python tests, 0 failures; `make analyze` 0 warnings
 across 87 source files; `make sanitize` 95,994, 0; `make tsan` 48,624, 0;
-`make dbtest` 18,000, 0; every exit status 0.
+`make dbtest` 18,000, 0; every exit status 0. Hosted: CI and Trusted
+acceptance passed on `d0e14f6` (runs 43473198174 and 43473198260).
 
 Two soaks on this build, chained after the gates (`build/gap003/frames/`,
 AC power throughout, machine otherwise idle, no `llama-server` alive at the
