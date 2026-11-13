@@ -99,10 +99,49 @@ does any change to the observer's prompts or code get measured against it.
 Nothing in this cycle changes the observer's behaviour; the only product
 change so far is a measurement flag on a diagnostic tool.
 
+## Step 2, done: the faults, planted and scored by tools
+
+The lists are committed before any scored run: `tests/fixtures/observer_faults/mars.json`
+and `pp.json`, ten faults each. Each names a file, an anchor sentence that
+occurs exactly once in it, the sentence inserted after the anchor, the canon
+statement of the original fact (what the replay seeds with `--canon`), and
+where the text states that fact. By type: *Mars* has 2 appearance (the
+green Martians' blood-red iris, Dejah Thoris's coal-black hair), 2 kinship
+(Dejah Thoris's parentage, Sola's), 3 place (Powell of Richmond, Kantos Kan
+of Helium, the Princess of Helium), 2 timeline (March 3, 1866; "ten years
+later") and 1 event-order (thirty days to Helium); *Pride and Prejudice* has
+1 appearance (Charlotte's age), 5 kinship (Lydia the youngest, Collins the
+cousin, five daughters, Gardiner the brother, Lady Catherine the aunt), 1
+place (Pemberley in Derbyshire), 2 timeline (Bingley's income, the Bennets'
+twenty-three years) and 1 event-order (Mrs. Gardiner's Derbyshire years).
+Two pairs share an anchor on purpose (M3 and M4, M6 and M10, P4 and P8, P6
+and P9, P7 and P10), so two faults sit in one chunk and the extraction's
+"at most 8 findings" cap is exercised.
+
+`tools/observer_plant.py` writes the planted copy and `faults-applied.json`
+with each insertion's byte offset and length (the observer's source spans are
+bytes; the novels have three-byte quotation marks before most anchors);
+`tools/observer_score.py` reads the replay's lines and counts a fault found
+when a `conflict` finding's span overlaps the inserted sentence, one finding
+per fault, and reports recall by fault type beside the finding counts by type
+and the counts added over the unplanted copy. Both planted cleanly against
+the two novels (10 faults in 8 and 7 files; 10 canon statements each).
+`test_observer_faults` pins the offsets, the shared anchor, the refusal on an
+ambiguous anchor and the scorer.
+
+The scored runs, each on an idle machine on AC power with no other
+`llama-server` alive: for each novel, the unplanted copy and the planted copy
+with its canon statements, through `observer_replay --real`; about one hour
+a copy for *Mars* and two for *Pride and Prejudice* at 22 s a job. Recall by
+type comes from the planted copies; the precision audit's fixed-seed sample
+comes from the unplanted ones.
+
 ## Gates
 
 On this tree (`build/observer/realflag-gates/gates-*.log`, `gates-exit.txt`):
 `make test` 95,994 C checks and 186 Python tests, 0 failures; `make analyze`
 0 warnings across 87 source files; `make sanitize` 95,994, 0; `make tsan`
-48,624, 0; `make dbtest` 18,000, 0; every exit status 0. Hosted verdicts are
-appended when the runs finish.
+48,624, 0; `make dbtest` 18,000, 0; every exit status 0. Hosted: CI and
+Trusted acceptance passed on `7622319` (runs 43481524642 and 43481524637).
+Step 2 (Python tools and their test, no C change): `make test` 95,994 C
+checks and 189 Python tests, 0 failures, exit 0 (`build/observer/faults-gates/`).
