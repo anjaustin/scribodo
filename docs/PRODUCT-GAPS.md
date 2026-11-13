@@ -60,7 +60,13 @@ measurement that closes it. Items run one at a time unless marked otherwise.
    The matrix is `GAP-004-interruption-matrix.md`.
 5. **GAP-003 budgets and soak.** Workload sizes and budgets agreed, then the
    soak, restart and repeatability runs on the M4; the single MEMORY-019
-   baseline becomes a series.
+   baseline becomes a series. *Started 2026-11-13* (MEMORY-019, the series
+   section): the baseline run five times with the fake model and three with
+   the real one, every phase but the send repeatable to a few percent, the
+   send's wall shown to be the reply's length (time to first token and
+   tokens per second repeatable); budgets proposed from the series, awaiting
+   the author. Soak with memory enabled and store sampling, restart and
+   resume: in progress.
 6. **GAP-001 beyond selection.** Observer precision and recall by finding type
    on both novels; author-rated usefulness on complete sessions.
 7. **GAP-002 distribution.** Signed app, guided model and service setup,

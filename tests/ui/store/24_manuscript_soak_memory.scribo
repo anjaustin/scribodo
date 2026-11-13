@@ -1,0 +1,43 @@
+# Manuscript-scale soak cycle with memory enabled (GAP-003 sustained use). Seed
+# with tests/seed_manuscript.py; tools/history_frame_soak.sh --manuscript --memory
+# repeats the cycle for the requested duration and samples app and service memory
+# and the store's growth and backlog. Memory covers the 1,116-turn chat before the
+# first cycle, so every send in the cycle is ingested and indexed behind the UI.
+wait 5
+dialog "$DIR/manuscript"
+click_element WelcomeOpen
+wait_status "now kept in the project store" 1800
+click_element ChatItem0
+wait_history
+expect chat_count 64
+expect memory_enabled no
+right_click_element ChatItem0
+click_element MenuItem2
+# The fixture's turns are sequences 0 to 1115; the baseline waits for 1116 only because a send precedes its enable.
+wait_memory 1115 36000
+expect memory_enabled yes
+measure_frames start
+# SOAK_CYCLE_BEGIN
+click_element ChatOlder
+wait_history
+click_element ChatOlder
+wait_history
+click_element ChatLatest
+wait_history
+click_element DocItem0
+key DOWN cmd
+type " soak"
+key S cmd
+expect dirty no
+click_element ChatItem0
+wait_history
+click_element ChatInput
+type "soak question about the amber key"
+key ENTER
+wait_chat 7200
+wait 600
+# SOAK_CYCLE_END
+expect chat_count 64
+expect chat_cache_max 67108864
+expect memory_enabled yes
+measure_frames stop

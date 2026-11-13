@@ -1,0 +1,36 @@
+# Resume after an unclean exit (GAP-003 restart). tools/manuscript_restart.sh
+# kills the app with SIGKILL during the memory soak cycle, then runs this
+# script on the same database and project folder: the project opens from the
+# store, the chat and memory are as they were, recall answers, a send works.
+# Memory settlement is checked by the runner with tools/store_growth_sample.sh
+# (the cursor at the last sequence, the outbox empty), not by a fixed number.
+wait 5
+measure_frames start
+dialog "$DIR/manuscript"
+click_element WelcomeOpen
+expect explorer_has "Manuscript chat"
+click_element ChatItem0
+wait_history
+measure_frames stop
+expect chat_count 64
+expect chat_cache_max 67108864
+expect memory_enabled yes
+wait_ready 36000
+measure_frames start
+click_element RecallToggle
+click_element RecallInput
+type "amber key"
+key ENTER
+wait_recall 3600
+measure_frames stop
+expect recall "idle"
+expect recall "memory_on=1"
+click_element RecallToggle
+measure_frames start
+click_element ChatInput
+type "resume question about the amber key"
+key ENTER
+wait_chat 7200
+measure_frames stop
+expect chat_busy no
+expect memory_enabled yes

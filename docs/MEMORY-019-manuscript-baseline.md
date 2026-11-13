@@ -126,6 +126,109 @@ save, and a fake-model send; 605 checks passed; 116,341 frames at p50
 Qdrant 471 MB peak, 464 MB final. Not hours yet, and still the fake model
 for the sends; the first sustained measurement at this scale shows no drift.
 
+## The baseline as a series (2026-11-13)
+
+GAP-003's fifth working item asks for budgets and repeatability, and a budget
+has to be read against how far repeated runs sit apart. `tools/manuscript_series.sh`
+runs the baseline N times, each on a fresh disposable database and project,
+and `tools/manuscript_series.py` tabulates the spread; the tree is `0d95ad2`,
+the machine idle, the hosted runner quiet. Columns are minimum / median /
+maximum over the runs (`build/gap003/series-fake-5/series.md`,
+`series-real-3/series.md`, every `run-N.log` kept).
+
+**Fake model, five runs, 28 of 28 checks each:**
+
+| Phase | Wall s | p99 ms | Worst frame ms |
+|---|---:|---:|---:|
+| import (background) | 0.92 / 0.93 / 0.93 | 18.0 / 18.3 / 18.3 | 18.0 / 18.3 / 18.3 |
+| open chat | 0.10 / 0.10 / 0.11 | 18.2 / 18.2 / 18.3 | 18.2 / 18.2 / 18.3 |
+| page five times and back | 0.62 / 0.63 / 0.63 | 18.3 / 18.3 / 20.8 | 18.3 / 18.3 / 20.8 |
+| chapter edit and save | 0.21 / 0.22 / 0.23 | 39.0 / 43.3 / 48.0 | 39.0 / 43.3 / 48.0 |
+| send (fake reply) | 0.97 / 0.99 / 1.00 | 39.9 / 41.3 / 45.3 | 39.9 / 41.3 / 45.3 |
+| enable memory, 1,116 turns, fake tokenizer | 53.97 / 54.02 / 54.26 | 18.3 / 18.3 / 18.5 | 18.3 / 18.3 / 20.1 |
+| recall | 0.28 / 0.28 / 0.30 | 19.3 / 19.4 / 19.6 | 19.3 / 19.4 / 19.6 |
+
+App peak RSS 172 / 173 / 173 MB; process wall 58 / 59 / 60 s.
+
+**Real model, three runs, 28 of 28 checks each** (pinned LFM3 BF16 and the
+Qwen3 embedder, started by the app's supervisor):
+
+| Phase | Wall s | p99 ms | Worst frame ms |
+|---|---:|---:|---:|
+| import (background) | 1.00 / 1.00 / 1.07 | 18.1 / 18.1 / 23.4 | 18.1 / 18.1 / 23.4 |
+| open chat | 0.10 / 0.11 / 0.11 | 18.1 / 18.1 / 18.2 | 18.1 / 18.1 / 18.2 |
+| page five times and back | 0.62 / 0.63 / 0.64 | 18.2 / 18.2 / 18.3 | 18.2 / 18.2 / 18.3 |
+| chapter edit and save | 0.20 / 0.22 / 0.22 | 30.4 / 44.8 / 47.8 | 30.4 / 44.8 / 47.8 |
+| send (real reply, streamed) | **5.67 / 30.48 / 87.50** | 25.5 / 32.5 / 35.5 | 36.4 / 38.5 / 41.4 |
+| enable memory, 1,116 turns, real tokenizer | 118.32 / 118.85 / 119.13 | 18.3 / 18.3 / 18.5 | 22.7 / 24.8 / 26.1 |
+| recall | 0.30 / 0.30 / 0.30 | 18.3 / 18.3 / 18.8 | 18.3 / 18.3 / 18.8 |
+
+App peak RSS 106 / 107 / 138 MB; process wall 128 / 154 / 212 s.
+
+What the series says:
+
+1. **Every phase but the send is repeatable to a few percent.** Across the
+   eight runs the import, chat open, paging, save, memory enable and recall
+   walls sit within 3% of their medians, and the frame figures within a
+   frame interval, except the save and the fake send, whose worst frame moves
+   between 39 and 48 ms (ten and fifty-five frames respectively; one slow
+   frame is the whole p99). These are the phases a budget can be stated for
+   directly.
+2. **The send's wall is the reply's length, nothing else.** The model
+   server's log for the three real sends: prompt evaluation 2.29, 2.45 and
+   2.48 s for 1,854, 1,975 and 1,975 tokens (time to first token, within 0.2 s
+   of each other), then 41.5, 41.1 and 41.1 ms per generated token (24.1 to
+   24.4 tokens per second), for 2,048, 676 and 71 tokens. The first reply
+   ran to the request's cap of 2,048 tokens (the chat's sampling profile,
+   `max_reply` in chat.c; the recorded requests carry `max_tokens` 2048),
+   which is why 87.5 s is the maximum a send can take at this prompt size on
+   this Mac. A send budget is therefore
+   a budget on time to first token and on tokens per second, with the wall
+   bounded by the cap; the UI stays under 42 ms worst frame while a reply
+   streams for 85 s.
+3. **Memory enable with the real tokenizer costs 0.106 s per turn** (118.3 to
+   119.1 s for 1,116), 2.2 times the fake-tokenizer path (54 s), both run
+   behind the UI at the frame floor. A real 100K-word chat archive is two
+   minutes of background work on first enablement, as MEMORY-017 and the
+   first record said.
+4. **Service memory, read properly.** `docker stats` reports the container's
+   cgroup usage, which includes the page cache. At the end of the series
+   Qdrant's cgroup held 890 MB, of which 379 MB anonymous and 469 MB file
+   cache (the process's RSS 729 MB: 362 MB anonymous, 368 MB file-mapped
+   segments); MariaDB's 491 MB was 408 MB anonymous and 64 MB cache. The
+   containers' limits are 1 GiB and 768 MiB. The 2026-11-08 figures (463 and
+   514 MB) were the same measure on a younger container; the growth since is
+   cache, reclaimable, not a leak claim either way. The soak below samples
+   the store's own size and backlog instead of inferring them from RSS.
+
+### Proposed budgets (2026-11-13, awaiting the author's agreement)
+
+Stated at about twice the series' median where the series is tight, and as
+the measured quantity where the wall is not the right unit. Each is a budget
+on this Mac for the 100K-word fixture, to be read against the series above,
+not an SLA.
+
+| Quantity | Measured (series) | Proposed budget |
+|---|---|---|
+| Worst interframe gap, any phase | 48.0 ms (save), 45.3 ms (fake send), 41.4 ms (real send) | 50 ms (three frame intervals) |
+| p99 interframe gap outside a streaming send and the save | 19.6 ms | 25 ms |
+| Open the 1,116-turn chat | 0.10 to 0.11 s | 0.25 s |
+| Page older five times and back | 0.62 to 0.64 s | 1.0 s |
+| Chapter edit, save, revision recorded | 0.20 to 0.23 s | 0.5 s |
+| Recall over the archive | 0.28 to 0.30 s | 1.0 s |
+| Import on first open (background) | 0.92 to 1.07 s for 1,116 messages | 2 s |
+| Memory enable, real tokenizer | 0.106 s per turn | 0.2 s per turn (223 s for the fixture) |
+| Send: time to first token at about 2,000 prompt tokens | 2.29 to 2.48 s | 4 s |
+| Send: generation rate | 24.1 to 24.4 tokens per second | at least 20 tokens per second |
+| Send: wall | 5.7 to 87.5 s, reply-length bound | 4 s + reply tokens / 20 (106 s at the cap) |
+| App peak RSS | 106 to 173 MB | 256 MB |
+| MariaDB and Qdrant anonymous memory | 408 and 379 MB | 512 MB each, under the containers' 768 MiB and 1 GiB |
+
+The budgets that bind today are the worst frame (48 of 50 ms on the save)
+and the Qdrant anonymous memory if a soak grows it. The author's agreement
+turns the column into the acceptance line; until then it is a proposal read
+off the series.
+
 ## What is next in S4
 
 - An hours-long soak (the 34-minute run above is the first point), and a

@@ -348,6 +348,34 @@ modify a database while any Scribodo process is running.
   eight chapter documents), opens it in the real app with the fake model, and
   reports one `FRAME_METRICS` line per phase (store import, chat open, paging,
   document edit and save, send) plus sampled RSS (`tests/ui/store/16_manuscript_baseline.scribo`).
+  `tools/manuscript_series.sh [--runs N] [--out DIR] [-- baseline arguments]`
+  runs that baseline N times, each on a fresh disposable database and project,
+  keeps every log and tabulates the spread per phase (minimum, median, maximum
+  of wall, p99 and worst frame) with `tools/manuscript_series.py`, which
+  `test_manuscript_series` (in `make test`) pins: a run missing a phase or
+  failing a check is named and left out of the spread. This is the GAP-003
+  repeatability measurement (MEMORY-019, the series section).
+- `tools/history_frame_soak.sh --manuscript [--memory] [--real] [--minutes N]`
+  is the sustained-use run: the manuscript cycle (paging, a chapter edit and
+  save, a send) repeated for the requested time with the app's RSS and the
+  service containers sampled. `--memory` enables memory over the whole chat
+  first (`tests/ui/store/24_manuscript_soak_memory.scribo`) so every send is
+  ingested and indexed behind the UI; `--real` sends to the pinned model and
+  sizes the run with the measured send (`--cycle-seconds`, default 90).
+  Throughout, `tools/store_growth_sample.sh` prints one `STORE_GROWTH` line per
+  minute (`--sample-seconds`): the database's data and index bytes, its
+  message, unit, record and revision counts, the outbox's pending deliveries,
+  the observer's lag behind each conversation and the semantic collections'
+  points, so disk growth and backlog are measured over the run rather than
+  inferred from RSS. Read-only against a `scribodo_test_` database.
+- `tools/manuscript_restart.sh [--cycles N] [--real]` is the restart and resume
+  run: the memory soak cycle on a disposable database until N cycles have
+  landed, the app killed with SIGKILL mid-cycle, the store sampled, and the
+  app started again on the same database and folder under
+  `tests/ui/store/25_manuscript_resume.scribo` (open from the store, recall, a
+  send, each bracketed by `measure_frames`); the runner then waits for memory
+  to settle on its own (cursor at the last sequence, outbox empty) and checks
+  the message count is the kill's plus the resume's two.
 - `python3 tools/memory_native_eval.py FILE` now accepts the exported episodes
   so the model's use of admitted sources is measured on the same fixture;
   `tools/memory_use_score.py EVENTS ANSWER_KEY` gives a coarse alias/openness
