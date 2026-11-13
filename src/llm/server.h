@@ -58,6 +58,14 @@ void llm_server_rerank_config(LlmServerConfig *cfg, const char *app_dir);
 LlmServer *llm_server_create(const LlmServerConfig *cfg);
 void llm_server_destroy(LlmServer *s); /* stops it first */
 
+/* Reap the server a dead window left behind (a crash, a force-quit) before
+ * anything reads the machine's free memory: it holds its gigabytes until it
+ * is killed, and the launch-time context fit would count them as taken
+ * (GAP-003 restart, 2026-11-13: the relaunch ran an 8K slot where a clean
+ * launch ran 32K). Takes the instance lock without blocking, so a live
+ * window's server is left alone. True if a process was killed. */
+bool llm_server_reap_orphan(const LlmServerConfig *cfg);
+
 void llm_server_start(LlmServer *s);
 void llm_server_stop(LlmServer *s);
 

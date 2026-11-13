@@ -285,12 +285,13 @@ of data and index).
 
 ## What stays open after this cycle
 
-- **The launch-time memory fit counts the orphan.** After a crash the
-  relaunch runs with the smallest context (8K here) until the author applies
-  the model settings again, because the fit runs before the orphan is
-  reaped. The fix is to reap before the fit (a public reap over the pid file
-  under a non-blocking lock attempt), pinned, and measured with the restart
-  run again: the resumed app's `n_ctx_slot` is the number. The next step.
+- **The launch-time fit reads a free-memory figure that varies run to run.**
+  With no orphan anywhere, the first app of `restart-real-2c` (launched
+  minutes after the gates finished) read 2.6 GB free and ran an 8K slot,
+  where the soak's clean launch an hour earlier ran 32K; the context an
+  author gets depends on what `sysmem_available` sees at that moment. What
+  it counts (free, inactive, purgeable, the containers' cache) is the next
+  measurement before the fit is tuned.
 - **A time-to-first-token budget for memory on**, per prompt size or as a cap
   on the layout's prompt tokens: the author's decision, with the soak's 35
   sends as the evidence.
@@ -312,6 +313,34 @@ of data and index).
   here. Recorded in TECHNICAL-DEBT.
 - **Housekeeping** (the leftover test databases and collection) is unchanged.
 
+## The next step, done: reap before the fit
+
+`llm_server_reap_orphan(cfg)` (`src/llm/server.c`, public) takes the
+instance lock without blocking, reaps the pid file's process if its command
+line names `llama-server` and this run directory's socket, removes the pid
+file and releases the lock; a live window's lock attempt fails and its
+server is left alone. `main.c` calls it for the chat, embedding and (when
+the pipeline is on) reranker configurations before `memfit_context` reads
+`sysmem_available()`, and says so on stderr. Pin: `test_llm: reap_orphan`
+(no pid file: false; a live owner: false and the server untouched; a dead
+owner: true, the server gone within the reaper's wait, the pid file removed;
+then false again). Gates on this tree (`build/gap003/reap/gates-*.log`):
+`make test` 95,994 C checks and 183 Python tests, 0 failures; `make analyze`
+0 warnings across 87 source files; `make sanitize` 95,994, 0; `make tsan`
+48,624, 0; `make dbtest` 18,000, 0; every exit status 0.
+
+Measured with the restart run again (`build/gap003/restart-real-2c`, real
+model, two cycles, idle machine on AC power): killed at 1,121 messages, the
+relaunch printed "reaped the chat server of an earlier window" and "reaped
+the embedding server of an earlier window", printed no low-memory line, and
+its server started with `n_ctx_slot = 32768` where `restart-real-2b`'s
+resumed server had `n_ctx_slot = 8192` after "0.2 GB is free for it". The
+resume then passed 11 of 11 checks in a 10 s wall (open 0.18 s, recall
+0.28 s, a send of 8.1 s: 3,089 prompt tokens, 3.9 s to first token, 104
+tokens at 26.6 per second), memory settled, and the record held 1,121
+messages before and after the kill and 1,123 after the resume. Hosted
+verdicts are appended when the runs finish.
+
 ## Gates and verdicts for the fix
 
 On the fixed tree (`build/gap003/orphan/gates-*.log`, `gates-exit.txt`):
@@ -320,4 +349,5 @@ and four Python tests more than `0534adc`: `orphan_after_owner_kill` and
 `test_power_source`); `make analyze` 0 warnings across 87 source files;
 `make sanitize` 95,983, 0, no sanitizer diagnostic; `make tsan` 48,613, 0, no
 diagnostic (the new test's spawned first window runs under TSan too);
-`make dbtest` 18,000, 0. Every exit status 0. Hosted verdicts are appended when the runs finish.
+`make dbtest` 18,000, 0. Every exit status 0. Hosted: CI and Trusted acceptance passed on `e7511b9`
+(runs 43453865695 and 43453865553).

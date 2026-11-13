@@ -393,6 +393,12 @@ modify a database while any Scribodo process is running.
   server is spawned with `POSIX_SPAWN_CLOEXEC_DEFAULT`; before, the server
   inherited the lock and every later window reported "Another Scribodo
   window"). `instance_lock` keeps the live second window refusing.
+  `test_llm: reap_orphan` pins `llm_server_reap_orphan`, which the app calls
+  before its launch-time memory fit: nothing to reap returns false, a live
+  window's server is left alone (the lock is taken without blocking), a dead
+  window's server is killed and its pid file removed. Without it the relaunch
+  after a crash counted the orphan's memory as taken and ran the smallest
+  context.
 - `python3 tools/memory_native_eval.py FILE` now accepts the exported episodes
   so the model's use of admitted sources is measured on the same fixture;
   `tools/memory_use_score.py EVENTS ANSWER_KEY` gives a coarse alias/openness

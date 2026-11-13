@@ -307,10 +307,13 @@ static void release_instance_lock(LlmServer *s)
     }
 }
 
-static void kill_orphan(LlmServer *s)
+/* The server a dead window left behind, named by its pid file: terminated
+ * and the pid file removed. True if a process was killed. */
+static bool reap_pidfile(const char *pidfile, const char *sock)
 {
-    FILE *f = fopen(s->pidfile, "r");
-    if (!f) return;
+    FILE *f = fopen(pidfile, "r");
+    if (!f) return false;
+    bool killed = false;
     int pid = 0;
     if (fscanf(f, "%d", &pid) == 1 && pid > 1 && kill(pid, 0) == 0) {
         /* Only kill it if it is *our* llama-server: pids get reused, so the
@@ -322,14 +325,40 @@ static void kill_orphan(LlmServer *s)
             if (!fgets(out, sizeof(out), p)) out[0] = '\0';
             pclose(p);
         }
-        if (strstr(out, "llama-server") && strstr(out, s->sock)) {
+        if (strstr(out, "llama-server") && strstr(out, sock)) {
             kill(pid, SIGTERM);
             for (int i = 0; i < 50 && kill(pid, 0) == 0; i++) usleep(100000);
             if (kill(pid, 0) == 0) kill(pid, SIGKILL);
+            for (int i = 0; i < 50 && kill(pid, 0) == 0; i++) usleep(100000);
+            killed = true;
         }
     }
     fclose(f);
-    unlink(s->pidfile);
+    unlink(pidfile);
+    return killed;
+}
+
+static void kill_orphan(LlmServer *s)
+{
+    reap_pidfile(s->pidfile, s->sock);
+}
+
+bool llm_server_reap_orphan(const LlmServerConfig *cfg)
+{
+    char lockfile[600], pidfile[600], sock[600];
+    snprintf(lockfile, sizeof(lockfile), "%s/server.lock", cfg->run_dir);
+    snprintf(pidfile, sizeof(pidfile), "%s/llama-server.pid", cfg->run_dir);
+    snprintf(sock, sizeof(sock), "%s/llama.sock", cfg->run_dir);
+    int fd = open(lockfile, O_RDWR | O_CLOEXEC); /* no lock file: no window ever ran here */
+    if (fd < 0) return false;
+    if (flock(fd, LOCK_EX | LOCK_NB) != 0) { /* a live window owns the server */
+        close(fd);
+        return false;
+    }
+    bool reaped = reap_pidfile(pidfile, sock);
+    flock(fd, LOCK_UN);
+    close(fd);
+    return reaped;
 }
 
 static bool write_key(LlmServer *s)

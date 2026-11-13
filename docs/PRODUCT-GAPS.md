@@ -72,10 +72,12 @@ measurement that closes it. Items run one at a time unless marked otherwise.
    relaunch got the model (fixed, pinned, MEMORY-019 soak section); on the
    fixed build the real-model restart passes and a real-model soak with
    memory on is steady, with the first token 3.7 to 20.5 s away at 3,138 to
-   13,179 prompt tokens. Still open: the relaunch after a crash sizes its
-   context before the orphan is reaped (next step), a count of frames above
-   the budget, a time-to-first-token row for memory on, observer backlog
-   with the observer on, and the author's agreement.
+   13,179 prompt tokens; the relaunch after a crash now reaps the dead
+   window's servers before sizing its context (measured: a 32K slot where
+   it had run 8K). Still open: a count of frames above the budget, a
+   time-to-first-token row for memory on, what the launch-time fit counts as
+   free memory, observer backlog with the observer on, and the author's
+   agreement.
 6. **GAP-001 beyond selection.** Observer precision and recall by finding type
    on both novels; author-rated usefulness on complete sessions.
 7. **GAP-002 distribution.** Signed app, guided model and service setup,

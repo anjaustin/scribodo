@@ -283,8 +283,11 @@ Both real-model runs again on the fixed build, idle machine, AC power
   memory on its own; 1,120 messages before and after the kill, 1,122 after
   the resume. One thing the relaunch does worse than a clean launch: it
   sized its context with the orphan's 4.2 GB still counted as taken and ran
-  an 8K slot where a clean launch ran 32K; the fit runs before the orphan is
-  reaped. The next step.
+  an 8K slot where a clean launch ran 32K, because the fit ran before the
+  orphan was reaped. Fixed the same day: the app reaps a dead window's
+  servers (`llm_server_reap_orphan`, pinned by `test_llm: reap_orphan`)
+  before the fit; the restart run again showed the relaunch reaping both
+  servers, no low-memory line, and a 32K slot.
 - **A real-model soak with memory on: steady, and the prompt is the
   context.** 35 cycles, 184 of 184 checks, 121,725 frames at p50 18.0, p95
   30.25, p99 37.0 ms and a worst of 87.8 ms with the streaming sends
@@ -302,9 +305,10 @@ Both real-model runs again on the fixed build, idle machine, AC power
 
 - The author's agreement on the budgets, with the worst-frame row restated
   once `FRAME_METRICS` counts frames above a threshold.
-- Reap an orphaned server before the launch-time memory fit, so a relaunch
-  after a crash gets the author's context, not the smallest; measured with
-  the restart run (the resumed app's slot context is the number).
+- What `sysmem_available` counts: with no orphan anywhere, one clean launch
+  read 2.6 GB free and ran an 8K slot while another, an hour earlier, ran
+  32K; the context an author gets should not depend on the moment of launch
+  more than the machine's real state requires.
 - A time-to-first-token row for memory on (the soak's 35 sends: 3.7 to 20.5 s
   at 3,138 to 13,179 prompt tokens), the author's decision on its form.
 - Observer backlog under a soak with `observer on`; no run so far has it on.

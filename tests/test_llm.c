@@ -2371,6 +2371,47 @@ static void test_orphan_after_owner_kill(void)
     if (!gone) kill(orphan, SIGKILL);
 }
 
+static void test_reap_orphan(void)
+{
+    /* llm_server_reap_orphan, called by the app before its launch-time memory
+     * fit: nothing to reap returns false, a live window's server is left
+     * alone, a dead window's server is killed and its pid file removed. */
+    LlmServerConfig cfg;
+    orphan_config(&cfg, g_dir);
+    FILE *script = fopen(cfg.server_bin, "wb");
+    CHECK(script != NULL);
+    if (!script) return;
+    fputs("#!/bin/sh\nwhile :; do sleep 1; done\n", script);
+    fclose(script);
+    chmod(cfg.server_bin, 0700);
+    FILE *f = fopen(cfg.model_path, "w");
+    if (f) { fputs("x", f); fclose(f); }
+    char pidfile[600];
+    snprintf(pidfile, sizeof(pidfile), "%s/llama-server.pid", cfg.run_dir);
+    unlink(pidfile);
+    CHECK(!llm_server_reap_orphan(&cfg)); /* no pid file: nothing to reap */
+    char *argv[] = { g_self, "--orphan-owner", g_dir, NULL };
+    pid_t owner = 0;
+    fflush(stdout);
+    CHECK(posix_spawn(&owner, g_self, NULL, NULL, argv, environ) == 0);
+    int orphan = 0;
+    for (int i = 0; i < 1000 && (orphan = read_pidfile(pidfile)) <= 1; i++) usleep(20000);
+    CHECK(orphan > 1 && kill(orphan, 0) == 0);
+    CHECK(!llm_server_reap_orphan(&cfg)); /* the owner is alive and holds the lock */
+    usleep(100000);
+    CHECK(kill(orphan, 0) == 0 && read_pidfile(pidfile) == orphan);
+    kill(owner, SIGKILL);
+    waitpid(owner, NULL, 0);
+    CHECK(kill(orphan, 0) == 0);
+    CHECK(llm_server_reap_orphan(&cfg)); /* the owner is dead: reaped */
+    bool gone = false;
+    for (int i = 0; i < 200 && !(gone = kill(orphan, 0) != 0); i++) usleep(50000);
+    CHECK(gone);
+    CHECK(access(pidfile, F_OK) != 0);
+    CHECK(!llm_server_reap_orphan(&cfg)); /* and nothing is left */
+    if (!gone) kill(orphan, SIGKILL);
+}
+
 /* ---- live: the real llama-server ------------------------------------------- */
 
 static void test_live(void)
@@ -2583,6 +2624,7 @@ int main(int argc, char **argv)
         { "torn_line_recovery", test_torn_line_recovery },
         { "instance_lock", test_instance_lock },
         { "orphan_after_owner_kill", test_orphan_after_owner_kill },
+        { "reap_orphan", test_reap_orphan },
     };
     TestCase livet[] = { { "live_llama_server", test_live } };
     int rc = live ? run_tests(livet, 1) : run_tests(unit, sizeof(unit) / sizeof(unit[0]));

@@ -3751,6 +3751,12 @@ int main(int argc, char **argv)
         const ModelSettingInfo *ci = model_setting_info(7);
         long long others = llm_server_mem_need(&ecfg, ecfg.ctx_total) +
                            (app.answer_pipeline ? llm_server_mem_need(&rcfg, rcfg.ctx_total) : 0);
+        /* Servers an earlier window left behind hold their memory until they
+         * are reaped; reap before the fit reads what is free, or a relaunch
+         * after a crash runs the smallest context (GAP-003 restart). */
+        if (llm_server_reap_orphan(&cfg)) fprintf(stderr, "scribodo: reaped the chat server of an earlier window\n");
+        if (llm_server_reap_orphan(&ecfg)) fprintf(stderr, "scribodo: reaped the embedding server of an earlier window\n");
+        if (app.answer_pipeline && llm_server_reap_orphan(&rcfg)) fprintf(stderr, "scribodo: reaped the reranker of an earlier window\n");
         MemFit fit = memfit_context(sysmem_available(), others, &cfg, app.model.context, (int)ci->min, (int)ci->step);
         memfit_message(&fit, app.model.context, app.mem_msg, sizeof(app.mem_msg));
         if (app.mem_msg[0]) fprintf(stderr, "scribodo: %s\n", app.mem_msg);
