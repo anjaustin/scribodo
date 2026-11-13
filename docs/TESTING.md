@@ -420,6 +420,16 @@ modify a database while any Scribodo process is running.
   screen per category, presentation and layout. The frozen review rubric
   remains the standard for any quality claim. Runs are retained under
   `build/memory-reach/runs/` and `build/mn-*`.
+- `tools/sysmem_sample.py [--minutes N] [--interval S]` prints one `SYSMEM`
+  line per sample: `avail_gb`, the launch-time memory fit's figure
+  (`sysmem_available`: total less wired, compressor and unpurgeable anonymous
+  pages) recomputed from `vm_stat`, its parts, and the resident sizes of the
+  Docker virtual machine, `llama-server` and the app. Run it beside a soak to
+  read a smaller context at launch against who grew (2026-11-13: the Docker
+  VM's resident memory rose from 1.6 to 4.4 GB over two acceptance runs and
+  the fit's figure fell from 7.5 to 4.6 GB with no model loaded).
+  `test_sysmem_sample` (in `make test`) pins the arithmetic and the
+  per-process sums from saved `vm_stat` and `ps` texts (`--from`, `--ps`).
 
 ### Persistence safety regressions
 

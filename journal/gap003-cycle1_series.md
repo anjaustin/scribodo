@@ -463,3 +463,39 @@ adoption:
    cadence; one send in a while is slower by up to that much, which the
    author feels, so this needs the author's agreement and the send's
    latency measured with it on.
+
+## What the launch-time fit counts, measured
+
+`tools/sysmem_sample.py` (new, pinned by `test_sysmem_sample`) recomputes
+`sysmem_available` from `vm_stat` once a minute beside the resident sizes of
+the Docker virtual machine, `llama-server` and the app
+(`build/gap003/frames/sysmem-samples.log`). Sampled from 17:30 UTC, idle,
+through the hosted acceptance runs for `c715e55` and `58df17d` on this
+machine (`make all test dbtest crashtest` and the UI tests against the CI
+containers), then three idle minutes:
+
+| Time (UTC) | Available | Anonymous | Compressor | Docker VM RSS | llama-server | App |
+|---|---|---|---|---|---|---|
+| 17:30 (idle) | 7.54 GB | 5.19 GB | 2.21 GB | 1.59 GB | 0 | 0 |
+| 17:38 (dbtest running) | 5.90 | 7.35 | 1.81 | 3.58 | 0 | 0 |
+| 17:44 (second run) | 5.09 | 8.29 | 1.66 | 4.19 | 0 | 0 |
+| 17:54 (idle again) | 4.59 | 8.58 | 1.51 | 4.43 | 0 | 0 |
+
+The fit's figure fell by 3.0 GB with no model loaded and the app at most
+0.18 GB, and the Docker virtual machine's resident memory rose by 2.8 GB over
+the same minutes and had not come back after the runner went idle. The VM
+(`docker info`: 8.3 GB of the machine's 17.2, the default, no setting pinned)
+holds the containers' working set and the Linux page cache for their files
+as anonymous memory on the host; MariaDB's and Qdrant's own limits (768 MiB
+and 1 GiB each) bound the containers, not the VM. So a launch minutes after
+heavy store work (a soak, an import, a `make dbtest`) reads less room than
+the same launch an hour later, and gets a smaller context: this is what
+`restart-real-2c`'s first app (2.6 GB free after the gates), the observer
+soak's app (2.5 GB after the fake soak) and the drain's app (5.2 GB, 24K)
+each read. The fit reads the machine correctly; the machine's free memory is
+what varies, and the Docker VM is the part that varies most. Whether the VM
+returns the memory over a longer idle is in the same log's later samples
+(recorded in the follow-up). The remedies are the author's: pin the VM's
+memory lower in Docker Desktop (the containers need under 2 GB), or accept
+the smaller context after store work, with the fit's low-memory line as the
+disclosure it already is.

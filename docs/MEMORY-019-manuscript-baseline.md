@@ -336,10 +336,15 @@ Both real-model runs again on the fixed build, idle machine, AC power
 
 - The author's agreement on the budgets, the worst-frame row as an absolute
   or a rate now that `FRAME_METRICS` counts frames above 50 ms.
-- What `sysmem_available` counts: with no orphan anywhere, one clean launch
-  read 2.6 GB free and ran an 8K slot while another, an hour earlier, ran
-  32K; the context an author gets should not depend on the moment of launch
-  more than the machine's real state requires.
+- The context after store work: `sysmem_available` reads the machine
+  correctly, and what moves it is the Docker virtual machine, whose resident
+  memory rose from 1.6 to 4.4 GB over two acceptance runs and did not come
+  back in the idle minutes after (`tools/sysmem_sample.py`, journal "what
+  the launch-time fit counts"); a launch minutes after a soak or `make
+  dbtest` gets a smaller context than one an hour later. The author's
+  remedy: pin the VM's memory lower in Docker Desktop (default 8.3 GB of
+  17.2; the containers need under 2 GB), or accept the smaller context with
+  the low-memory line as its disclosure.
 - A time-to-first-token row for memory on (the soak's 35 sends: 3.7 to 20.5 s
   at 3,138 to 13,179 prompt tokens), the author's decision on its form.
 - The observer's scheduling under chat: the author's choice among the three

@@ -83,7 +83,8 @@ measurement that closes it. Items run one at a time unless marked otherwise.
    chat"); one observer call is about 26 s uncontended, so the remedy is a
    scheduling change for the author to choose (disclosure, cadence-aware
    starts, or a bounded hold on the send). Still open: that remedy, a time-to-first-token row
-   for memory on, what the launch-time fit counts as free memory, and the
+   for memory on, the Docker VM's memory cap (measured: the fit's free figure
+   falls 3 GB after store work because the VM keeps the containers' cache), and the
    author's agreement on the budgets (the worst-frame row as an absolute or
    a rate).
 6. **GAP-001 beyond selection.** Observer precision and recall by finding type
