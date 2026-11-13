@@ -330,6 +330,11 @@ static void test_relations(void)
                          inherited, 1, NULL, 0, "q", &bad);
     CHECK(n == 3 && bad && !strcmp(bad, "Mr. Bingley's estate")); /* the possessive, and the whole "is" statement, of the estate */
     free(bad); bad = NULL;
+    /* The past tense is checked whole like the present: the possessive is supported by "inherited", the statement
+     * about it is not (red-team 2026-11-12, journal/redteam-loose_ends.md). */
+    n = answer_relations("Mr. Bingley's inheritance was Netherfield Park. Mr. Bingley was the heir of Mr. Darcy.", inherited, 1, NULL, 0, "q", &bad);
+    CHECK(n == 4 && bad && !strcmp(bad, "Mr. Bingley's inheritance was Netherfield Park")); /* "heir of Mr. Darcy" is also pattern 1's */
+    free(bad); bad = NULL;
     n = answer_relations("Mr. Darcy's inheritance is large.", inherited, 1, NULL, 0, "q", &bad);
     CHECK(n == 1 && bad && !strcmp(bad, "Mr. Darcy's inheritance"));
     free(bad); bad = NULL;

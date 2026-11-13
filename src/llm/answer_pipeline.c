@@ -1053,7 +1053,7 @@ static bool rel_match_at(const char *s, size_t len, size_t i, int which, RelMatc
         }
         return false;
     }
-    if (which == 3) { /* (his|her|their|NAME's) KIN is (the |a )?NAME */
+    if (which == 3) { /* (his|her|their|NAME's) KIN (is|was) (the |a )?NAME */
         /* The subject is a pronoun or a possessive name: "the youngest Bennet daughter is Lydia" (a family name as an
          * adjective) is not a relation statement; "Lydia's father is Mr. Bennet" is one, checked whole (found live on the
          * first novel, journal/answer-cycle4_builder.md). */
@@ -1073,8 +1073,12 @@ static bool rel_match_at(const char *s, size_t len, size_t i, int which, RelMatc
             size_t e = subj_ends[k];
             if (!rel_lit(s, len, e, " ")) continue;
             size_t kl = rel_kin(s, len, e + 1);
-            if (!kl || !rel_lit(s, len, e + 1 + kl, " is ")) continue;
-            size_t j = e + 1 + kl + 4;
+            if (!kl) continue;
+            /* "is" and "was": a statement about a relation in the past tense states it just the same (red-team
+             * 2026-11-12, journal/redteam-loose_ends.md: "Mr. Bingley's inheritance was Netherfield Park"). */
+            size_t vl = rel_lit(s, len, e + 1 + kl, " is ") ? 4 : rel_lit(s, len, e + 1 + kl, " was ") ? 5 : 0;
+            if (!vl) continue;
+            size_t j = e + 1 + kl + vl;
             size_t ends2[REL_MAX_ENDS], n2 = 0, obj = j;
             const char *art[3] = { "the ", "a ", "" };
             for (int a = 0; a < 3 && !n2; a++) {
@@ -1091,12 +1095,13 @@ static bool rel_match_at(const char *s, size_t len, size_t i, int which, RelMatc
         }
         return false;
     }
-    /* which == 4: NAME is (the |a |not the )?KIN of NAME */
+    /* which == 4: NAME (is|was) (the |a |not the )?KIN of NAME */
     n = rel_name_ends(s, len, i, ends);
     for (size_t k = 0; k < n; k++) {
         size_t e = ends[k];
-        if (!rel_lit(s, len, e, " is ")) continue;
-        size_t j = e + 4;
+        size_t vl = rel_lit(s, len, e, " is ") ? 4 : rel_lit(s, len, e, " was ") ? 5 : 0;
+        if (!vl) continue;
+        size_t j = e + vl;
         const char *art[4] = { "the ", "a ", "not the ", "" };
         for (int a = 0; a < 4; a++) {
             if (art[a][0] && !rel_lit(s, len, j, art[a])) continue;

@@ -197,7 +197,9 @@ modify a database while any Scribodo process is running.
   C check must agree with `tools/answer_relation_arm.py` row for row
   (`test_answer_relation_arm` re-checks the same fixture from Python; the arm
   strips the composer's think block as the product does, skips questions,
-  scopes a negation to its clause, stops a name at a possessive and takes
+  reads "is" and "was" alike in a whole relation statement
+  (journal/redteam-loose_ends.md), scopes a negation to its clause, stops a
+  name at a possessive and takes
   only a pronoun or a possessive as a relation's subject, all measured in
   journal/answer-cycle4_relation.md; it supports "X's inheritance" by "X
   inherited" and tallies phrases and flagged replies by class, kinship or

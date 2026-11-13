@@ -46,6 +46,11 @@ class RelationArmTests(unittest.TestCase):
                          [("Mr. Bingley's inheritance", 'possession', False), ("Mr. Bingley's estate", 'possession', True),
                           ("Mr. Bingley's estate is Netherfield Park", 'possession', True)])
         self.assertEqual([r['flag'] for r in ra.check("Mr. Darcy's inheritance is large.", span, [], 'q')], [True])
+        # The past tense is checked whole like the present (journal/redteam-loose_ends.md).
+        rows = ra.check("Mr. Bingley's inheritance was Netherfield Park. Mr. Bingley was the heir of Mr. Darcy.", span, [], 'q')
+        self.assertEqual([(r['phrase'], r['flag']) for r in rows],
+                         [("Mr. Bingley's inheritance", False), ("Mr. Bingley's inheritance was Netherfield Park", True),
+                          ('heir of Mr. Darcy', True), ("Mr. Bingley was the heir of Mr. Darcy", True)])
         self.assertEqual(ra.phrase_class("Elizabeth's father is Mr. Bennet"), 'kinship')
         self.assertEqual(ra.phrase_class("daughter of Mr. Bennet"), 'kinship')
 

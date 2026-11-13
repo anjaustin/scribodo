@@ -38,8 +38,9 @@ PHRASES = [
     re.compile(rf"\b({NAME})['’]s ({KIN})\b"),
     # The subject is a pronoun or a possessive name: "the youngest Bennet daughter is Lydia" (a family name as an
     # adjective) is not a relation statement; "Lydia's father is Mr. Bennet" is one, checked whole.
-    re.compile(rf"\b([Hh]is|[Hh]er|[Tt]heir|{NAME}['’]s) ({KIN}) is (?:the |a )?({NAME})"),
-    re.compile(rf"\b({NAME}) is (?:the |a |not the )?({KIN}) of ({NAME})"),
+    # "is" and "was" alike: a relation stated in the past tense is stated (journal/redteam-loose_ends.md).
+    re.compile(rf"\b([Hh]is|[Hh]er|[Tt]heir|{NAME}['’]s) ({KIN}) (?:is|was) (?:the |a )?({NAME})"),
+    re.compile(rf"\b({NAME}) (?:is|was) (?:the |a |not the )?({KIN}) of ({NAME})"),
 ]
 NEGATION = re.compile(r"\b(?:not|never|neither|nor|wrong|instead|isn't|aren't|wasn't)\b", re.I)
 # A negation reaches its own clause: "Hareton is Heathcliff's nephew, not his son" states the first and denies the second.

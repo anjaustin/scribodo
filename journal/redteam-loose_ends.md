@@ -116,3 +116,37 @@ source files; `make sanitize` 95,967, 0, 0 diagnostics; `make tsan` 48,597, 0,
 0 diagnostics; `make dbtest` 18,000, 0. Every exit status 0
 (`build/observer/idcheck-gates-*.log`, `idcheck-gates-exit.txt`).
 
+## 3. A relation stated in the past tense is checked whole
+
+Patterns 3 and 4 of the relation check ("X's KIN is Y", "X is the KIN of Y")
+accepted "is" only, so "Mr. Bingley's inheritance was Netherfield Park" was
+checked as the possessive alone, which the inheritance rule now supports. Both
+patterns read "is" and "was" alike, in C (`rel_match_at`) and in the arm (the
+regular expressions). Measured with the arm over the 24 capture directories,
+before (`build/relation/arm-tense-before.json`) and after (`arm-tense.json`):
+
+| | before | after |
+|---|---|---|
+| replies flagged | 21 of 230 | 21 of 230 |
+| kinship phrases supported / negated / flagged | 66 / 10 / 23 | 66 / 10 / 23 |
+| possession phrases supported / negated / flagged | 13 / 8 / 37 | 13 / 8 / 44 |
+
+The seven new phrases are "Mr. Bingley's estate was Netherfield", checked
+whole in the seven first-novel runs that wrote it; each of those replies was
+already flagged for "Mr. Bingley's estate", so no verdict moves. The parity
+fixture's seven rows carry the new count (`checked` 7 to 8); the 230 rows,
+the 21 flagged and the unsupported phrase of every row are otherwise
+unchanged, and the C check agrees with the arm on every row (`test_relations`).
+The probe's cases are pinned in `test_relations` and
+`test_answer_relation_arm`: "Mr. Bingley's inheritance was Netherfield Park"
+is flagged whole, "Mr. Bingley was the heir of Mr. Darcy" too (and its "heir
+of Mr. Darcy" by pattern 1, as before).
+
+## Gates (section 3)
+
+`make test` 95,968 C checks and 176 Python tests, 0 failures (one C check more
+than `c979df5`); `make analyze` 0 warnings across 87 source files; `make
+sanitize` 95,968, 0, 0 diagnostics; `make tsan` 48,598, 0, 0 diagnostics;
+`make dbtest` 18,000, 0. Every exit status 0 (`build/relation/tense-gates-*.log`,
+`tense-gates-exit.txt`).
+
