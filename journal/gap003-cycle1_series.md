@@ -500,3 +500,28 @@ memory lower in Docker Desktop (the containers need under 2 GB), or accept
 the smaller context after store work, with the fit's low-memory line as the
 disclosure it already is. Hosted: CI and Trusted acceptance passed on
 `c25cd08` (runs 43478074346 and 43478074276).
+
+The sampler's remaining hour answers whether the VM gives the memory back,
+and when (`sysmem-samples.log`, 90 samples):
+
+| Time (UTC) | What ran | Available | Docker VM RSS | llama-server |
+|---|---|---|---|---|
+| 18:05 | idle, 30 min after the runs | 4.52 GB | 4.61 GB | 0 |
+| 18:11 | the replay smoke loads the model | 2.86 | 2.36 | 3.79 |
+| 18:17 | smoke over, model gone | 7.06 | 2.10 | 0 |
+| 18:23 to 18:35 | two more acceptance runs | 5.43 to 4.90 | 4.16 to 4.62 | 0 |
+| 18:41 to 18:59 | the Mars observer run holds the model | 2.53 to 2.75 | 3.93 to 3.38 | 3.71 |
+
+Idle does not return it: thirty minutes after the acceptance runs the VM
+still held 4.6 GB. Pressure does: the moment the model took 3.8 GB, the VM
+gave back 2.3 GB within a minute (its balloon), and with the model gone the
+fit's figure read 7.1 GB, higher than before the runs. So the figure the fit
+reads *before* loading the model understates what the machine would have
+yielded *to* the model by about the VM's reclaimable cache, 2 GB here, and
+that is why a launch after store work sizes an 8K or 24K slot that a launch
+an hour later, or a launch that simply tried, would have sized at 32K. The
+remedy choices stand as written (pin the VM's cap, or accept the smaller
+slot); a third is now on the table for the author: let the fit count the
+Docker VM's resident memory above a floor as available, since the VM yields
+it under pressure, measured here once and to be measured again before it is
+relied on.

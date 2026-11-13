@@ -343,8 +343,12 @@ Both real-model runs again on the fixed build, idle machine, AC power
   the launch-time fit counts"); a launch minutes after a soak or `make
   dbtest` gets a smaller context than one an hour later. The author's
   remedy: pin the VM's memory lower in Docker Desktop (default 8.3 GB of
-  17.2; the containers need under 2 GB), or accept the smaller context with
-  the low-memory line as its disclosure.
+  17.2; the containers need under 2 GB), accept the smaller context with
+  the low-memory line as its disclosure, or let the fit count the VM's
+  memory above a floor as available: the VM gave back 2.3 GB within a
+  minute of the model loading (its balloon) while thirty idle minutes
+  returned nothing, so the pre-load figure understates what the model would
+  get by about that much (journal, the sampler's last hour).
 - A time-to-first-token row for memory on (the soak's 35 sends: 3.7 to 20.5 s
   at 3,138 to 13,179 prompt tokens), the author's decision on its form.
 - The observer's scheduling under chat: the author's choice among the three
