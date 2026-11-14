@@ -667,7 +667,7 @@ static void test_import(void)
     store_set_write_time(g_store, 0);
     const time_t revs_ts_oldest = 1700000000, note_ts = 1700000000;
     char cmd0[1400];
-    ChatMessage u = { .role = CHAT_USER, .content = "hello", .docs = "ch1.md" };
+    ChatMessage u = { .role = CHAT_USER, .content = "hello", .docs = "ch1.md", .is_note = true };
     ChatMessage a = { .role = CHAT_ASSISTANT, .content = "hi", .stopped = true };
     CHECK(chat_store_append(g_store, proj, "20261104-160000-abcd", "Greeting", &u) && chat_store_append(g_store, proj, "20261104-160000-abcd", "x", &a));
     /* A rename made before the import. */
@@ -777,6 +777,7 @@ static void test_import(void)
     CHECK(chat_store_load(g_store, proj, "20261104-160000-abcd", &msgs, &nm) && nm == 2 && msgs[0].docs &&
            !strcmp(msgs[0].docs, "Chapter One.md"));
     CHECK(nm == 2 && !msgs[0].stopped && msgs[1].stopped && !msgs[1].truncated && !msgs[1].error);
+    CHECK(msgs[0].is_note && !msgs[1].is_note); /* the author's declaration round-trips through the database (migration 017) */
     ChatSourcePage source_page;
     ChatSourceCursor source_cursor = {0};
     CHECK(chat_store_source_page(g_store, proj, "20261104-160000-abcd", &source_cursor, &source_page) &&

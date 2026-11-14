@@ -2762,7 +2762,7 @@ static void send_chat(App *app, char *text)
     }
     /* The attached documents, read now (by reference: nothing is copied
      * into the project). An edit request uses the edited document alone. */
-    ChatContext ctx = { 0 };
+    ChatContext ctx = { .note = chat_view_take_submit_note(app->chat_view) }; /* the author's declared turn kind */
     char *doc = NULL;
     ChatDoc cdocs[MAX_ATTACH];
     char *texts[MAX_ATTACH] = { 0 };
@@ -3309,6 +3309,7 @@ static Rectangle host_element(void *ctx, const char *name)
     if (!strcmp(name, "ReviewPanel")) return review_active(app->review) ? app->review_rect : (Rectangle){ 0 };
     if (!strcmp(name, "AcceptEdit")) return review_active(app->review) ? review_accept_rect(app->review_rect) : (Rectangle){ 0 };
     if (!strcmp(name, "ApplyLast")) return chat_view_last_apply_rect(app->chat_view);
+    if (!strcmp(name, "ChatNoteToggle")) return chat_view_note_toggle_rect(app->chat_view, app->chat_input_rect);
     if (!strcmp(name, "NoteLast")) return chat_view_last_note_rect(app->chat_view, false);
     if (!strcmp(name, "CanonLast")) return chat_view_last_note_rect(app->chat_view, true);
     if (!strcmp(name, "SourcesLast")) return chat_view_last_sources_rect(app->chat_view);

@@ -36,6 +36,7 @@ typedef struct {
     const char *via;
     double created_at;
     const char *memory_sources;
+    bool is_note;
 } ChatMessageRow;
 
 static bool bool_cell(const DbRows *rows, size_t row, size_t col, bool *out)
@@ -57,12 +58,12 @@ static bool chat_summary_row(const DbRows *rows, size_t row, ChatSummaryRow *out
 
 static bool chat_message_row(const DbRows *rows, size_t row, ChatMessageRow *out)
 {
-    bool ok = db_rows_has_columns(rows, 10) && db_cell_i64(rows, row, 0, &out->seq) &&
+    bool ok = db_rows_has_columns(rows, 11) && db_cell_i64(rows, row, 0, &out->seq) &&
            db_cell_text(rows, row, 1, &out->role) && db_cell_text(rows, row, 2, &out->content) &&
            bool_cell(rows, row, 3, &out->error) && bool_cell(rows, row, 4, &out->is_edit) &&
            bool_cell(rows, row, 5, &out->truncated) && db_cell_nullable(rows, row, 6, &out->via) &&
            db_cell_double(rows, row, 7, &out->created_at) && bool_cell(rows, row, 8, &out->stopped) &&
-           db_cell_nullable(rows, row, 9, &out->memory_sources) &&
+           db_cell_nullable(rows, row, 9, &out->memory_sources) && bool_cell(rows, row, 10, &out->is_note) &&
            (!out->memory_sources || strlen(out->memory_sources) <= CHAT_MEMORY_SOURCES_BYTES);
     return ok && out->seq >= 0 && out->created_at >= 0 && out->created_at < 0x1p63;
 }
@@ -125,13 +126,14 @@ bool sdb_chat_append_sequenced(Db *db, const char *project_id, const char *id, c
     } else {
         ok = false;
     }
-    DbArg a[11] = { DB_S(id), DB_I(seq), DB_S(m->role == CHAT_USER ? "user" : "assistant"), DB_S(m->content ? m->content : ""),
+    DbArg a[12] = { DB_S(id), DB_I(seq), DB_S(m->role == CHAT_USER ? "user" : "assistant"), DB_S(m->content ? m->content : ""),
                    DB_I(m->error ? 1 : 0), DB_I(m->is_edit ? 1 : 0), DB_I(m->truncated ? 1 : 0), DB_D(t),
-                   DB_S(m->via && m->via[0] ? m->via : NULL), DB_I(m->stopped ? 1 : 0), DB_S(m->memory_sources) };
+                   DB_S(m->via && m->via[0] ? m->via : NULL), DB_I(m->stopped ? 1 : 0), DB_S(m->memory_sources),
+                   DB_I(m->is_note ? 1 : 0) };
     ok = ok && db_run(db,
-                      "INSERT INTO messages (conversation_id, seq, role, content, error, is_edit, truncated, created_at, via, stopped, memory_sources)"
-                      " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                      a, 11, NULL);
+                      "INSERT INTO messages (conversation_id, seq, role, content, error, is_edit, truncated, created_at, via, stopped, memory_sources, is_note)"
+                      " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                      a, 12, NULL);
     /* The documents this message was sent with. */
     if (ok && m->docs && m->docs[0]) {
         char *copy = strdup(m->docs);
@@ -204,7 +206,7 @@ bool sdb_chat_load(Db *db, const char *project_id, const char *id, ChatMessage *
     DbRows r, d;
     DbArg k[2] = { DB_S(id), DB_S(project_id) };
     if (!db_query(db,
-                  "SELECT m.seq, m.role, m.content, m.error, m.is_edit, m.truncated, m.via, m.created_at, m.stopped, m.memory_sources FROM messages m"
+                  "SELECT m.seq, m.role, m.content, m.error, m.is_edit, m.truncated, m.via, m.created_at, m.stopped, m.memory_sources, m.is_note FROM messages m"
                   " JOIN conversations c ON c.id = m.conversation_id WHERE m.conversation_id = ? AND c.project_id = ?"
                   " ORDER BY m.seq",
                   k, 2, &r))
@@ -217,7 +219,7 @@ bool sdb_chat_load(Db *db, const char *project_id, const char *id, ChatMessage *
         db_rows_free(&r);
         return false;
     }
-    bool ok = db_rows_has_columns(&r, 10) && db_rows_has_columns(&d, 2);
+    bool ok = db_rows_has_columns(&r, 11) && db_rows_has_columns(&d, 2);
     int64_t previous_document_seq = -1;
     for (size_t i = 0; ok && i < d.nrows; i++) {
         int64_t seq;
@@ -241,6 +243,7 @@ bool sdb_chat_load(Db *db, const char *project_id, const char *id, ChatMessage *
         m->content = strdup(row.content);
         m->error = row.error;
         m->is_edit = row.is_edit;
+        m->is_note = row.is_note;
         m->truncated = row.truncated;
         m->stopped = row.stopped;
         m->via = row.via && row.via[0] ? strdup(row.via) : NULL;

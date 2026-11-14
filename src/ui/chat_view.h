@@ -31,6 +31,12 @@ void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_foc
  * (malloc'd); otherwise NULL. The input is kept until chat_view_clear_input,
  * so a message that fails to send is not lost. */
 char *chat_view_take_submit(ChatView *v);
+/* The Note toggle in the input area (2026-11-14): the author declares the turn a note, not a question, and the
+ * composer's answer gate does not arm on it however it is worded. The mode is sticky until toggled again; the
+ * value at the moment of submission goes with the turn. */
+bool chat_view_take_submit_note(ChatView *v);
+bool chat_view_note_mode(const ChatView *v);
+Rectangle chat_view_note_toggle_rect(const ChatView *v, Rectangle input);
 void chat_view_submit_now(ChatView *v);
 void chat_view_clear_input(ChatView *v);
 

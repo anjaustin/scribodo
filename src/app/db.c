@@ -883,10 +883,19 @@ static const char *const k_migration_016[] = {
     NULL,
 };
 
+/* journal/answer-cycle4_note_turns.md (the author's decision, 2026-11-14): a user turn the author marked as a note in the
+ * composer. The answer gate does not arm on it however it is worded; the record keeps the author's declaration beside
+ * the turn. One re-runnable statement; existing rows read as not notes. */
+static const char *const k_migration_017[] = {
+    "ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_note TINYINT(1) NOT NULL DEFAULT 0",
+    NULL,
+};
+
 static const char *const *const k_migrations[] = { k_migration_001, k_migration_002, k_migration_003, k_migration_004,
                                                    k_migration_005, k_migration_006, k_migration_007, k_migration_008,
                                                    k_migration_009, k_migration_010, k_migration_011, k_migration_012,
-                                                   k_migration_013, k_migration_014, k_migration_015, k_migration_016 };
+                                                   k_migration_013, k_migration_014, k_migration_015, k_migration_016,
+                                                   k_migration_017 };
 
 int db_schema_version(Db *db)
 {

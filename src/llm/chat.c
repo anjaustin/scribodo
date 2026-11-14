@@ -822,7 +822,7 @@ char *chat_build_request_pipeline(const ChatMessage *msgs, size_t n, const ChatN
     ChatMessage window[ANSWER_HISTORY_MESSAGES + 1];
     const ChatMessage *shown = msgs + start;
     size_t shown_n = n - start;
-    if (shown_n <= ANSWER_HISTORY_MESSAGES + 1 && n > 0 && answer_gate_applies(msgs[n - 1].content)) {
+    if (shown_n <= ANSWER_HISTORY_MESSAGES + 1 && n > 0 && !msgs[n - 1].is_note && answer_gate_applies(msgs[n - 1].content)) {
         for (size_t i = 0; i < shown_n; i++) {
             window[i] = msgs[start + i];
             if (window[i].role == CHAT_ASSISTANT && !window[i].error &&
@@ -1139,7 +1139,7 @@ static void build_begin(ChatSession *s, ChatBuild *b)
     b->history_ok = s->edit_passage || chat_request_history_copy(s->msgs, total, s->via_remote, &b->history);
     if (!s->edit_passage && s->windowed && (s->older || s->newer)) b->history.limited = true;
     s->history_stats = (ChatHistoryStats){ b->history.count, b->history.content_bytes, b->history.scanned, b->history.limited };
-    b->ctx = (ChatContext){ s->ctx_title, s->ctx_text, s->ctx_docs, s->nctx_docs };
+    b->ctx = (ChatContext){ s->ctx_title, s->ctx_text, s->ctx_docs, s->nctx_docs, false };
     snprintf(b->author, sizeof(b->author), "%s", s->author_name);
     snprintf(b->assistant, sizeof(b->assistant), "%s", s->assistant_name);
     b->names = (ChatNames){ b->author, b->assistant };
@@ -1214,6 +1214,7 @@ typedef struct {
     bool available;
     int64_t before;
     const char *query;
+    bool note;             /* the author declared the turn a note: no gate, however it is worded */
     bool pipeline_done;
     double recall_started, recall_finished;
     size_t recalled;
@@ -1242,6 +1243,7 @@ static void memory_begin(ChatSession *s, ChatBuild *b, MemoryStage *m)
     for (size_t i = b->first_history; i < b->history.count; i++)
         if (b->history.messages[i].sequence_known && b->history.messages[i].sequence < m->before) m->before = b->history.messages[i].sequence;
     m->query = b->history.count ? b->history.messages[b->history.count - 1].content : "";
+    m->note = b->history.count && b->history.messages[b->history.count - 1].is_note;
     MemoryScope scope;
     if (m->available && memory_scope_get(m->db, m->project_id, s->memory_conversation, &scope) && scope.enabled)
         m->available = s->document_cache
@@ -1293,7 +1295,7 @@ static void memory_pipeline(ChatSession *s, ChatBuild *b, MemoryStage *m)
     char *rebuilt = preface ? chat_build_request_pipeline(b->history.messages, b->history.count, &b->names, b->slot_ctx, b->counter, s,
                                                           &b->first_history, preface) : NULL;
     gate_clear(s);
-    if (rebuilt && answer_gate_applies(m->query)) gate_arm(s, &pipeline, &b->history, b->first_history, m->query);
+    if (rebuilt && !m->note && answer_gate_applies(m->query)) gate_arm(s, &pipeline, &b->history, b->first_history, m->query);
     free(preface);
     free(b->req);
     b->req = rebuilt;
@@ -1721,6 +1723,7 @@ static bool send_common(ChatSession *s, const char *text, const ChatContext *ctx
         return false;
     }
     size_t user_index = original_count;
+    s->msgs[user_index].is_note = ctx && ctx->note && !passage; /* an edit request is never a note */
     free(s->ctx_title);
     free(s->ctx_text);
     free(s->edit_instruction);

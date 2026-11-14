@@ -38,7 +38,7 @@
 
 bool admin_name(const char *sql_fmt, const char *name);
 
-#define LATEST_SCHEMA 16
+#define LATEST_SCHEMA 17
 
 static const char *const k_points[] = { "migration.statement", "migration.receipt" };
 
@@ -172,8 +172,8 @@ static void run_point(const char *point)
         CHECK(db != NULL);
         if (!db) { fprintf(stderr, "    %s\n", err); admin_name("DROP DATABASE %s", name); break; }
         int at_death = db_schema_version(db);
-        /* A death after a statement leaves the migration unreceipted (schema below 16); a death after receipt k
-         * leaves exactly k receipts, the sixteenth included. */
+        /* A death after a statement leaves the migration unreceipted (schema below 17); a death after receipt k
+         * leaves exactly k receipts, the seventeenth included. */
         if (!strcmp(point, "migration.receipt")) CHECK(at_death == k);
         else CHECK(at_death >= 0 && at_death < LATEST_SCHEMA);
         bool recovered = db_migrate(db, err, sizeof(err));
@@ -181,8 +181,8 @@ static void run_point(const char *point)
         CHECK(recovered && db_schema_version(db) == LATEST_SCHEMA);
         DbRows rows;
         bool receipts = db_query(db, "SELECT COUNT(*), COUNT(DISTINCT version), MIN(version), MAX(version) FROM schema_migrations", NULL, 0, &rows) &&
-                        rows.nrows == 1 && !strcmp(db_cell(&rows, 0, 0), "16") && !strcmp(db_cell(&rows, 0, 1), "16") &&
-                        !strcmp(db_cell(&rows, 0, 2), "1") && !strcmp(db_cell(&rows, 0, 3), "16");
+                        rows.nrows == 1 && !strcmp(db_cell(&rows, 0, 0), "17") && !strcmp(db_cell(&rows, 0, 1), "17") &&
+                        !strcmp(db_cell(&rows, 0, 2), "1") && !strcmp(db_cell(&rows, 0, 3), "17");
         if (rows.nrows) db_rows_free(&rows);
         CHECK(receipts);
         char *fp = schema_fingerprint(db, name);

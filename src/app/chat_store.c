@@ -103,6 +103,7 @@ bool chat_store_append_files(StoreManager *manager, const char *project_dir, con
          cJSON_AddNumberToObject(j, "ts", store_write_time(manager));
     if (ok && m->error) ok = cJSON_AddBoolToObject(j, "error", true);
     if (ok && m->is_edit) ok = cJSON_AddBoolToObject(j, "edit", true);
+    if (ok && m->is_note) ok = cJSON_AddBoolToObject(j, "note", true);
     if (ok && m->truncated) ok = cJSON_AddBoolToObject(j, "truncated", true);
     if (ok && m->stopped) ok = cJSON_AddBoolToObject(j, "stopped", true);
     if (ok && m->via && m->via[0]) ok = cJSON_AddStringToObject(j, "via", m->via);
@@ -337,6 +338,7 @@ bool chat_store_load_files(const char *project_dir, const char *id, ChatMessage 
                                           .content = strdup(content->valuestring),
                                            .error = cJSON_IsTrue(cJSON_GetObjectItem(j, "error")),
                                           .is_edit = cJSON_IsTrue(cJSON_GetObjectItem(j, "edit")),
+                                          .is_note = cJSON_IsTrue(cJSON_GetObjectItem(j, "note")),
                                           .truncated = cJSON_IsTrue(cJSON_GetObjectItem(j, "truncated")),
                                           .stopped = cJSON_IsTrue(cJSON_GetObjectItem(j, "stopped")) };
                 ok = message->content != NULL;

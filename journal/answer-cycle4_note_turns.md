@@ -93,3 +93,29 @@ author and not disclosed, and it is now measured.
 
 No code changed in `ece3439`; CI and Trusted acceptance both passed on it
 (runs 43317951921 and 43317951878).
+
+## Built (2026-11-14)
+
+The author chose the structural fix ("add an author-declared turn"). The
+composer's input area carries a **Note** toggle (sticky until toggled
+again; the state at the moment of sending goes with the turn). A turn sent
+with it on is stored as the author's note: `ChatMessage.is_note`, the
+`messages.is_note` column (migration 017, one re-runnable statement, existing
+rows read as not notes) and the file store's `"note": true`; the importer
+carries it from legacy files. The composer's two gate sites (the window
+rule and the arming of the verified pipeline's checks) do not arm on a note
+turn however it is worded, so "Zoë's eyes were brown in chapter one, weren't
+they?" marked as a note is answered as a note, not gated as a question; an
+unmarked turn keeps the measured rule, a question ends with "?". The
+transcript labels the turn "You · note". UI scripts click `ChatNoteToggle`
+and read `expect chat_notes N`; `tests/ui/chat.scribo` sends a note, a
+second note under the sticky mode, then an ordinary turn after toggling off.
+Round trips are pinned in `test_llm` (file store), `test_db` (database and
+import) and `test_persistence_faults`; the migration crash matrix reran at
+131 rows, 0 failures.
+
+Not built here, recorded in PRODUCT-GAPS item 1: the acknowledgement check
+(anything the reply adds beyond the note and its sources) and the memory
+record storing the turn as the author's note rather than a chat turn. No
+prompt or request text changed, so no model measurement was owed; the
+change is measured by the tests above and the UI script.

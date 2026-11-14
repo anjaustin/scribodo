@@ -62,3 +62,23 @@ key ENTER
 wait_chat
 expect chat_count 10
 expect chat_last "via shortcut"
+# The Note toggle: a turn the author marks as a note is stored as one, however it is worded; the mode is sticky
+# until toggled again, and the next ordinary turn is not a note.
+expect chat_notes 0
+click_element ChatNoteToggle
+type "Zoë's eyes were brown in chapter one, weren't they?"
+key ENTER
+wait_chat
+expect chat_count 12
+expect chat_notes 1
+type "and this one too"
+key ENTER
+wait_chat
+expect chat_count 14
+expect chat_notes 2
+click_element ChatNoteToggle
+type "Who is Zoë?"
+key ENTER
+wait_chat
+expect chat_count 16
+expect chat_notes 2

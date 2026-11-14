@@ -543,6 +543,12 @@ MAX` reports where a click on the element would land, which is how
 `tests/ui/store/19_explorer_scroll.scribo` checks that a toolbar button's
 rectangle does not move when the explorer is scrolled ([REDTEAM-016](REDTEAM-016-real-manuscript.md)).
 
+The composer's Note toggle (2026-11-14, journal/answer-cycle4_note_turns.md "Built") is the element `ChatNoteToggle`;
+`expect chat_notes N` counts the turns the author marked as notes (`ChatMessage.is_note`, the `messages.is_note`
+column of migration 017, the file store's `note` key). `tests/ui/chat.scribo` sends a note, a second under the sticky
+mode and an ordinary turn after toggling off; the round trips are pinned in `test_llm`, `test_db` (database and
+import) and `test_persistence_faults`, and the answer gate's two sites skip a note turn however it is worded.
+
 ### Running with the display asleep
 
 Creating a window needs an awake display. If the Mac's display is asleep, the app exits with `could not create a window`. Keep it awake for the run with:

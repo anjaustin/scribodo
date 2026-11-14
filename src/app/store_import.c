@@ -364,15 +364,15 @@ static bool import_chats(Db *db, const char *project_dir, const char *pid, IdMap
                 ok = false;
                 break;
             }
-            DbArg a[11] = { DB_S(cid), DB_I(k), DB_S(msgs[k].role == CHAT_USER ? "user" : "assistant"),
+            DbArg a[12] = { DB_S(cid), DB_I(k), DB_S(msgs[k].role == CHAT_USER ? "user" : "assistant"),
                            DB_S(msgs[k].content ? msgs[k].content : ""), DB_I(msgs[k].error ? 1 : 0),
                            DB_I(msgs[k].is_edit ? 1 : 0), DB_I(msgs[k].truncated ? 1 : 0), DB_D(msgs[k].ts ? msgs[k].ts : t0),
                            DB_S(msgs[k].via && msgs[k].via[0] ? msgs[k].via : NULL), DB_I(msgs[k].stopped ? 1 : 0),
-                           DB_S(msgs[k].memory_sources) };
+                           DB_S(msgs[k].memory_sources), DB_I(msgs[k].is_note ? 1 : 0) };
             ok = db_run(db,
                         "INSERT IGNORE INTO messages (conversation_id, seq, role, content, error, is_edit, truncated, created_at,"
-                        " via, stopped, memory_sources) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                        a, 11, &added);
+                        " via, stopped, memory_sources, is_note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                        a, 12, &added);
             if (ok && added) ok = memory_message_intent(db, pid, cid, (int64_t)k);
             if (!ok || !added || !msgs[k].docs || !msgs[k].docs[0]) continue;
             char *copy = strdup(msgs[k].docs);

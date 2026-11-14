@@ -35,12 +35,14 @@ measurement that closes it. Items run one at a time unless marked otherwise.
    successor item on faithful use is a relation check on the reply. *Done
    2026-11-12* on three novels (`journal/answer-cycle4_relation.md`), with
    the verifier's tolerance and the check's two classes measured apart
-   (`answer-cycle4_tolerance.md`, `answer-cycle4_relation_split.md`). **Open
-   for the author:** a note turn is not gated; measured
-   (`answer-cycle4_note_turns.md`), the existing checks would not catch the
-   recorded embellishment and would withhold new writing, so the fix is an
-   author-declared turn kind in the composer (a note the author marks as a
-   note), a product affordance to decide, not a rule on the author's wording.
+   (`answer-cycle4_tolerance.md`, `answer-cycle4_relation_split.md`). *Built
+   2026-11-14* at the author's direction (`answer-cycle4_note_turns.md`, "Built"):
+   a Note toggle in the composer declares a turn the author's note; the turn is
+   stored as one (migration 017, the file store's `note` key) and the answer
+   gate does not arm on it however it is worded, while an unmarked turn keeps
+   today's rule (a question ends with "?"). Still open on notes: a check of the
+   acknowledgement against the note and its sources, and the memory record
+   carrying the kind.
 2. **Generalisation: the second manuscript** (GAP-001, LANDSCAPE rows 12 and
    20). *A Princess of Mars*, imported, with 8 boundary cases and 15 reach
    tasks written before any run. Run reach and the verified pipeline once at

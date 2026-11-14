@@ -131,7 +131,7 @@ static void chat_load_faults(void)
 {
     ChatMessage original = { .role = CHAT_USER, .content = "Keep this conversation" };
     ChatMessage replacement[] = {
-        { .role = CHAT_USER, .content = "A question", .docs = "chapter.md", .via = "Provider", .ts = 123 },
+        { .role = CHAT_USER, .content = "A question", .docs = "chapter.md", .via = "Provider", .ts = 123, .is_note = true },
         { .role = CHAT_ASSISTANT, .content = "A partial answer", .via = "Provider", .ts = 124,
           .truncated = true, .stopped = true, .is_edit = true }
     };
@@ -143,6 +143,7 @@ static void chat_load_faults(void)
     chat_lock(s);
     CHECK(chat_message(s, 0)->ts == 123 && chat_message(s, 1)->ts == 124);
     CHECK(chat_message(s, 1)->truncated && chat_message(s, 1)->stopped && chat_message(s, 1)->is_edit);
+    CHECK(chat_message(s, 0)->is_note && !chat_message(s, 1)->is_note);
     chat_unlock(s);
     for (long i = 0; i < count * 2; i++) {
         CHECK(chat_load_messages(s, &original, 1));
@@ -346,7 +347,7 @@ static void writer_faults(void)
         CHECK(!ok && !recorded && access(path, F_OK) != 0);
     }
     ChatMessage message = { .role = CHAT_USER, .content = "Reply", .docs = "chapter.md", .via = "Provider",
-                            .error = true, .is_edit = true, .truncated = true };
+                            .error = true, .is_edit = true, .truncated = true, .is_note = true };
     snprintf(path, sizeof(path), "%s/.scribodo/chats/aaaa.jsonl", project);
     fault_alloc_after(-1);
     CHECK(chat_store_append(store, project, "aaaa", "All fields", &message));

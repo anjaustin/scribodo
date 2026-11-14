@@ -32,6 +32,8 @@ typedef struct {
     bool truncated;  /* reply stopped at the length limit */
     bool stopped;    /* reply stopped by the author part-way (incomplete) */
     bool is_edit;    /* user: an edit request; assistant: a proposed replacement */
+    bool is_note;    /* user: the author marked the turn as a note, not a question (the composer's Note toggle): the
+                      * answer gate does not arm on it however it is worded (journal/answer-cycle4_note_turns.md) */
     char *docs;      /* user: names of the documents attached, '\n'-separated ("" = none), or NULL */
     char *via;       /* sent to / answered by a remote model ("Frontier · api.example.com"); NULL = this Mac */
     double ts;       /* when it was stored (loaded chats), else 0 */
@@ -67,6 +69,7 @@ typedef struct {
     const char *doc_text;
     const ChatDoc *docs;
     size_t ndocs;
+    bool note;             /* the author declared this turn a note (ChatMessage.is_note on the stored turn) */
 } ChatContext;
 
 typedef struct ChatSession ChatSession;

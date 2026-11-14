@@ -438,6 +438,13 @@ static void run_expect(Script *s, ScriptHost *h, Tokens *t)
         chat_lock(h->chat);
         ok = chat_window_info(h->chat).unsaved == yes(t->tok[2]);
         chat_unlock(h->chat);
+    } else if (!strcmp(what, "chat_notes") && t->n == 3 && h->chat) { /* user turns the author marked as notes */
+        chat_lock(h->chat);
+        size_t n = chat_count(h->chat), notes = 0;
+        for (size_t i = 0; i < n; i++) notes += chat_message(h->chat, i)->is_note;
+        chat_unlock(h->chat);
+        ok = notes == strtoul(t->tok[2], NULL, 10);
+        snprintf(detail, sizeof(detail), "got %zu", notes);
     } else if (!strcmp(what, "chat_last") && t->n == 3 && h->chat) {
         chat_lock(h->chat);
         size_t n = chat_count(h->chat);

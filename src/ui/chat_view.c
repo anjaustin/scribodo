@@ -55,6 +55,8 @@ struct ChatView {
     Rectangle last_note, last_canon;
     Rectangle last_sources;
     char *submitted;
+    bool note_mode;       /* the Note toggle (sticky) */
+    bool submitted_note;  /* the mode when `submitted` was taken */
     ChatPageAction page;
     Rectangle page_rect[4];
     bool presented;
@@ -64,6 +66,7 @@ struct ChatView {
 };
 
 static float adv(uint32_t cp, void *ctx) { return sfont_advance((const SFont *)ctx, cp); }
+static Rectangle editor_rect(Rectangle input);
 
 ChatView *chat_view_create(SFont *text_font, SFont *label_font, ChatSession *chat)
 {
@@ -390,7 +393,10 @@ void chat_view_update(ChatView *v, Rectangle list, Rectangle input, bool input_f
     if (v->scroll < 0) v->scroll = 0;
     chat_unlock(v->chat);
 
-    editor_update(v->input, input, input_focused);
+    Rectangle toggle = chat_view_note_toggle_rect(v, input);
+    if (!input_mouse_blocked() && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(GetMousePosition(), toggle))
+        v->note_mode = !v->note_mode;
+    editor_update(v->input, editor_rect(input), input_focused);
     if (input_focused && editor_take_submit(v->input)) {
         char *text = editor_text_utf8(v->input);
         /* Ignore whitespace-only submissions. */
@@ -400,11 +406,15 @@ void chat_view_update(ChatView *v, Rectangle list, Rectangle input, bool input_f
         if (text && !blank) {
             free(v->submitted);
             v->submitted = text;
+            v->submitted_note = v->note_mode;
         } else {
             free(text);
         }
     }
 }
+
+bool chat_view_take_submit_note(ChatView *v) { return v->submitted_note; }
+bool chat_view_note_mode(const ChatView *v) { return v->note_mode; }
 
 char *chat_view_take_submit(ChatView *v)
 {
@@ -415,6 +425,7 @@ char *chat_view_take_submit(ChatView *v)
 
 void chat_view_submit_now(ChatView *v)
 {
+    v->submitted_note = v->note_mode;
     char *text = editor_text_utf8(v->input);
     bool blank = true;
     for (const char *p = text; p && *p; p++)
@@ -552,6 +563,10 @@ void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_foc
         if (m->via && m->via[0])
             snprintf(who, sizeof(who), m->role == CHAT_USER ? "You \xC2\xB7 sent to %s" : "%s", m->via);
         else snprintf(who, sizeof(who), "%s", m->role == CHAT_USER ? "You" : v->assistant_name);
+        if (m->role == CHAT_USER && m->is_note) {
+            size_t used = strlen(who);
+            snprintf(who + used, sizeof(who) - used, " \xC2\xB7 note");
+        }
         if (m->excerpt) {
             size_t used = strlen(who);
             snprintf(who + used, sizeof(who) - used, " · excerpt at character %zu", m->excerpt_start + 1);
@@ -601,7 +616,31 @@ void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_foc
 
     DrawRectangleRec(input, COL_INPUT_BG);
     DrawRectangleLinesEx(input, 1.0f, input_focused ? COL_FOCUS : COL_INPUT_BORDER);
-    editor_draw(v->input, input, input_focused);
+    editor_draw(v->input, editor_rect(input), input_focused);
+    /* The Note toggle: filled when the next turn goes as the author's note. */
+    Rectangle toggle = chat_view_note_toggle_rect(v, input);
+    DrawRectangleRounded(toggle, 0.5f, 6, v->note_mode ? COL_LINK : COL_INPUT_BG);
+    DrawRectangleLinesEx(toggle, 1.0f, v->note_mode ? COL_LINK : COL_INPUT_BORDER);
+    const char *note = "Note";
+    float tw = sfont_measure_utf8(v->label, note, 4);
+    sfont_draw_utf8(v->label, note, 4, toggle.x + (toggle.width - tw) / 2, toggle.y + 3, v->note_mode ? COL_INPUT_BG : COL_LABEL);
+}
+
+#define NOTE_TOGGLE_W 54.0f
+#define NOTE_TOGGLE_H 22.0f
+
+/* The input editor keeps the width left of the toggle. */
+static Rectangle editor_rect(Rectangle input)
+{
+    input.width -= NOTE_TOGGLE_W + 12;
+    return input;
+}
+
+Rectangle chat_view_note_toggle_rect(const ChatView *v, Rectangle input)
+{
+    (void)v;
+    if (input.width <= 0) return (Rectangle){ 0 };
+    return (Rectangle){ input.x + input.width - NOTE_TOGGLE_W - 6, input.y + 5, NOTE_TOGGLE_W, NOTE_TOGGLE_H };
 }
 
 void chat_view_set_can_apply(ChatView *v, bool can)
