@@ -27,7 +27,7 @@
   - Each check is a constrained judgment run twice, with CANON and NEW in both orders. A conflict is recorded only if both runs agree.
   - The result is one `conflict` finding per canon entry and passage, naming the canon entry and quoting its text.
   - Notes that overlap strongly (score of 3 or more) are linked as related, without a model call.
-- **Scheduling:** observer work starts only after chat has been idle for 1.5 s. The app reports chat activity every frame, and an in-flight request is abandoned, then retried later, the moment chat becomes active.
+- **Scheduling:** observer work starts only after chat has been idle for 1.5 s; each time chat cancels a running job the idleness required doubles, to 120 s, and a completed job resets it (the wait mode, 2026-11-14). The app reports chat activity every frame, and an in-flight request is abandoned, then retried later, the moment chat becomes active.
 - **Authority:** findings appear only in the sidebar.
   - **Discuss** puts the finding, its quote and any conflicting canon text into the message box. The author sees it, can edit it, and sends it. Nothing reaches the assistant otherwise.
   - **Save as note** stores a note with the finding's sources.

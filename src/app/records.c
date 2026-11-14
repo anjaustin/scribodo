@@ -209,8 +209,11 @@ bool records_list_files_checked(const char *project_dir, RecordKind kind, Record
         cJSON *id = cJSON_GetObjectItem(j, "id"), *content = cJSON_GetObjectItem(j, "content"),
               *status = cJSON_GetObjectItem(j, "status");
         if (!cJSON_IsString(id) || !valid_id(id->valuestring) || !cJSON_IsString(content) || !cJSON_IsString(status)) {
+            /* A parsed line that is not a record: fail closed rather than drop it (REDTEAM-010 for chats; red-team
+             * 2026-11-14 here), so a damaged file is reported instead of read short. */
             cJSON_Delete(j);
-            continue;
+            ok = false;
+            break;
         }
         if ((n + 1) * 2 > index_cap) { /* grow and rehash */
             if (index_cap > SIZE_MAX / 2 / sizeof(size_t)) { cJSON_Delete(j); ok = false; break; }

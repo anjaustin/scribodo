@@ -58,8 +58,18 @@ def read(path):
             stats["joined"] += nphys > 1
             buffer = None
         elif len(parts) > len(FIELDS):
+            # The join overflowed: the earlier physical lines were a fragment. Count it malformed and read the last
+            # physical line on its own, so a fragment never swallows the record after it (red-team 2026-11-14).
             stats["malformed"] += 1
             buffer = None
+            parts = split_fields(line)
+            if complete(parts):
+                row = dict(zip(FIELDS, parts))
+                row["start"], row["len"], row["line"] = int(parts[8]), int(parts[9]), line
+                rows.append(row)
+                stats["records"] += 1
+            elif line and not line.startswith("#"):
+                buffer, nphys = line, 1
     if buffer is not None:
         stats["malformed"] += 1
     return rows, stats

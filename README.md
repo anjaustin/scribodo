@@ -122,7 +122,7 @@ bounded-history foundation is tracked in
 
 ## Building
 
-Requirements: a C11 compiler (Apple clang on macOS) and `make`. Every dependency is vendored as a pinned git submodule, and raylib is compiled from source.
+Requirements: the Xcode command line tools (Apple clang, `make`), Homebrew's `openssl@3` and `cmake` (`brew install openssl@3 cmake`; the MariaDB connector is built from source with the static OpenSSL libraries), `python3`, and Docker Desktop for the store (`make dbtest`, `make uitest-db`, `make crashtest`). Every other dependency is vendored as a pinned git submodule, and raylib is compiled from source. `make uitest` opens windows, so it needs an unlocked console.
 
 ```sh
 git clone --recursive https://github.com/anjaustin/scribodo.git
@@ -238,8 +238,10 @@ You can also drop a `.md` or `.txt` file onto the window to open it. Press ⌘S 
 - Saves are atomic, follow symlinks to the real file, and keep the file's permissions, BOM and line endings.
 - If another program changed the file since you opened it, Scribodo leaves that version in place and writes yours to a sibling `… (Scribodo conflict <date> <time>).md`. Saving again within 30 seconds, without further edits, overwrites the disk version.
 - Files that are write-protected or contain invalid UTF-8 open read-only.
+- While a document has unsaved edits, its whole text is written beside it every ten seconds (`<name>.scribodo-XXXXXX`, the same name a save's temp file has). If the app or the Mac dies before you save, the next open keeps that text beside the document as `<name> (Scribodo recovered <date> <time>).md` and opens it; nothing is overwritten. A clean save removes the draft.
+- The project store (chats, notes, canon, History) is a MariaDB inside Docker Desktop's virtual machine. Its commits are durable against the app or the database dying, which the interruption matrix tests; whether a commit survives the Mac losing power depends on the virtual machine flushing its disk, which Scribodo cannot test or guarantee. Documents are files on your disk and do not depend on it. **Back up now** exports the whole store to files.
 
-See [`docs/REDTEAM-001-editor-spike.md`](docs/REDTEAM-001-editor-spike.md) for the review behind these behaviors.
+See [`docs/REDTEAM-001-editor-spike.md`](docs/REDTEAM-001-editor-spike.md) and [`docs/REDTEAM-022-end-to-end.md`](docs/REDTEAM-022-end-to-end.md) for the reviews behind these behaviors.
 
 By default the build targets the host CPU (`-mcpu=native`, which includes NEON on Apple Silicon). For a portable binary, run `make ARCH_FLAGS=`.
 

@@ -210,19 +210,19 @@ bool sdb_chat_window(Db *db, const char *project, const char *conversation,
             ? "SELECT m.role,LEFT(CAST(SUBSTRING(m.content,IF(m.seq=?, ?,1),?) AS BINARY),?),m.error,m.is_edit,m.truncated,"
               " LEFT(CAST(m.via AS BINARY),513),m.created_at,OCTET_LENGTH(m.content),"
                " OCTET_LENGTH(SUBSTRING(m.content,IF(m.seq=?, ?,1),?)),COALESCE(OCTET_LENGTH(m.via),0),m.seq,m.stopped"
-               " ,COALESCE(OCTET_LENGTH(m.memory_sources),0),LEFT(CAST(m.memory_sources AS BINARY),16385)"
+               " ,COALESCE(OCTET_LENGTH(m.memory_sources),0),LEFT(CAST(m.memory_sources AS BINARY),16385),m.is_note"
                " FROM messages m JOIN conversations c ON c.id=m.conversation_id"
                " WHERE m.id IN (?,?,?,?,?,?,?,?) AND m.conversation_id=? AND c.project_id=? ORDER BY m.seq"
             : "SELECT m.role,LEFT(CAST(SUBSTRING(m.content,IF(m.seq=?, ?,1),?) AS BINARY),?),m.error,m.is_edit,m.truncated,"
               " LEFT(CAST(m.via AS BINARY),513),m.created_at,OCTET_LENGTH(m.content),"
                " OCTET_LENGTH(SUBSTRING(m.content,IF(m.seq=?, ?,1),?)),COALESCE(OCTET_LENGTH(m.via),0),m.seq,m.stopped"
-               " ,COALESCE(OCTET_LENGTH(m.memory_sources),0),LEFT(CAST(m.memory_sources AS BINARY),16385)"
+               " ,COALESCE(OCTET_LENGTH(m.memory_sources),0),LEFT(CAST(m.memory_sources AS BINARY),16385),m.is_note"
                " FROM messages m JOIN conversations c ON c.id=m.conversation_id"
                " WHERE m.id IN (?,?,?,?,?,?,?,?) AND m.conversation_id=? AND c.project_id=? ORDER BY m.seq DESC";
         DbRows row;
         ok = db_query(db, body_sql, args, 17, &row);
         if (!ok) break;
-        ok = row.nrows == batch && db_rows_has_columns(&row, 14);
+        ok = row.nrows == batch && db_rows_has_columns(&row, 15);
         for (size_t r = 0; ok && r < batch; r++) {
             int64_t seq = -1, expected = -1;
             ok = db_cell_i64(&row, r, 10, &seq) && db_cell_i64(&metadata, i + r, 1, &expected) && seq == expected;
@@ -232,7 +232,7 @@ bool sdb_chat_window(Db *db, const char *project, const char *conversation,
             ChatMessage *m = &page.messages[page.count++];
             const char *role = NULL, *text = NULL, *via = NULL, *sources = NULL;
             uint64_t total = 0, part = 0, via_bytes = 0, sources_bytes = 0;
-            ok = read_row_bool(&row, r, 11, &m->stopped) && db_cell_text(&row, r, 0, &role) && (!strcmp(role, "user") || !strcmp(role, "assistant")) &&
+            ok = read_row_bool(&row, r, 11, &m->stopped) && read_row_bool(&row, r, 14, &m->is_note) && db_cell_text(&row, r, 0, &role) && (!strcmp(role, "user") || !strcmp(role, "assistant")) &&
                  db_cell_text(&row, r, 1, &text) && read_row_bool(&row, r, 2, &m->error) &&
                  read_row_bool(&row, r, 3, &m->is_edit) && read_row_bool(&row, r, 4, &m->truncated) &&
                  db_cell_nullable(&row, r, 5, &via) && db_cell_double(&row, r, 6, &m->ts) && m->ts >= 0 && m->ts < 0x1p63 &&

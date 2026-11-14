@@ -2,6 +2,8 @@
 #include <string.h>
 
 #include "core/experiments.h"
+#include "core/utf8.h"
+#include <stdint.h>
 #include "llm/observer.h"
 #include "test_util.h"
 
@@ -60,6 +62,41 @@ static void test_paragraphs_and_overlap(void)
     CHECK(obs_title("Mrs", 3) && obs_title("captain", 7) && !obs_title("Darcy", 5) && !obs_title("Mrsx", 4));
 }
 
+static bool valid_utf8(const char *s)
+{
+    size_t n = strlen(s), invalid = 0;
+    uint32_t *cps = malloc((n + 1) * sizeof(uint32_t));
+    if (!cps) return false;
+    utf8_decode((const uint8_t *)s, n, cps, &invalid);
+    free(cps);
+    return invalid == 0;
+}
+
+static void test_statement_clips_by_characters(void)
+{
+    /* 298 ASCII bytes, then an em dash (3 bytes, straddling byte 300), then more: the old "%.300s" cut inside the
+     * dash. 305 characters, so the clip at 300 keeps the whole dash and one space and drops "more.". */
+    char quote[400];
+    memset(quote, 'a', 298);
+    memcpy(quote + 298, "\xE2\x80\x94 more.", 9);
+    quote[307] = '\0';
+    char out[OBS_STATEMENT_BYTES];
+    obs_statement("Zo\xC3\xAB's eyes are brown.", quote, out, sizeof(out));
+    CHECK(valid_utf8(out));
+    CHECK(strstr(out, "a\xE2\x80\x94 \xE2\x80\x9D)") != NULL && !strstr(out, "more."));
+    memcpy(quote + 290, "\xE2\x80\x94 more words.", 15); /* 305 bytes, 303 characters: three characters clipped */
+    quote[305] = '\0';
+    obs_statement("d", quote, out, sizeof(out));
+    CHECK(valid_utf8(out) && strstr(out, "\xE2\x80\x94 more wor\xE2\x80\x9D)") != NULL);
+    char longq[1300];
+    for (size_t i = 0; i < 400; i++) memcpy(longq + 3 * i, "\xE2\x80\x94", 3); /* 400 em dashes: 1,200 bytes */
+    longq[1200] = '\0';
+    obs_statement("d", longq, out, sizeof(out));
+    CHECK(valid_utf8(out) && strlen(out) == 1 + 2 + 3 + 300 * 3 + 3 + 1); /* 300 characters kept */
+    obs_statement(NULL, NULL, out, sizeof(out));
+    CHECK(!strcmp(out, " (\xE2\x80\x9C\xE2\x80\x9D)"));
+}
+
 static void test_values_in_texts(void)
 {
     const char *canon = "Dejah Thoris is the daughter of Mors Kajak and the granddaughter of Tardos Mors.";
@@ -107,6 +144,7 @@ int main(void)
         { "paragraphs_and_overlap", test_paragraphs_and_overlap },
         { "first_sentence", test_first_sentence },
         { "values_in_texts", test_values_in_texts },
+        { "statement_clips_by_characters", test_statement_clips_by_characters },
     };
     return run_tests(tests, sizeof(tests) / sizeof(tests[0]));
 }

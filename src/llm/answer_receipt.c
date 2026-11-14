@@ -24,19 +24,26 @@ static size_t header_length(const char *fmt, ...)
     return n < 0 ? 0 : (size_t)n;
 }
 
+static size_t field_copy(char *dst, size_t max, const char *src);
+
 char *answer_receipt(const AnswerPipelineResult *r)
 {
     if (!r) return NULL;
     const char *span = r->span ? r->span : "";
     const char *span2 = r->second_span ? r->second_span : "";
+    /* Document names: "|" becomes a broken bar so no field holds the separator (the readers split on " | ";
+     * answer_receipt.h promises it; red-team 2026-11-14). */
+    char name1[300], name2[300];
+    field_copy(name1, sizeof(name1) - 1, r->has_top ? answer_source_name(&r->top) : "");
+    field_copy(name2, sizeof(name2) - 1, r->has_second ? answer_source_name(&r->second) : "");
     const char *fmt_top = "--- VERIFIED SOURCE | unit=%s | document=%s | score=%.4f | status=%s | part=%zu | candidates=%zu scored=%zu ---\n";
     const char *fmt_none = "--- VERIFIED SOURCE | none | status=%s | candidates=%zu scored=%zu ---\n";
     const char *fmt_second = "--- VERIFIED SOURCE 2 | unit=%s | document=%s | score=%.4f | status=%s | part=%zu ---\n";
     size_t fixed = r->has_top
-        ? header_length(fmt_top, r->top.id, answer_source_name(&r->top), r->top_score, r->status, r->top_part + 1, r->candidates, r->scored) + 1
+        ? header_length(fmt_top, r->top.id, name1, r->top_score, r->status, r->top_part + 1, r->candidates, r->scored) + 1
         : header_length(fmt_none, r->status, r->candidates, r->scored);
     if (r->has_second)
-        fixed += header_length(fmt_second, r->second.id, answer_source_name(&r->second), r->second_score, r->second_status, r->second_part + 1) + 1;
+        fixed += header_length(fmt_second, r->second.id, name2, r->second_score, r->second_status, r->second_part + 1) + 1;
     /* The headers are always complete; the span lines share what is left of the bound, first span first. */
     size_t room = fixed < ANSWER_RECEIPT_PIPELINE_MAX ? ANSWER_RECEIPT_PIPELINE_MAX - fixed : 0;
     size_t len1 = r->has_top ? utf8_prefix(span, room) : 0;
@@ -46,7 +53,7 @@ char *answer_receipt(const AnswerPipelineResult *r)
     if (!out) return NULL;
     size_t k = 0;
     if (r->has_top) {
-        k += (size_t)snprintf(out + k, cap - k, fmt_top, r->top.id, answer_source_name(&r->top), r->top_score, r->status,
+        k += (size_t)snprintf(out + k, cap - k, fmt_top, r->top.id, name1, r->top_score, r->status,
                               r->top_part + 1, r->candidates, r->scored);
         memcpy(out + k, span, len1); k += len1;
         out[k++] = '\n';
@@ -54,7 +61,7 @@ char *answer_receipt(const AnswerPipelineResult *r)
         k += (size_t)snprintf(out + k, cap - k, fmt_none, r->status, r->candidates, r->scored);
     }
     if (r->has_second) {
-        k += (size_t)snprintf(out + k, cap - k, fmt_second, r->second.id, answer_source_name(&r->second), r->second_score,
+        k += (size_t)snprintf(out + k, cap - k, fmt_second, r->second.id, name2, r->second_score,
                               r->second_status, r->second_part + 1);
         memcpy(out + k, span2, len2); k += len2;
         out[k++] = '\n';
@@ -68,7 +75,7 @@ static size_t field_copy(char *dst, size_t max, const char *src)
 {
     if (!src) { dst[0] = '\0'; return 0; }
     size_t n = utf8_prefix(src, max);
-    for (size_t i = 0; i < n; i++) dst[i] = src[i] == '\n' || src[i] == '\r' ? ' ' : src[i];
+    for (size_t i = 0; i < n; i++) dst[i] = src[i] == '\n' || src[i] == '\r' ? ' ' : src[i] == '|' ? '/' : src[i];
     dst[n] = '\0';
     return n;
 }

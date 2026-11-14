@@ -140,7 +140,7 @@ bool sdb_chat_append_sequenced(Db *db, const char *project_id, const char *id, c
         if (!copy) ok = false;
         for (char *save = NULL, *nm = copy ? strtok_r(copy, "\n", &save) : NULL; ok && nm; nm = strtok_r(NULL, "\n", &save)) {
             char doc[40];
-            if (!store_document_id_db(db, project_id, nm, true, doc, sizeof(doc))) continue;
+            if (!store_document_id_db(db, project_id, nm, true, doc, sizeof(doc))) { ok = false; break; } /* the turn is not recorded without its attachment (red-team 2026-11-14) */
             DbArg d[3] = { DB_S(doc), DB_S(id), DB_I(seq) };
             ok = db_run(db,
                         "INSERT IGNORE INTO message_documents (message_id, document_id)"
@@ -306,8 +306,17 @@ bool sdb_chat_set_observer(Db *db, const char *project_id, const char *id, bool 
 
 bool sdb_chat_rename(Db *db, const char *project_id, const char *id, const char *title)
 {
+    /* The previous title is kept (delete nothing, only archive; red-team 2026-11-14): one transaction, the old
+     * title into conversation_titles, then the new one onto the row. */
+    if (!db_begin(db)) return false;
+    double t = now_s();
     uint64_t changed = 0;
-    DbArg a[4] = { DB_S(title), DB_D(now_s()), DB_S(id), DB_S(project_id) };
-    return db_run(db, "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ? AND project_id = ?", a, 4, &changed) &&
-           changed == 1;
+    DbArg keep[3] = { DB_D(t), DB_S(id), DB_S(project_id) };
+    DbArg a[4] = { DB_S(title), DB_D(t), DB_S(id), DB_S(project_id) };
+    bool ok = db_run(db, "INSERT INTO conversation_titles (conversation_id, title, replaced_at)"
+                         " SELECT id, title, ? FROM conversations WHERE id = ? AND project_id = ?", keep, 3, NULL) &&
+              db_run(db, "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ? AND project_id = ?", a, 4, &changed) &&
+              changed == 1;
+    if (!ok) { db_rollback(db); return false; }
+    return db_commit(db);
 }

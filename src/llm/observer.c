@@ -681,7 +681,8 @@ static bool job_judge_pair(JobRun *r, size_t i, size_t c, const char *stmt)
     bool conflict = backend_judge(r->o, v->content, stmt, check, sizeof(check));
     if (atomic_load(&r->o->cancel)) return false;
     for (size_t q = 0; conflict && q < r->nconf; q++) /* same canon, same passage: once */
-        if (!strcmp(r->conflicts[q].canon_id, r->canon[c].id) && r->cands[r->conflicts[q].cand].src.start == r->cands[i].src.start)
+        if (!strcmp(r->conflicts[q].canon_id, r->canon[c].id) && r->cands[r->conflicts[q].cand].src.start == r->cands[i].src.start &&
+            !strcmp(r->cands[r->conflicts[q].cand].src.quote, r->cands[i].src.quote)) /* chat pieces share offsets across messages */
             conflict = false;
     if (conflict && conflict_recorded(r->existing, r->ne, r->canon[c].id, v->content, r->cands[i].src.quote)) conflict = false;
     if (conflict && r->nconf < MAX_JUDGE_PAIRS) {
@@ -715,8 +716,11 @@ static void job_judge(JobRun *r)
 {
     for (size_t i = 0; i < r->nc && !r->cancelled; i++) {
         if (!strcmp(r->cands[i].type, "question")) continue;
-        char stmt[600];
-        snprintf(stmt, sizeof(stmt), "%s (\xE2\x80\x9C%.300s\xE2\x80\x9D)", r->cands[i].desc, r->cands[i].src.quote);
+        /* The quote is clipped by characters, never by bytes: a cut inside a multi-byte character made the judge
+         * request invalid JSON, which the server refused, so the statement was never checked (red-team 2026-11-14,
+         * seen in the recorded Mars runs: a 305-byte quote ending in an em dash). */
+        char stmt[OBS_STATEMENT_BYTES];
+        obs_statement(r->cands[i].desc, r->cands[i].src.quote, stmt, sizeof(stmt));
         size_t cand[4];
         int ncand = job_canon_candidates(r, stmt, cand);
         for (int b = 0; b < ncand && r->pairs < MAX_JUDGE_PAIRS; b++) {
@@ -938,6 +942,7 @@ static void *worker(void *arg)
         o->rebuild = false;
         o->poked = false;
         o->running = true;
+        o->cancelled_by_chat = false; /* chat activity during discovery or a rebuild is not a cancelled job (red-team 2026-11-14) */
         atomic_store(&o->cancel, false);
         pthread_mutex_unlock(&o->mu);
 
@@ -1130,6 +1135,7 @@ void observer_set_project(Observer *o, const char *project_dir)
         atomic_store(&o->cancel, true);
         o->retry_at = 0;
         o->io_error = false;
+        o->idle_required = IDLE_DELAY; /* another project's chat never cancelled this one's jobs */
         snprintf(o->status, sizeof(o->status), "%s", o->project[0] ? "Starting\xE2\x80\xA6" : "Open a document to start");
     }
     o->poked = true;

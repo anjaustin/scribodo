@@ -7,7 +7,10 @@
 bool chat_receipt_refusal(const char *memory_sources)
 {
     static const char k_mark[] = "--- ANSWER GATE | verdict=";
-    const char *p = memory_sources ? strstr(memory_sources, k_mark) : NULL;
+    /* The last occurrence: the receipt writes the document name and the verified spans raw before the gate line, and
+     * manuscript text may contain the marker (red-team 2026-11-14). */
+    const char *p = NULL;
+    for (const char *q = memory_sources ? strstr(memory_sources, k_mark) : NULL; q; q = strstr(q + 1, k_mark)) p = q;
     if (!p) return false;
     p += sizeof(k_mark) - 1;
     const char *end = strstr(p, " |");

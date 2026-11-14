@@ -420,16 +420,22 @@ static void run_expect(Script *s, ScriptHost *h, Tokens *t)
         snprintf(detail, sizeof(detail), "got %zu cache bytes", bytes);
     } else if (!strcmp(what, "memory_enabled") && t->n == 3 && h->memory_enabled) {
         ok = h->memory_enabled(h->ctx) == yes(t->tok[2]);
+    } else if (!strcmp(what, "memory_sources_none") && t->n == 2 && h->memory_sources) {
+        /* No sources at all (memory off for the conversation, or no reply): distinct from "sources without X". */
+        char *sources = h->memory_sources(h->ctx);
+        ok = !sources || !sources[0];
+        show(detail, sizeof(detail), "memory_sources", sources ? sources : "");
+        free(sources);
     } else if ((!strcmp(what, "memory_sources") || !strcmp(what, "memory_sources_not")) && t->n == 3 && h->memory_sources) {
         char *sources = h->memory_sources(h->ctx);
         bool found = sources && strstr(sources, t->tok[2]);
-        ok = !strcmp(what, "memory_sources") ? found : !found;
+        ok = !strcmp(what, "memory_sources") ? found : (sources && !found); /* no reply is not "sources without X" */
         show(detail, sizeof(detail), "memory_sources", sources ? sources : "");
         free(sources);
     } else if ((!strcmp(what, "recall") || !strcmp(what, "recall_not")) && t->n == 3 && h->recall_text) {
         char *text = h->recall_text(h->ctx);
         bool found = text && strstr(text, t->tok[2]);
-        ok = !strcmp(what, "recall") ? found : !found;
+        ok = !strcmp(what, "recall") ? found : (text && !found);
         show(detail, sizeof(detail), "recall", text ? text : "");
         free(text);
     } else if (!strcmp(what, "history_busy") && t->n == 3 && h->history_busy) {
@@ -977,8 +983,10 @@ bool script_frame(Script *s, ScriptHost *h)
         }
         if (s->wait_chat > 0) {
             s->wait_chat--;
-            if (chat_busy(h->chat) || s->wait_chat % 1000 == 999) return true;
+            if (chat_busy(h->chat) && s->wait_chat > 0) return true;
+            bool done = !chat_busy(h->chat);
             s->wait_chat = 0;
+            if (!done) report(s, false, "chat did not finish"); /* a hung send is a failure, not a pass-through (red-team 2026-11-14) */
             new_batch(s); /* one more frame so chat_poll publishes completion */
             continue;
         }

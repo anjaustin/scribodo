@@ -1607,7 +1607,9 @@ static void test_observer_wait_mode(void)
     if (!o) { unsetenv("SCRIBODO_FAKE_EXTRACT_MS"); return; }
     CHECK(observer_idle_required(o) == 1.5 && observer_chat_cancels(o) == 0);
     observer_set_project(o, proj);
-    usleep(300000); /* inside the held job */
+    double tw = wall_s();
+    while (observer_attempts(o) < 1 && wall_s() - tw < 5) usleep(10000); /* the job is running (held by the hook) */
+    usleep(50000);
     observer_set_chat_active(o, true);
     double t0 = wall_s();
     while (observer_chat_cancels(o) == 0 && wall_s() - t0 < 5) usleep(20000);

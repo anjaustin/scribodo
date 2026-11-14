@@ -1,7 +1,10 @@
 #define _DARWIN_C_SOURCE
 #include "observer.h"
 #include "observer_text_internal.h"
+#include <stdint.h>
+#include <stdio.h>
 #include "core/experiments.h"
+#include "core/utf8.h"
 
 #include <stdbool.h>
 #include <stdlib.h>
@@ -304,6 +307,27 @@ void obs_first_sentence(char *s)
         end[1] = '\0';
         return;
     }
+}
+
+/* The statement a judge call sees: the description and the located quote, the quote clipped to 300 characters (the
+ * evidence schema's maxLength) by characters, never by bytes. Clipping by "%.300s" cut inside a multi-byte character
+ * and the request was invalid JSON the server refused, so the statement was never checked (red-team 2026-11-14; the
+ * recorded Mars runs hold a 305-byte quote ending in an em dash). */
+void obs_statement(const char *desc, const char *quote, char *out, size_t cap)
+{
+    char q[1205];
+    const char *s = quote ? quote : "";
+    size_t n = strlen(s), k = 0, chars = 0;
+    while (k < n && chars < 300) { /* 300 characters, whole ones */
+        uint32_t cp;
+        int len = utf8_decode_one((const uint8_t *)s + k, n - k, &cp);
+        if (len <= 0 || k + (size_t)len >= sizeof(q)) break;
+        k += (size_t)len;
+        chars++;
+    }
+    memcpy(q, s, k);
+    q[k] = '\0';
+    snprintf(out, cap, "%s (\xE2\x80\x9C%s\xE2\x80\x9D)", desc ? desc : "", q);
 }
 
 /* The judge's two values, each located in its own text (obs_locate: exact, then ignoring quote style and emphasis)

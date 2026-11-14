@@ -13,14 +13,15 @@
 
 #include "core/json.h"
 #include "core/file_text.h"
+#include <limits.h>
 #include "app/chat_store_internal.h"
 #include "app/project_store.h"
 #include "app/store.h"
 
 bool chat_store_dir(const char *project_dir, char *out, size_t outlen)
 {
-    char base[1024];
-    snprintf(base, sizeof(base), "%s/.scribodo", project_dir);
+    char base[PATH_MAX + 32];
+    if (snprintf(base, sizeof(base), "%s/.scribodo", project_dir) >= (int)sizeof(base)) return false; /* never a cut path */
     if (mkdir(base, 0755) != 0 && errno != EEXIST) return false;
     snprintf(out, outlen, "%s/chats", base);
     if (mkdir(out, 0755) != 0 && errno != EEXIST) return false;

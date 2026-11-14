@@ -30,7 +30,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 30
-    mem_limit: 768m
+    mem_limit: ${SCRIBODO_MARIADB_MEM_LIMIT:-768m}
 
   qdrant:
     image: qdrant/qdrant:v1.20.0@sha256:9bfc89f9914fc14876a88c05270685921a55b8877b254a98bcc1cc2f0a424cd2
@@ -49,7 +49,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 30
-    mem_limit: 1g
+    mem_limit: ${SCRIBODO_QDRANT_MEM_LIMIT:-1g}
 
 secrets:
   db_password:

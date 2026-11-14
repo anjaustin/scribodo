@@ -254,6 +254,10 @@ Accessibility and independent author usability need explicit evaluation.
 
 **Next work:** A real-input/VoiceOver/keyboard-only test matrix and a small author
 pilot on supported hardware; capture task completion, friction and failures.
+Also here (REDTEAM-022 R26, deferred): the Explorer lists at most 200 documents
+of a folder, in directory order, with no sign that any were left out; the fix is
+a `truncated` flag in the explorer snapshot and a status line, to be built when
+the pilot's folders or the author's reach that size.
 
 **Exit evidence:** Recorded results, actionable defects with regression/manual
 coverage, and author feedback on complete writing sessions rather than demos.

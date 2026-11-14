@@ -209,6 +209,30 @@ static void test_failed_save_leaves_original(void)
  * arms an alarm so a regression fails the run instead of hanging it. */
 /* The one atomic writer for the app's small files (core/file_text.h): whole content, requested mode, no temp
  * left, the original kept when the write cannot happen. */
+/* The draft writer leaves exactly one save-temp-named file beside the document, which recovery then offers. */
+static void test_write_draft(void)
+{
+    char dir[600], doc[700], first[600], d1[800], d2[800];
+    snprintf(dir, sizeof(dir), "%s/drafts", g_dir);
+    CHECK(mkdir(dir, 0755) == 0);
+    snprintf(doc, sizeof(doc), "%s/chapter.md", dir);
+    write_bytes(doc, "old\n", 4);
+    CHECK(doc_write_draft(doc, "first draft\n", 12, "", d1, sizeof(d1)));
+    const char *tail = strrchr(d1, '/'); /* the path is resolved (realpath), so compare the name */
+    CHECK(tail && !strncmp(tail, "/chapter.md.scribodo-", 21) && strlen(tail) == 27);
+    uint8_t buf[64];
+    CHECK(read_bytes(d1, buf, sizeof(buf)) == 12 && !memcmp(buf, "first draft\n", 12));
+    CHECK(doc_write_draft(doc, "second draft\n", 13, d1, d2, sizeof(d2)));
+    CHECK(strcmp(d1, d2) != 0 && access(d1, F_OK) != 0 && read_bytes(d2, buf, sizeof(buf)) == 13);
+    CHECK(read_bytes(doc, buf, sizeof(buf)) == 4); /* the document itself is untouched */
+    bool differs = false;
+    CHECK(doc_recover_strays(doc, first, sizeof(first), &differs) == 1 && differs);
+    CHECK(!strncmp(first, "chapter (Scribodo recovered ", 28));
+    char tiny[8];
+    CHECK(!doc_write_draft(doc, "x", 1, "", tiny, sizeof(tiny)) && tiny[0] == '\0');
+    CHECK(!doc_write_draft(NULL, "x", 1, "", d1, sizeof(d1)));
+}
+
 /* A stray save temp beside a document is kept under a name that lists as a document, never over a file. */
 static void test_recover_strays(void)
 {
@@ -383,7 +407,7 @@ int main(void)
         { "save_preserves_mode", test_save_preserves_mode },
         { "refuses_external_change", test_refuses_external_change },
         { "failed_save_leaves_original", test_failed_save_leaves_original },
-        { "recover_strays", test_recover_strays },
+        { "recover_strays", test_recover_strays }, { "write_draft", test_write_draft },
         { "file_text_write_atomic", test_file_text_write_atomic }, { "fifo_does_not_block", test_fifo_does_not_block },
         { "write_protected", test_write_protected },
         { "large_roundtrip", test_large_roundtrip },

@@ -476,6 +476,7 @@ several are optional developer actions rather than merge gates.
       no display session in which Raylib can create a window, so the permanently
       failing job was retired rather than consuming capacity without coverage.
 - [x] Store UI (`make uitest-db`) on the trusted Mac runner.
+- [x] The interruption matrix (`make crashtest`) on the trusted Mac runner.
 - [x] Scheduled/manual backup and remote-provider acceptance suites.
 - [ ] Real-model/offline acceptance remains manual because it requires the local
       model asset and a deliberately network-isolated sandbox.

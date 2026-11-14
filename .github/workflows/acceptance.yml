@@ -28,6 +28,9 @@ jobs:
       SCRIBODO_COMPOSE_PROJECT: scribodo-ci
       SCRIBODO_DB_PORT: "33062"
       SCRIBODO_QDRANT_PORT: "6334"
+      # The runner shares the author's Docker VM (pinned to 3,072 MiB) with the local stack; both stacks' caps fit.
+      SCRIBODO_MARIADB_MEM_LIMIT: "512m"
+      SCRIBODO_QDRANT_MEM_LIMIT: "768m"
     steps:
       - name: Check out pinned dependencies
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0

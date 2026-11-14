@@ -199,8 +199,8 @@ void chat_clear(ChatSession *s)
 void chat_destroy(ChatSession *s)
 {
     if (!s) return;
+    chat_clear(s); /* joins the worker first: gate_apply reads the gate strings (red-team 2026-11-14) */
     gate_clear(s);
-    chat_clear(s);
     free(s->msgs);
     free(s->request);
     free(s->ctx_title);
@@ -1143,14 +1143,14 @@ static void build_begin(ChatSession *s, ChatBuild *b)
     snprintf(b->author, sizeof(b->author), "%s", s->author_name);
     snprintf(b->assistant, sizeof(b->assistant), "%s", s->assistant_name);
     b->names = (ChatNames){ b->author, b->assistant };
+    b->samp = s->sampling; /* read under the lock: chat_set_sampling writes them from the UI thread */
+    b->use_samp = s->has_sampling;
     pthread_mutex_unlock(&s->mu);
     /* Budget from the server's real per-slot context, not an assumption
      * (red-team 003: a mismatch overflowed the context despite trimming). */
     b->slot_ctx = s->via_remote ? s->remote.context_tokens : s->server ? llm_server_slot_ctx(s->server) : SLOT_CTX_TOKENS;
     /* The reply's room in the budget follows the author's max reply length
      * (the builders reserve MAX_REPLY_TOKENS). */
-    b->samp = s->sampling;
-    b->use_samp = s->has_sampling;
     if (b->use_samp) b->slot_ctx -= b->samp.max_reply - MAX_REPLY_TOKENS;
     /* The local tokenizer counts only for the local model; remote budgets are estimated. */
     b->counter = !s->via_remote && (s->server || (s->memory_enabled && !s->edit_passage)) ? server_count : NULL;
@@ -1266,6 +1266,7 @@ static void gate_arm(ChatSession *s, const AnswerPipelineResult *pipeline, const
         s->gate_names[s->gate_nspans] = strdup(nm);
         s->gate_spans[s->gate_nspans] = strdup(gate_text[i]);
         if (s->gate_names[s->gate_nspans] && s->gate_spans[s->gate_nspans]) s->gate_nspans++;
+        else { free(s->gate_names[s->gate_nspans]); free(s->gate_spans[s->gate_nspans]); s->gate_names[s->gate_nspans] = s->gate_spans[s->gate_nspans] = NULL; }
     }
     for (size_t i = first_history; i + 1 < history->count && s->gate_nauthor < ANSWER_HISTORY_MESSAGES; i++)
         if (history->messages[i].role == CHAT_USER && !history->messages[i].error && history->messages[i].content) {
@@ -1283,16 +1284,33 @@ static void memory_pipeline(ChatSession *s, ChatBuild *b, MemoryStage *m)
     if (!(m->available && s->answer_pipeline && s->rerank)) return;
     AnswerPipelineResult pipeline = {0};
     MemoryScope pscope;
+    /* Consent off for this conversation: nothing is searched and the request is left as built, so the recall stage
+     * reports "Local memory disabled" (red-team 2026-11-14: the stage used to rebuild the request around "No verified
+     * passage was found", which told the composer the manuscript had been searched). */
+    if (!memory_scope_get(m->db, m->project_id, s->memory_conversation, &pscope) || !pscope.enabled) return;
     double pipeline_deadline = memory_budget_now_ms() + ANSWER_PIPELINE_BUDGET_MS;
     /* The vector search is bounded by the pipeline's own deadline and the
      * session's cancel, not the 500 ms preparation budget (REDTEAM-021 R1). */
     SemanticClient *pipeline_vectors = semantic_client_bounded(s->memory_vectors, &s->cancel, pipeline_deadline);
-    if (pipeline_vectors && memory_scope_get(m->db, m->project_id, s->memory_conversation, &pscope) && pscope.enabled)
-        answer_pipeline_run(m->db, pipeline_vectors, s->rerank, s->server, &pscope, &m->documents, m->query, m->before,
-                            &s->cancel, pipeline_deadline, &pipeline);
+    if (!pipeline_vectors) return; /* no search ran; the plain request stands */
+    answer_pipeline_run(m->db, pipeline_vectors, s->rerank, s->server, &pscope, &m->documents, m->query, m->before,
+                        &s->cancel, pipeline_deadline, &pipeline);
     semantic_client_destroy(pipeline_vectors);
+    if (pipeline.scored && pipeline.score_failures == pipeline.scored) {
+        /* Every score failed (the reranker refused or was unavailable): a capacity failure, not a search result.
+         * The request keeps its plain shape and the notice says what happened. */
+        snprintf(b->memory_notice, sizeof(b->memory_notice), "Verified pipeline: %zu candidates, %zu scored, none accepted by the reranker; the plain request was sent.",
+                 pipeline.candidates, pipeline.scored);
+        if (experiments()->memory_trace) answer_trace_pipeline(stderr, &pipeline, b->req ? strlen(b->req) : 0, b->first_history);
+        answer_pipeline_result_free(&pipeline);
+        m->pipeline_done = true;
+        m->available = false;
+        return;
+    }
     char *preface = answer_verified_block(&pipeline);
-    char *rebuilt = preface ? chat_build_request_pipeline(b->history.messages, b->history.count, &b->names, b->slot_ctx, b->counter, s,
+    /* Counted by the byte estimate (bytes / 1.5, the conservative side): the 500 ms tokenizer budget is spent by the
+     * time the pipeline returns, so every /tokenize would fail and fall back to it anyway (red-team 2026-11-14). */
+    char *rebuilt = preface ? chat_build_request_pipeline(b->history.messages, b->history.count, &b->names, b->slot_ctx, NULL, s,
                                                           &b->first_history, preface) : NULL;
     gate_clear(s);
     if (rebuilt && !m->note && answer_gate_applies(m->query)) gate_arm(s, &pipeline, &b->history, b->first_history, m->query);
@@ -1493,6 +1511,7 @@ static void *fake_worker(void *arg)
         finish(s, true, s->build_error[0] ? s->build_error : "Out of memory");
         return NULL;
     }
+    gate_clear(s); /* the fixture never applies the gate; an armed one must not reach a later remote turn */
     /* Echo the last user message; mention the document if one was sent. */
     char reply[4096];
     pthread_mutex_lock(&s->mu);
@@ -1669,10 +1688,16 @@ bool chat_send_edit(ChatSession *s, const char *instruction, const char *passage
         snprintf(err, errlen, "Select the passage you want edited first");
         return false;
     }
-    char label[600];
-    snprintf(label, sizeof(label), "\xE2\x9C\x8E Edit: %s", instruction && instruction[0] ? instruction : "improve this passage");
-    return send_common(s, label, ctx, instruction && instruction[0] ? instruction : "Improve this passage.", passage,
-                       err, errlen);
+    /* The author's turn records the whole instruction (red-team 2026-11-14: a 600-byte label cut it, sometimes
+     * inside a character, and the cut row could not be stored). */
+    const char *what = instruction && instruction[0] ? instruction : "improve this passage";
+    size_t n = strlen(what) + 16;
+    char *label = malloc(n);
+    if (!label) { snprintf(err, errlen, "Out of memory"); return false; }
+    snprintf(label, n, "\xE2\x9C\x8E Edit: %s", what);
+    bool ok = send_common(s, label, ctx, instruction && instruction[0] ? instruction : "Improve this passage.", passage, err, errlen);
+    free(label);
+    return ok;
 }
 
 static bool send_common(ChatSession *s, const char *text, const ChatContext *ctx, const char *instruction,

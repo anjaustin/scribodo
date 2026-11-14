@@ -25,4 +25,4 @@ click_element ChatInput
 type "continue with memory disabled"
 key ENTER
 wait_chat
-expect memory_sources_not "GENERATED T1 BRIEF"
+expect memory_sources_none

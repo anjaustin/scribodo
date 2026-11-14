@@ -14,6 +14,9 @@
 #include "llm/llm_text.h"
 
 #define RERANK_CLIP_BYTES 2000
+/* The question's share of the 2,048-token slot: a pasted paragraph that ends in a question must not push the prompt
+ * past the slot, which failed every score and made the request claim no passage was found (red-team 2026-11-14). */
+#define RERANK_QUERY_CLIP_BYTES 1000
 #define RERANK_N_PROBS 20
 #define RERANK_HTTP_TIMEOUT_MS 30000
 
@@ -53,7 +56,9 @@ bool rerank_client_fixture(const RerankClient *c) { return c && !c->server; }
 char *rerank_prompt(const char *question, const char *text)
 {
     if (!question || !text) return NULL;
-    char *q = llm_neutralize(question);
+    char qclip[RERANK_QUERY_CLIP_BYTES + 1];
+    utf8_clip(qclip, sizeof(qclip), question, RERANK_QUERY_CLIP_BYTES);
+    char *q = llm_neutralize(qclip);
     char *clip = malloc(RERANK_CLIP_BYTES + 1);
     char *d = NULL;
     if (clip) {

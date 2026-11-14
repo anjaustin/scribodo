@@ -103,7 +103,13 @@ static void ensure_layout(Editor *e)
 {
     float w = e->text_w > 1.0f ? e->text_w : 600.0f;
     if (!e->layout_dirty && e->layout_width == w) return;
-    wrap_compute(&e->layout, &e->buf, w, adv_cb, e->font);
+    if (wrap_compute(&e->layout, &e->buf, w, adv_cb, e->font) < 0) {
+        /* Out of memory mid-wrap: the rows do not tile the buffer; try again next frame rather than draw and
+         * hit-test a partial layout (red-team 2026-11-14). */
+        e->layout_dirty = true;
+        e->layout_width = -1.0f;
+        return;
+    }
     e->layout_dirty = false;
     e->layout_width = w;
 }

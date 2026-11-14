@@ -36,6 +36,10 @@ char *chat_view_take_submit(ChatView *v);
  * value at the moment of submission goes with the turn. */
 bool chat_view_take_submit_note(ChatView *v);
 bool chat_view_note_mode(const ChatView *v);
+/* The keyboard path (⌘⇧N while the composer has focus) and edit mode, in which an instruction is never a note and
+ * the toggle is hidden (red-team 2026-11-14). */
+void chat_view_toggle_note(ChatView *v);
+void chat_view_set_note_disabled(ChatView *v, bool disabled);
 Rectangle chat_view_note_toggle_rect(const ChatView *v, Rectangle input);
 void chat_view_submit_now(ChatView *v);
 void chat_view_clear_input(ChatView *v);

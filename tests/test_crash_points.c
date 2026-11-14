@@ -38,7 +38,9 @@
 
 bool admin_name(const char *sql_fmt, const char *name);
 
-#define LATEST_SCHEMA 17
+#define LATEST_SCHEMA 18
+/* Statements across k_migrations (src/app/db.c, with memory_brief_schema.h): the column checklist updates it. */
+#define MIGRATION_STATEMENTS 84
 
 static const char *const k_points[] = { "migration.statement", "migration.receipt" };
 
@@ -162,6 +164,9 @@ static void run_point(const char *point)
         if (r.exited) {
             /* The matrix is exhausted: the child finished every point before hit k. */
             CHECK(r.code == 0 && r.version == LATEST_SCHEMA && r.hits == k - 1);
+            /* The matrix has a floor: every statement and every receipt is a death (a refactor that drops a
+             * crash_point or the -DSCRIBODO_CRASH_POINTS flag would otherwise pass with zero deaths). */
+            CHECK(r.hits == (!strcmp(point, "migration.receipt") ? LATEST_SCHEMA : MIGRATION_STATEMENTS));
             fprintf(g_matrix, "%s\t%ld\tnone\t-\t%d\t-\t%ld hits in all\n", point, k, r.version, r.hits);
             printf("%s: %ld points, every one recovered to schema %d\n", point, k - 1, LATEST_SCHEMA);
             admin_name("DROP DATABASE %s", name);
@@ -172,8 +177,8 @@ static void run_point(const char *point)
         CHECK(db != NULL);
         if (!db) { fprintf(stderr, "    %s\n", err); admin_name("DROP DATABASE %s", name); break; }
         int at_death = db_schema_version(db);
-        /* A death after a statement leaves the migration unreceipted (schema below 17); a death after receipt k
-         * leaves exactly k receipts, the seventeenth included. */
+        /* A death after a statement leaves the migration unreceipted (schema below the latest); a death after receipt k
+         * leaves exactly k receipts, the last included. */
         if (!strcmp(point, "migration.receipt")) CHECK(at_death == k);
         else CHECK(at_death >= 0 && at_death < LATEST_SCHEMA);
         bool recovered = db_migrate(db, err, sizeof(err));
@@ -181,8 +186,8 @@ static void run_point(const char *point)
         CHECK(recovered && db_schema_version(db) == LATEST_SCHEMA);
         DbRows rows;
         bool receipts = db_query(db, "SELECT COUNT(*), COUNT(DISTINCT version), MIN(version), MAX(version) FROM schema_migrations", NULL, 0, &rows) &&
-                        rows.nrows == 1 && !strcmp(db_cell(&rows, 0, 0), "17") && !strcmp(db_cell(&rows, 0, 1), "17") &&
-                        !strcmp(db_cell(&rows, 0, 2), "1") && !strcmp(db_cell(&rows, 0, 3), "17");
+                        rows.nrows == 1 && !strcmp(db_cell(&rows, 0, 0), "18") && !strcmp(db_cell(&rows, 0, 1), "18") &&
+                        !strcmp(db_cell(&rows, 0, 2), "1") && !strcmp(db_cell(&rows, 0, 3), "18");
         if (rows.nrows) db_rows_free(&rows);
         CHECK(receipts);
         char *fp = schema_fingerprint(db, name);
@@ -195,7 +200,9 @@ static void run_point(const char *point)
             fprintf(stderr, "    schema differs at: %.120s\n    reference:         %.120s\n", a, b);
         }
         CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == LATEST_SCHEMA); /* idempotent after recovery */
-        fprintf(g_matrix, "%s\t%ld\tSIGKILL\t%d\t%d\t%s\t%s\n", point, k, at_death, db_schema_version(db), receipts ? "16 receipts" : "receipts wrong",
+        char receipt_label[32];
+        snprintf(receipt_label, sizeof(receipt_label), "%d receipts", LATEST_SCHEMA);
+        fprintf(g_matrix, "%s\t%ld\tSIGKILL\t%d\t%d\t%s\t%s\n", point, k, at_death, db_schema_version(db), receipts ? receipt_label : "receipts wrong",
                 same ? "schema identical" : "schema differs");
         g_rows++;
         free(fp);
@@ -368,7 +375,7 @@ static void run_import_point(const char *point)
         ChildResult r;
         CHECK(run_child2(g_self, spec, "--child-import", name, dir, &r));
         if (r.exited) {
-            CHECK(r.code == 0 && r.hits == k - 1);
+            CHECK(r.code == 0 && r.hits == k - 1 && r.hits >= 1); /* a transition with no crash point is a failure, not a pass */
             fprintf(g_matrix, "%s\t%ld\tnone\t-\t-\t-\t%ld hits in all\n", point, k, r.hits);
             printf("%s: %ld points\n", point, k - 1);
             store_manager_destroy(manager);
@@ -459,7 +466,7 @@ static void run_fork_point(const char *point)
         ChildResult r;
         CHECK(run_child2(g_self, spec, "--child-fork", name, copy, &r));
         if (r.exited) {
-            CHECK(r.code == 0 && r.hits == k - 1);
+            CHECK(r.code == 0 && r.hits == k - 1 && r.hits >= 1); /* a transition with no crash point is a failure, not a pass */
             fprintf(g_matrix, "%s\t%ld\tnone\t-\t-\t-\t%ld hits in all\n", point, k, r.hits);
             printf("%s: %ld points\n", point, k - 1);
             store_manager_destroy(manager);
@@ -627,7 +634,7 @@ static void run_save_point_with(const char *point, const char *mode, const char 
         ChildResult r;
         CHECK(run_child(g_self, spec, mode, path, &r));
         if (r.exited) {
-            CHECK(r.code == 0 && r.hits == k - 1);
+            CHECK(r.code == 0 && r.hits == k - 1 && r.hits >= 1); /* a transition with no crash point is a failure, not a pass */
             fprintf(g_matrix, "%s\t%ld\tnone\t-\t-\t-\t%ld hits in all\n", point, k, r.hits);
             printf("%s: %ld points\n", point, k - 1);
             break;
@@ -731,6 +738,8 @@ static void test_disk_row(void)
     snprintf(cmd, sizeof(cmd), "hdiutil detach %s >/dev/null 2>&1; hdiutil attach -nomount ram://4096 2>/dev/null", mount);
     if (!first_line(cmd, dev, sizeof(dev)) || strncmp(dev, "/dev/disk", 9)) {
         printf("disk row: no RAM disk could be attached; skipped\n");
+        /* Four matrix rows would vanish silently: a skip passes only when asked for (SCRIBODO_CRASH_SKIP_DISK=1). */
+        CHECK(getenv("SCRIBODO_CRASH_SKIP_DISK") && !strcmp(getenv("SCRIBODO_CRASH_SKIP_DISK"), "1"));
         fprintf(g_matrix, "disk.full\t-\tskipped\tno RAM disk\t-\t-\t-\n");
         return;
     }

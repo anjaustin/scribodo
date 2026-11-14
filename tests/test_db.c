@@ -350,8 +350,19 @@ static void test_chat_windows(void)
                  (DbArg[2]){ DB_S(cid), DB_I(9937 * 3) }, 2, NULL));
     CHECK(sdb_chat_window(db, pid, cid, &request, &page) && page.count == 64 && !page.attachments_known && !page.latest_user_docs[0]);
     chat_window_page_free(&page);
+    /* The author's note declaration rides the window loader too (red-team 2026-11-14: it was read only by the full
+     * loader, which store projects never use, so a reopened chat showed every note as a question). */
+    ChatMessage note_turn = { .role = CHAT_USER, .content = "Remember: the seal is cobalt.", .is_note = true };
+    int64_t note_seq = -1;
+    CHECK(sdb_chat_append_sequenced(db, pid, cid, "Window fixture", &note_turn, &note_seq) && note_seq > sequence);
+    request = (ChatWindowRequest){ .direction = CHAT_WINDOW_LATEST };
+    CHECK(sdb_chat_window(db, pid, cid, &request, &page));
+    CHECK(page.count >= 2 && page.messages[page.count - 1].is_note && !page.messages[page.count - 2].is_note &&
+          page.messages[page.count - 1].sequence == note_seq);
+    chat_window_page_free(&page);
     free(large);
     store_stop(g_store);
+
 }
 
 static void test_store_managers(void)
@@ -545,6 +556,12 @@ static void test_backends(void)
     CHECK(stopped_page.count == 2 && !stopped_page.chunks[0].stopped && stopped_page.chunks[1].stopped);
     chat_source_page_free(&stopped_page);
     CHECK(sdb_chat_rename(db, pid, "20261104-150000-abcd", "Comparing chapters"));
+    { /* the previous title is kept (migration 018) */
+        DbRows tr;
+        CHECK(db_query(db, "SELECT title FROM conversation_titles WHERE conversation_id = ? ORDER BY replaced_at", (DbArg[1]){ DB_S("20261104-150000-abcd") }, 1, &tr));
+        CHECK(tr.nrows == 1 && strcmp(db_cell(&tr, 0, 0), "Comparing chapters") != 0 && db_cell(&tr, 0, 0)[0]);
+        if (tr.nrows) db_rows_free(&tr);
+    }
     /* The author's "don't observe this chat" is kept with it. */
     {
         CHECK(sdb_chat_set_observer(db, pid, "20261104-150000-abcd", false));

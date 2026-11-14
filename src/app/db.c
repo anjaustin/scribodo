@@ -310,6 +310,7 @@ static MYSQL_STMT *prepare(Db *db, const char *sql, const DbArg *args, size_t na
     if (nargs) {
         MYSQL_BIND *b = calloc(nargs, sizeof(MYSQL_BIND));
         if (!b) {
+            set_err(db, "statement", "out of memory");
             mysql_stmt_close(st);
             return NULL;
         }
@@ -438,7 +439,7 @@ bool db_query(Db *db, const char *sql, const DbArg *args, size_t nargs, DbRows *
     MYSQL_BIND *rb = ncols ? calloc(ncols, sizeof(MYSQL_BIND)) : NULL;
     unsigned long *lens = ncols ? calloc(ncols, sizeof(unsigned long)) : NULL;
     my_bool *nulls = ncols ? calloc(ncols, sizeof(my_bool)) : NULL;
-    if (ok && ncols && (!rb || !lens || !nulls)) ok = false;
+    if (ok && ncols && (!rb || !lens || !nulls)) { set_err(db, "statement", "out of memory"); ok = false; }
     for (size_t c = 0; ok && c < ncols; c++) {
         rb[c].buffer_type = MYSQL_TYPE_STRING; /* every column read as text; sizes found per row */
         rb[c].buffer = NULL;
@@ -544,8 +545,8 @@ bool db_query(Db *db, const char *sql, const DbArg *args, size_t nargs, DbRows *
 
 /* ---- migrations ------------------------------------------------------------- */
 
-/* Each migration is a list of statements, applied in one transaction (DDL
- * commits implicitly in MariaDB, so each statement is also idempotent: IF
+/* Each migration is a list of statements, each committed on its own (DDL
+ * commits implicitly in MariaDB), so each statement is idempotent: IF
  * NOT EXISTS). */
 static const char *const k_migration_001[] = {
     "CREATE TABLE IF NOT EXISTS projects ("
@@ -891,11 +892,20 @@ static const char *const k_migration_017[] = {
     NULL,
 };
 
+/* Red-team 2026-11-14 (the promise: delete nothing, only archive): a chat's rename overwrote its title with no
+ * history, while the file store keeps every title line. The previous title is kept here when a chat is renamed. One
+ * re-runnable statement. */
+static const char *const k_migration_018[] = {
+    "CREATE TABLE IF NOT EXISTS conversation_titles (conversation_id VARCHAR(40) NOT NULL, title TEXT NOT NULL,"
+    " replaced_at DOUBLE NOT NULL, INDEX conversation_titles_conversation (conversation_id))",
+    NULL,
+};
+
 static const char *const *const k_migrations[] = { k_migration_001, k_migration_002, k_migration_003, k_migration_004,
                                                    k_migration_005, k_migration_006, k_migration_007, k_migration_008,
                                                    k_migration_009, k_migration_010, k_migration_011, k_migration_012,
                                                    k_migration_013, k_migration_014, k_migration_015, k_migration_016,
-                                                   k_migration_017 };
+                                                   k_migration_017, k_migration_018 };
 
 int db_schema_version(Db *db)
 {
@@ -941,7 +951,7 @@ bool db_migrate_upto(Db *db, int upto, char *err, size_t errlen)
             crash_point("migration.statement");
         }
         DbArg a[2] = { DB_I(v), DB_D(0) };
-        if (!db_run(db, "INSERT INTO schema_migrations (version, applied_at) VALUES (?, UNIX_TIMESTAMP(NOW(6)) + ?)", a, 2,
+        if (!db_run(db, "INSERT IGNORE INTO schema_migrations (version, applied_at) VALUES (?, UNIX_TIMESTAMP(NOW(6)) + ?)", a, 2,
                     NULL)) {
             snprintf(err, errlen, "Recording migration %d failed: %s", v, db->err);
             return false;

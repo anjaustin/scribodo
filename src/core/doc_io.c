@@ -479,3 +479,35 @@ int doc_recover_strays(const char *path, char *first, size_t firstlen, bool *dif
     free(target);
     return recovered;
 }
+
+bool doc_write_draft(const char *path, const char *text, size_t len, const char *previous, char *out, size_t outlen)
+{
+    if (out && outlen) out[0] = '\0';
+    if (!path || !text || !out || outlen < 24) return false;
+    char *target = resolve_target(path);
+    if (!target) return false;
+    char tmp[PATH_MAX + 32];
+    if (snprintf(tmp, sizeof(tmp), "%s.scribodo-XXXXXX", target) >= (int)sizeof(tmp) || strlen(tmp) >= outlen) {
+        free(target);
+        return false;
+    }
+    int fd = mkstemp(tmp);
+    bool ok = fd >= 0;
+    for (size_t off = 0; ok && off < len;) {
+        ssize_t n = write(fd, text + off, len - off);
+        if (n <= 0) { ok = errno == EINTR; continue; }
+        off += (size_t)n;
+    }
+    if (ok) ok = fsync(fd) == 0;
+    if (fd >= 0) close(fd);
+    if (!ok) {
+        if (fd >= 0) unlink(tmp);
+        free(target);
+        return false;
+    }
+    if (previous && previous[0] && strcmp(previous, tmp) != 0) unlink(previous);
+    fsync_parent_dir(target);
+    snprintf(out, outlen, "%s", tmp);
+    free(target);
+    return true;
+}

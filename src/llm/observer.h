@@ -93,6 +93,11 @@ int obs_overlap(const char *a, const char *b);
 /* Paragraphs of a document: byte ranges split on blank lines. */
 size_t obs_paragraphs(const char *text, size_t *starts, size_t *lens, size_t max);
 
+/* The statement a judge call sees: description plus the quote clipped to 300 characters; valid UTF-8 whatever the
+ * quote's bytes. OBS_STATEMENT_BYTES holds the longest (a 260-byte description and a 1,200-byte quote). */
+#define OBS_STATEMENT_BYTES 2400
+void obs_statement(const char *desc, const char *quote, char *out, size_t cap);
+
 /* A title or honorific (Mr, Lady, Captain, …): never a shared name in obs_overlap. */
 bool obs_title(const char *word, size_t len);
 

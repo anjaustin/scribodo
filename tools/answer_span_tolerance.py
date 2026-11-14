@@ -29,7 +29,7 @@ from collections import Counter, OrderedDict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE_HEADER = re.compile(r'--- VERIFIED SOURCE(?: 2)? \| unit=([0-9a-f]{64}) \| document=\S+ \| score=\S+ \| status=(\S+)')
+SOURCE_HEADER = re.compile(r'--- VERIFIED SOURCE(?: 2)? \| unit=([0-9a-f]{64}) \| document=.+? \| score=\S+ \| status=(\S+)')  # a document name may hold spaces; never " | " (answer_receipt.c)
 SENTENCE_END = re.compile(r'[.!?]["\'”’]?(?=\s|$)')
 AUXILIARIES = (' is ', ' was ', ' had ', ' has ', ' are ', ' were ', ' did ', ' will ', ' would ', ' could ', ' should ', ' can ',
                ' must ', ' might ')

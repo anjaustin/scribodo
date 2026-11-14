@@ -547,7 +547,7 @@ The composer's Note toggle (2026-11-14, journal/answer-cycle4_note_turns.md "Bui
 `expect chat_notes N` counts the turns the author marked as notes (`ChatMessage.is_note`, the `messages.is_note`
 column of migration 017, the file store's `note` key). `tests/ui/chat.scribo` sends a note, a second under the sticky
 mode and an ordinary turn after toggling off; the round trips are pinned in `test_llm`, `test_db` (database and
-import) and `test_persistence_faults`, and the answer gate's two sites skip a note turn however it is worded.
+import) and `test_persistence_faults`, and the answer gate's two sites skip a note turn however it is worded. Since REDTEAM-022 a negative expectation (`memory_sources_not`, `recall_not`) needs a value to be negative about, `expect memory_sources_none` states that a turn has no sources at all, and `wait_chat` reports when the reply does not finish.
 
 ### Running with the display asleep
 

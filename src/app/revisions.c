@@ -194,7 +194,9 @@ static bool record_impl(StoreManager *manager, const char *project_dir, const ch
         free(saved);
         if (intact && file_out) snprintf(file_out, file_len, "%s", list[reuse].file);
         free(list);
-        return intact; /* an index hash alone cannot establish a usable snapshot */
+        /* An index hash alone cannot establish a usable snapshot: a damaged entry is reported, not papered over
+         * with a fresh copy (test_llm snapshot_reuse_integrity pins it; REDTEAM-022 R30 considered and kept). */
+        return intact;
     }
     free(list);
 

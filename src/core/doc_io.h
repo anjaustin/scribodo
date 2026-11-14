@@ -77,4 +77,10 @@ DocStatus doc_save(const char *path, const uint32_t *cps, size_t n, bool bom, bo
  * differ from the document's. */
 int doc_recover_strays(const char *path, char *first, size_t firstlen, bool *differs);
 
+/* A draft of unsaved text beside the document: `<document>.scribodo-XXXXXX`, the save temp's own name, so a
+ * process that dies before the author saves leaves the text where doc_recover_strays offers it on the next load.
+ * Written durably (fsync); `previous` (a draft this process wrote earlier, or empty) is removed once the new one is
+ * on disk, so one draft stands at a time. `out` receives the new draft's path. */
+bool doc_write_draft(const char *path, const char *text, size_t len, const char *previous, char *out, size_t outlen);
+
 #endif

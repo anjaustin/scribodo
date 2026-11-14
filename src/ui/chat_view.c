@@ -56,6 +56,7 @@ struct ChatView {
     Rectangle last_sources;
     char *submitted;
     bool note_mode;       /* the Note toggle (sticky) */
+    bool note_disabled;   /* edit mode: an edit instruction is never a note, so the toggle is hidden */
     bool submitted_note;  /* the mode when `submitted` was taken */
     ChatPageAction page;
     Rectangle page_rect[4];
@@ -66,7 +67,7 @@ struct ChatView {
 };
 
 static float adv(uint32_t cp, void *ctx) { return sfont_advance((const SFont *)ctx, cp); }
-static Rectangle editor_rect(Rectangle input);
+static Rectangle editor_rect(const ChatView *v, Rectangle input);
 
 ChatView *chat_view_create(SFont *text_font, SFont *label_font, ChatSession *chat)
 {
@@ -88,7 +89,7 @@ ChatView *chat_view_create(SFont *text_font, SFont *label_font, ChatSession *cha
         free(v);
         return NULL;
     }
-    editor_set_scratch(v->input, "Message Scribodo\xE2\x80\xA6  (Enter to send, Shift+Enter for a new line)");
+    editor_set_scratch(v->input, "Message Scribodo\xE2\x80\xA6  (Enter sends, \xE2\x87\xA7" "Enter breaks a line)");
     editor_set_layout(v->input, 10.0f, 8.0f, 4000.0f);
     editor_set_submit_on_enter(v->input, true);
     return v;
@@ -396,7 +397,7 @@ void chat_view_update(ChatView *v, Rectangle list, Rectangle input, bool input_f
     Rectangle toggle = chat_view_note_toggle_rect(v, input);
     if (!input_mouse_blocked() && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(GetMousePosition(), toggle))
         v->note_mode = !v->note_mode;
-    editor_update(v->input, editor_rect(input), input_focused);
+    editor_update(v->input, editor_rect(v, input), input_focused);
     if (input_focused && editor_take_submit(v->input)) {
         char *text = editor_text_utf8(v->input);
         /* Ignore whitespace-only submissions. */
@@ -415,6 +416,8 @@ void chat_view_update(ChatView *v, Rectangle list, Rectangle input, bool input_f
 
 bool chat_view_take_submit_note(ChatView *v) { return v->submitted_note; }
 bool chat_view_note_mode(const ChatView *v) { return v->note_mode; }
+void chat_view_toggle_note(ChatView *v) { if (v && !v->note_disabled) v->note_mode = !v->note_mode; }
+void chat_view_set_note_disabled(ChatView *v, bool disabled) { if (v) v->note_disabled = disabled; }
 
 char *chat_view_take_submit(ChatView *v)
 {
@@ -616,7 +619,8 @@ void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_foc
 
     DrawRectangleRec(input, COL_INPUT_BG);
     DrawRectangleLinesEx(input, 1.0f, input_focused ? COL_FOCUS : COL_INPUT_BORDER);
-    editor_draw(v->input, editor_rect(input), input_focused);
+    editor_draw(v->input, editor_rect(v, input), input_focused);
+    if (v->note_disabled) return; /* an edit instruction is never a note (red-team 2026-11-14) */
     /* The Note toggle: filled when the next turn goes as the author's note. */
     Rectangle toggle = chat_view_note_toggle_rect(v, input);
     DrawRectangleRounded(toggle, 0.5f, 6, v->note_mode ? COL_LINK : COL_INPUT_BG);
@@ -629,17 +633,16 @@ void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_foc
 #define NOTE_TOGGLE_W 54.0f
 #define NOTE_TOGGLE_H 22.0f
 
-/* The input editor keeps the width left of the toggle. */
-static Rectangle editor_rect(Rectangle input)
+/* The input editor keeps the width left of the toggle (the whole width while the toggle is hidden). */
+static Rectangle editor_rect(const ChatView *v, Rectangle input)
 {
-    input.width -= NOTE_TOGGLE_W + 12;
+    if (!v->note_disabled) input.width -= NOTE_TOGGLE_W + 12;
     return input;
 }
 
 Rectangle chat_view_note_toggle_rect(const ChatView *v, Rectangle input)
 {
-    (void)v;
-    if (input.width <= 0) return (Rectangle){ 0 };
+    if (input.width <= 0 || (v && v->note_disabled)) return (Rectangle){ 0 };
     return (Rectangle){ input.x + input.width - NOTE_TOGGLE_W - 6, input.y + 5, NOTE_TOGGLE_W, NOTE_TOGGLE_H };
 }
 

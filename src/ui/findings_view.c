@@ -177,6 +177,16 @@ static int wrap(const SFont *f, const char *s, float w, int max_lines,
 
 static bool is_selected(const FindingsView *v, size_t i) { return !strcmp(v->selected, v->items[i].id); }
 
+static const char k_disclosure[] = "Possible conflicts are suggestions: about 1 in 13 was real on the test novels. Each links to its source.";
+
+/* The disclosure line's height when the list holds a conflict, else 0. */
+static float disclosure_height(const FindingsView *v)
+{
+    for (size_t i = 0; i < v->n; i++)
+        if (!strcmp(v->items[i].type, "conflict")) return v->label->line_height + 6.0f;
+    return 0.0f;
+}
+
 static float item_height(FindingsView *v, size_t i, float w)
 {
     Item *it = &v->items[i];
@@ -199,6 +209,7 @@ void findings_view_update(FindingsView *v, Rectangle r)
     if (CheckCollisionPointRec(GetMousePosition(), r)) v->scroll -= GetMouseWheelMoveV().y * 30.0f;
     float total = 0;
     for (size_t i = 0; i < v->n; i++) total += item_height(v, i, r.width) + GAP;
+    total += disclosure_height(v);
     float max = total - r.height > 0 ? total - r.height : 0;
     if (v->scroll > max) v->scroll = max;
     if (v->scroll < 0) v->scroll = 0;
@@ -255,6 +266,12 @@ FindingAction findings_view_draw(FindingsView *v, Rectangle r, char *id_out, siz
     FindingAction act = FA_NONE;
     BeginScissorMode((int)r.x, (int)r.y, (int)r.width, (int)r.height);
     float y = r.y - v->scroll;
+    if (disclosure_height(v) > 0) {
+        /* Measured and disclosed where the author decides (MEMORY-015 §4): the conflict path's precision on the test
+         * novels, journal/observer-cycle2_quality.md step 4 (7 true in 92 shown), is 1 in 13. */
+        sfont_draw_utf8(v->label, k_disclosure, (int)strlen(k_disclosure), r.x, y, MUTED);
+        y += disclosure_height(v);
+    }
     for (size_t i = 0; i < v->n; i++) {
         Item *it = &v->items[i];
         float h = item_height(v, i, r.width);
@@ -265,11 +282,15 @@ FindingAction findings_view_draw(FindingsView *v, Rectangle r, char *id_out, siz
             DrawRectangleRounded(card, 0.06f, 6, sel ? CARD_SEL : CARD);
             if (sel) DrawRectangleRec((Rectangle){ card.x, card.y + 4, 3, h - 8 }, EDGE);
             float x = card.x + PAD, cy = card.y + PAD, inner = card.width - 2 * PAD;
-            char badge[64];
-            snprintf(badge, sizeof(badge), "%s%s%s%s", it->type, strcmp(it->status, "new") ? " \xC2\xB7 " : "",
-                     strcmp(it->status, "new") ? it->status : "", it->stale ? " \xC2\xB7 outdated (canon changed)" : "");
-            for (char *p = badge; *p && *p != ' '; p++)
+            char badge[80];
+            /* A conflict is the observer's suggestion, not a verdict: "POSSIBLE CONFLICT" (measured 7 true in 92 on the
+             * test novels, journal/observer-cycle2_quality.md; the line above the list says so). */
+            const char *kind = !strcmp(it->type, "conflict") ? "possible conflict" : it->type;
+            int kn = snprintf(badge, sizeof(badge), "%s", kind);
+            for (char *p = badge; *p; p++)
                 if (*p >= 'a' && *p <= 'z') *p = (char)(*p - 32);
+            snprintf(badge + kn, sizeof(badge) - (size_t)kn, "%s%s%s", strcmp(it->status, "new") ? " \xC2\xB7 " : "",
+                     strcmp(it->status, "new") ? it->status : "", it->stale ? " \xC2\xB7 outdated (canon changed)" : "");
             sfont_draw_utf8(v->label, badge, (int)strlen(badge), x, cy, type_color(it->type));
             cy += v->label->line_height;
             LineCtx lc = { v->text, x, cy, v->text->line_height, TEXT };

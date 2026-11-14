@@ -152,7 +152,7 @@ $(BUILD)/test_components: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_state_fix
 $(BUILD)/test_db_rows: $(BUILD)/src/app/db.o $(BUILD)/tests/test_db_rows.o
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS)
 
-$(BUILD)/test_observer_text: $(BUILD)/src/llm/observer_text.o $(BUILD)/src/core/experiments.o $(BUILD)/tests/test_observer_text.o
+$(BUILD)/test_observer_text: $(BUILD)/src/llm/observer_text.o $(BUILD)/src/core/experiments.o $(BUILD)/src/core/utf8.o $(BUILD)/tests/test_observer_text.o
 	$(CC) $(CFLAGS) $^ -o $@
 
 $(BUILD)/test_chat_history: $(BUILD)/src/llm/chat_history.o $(BUILD)/tests/test_chat_history.o
@@ -238,7 +238,7 @@ CHAT_VIEW_FAULT_SRCS := $(CORE_SRCS) $(LLM_SRCS) src/core/json_vendor.c src/app/
 $(BUILD)/test_chat_view_faults: $(CHAT_VIEW_FAULT_SRCS) $(wildcard src/core/*.h src/app/*.h src/llm/*.h src/ui/*.h) tests/fault_alloc.h $(BUILD)/tests/fault_alloc.o | $(MARIADB_LIB)
 	$(CC) $(CFLAGS) $(INCLUDES) -DCHAT_VIEW_FAULT_TEST -include tests/fault_alloc.h $(CHAT_VIEW_FAULT_SRCS) $(BUILD)/tests/fault_alloc.o -o $@ $(MARIADB_LIBS) -lpthread -lm
 
-$(BUILD)/test_observer_fake: $(BUILD)/src/llm/observer_text.o $(BUILD)/src/core/experiments.o $(BUILD)/src/llm/observer_fake.o $(BUILD)/third_party/cJSON/cJSON.o $(BUILD)/tests/test_observer_fake.o
+$(BUILD)/test_observer_fake: $(BUILD)/src/llm/observer_text.o $(BUILD)/src/core/experiments.o $(BUILD)/src/core/utf8.o $(BUILD)/src/llm/observer_fake.o $(BUILD)/third_party/cJSON/cJSON.o $(BUILD)/tests/test_observer_fake.o
 	$(CC) $(CFLAGS) $^ -o $@
 
 # The real editor, linked against headless raylib stubs.
@@ -316,6 +316,7 @@ UI_SCRIPTS := $(filter-out tests/ui/real-% tests/ui/case_sensitive.scribo,$(wild
 # tests/ui/real-*.scribo drive the real model through the UI (make uitest-real).
 REAL_UI_SCRIPTS := $(wildcard tests/ui/real-*.scribo)
 uitest: $(APP)
+	@test -n "$(UI_SCRIPTS)" || { echo "uitest: no scripts under tests/ui"; exit 1; }
 	@chmod -R u+w build/ui 2>/dev/null; rm -rf build/ui
 	@fail=0; for s in $(UI_SCRIPTS); do \
 	  name=$$(basename $$s .scribo); work=build/ui/$$name/work; \

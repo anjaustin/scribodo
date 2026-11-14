@@ -238,6 +238,13 @@ static void test_block_and_receipt(void)
     free(block); free(receipt);
     answer_pipeline_result_free(&none);
 
+    /* A document name never carries the field separator (answer_receipt.h: no value contains " | "). */
+    AnswerPipelineResult piped = result_with("a span.", "Chapter | One.md", 0.7, "verified");
+    receipt = answer_receipt(&piped);
+    CHECK(receipt && strstr(receipt, "document=Chapter / One.md | score=") && !strstr(receipt, "Chapter | One"));
+    free(receipt);
+    answer_pipeline_result_free(&piped);
+
     AnswerPipelineResult empty = result_with(NULL, NULL, 0, "no_candidates");
     receipt = answer_receipt(&empty);
     CHECK(receipt && strstr(receipt, "VERIFIED SOURCE | none | status=no_candidates"));

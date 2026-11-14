@@ -33,6 +33,7 @@
 
 #include "app/chat_store.h"
 #include "core/utf8.h"
+#include "core/doc_io.h"
 #include "app/recent.h"
 #include "app/records.h"
 #include "app/renames.h"
@@ -184,6 +185,12 @@ typedef struct {
             uint64_t session_generation;
         };
     };
+
+    /* Drafts of unsaved text (draft_tick) */
+    char draft_path[PATH_MAX];   /* the unsaved document's draft beside it, empty when none */
+    char draft_doc[PATH_MAX];    /* the document the draft belongs to */
+    double draft_at;             /* when the draft was last considered */
+    uint64_t draft_hash;         /* the text the draft holds */
 
     /* Reviewed AI edits */
     union {
@@ -1629,6 +1636,52 @@ static void save(App *app)
     app->lists_dirty = true;
 }
 
+/* ---- drafts: the unsaved text survives a dead battery ------------------------------------- */
+
+#define DRAFT_INTERVAL_S 10.0
+
+static uint64_t fnv1a(const char *s)
+{
+    uint64_t h = 1469598103934665603ULL;
+    for (const unsigned char *p = (const unsigned char *)s; *p; p++) h = (h ^ *p) * 1099511628211ULL;
+    return h;
+}
+
+static void draft_discard(App *app)
+{
+    if (app->draft_path[0]) unlink(app->draft_path);
+    app->draft_path[0] = app->draft_doc[0] = '\0';
+    app->draft_hash = 0;
+}
+
+/* While the open document has unsaved edits, its whole text is written beside it every DRAFT_INTERVAL_S seconds
+ * when it changed, under the save temp's own name, so a process that dies before the author saves leaves the text
+ * where doc_recover_strays offers it on the next load (red-team 2026-11-14: a dead battery lost everything since
+ * the last save). One draft at a time; a clean buffer removes it. */
+static void draft_tick(App *app)
+{
+    const char *path = editor_path(app->editor);
+    if (!path || !editor_is_dirty(app->editor) || (app->draft_doc[0] && strcmp(app->draft_doc, path) != 0)) {
+        if (app->draft_path[0]) draft_discard(app);
+        return;
+    }
+    double now = GetTime();
+    if (now - app->draft_at < DRAFT_INTERVAL_S) return;
+    app->draft_at = now;
+    char *text = editor_text_utf8(app->editor);
+    if (!text) return;
+    uint64_t h = fnv1a(text);
+    if (h != app->draft_hash) {
+        char out[PATH_MAX];
+        if (doc_write_draft(path, text, strlen(text), app->draft_path, out, sizeof(out))) {
+            snprintf(app->draft_path, sizeof(app->draft_path), "%s", out);
+            snprintf(app->draft_doc, sizeof(app->draft_doc), "%s", path);
+            app->draft_hash = h;
+        }
+    }
+    free(text);
+}
+
 /* ---- chat ---------------------------------------------------------------------- */
 
 /* ---- names noticed in chat ----------------------------------------------------------- */
@@ -1778,6 +1831,40 @@ static void adopt_chat(App *app)
     if (chat_trim_saved(app->chat)) chat_view_history_changed(app->chat_view);
     set_status(app, ok ? "Chat saved to this project" : store_says(app, "Could not save the chat to .scribodo/chats"));
     app->lists_dirty = true;
+}
+
+/* Messages kept in memory while the store was offline are saved when it answers again (red-team 2026-11-14: the
+ * status told the author to keep them and nothing re-appended them, so sending stayed refused). Only a store
+ * project's messages carry sequences; the ones without one are the unsaved ones. */
+static void resave_unsaved_chat(App *app)
+{
+    if (!app->chat_project[0] || !app->chat_id[0] || chat_busy(app->chat) || !database_history_project(app->chat_project)) return;
+    chat_lock(app->chat);
+    size_t n = chat_count(app->chat), k = 0;
+    ChatMessage *copy = calloc(n ? n : 1, sizeof(ChatMessage));
+    size_t *at = calloc(n ? n : 1, sizeof(size_t));
+    for (size_t i = 0; copy && at && i < n; i++) {
+        const ChatMessage *m = chat_message(app->chat, i);
+        if (m->sequence_known) continue;
+        copy[k] = *m;
+        copy[k].content = strdup(m->content ? m->content : "");
+        at[k++] = i;
+    }
+    chat_unlock(app->chat);
+    bool ok = copy && at;
+    if (ok && k) {
+        for (size_t j = 0; ok && j < k; j++) {
+            int64_t sequence = -1;
+            ok = copy[j].content && chat_store_append_sequenced(app->store, app->chat_project, app->chat_id, app->chat_title, &copy[j], &sequence);
+            if (ok && sequence >= 0) chat_mark_saved(app->chat, at[j], sequence);
+        }
+        if (chat_trim_saved(app->chat)) chat_view_history_changed(app->chat_view);
+        set_status(app, ok ? "Saved the messages kept while the store was offline" : store_says(app, "Could not save the chat to .scribodo/chats"));
+        app->lists_dirty = true;
+    }
+    for (size_t j = 0; copy && j < k; j++) free(copy[j].content);
+    free(copy);
+    free(at);
 }
 
 /* ---- attachments ---------------------------------------------------------------- */
@@ -2374,8 +2461,10 @@ static void store_canon(App *app, const char *status, bool use_editor_text)
     size_t ns;
     const SourceRef *src = record_view_sources(v, &ns);
     int ver = 0;
-    if (app->project_dir[0] && records_append(app->store, app->project_dir, REC_CANON, id, status, text, src, ns, &ver)) {
-        bool first = !record_view_id(v)[0];
+    bool first = !record_view_id(v)[0];
+    FindingInfo origin = { 0 }; /* a first version drafted from a finding records which one (red-team 2026-11-14) */
+    if (first && app->canon_finding[0]) snprintf(origin.related, sizeof(origin.related), "%s", app->canon_finding);
+    if (app->project_dir[0] && records_append_ex(app->store, app->project_dir, REC_CANON, id, status, text, src, ns, origin.related[0] ? &origin : NULL, &ver)) {
         record_view_stored(v, id, ver, status, text);
         if (first && app->canon_finding[0]) { /* the finding it came from is now committed */
             observer_set_finding_status(app->observer, app->project_dir, app->canon_finding, "committed");
@@ -2501,7 +2590,9 @@ static void finding_action(App *app, FindingAction act, const char *id)
         char nid[40];
         records_new_id(REC_NOTE, nid, sizeof(nid));
         int ver = 0;
-        if (!records_append(app->store, app->project_dir, REC_NOTE, nid, "active", v->content, v->sources, v->nsources, &ver)) {
+        FindingInfo origin = { 0 }; /* the note's provenance: the finding it was made from (red-team 2026-11-14) */
+        snprintf(origin.related, sizeof(origin.related), "%s", id);
+        if (!records_append_ex(app->store, app->project_dir, REC_NOTE, nid, "active", v->content, v->sources, v->nsources, &origin, &ver)) {
             set_status(app, store_says(app, "Could not save the note to .scribodo/notes.jsonl"));
             break;
         }
@@ -2924,7 +3015,7 @@ static void update_labels(App *app)
     snprintf(app->model_label, sizeof(app->model_label), "\xE2\x97\x8F %s", msg);
     bool remote_on = app->chat && chat_remote_selected(app->chat);
     if (remote_on)
-        snprintf(app->model_label, sizeof(app->model_label), "\xE2\x97\x8F Remote: %s \xC2\xB7 chat and attached documents go to %s",
+        snprintf(app->model_label, sizeof(app->model_label), "\xE2\x97\x8F Remote: %s \xC2\xB7 chat, attached documents, edit passages and your profile name go to %s",
                  app->remote.name, app->remote.host);
     if (remote_on) snprintf(app->remote_badge, sizeof(app->remote_badge), "\xE2\x86\x97 sent to %s", app->remote.host);
     else app->remote_badge[0] = '\0';
@@ -3816,6 +3907,13 @@ int main(int argc, char **argv)
     /* TLS secrets are never written out for a remote model's traffic. */
     unsetenv("SSLKEYLOGFILE");
     /* A remote model only if the author configured one; never selected here. */
+    /* UI scripts never read the author's remote configuration (its provider name and host would reach a run's
+     * artefacts); they keep their own, normally absent, in the fixture folder. */
+    if (script_path && !getenv("SCRIBODO_REMOTE_CONFIG")) {
+        char rp[PATH_MAX];
+        snprintf(rp, sizeof(rp), "%s/remote.json", getenv("SCRIBODO_SCRIPT_DIR") ? getenv("SCRIBODO_SCRIPT_DIR") : ".");
+        setenv("SCRIBODO_REMOTE_CONFIG", rp, 1);
+    }
     app.remote_ok = remote_load(&app.remote, app.remote_why, sizeof(app.remote_why));
     if (!app.remote_ok && app.remote_why[0]) {
         char msg[300];
@@ -3969,6 +4067,7 @@ int main(int argc, char **argv)
                 store_start(app.store, getenv("SCRIBODO_DB_NAME"), app.store_why, sizeof(app.store_why));
             }
             if (store_online(app.store)) {
+                resave_unsaved_chat(&app);
                 if (store_adopt_project(&app) && app.observer) {
                     app.observer_project_deferred = true;
                     observer_set_project(app.observer, "");
@@ -3979,6 +4078,7 @@ int main(int argc, char **argv)
             }
         }
         backup_poll(&app);
+        draft_tick(&app);
         names_tick(&app);
         names_poll(&app);
         import_poll(&app);
@@ -4241,6 +4341,8 @@ int main(int argc, char **argv)
         }
         /* From the document only: the chat box has no selection to quote. */
         if (primary && shift && shortcut_pressed('n') && app.focus == FOCUS_DOC) note_from_selection(&app);
+        /* In the composer the same keys toggle the Note mark (red-team 2026-11-14: it was mouse-only). */
+        if (primary && shift && shortcut_pressed('n') && app.focus == FOCUS_CHAT && !app.edit_mode) chat_view_toggle_note(app.chat_view);
         if (primary && shift && shortcut_pressed('c') && app.focus == FOCUS_DOC) canon_from_selection(&app);
         if (!modal && app.focus == FOCUS_RECORD && IsKeyPressed(KEY_ESCAPE)) app.focus = FOCUS_DOC;
         if (!modal && app.focus == FOCUS_RECALL && IsKeyPressed(KEY_ESCAPE)) app.focus = FOCUS_DOC;
@@ -4394,6 +4496,7 @@ int main(int argc, char **argv)
         }
         if (record_view_active(app.record))
             record_action(&app, record_view_draw(app.record, app.record_rect, app.focus == FOCUS_RECORD));
+        chat_view_set_note_disabled(app.chat_view, app.edit_mode);
         chat_view_draw(app.chat_view, app.chat_list_rect, app.chat_input_rect, app.focus == FOCUS_CHAT);
         if (app.observer_open && app.findings_rect.width > 0) {
             char fid[40] = "";
