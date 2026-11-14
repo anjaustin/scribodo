@@ -118,9 +118,13 @@ measurement that closes it. Items run one at a time unless marked otherwise.
    2026-11-14* (journal, "Thresholds, agreed"): recall at least 0.50 and
    place 1.00, conflict precision at least 0.50, entity 0.60 with empties
    at most 0.10, event 0.80, question 0.60, relationship 0.75, no row below
-   today's value. First change to measure: the candidate step ignoring
-   shared titles and a judge whose two disagreeing values must occur in the
-   texts, reran on both planted copies.
+   today's value. *Conflict gate measured 2026-11-14* (journal step 5): the
+   candidate step ignoring shared titles and a judge whose two disagreeing
+   values must occur in the texts, rerun on both planted copies, raised the
+   off-fault conflicts (Mars 44 to 61, P&P 41 to 83) and lost two Mars
+   faults; kept in the tree behind `SCRIBODO_OBSERVER_CONFLICT_GATE=1`,
+   default off (MEMORY-015 §5). Next: the replay records the judge's replies
+   so rules on the values are scored offline before the next model run.
 7. **GAP-002 distribution.** Signed app, guided model and service setup,
    upgrade and uninstall, proven on a clean Mac.
 8. **GAP-005 real input and accessibility.** The IME, dead-key, layout,

@@ -93,6 +93,13 @@ int obs_overlap(const char *a, const char *b);
 /* Paragraphs of a document: byte ranges split on blank lines. */
 size_t obs_paragraphs(const char *text, size_t *starts, size_t *lens, size_t max);
 
+/* A title or honorific (Mr, Lady, Captain, …): never a shared name in obs_overlap. */
+bool obs_title(const char *word, size_t len);
+
+/* The judge's two disagreeing values, each located in its own text and different from each other; a conflict verdict
+ * is accepted only with them. */
+bool obs_values_in_texts(const char *canon, const char *statement, const char *canon_value, const char *new_value);
+
 /* Cuts a text at the end of its first sentence (a period ending the text or followed by a space and a capital); a
  * period after an initial or a title does not end one. */
 void obs_first_sentence(char *s);

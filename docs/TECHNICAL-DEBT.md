@@ -67,6 +67,10 @@ five such axes for at least 24 reachable combinations; live runs exercise two.
   re-runnable statements (`journal/answer-cycle4_retire_index.md`). The column
   never held author text. The experiment stays reproducible from the recorded
   runs and `tools/answer_coref_arm.py`. **Entry closed.**
+- **2026-11-14:** `SCRIBODO_OBSERVER_CONFLICT_GATE` joined the table (eleven
+  fields): the observer's conflict gate, measured on both planted novels and
+  worse than the default (`journal/observer-cycle2_quality.md`, step 5), kept
+  gated off by the rule above. No column.
 
 ## Open — answer receipts and trace lines are an unversioned contract (P2)
 

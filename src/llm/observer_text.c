@@ -1,6 +1,7 @@
 #define _DARWIN_C_SOURCE
 #include "observer.h"
 #include "observer_text_internal.h"
+#include "core/experiments.h"
 
 #include <stdbool.h>
 #include <stdlib.h>
@@ -216,6 +217,23 @@ bool obs_stopword(const char *w, size_t n)
     return false;
 }
 
+/* A title or honorific is not a name two texts share: "Mr. Darcy" and "Mr. Wickham" have "Mr" in common and nothing
+ * else, and the canon candidate step sent such pairs to the judge (journal/observer-cycle2_quality.md, step 4). Applied
+ * in tokens() only under the conflict-gate experiment: measured with the value-verified judge on both planted novels
+ * (step 5), the off-fault conflicts rose and a Mars place fault whose only shared word was "Princess" was lost. */
+bool obs_title(const char *w, size_t n)
+{
+    static const char *const titles[] = {
+        "mr", "mrs", "ms", "miss", "mister", "master", "lady", "lord", "sir", "dame", "madam", "madame", "dr",
+        "doctor", "captain", "capt", "colonel", "col", "major", "general", "gen", "lieutenant", "lt", "sergeant",
+        "sgt", "reverend", "rev", "professor", "prof", "king", "queen", "prince", "princess", "duke", "duchess",
+        "count", "countess", "baron", "baroness", "earl", "saint", "st",
+    };
+    for (size_t i = 0; i < sizeof(titles) / sizeof(titles[0]); i++)
+        if (strlen(titles[i]) == n && !strncasecmp(titles[i], w, n)) return true;
+    return false;
+}
+
 typedef struct {
     char w[48];
     bool name;
@@ -224,6 +242,7 @@ typedef struct {
 static size_t tokens(const char *s, Tok *out, size_t max)
 {
     size_t k = 0;
+    const bool gate = experiments()->observer_conflict_gate;
     const unsigned char *u = (const unsigned char *)s;
     for (size_t i = 0; u[i] && k < max;) {
         while (u[i] && !obs_word_byte(u[i])) i++;
@@ -236,7 +255,7 @@ static size_t tokens(const char *s, Tok *out, size_t max)
         /* strip a possessive ('s / ’s) */
         if (n > 2 && u[a + n - 1] == 's' && u[a + n - 2] == '\'') n -= 2;
         else if (n > 4 && u[a + n - 1] == 's' && u[a + n - 2] == 0x99 && u[a + n - 3] == 0x80) n -= 4;
-        if (n >= sizeof(out[0].w) || obs_stopword(s + a, n)) continue;
+        if (n >= sizeof(out[0].w) || obs_stopword(s + a, n) || (gate && obs_title(s + a, n))) continue;
         bool name = obs_upper_start(u + a);
         if (!name && cp_count(s + a, n) < 4) continue;
         bool dup = false;
@@ -285,4 +304,18 @@ void obs_first_sentence(char *s)
         end[1] = '\0';
         return;
     }
+}
+
+/* The judge's two values, each located in its own text (obs_locate: exact, then ignoring quote style and emphasis)
+ * and different from each other; a verdict of "conflict" is accepted only with them. A judge that calls "Dejah
+ * Thoris wears silks" a conflict with "Dejah Thoris is the Princess of Helium" cannot name a value of the canon that
+ * the new text contradicts, and software refuses it here rather than a prompt asking it not to
+ * (journal/observer-cycle2_quality.md, steps 3 and 4: 85 of 92 conflicts were such additions). */
+bool obs_values_in_texts(const char *canon, const char *statement, const char *canon_value, const char *new_value)
+{
+    if (!canon || !statement || !canon_value || !new_value || !canon_value[0] || !new_value[0]) return false;
+    if (!strcasecmp(canon_value, new_value)) return false;
+    size_t start, len;
+    return obs_locate(canon, strlen(canon), canon_value, &start, &len) &&
+           obs_locate(statement, strlen(statement), new_value, &start, &len);
 }

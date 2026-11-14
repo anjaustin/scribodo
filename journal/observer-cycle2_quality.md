@@ -500,6 +500,86 @@ disagree, accepted only when each value occurs in its side's text. The
 planted copies of both novels are rerun with them; recall must hold at 7 of
 20 or rise and the off-fault conflicts must fall from 85.
 
+## Step 5, done: the conflict gate, measured and gated off
+
+The remedy chosen in step 4 was built as two software changes and measured
+together on the planted copies of both novels, each scored against its
+unplanted run from steps 3 and 4 (`build/observer/real-conflict.log`,
+`real-mars-planted2.txt`, `real-pp-planted2.txt`): the canon candidate step
+ignoring a shared title (`obs_title`, 42 titles from Mr to earl, skipped in
+`tokens()` beside the stopwords) and a judge whose constrained reply carries
+`canon_value` and `new_value` before its verdict, a conflict vote accepted
+only when each value occurs in its side's text and the two differ
+(`obs_values_in_texts`). The fake-path yardstick was byte-identical with
+`realflag` on all three novels (717 / 348 / 948), so the fake judge's
+attribute-pattern values already satisfied the check; the real model was the
+question.
+
+| run | wall | reached | findings | conflicts | on a fault | off-fault | recall |
+|---|---|---|---|---|---|---|---|
+| Mars planted, step 3 | 6,066 s (tick limit) | ch27 of 28 | 595 | 49 | 5 | 44 | 5 / 10 |
+| Mars planted, gate | 7,201 s (limit) | ch25 of 28 | 590 | 64 | 3 | 61 | 3 / 10 |
+| P&P planted, step 4 | 13,889 s (complete) | part 8 of 8 | 732 | 43 | 2 | 41 | 2 / 10 |
+| P&P planted, gate | 14,400 s (limit) | part 7 of 8 | 677 | 85 | 2 | 83 | 2 / 10 |
+
+Both targets failed. Off-fault conflicts rose on both novels, 85 to 144 over
+the two, although each gate run read less text than its baseline (the Mars
+run stopped two chapters short, the P&P run one part short, every planted
+fault but P7 and P10 inside the text read). Recall fell on Mars from 5 to 3
+(M3 Powell's Richmond, M4 Powell's March 3 and M10 Helium in three days
+found; M6 the padwar of Zodanga, M8 Sola's parentage and M9 the Princess of
+Zodanga lost; M1, M2, M5, M7 missed as before) and held at P3 and P9 on
+P&P. The found contents are the same shape as before: `Canon states Captain
+James K. Powell is of Richmond. the new text introduces a quote about
+'Powell' who was born and raised in Boston`.
+
+What the 144 off-fault records show, read in the sample above and in the
+first fourteen of each file: the same additions as in steps 3 and 4 (Dejah
+Thoris grasps the narrator's hand; Charlotte says she hardly ever does),
+each now with a canon value and a new value the model named and software
+found in the texts. The check as built verifies only that two strings occur,
+one in each text, and differ; "Princess of Helium" and "promised her hand to
+Sab Than" pass it. One ch25 record flags a sentence that restates the canon
+(*Dejah Thoris would be joined forever to the Prince of Zodanga*, canon
+*Dejah Thoris is the Princess of Helium*). The rise rather than a fall is
+consistent with the two required value fields, filled before the verdict,
+pushing the verdict toward "conflict": a model that has just written two
+values says they disagree. That is a reading, not a measurement; the replay
+did not record the judge's replies, so which rule on the values would have
+rejected which record cannot be scored from this run, and the stoplist's
+share cannot be separated from the judge's. M9's lost fault is the one case
+the stoplist alone explains: its insert, *She was, after all, the Princess
+of Zodanga*, shares only "Princess" with its canon entry, and "princess" is
+on the title list.
+
+**Decision taken by the rule for failed experiments** (MEMORY-015 §5, delete
+nothing, only archive): both halves stay in the tree behind one flag,
+`SCRIBODO_OBSERVER_CONFLICT_GATE=1`, a field of `Experiments`
+(`src/core/experiments.h`), default off. Off, the candidate step and the
+judge are the step 4 code (titles count as shared names; the judge's reply is
+`check` and `verdict`, 260 tokens). On, they are the measured gate. The
+default is the measured choice: the observer ships today at 7 true in 92
+conflicts, and the threshold of 0.50 stands unmet. `test_observer_text`
+pins both states (the Darcy/Wickham pair overlaps 2 by default and 0 under
+the flag; the Helium/Zodanga pair likewise), reloading the table around the
+flag so the test asserts the default whatever the environment.
+
+**What the next attempt needs first, in software, before any model time:**
+the replay records every judge call (canon, statement, order, check, the two
+values, verdict, and whether the statement lies on a planted fault) to a
+file, so that candidate rules on the values (a value may not restate the
+other text; the two values must be of one kind, a number, a name, a kinship
+word, a colour; the values must not be the shared subject) are scored
+offline in seconds against a run's 2,000 real replies, as the composer's
+request replays are (journal/answer-cycle3). A rule that scores well on the
+recorded replies is then measured once on both planted copies. Order of the
+schema's fields (values after the verdict) is a prompt change and is
+measured the same way, never shipped on the reading above.
+
+Run conditions, for the record: the Mac was on AC power at 38% when the Mars
+run began (04:56Z) and on battery, 13%, when the P&P run ended (10:57Z); the
+hosted acceptance runner was idle throughout (the chain waited for it).
+
 ## Gates
 
 On this tree (`build/observer/realflag-gates/gates-*.log`, `gates-exit.txt`):

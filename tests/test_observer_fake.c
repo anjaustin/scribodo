@@ -11,7 +11,8 @@ static void test_extract_and_judge(void)
     free(result);
 
     result = obs_fake_judge("Zo\xC3\xAB's eyes are green.", "Zo\xC3\xAB's eyes are brown.");
-    CHECK(result && strstr(result, "\"conflict\""));
+    CHECK(result && strstr(result, "\"conflict\"") && strstr(result, "\"canon_value\":\"green\"") &&
+          strstr(result, "\"new_value\":\"brown\""));
     free(result);
 
     result = obs_fake_judge("Zo\xC3\xAB's eyes are green.", "Zo\xC3\xAB's eyes are green.");

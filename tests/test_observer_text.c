@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "core/experiments.h"
 #include "llm/observer.h"
 #include "test_util.h"
 
@@ -41,6 +42,36 @@ static void test_paragraphs_and_overlap(void)
           !strncmp(document + starts[1], "Second.", lens[1]));
     CHECK(obs_overlap("Zo\xC3\xAB\xE2\x80\x99s eyes are brown.", "Zo\xC3\xAB's eyes are green.") >= 3);
     CHECK(obs_overlap("The fog came in.", "Dvo\xC5\x99\xC3\xA1k lost his hand.") == 0);
+    /* a shared title counts as a shared name by default (measured: the stoplist lost a place fault whose only shared
+     * word was "Princess"); under the conflict-gate experiment it does not (2026-11-14) */
+    unsetenv("SCRIBODO_OBSERVER_CONFLICT_GATE");
+    experiments_reload();
+    CHECK(obs_overlap("Mr. Darcy's estate is in Derbyshire.", "Mr. Wickham joined the Regulars.") == 2);
+    CHECK(obs_overlap("Dejah Thoris is the Princess of Helium.", "She was, after all, the Princess of Zodanga.") == 2);
+    setenv("SCRIBODO_OBSERVER_CONFLICT_GATE", "1", 1);
+    experiments_reload();
+    CHECK(obs_overlap("Mr. Darcy's estate is in Derbyshire.", "Mr. Wickham joined the Regulars.") == 0);
+    CHECK(obs_overlap("Lady Catherine de Bourgh is Mr. Darcy's aunt.", "Lady Lucas called at Longbourn.") == 0);
+    CHECK(obs_overlap("Captain James K. Powell is of Richmond.", "Powell had been born in Boston.") == 2);
+    CHECK(obs_overlap("Dejah Thoris is the Princess of Helium.", "She was, after all, the Princess of Zodanga.") == 0);
+    unsetenv("SCRIBODO_OBSERVER_CONFLICT_GATE");
+    experiments_reload();
+    CHECK(obs_overlap("Mr. Darcy's estate is in Derbyshire.", "Mr. Wickham joined the Regulars.") == 2);
+    CHECK(obs_title("Mrs", 3) && obs_title("captain", 7) && !obs_title("Darcy", 5) && !obs_title("Mrsx", 4));
+}
+
+static void test_values_in_texts(void)
+{
+    const char *canon = "Dejah Thoris is the daughter of Mors Kajak and the granddaughter of Tardos Mors.";
+    const char *stmt = "Dejah Thoris was the daughter of Tardos Mors himself.";
+    CHECK(obs_values_in_texts(canon, stmt, "daughter of Mors Kajak", "daughter of Tardos Mors"));
+    CHECK(!obs_values_in_texts(canon, stmt, "daughter of Mors Kajak", "daughter of Mors Kajak")); /* the same value */
+    CHECK(!obs_values_in_texts(canon, stmt, "", "daughter of Tardos Mors"));                     /* nothing named */
+    CHECK(!obs_values_in_texts(canon, stmt, "wears silks", "daughter of Tardos Mors"));           /* not in canon */
+    CHECK(!obs_values_in_texts(canon, stmt, "daughter of Mors Kajak", "Princess of Helium"));     /* not in new */
+    CHECK(!obs_values_in_texts(canon, NULL, "a", "b") && !obs_values_in_texts(canon, stmt, NULL, "b"));
+    /* quote style and emphasis do not defeat the location */
+    CHECK(obs_values_in_texts("Zo\xC3\xAB\xE2\x80\x99s eyes are green.", "Zo\xC3\xAB's eyes are *brown*.", "Zo\xC3\xAB's eyes are green", "eyes are brown"));
 }
 
 static bool first_sentence_is(const char *text, const char *want)
@@ -75,6 +106,7 @@ int main(void)
         { "locate", test_locate },
         { "paragraphs_and_overlap", test_paragraphs_and_overlap },
         { "first_sentence", test_first_sentence },
+        { "values_in_texts", test_values_in_texts },
     };
     return run_tests(tests, sizeof(tests) / sizeof(tests[0]));
 }

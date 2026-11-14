@@ -26,6 +26,9 @@ typedef struct {
     bool answer_pipeline;         /* SCRIBODO_ANSWER_PIPELINE=verified: the verified-answer pipeline (journal/answer-cycle2_pipeline_live.md, pass 6) */
     bool memory_presentation_compact; /* SCRIBODO_MEMORY_PRESENTATION=compact: archived presentation (MEMORY-011: failed, kept for the harness) */
     bool memory_presentation_episode; /* SCRIBODO_MEMORY_PRESENTATION=episode: archived presentation (MEMORY-011: failed, kept for the harness) */
+    bool observer_conflict_gate;  /* SCRIBODO_OBSERVER_CONFLICT_GATE=1: the canon candidate step ignores shared titles and the judge must name
+                                     the two disagreeing values (journal/observer-cycle2_quality.md step 5: measured 2026-11-14, off-fault
+                                     conflicts rose on both novels; kept gated, default off) */
 } Experiments;
 
 const Experiments *experiments(void);

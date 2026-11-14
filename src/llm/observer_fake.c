@@ -157,6 +157,8 @@ char *obs_fake_judge(const char *canon, const char *statement)
     if (conflict) snprintf(check, sizeof(check), "Canon says %s's %s: %s; the new text says %s.", n1, a1, v1, v2);
     else snprintf(check, sizeof(check), "No contradiction found.");
     cJSON_AddStringToObject(root, "check", check);
+    cJSON_AddStringToObject(root, "canon_value", conflict ? v1 : "");
+    cJSON_AddStringToObject(root, "new_value", conflict ? v2 : "");
     cJSON_AddStringToObject(root, "verdict", conflict ? "conflict" : "unrelated");
     char *out = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);

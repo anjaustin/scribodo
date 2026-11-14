@@ -6,6 +6,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "core/experiments.h"
 #include "core/json.h"
 #include "llm/http.h"
 #include "llm/llm_text.h"
@@ -28,6 +29,19 @@ static const char *k_judge_system =
     "conflict if CANON and NEW cannot both be true; consistent if they agree; unrelated if NEW says nothing about "
     "what CANON establishes.";
 
+/* The conflict-gate experiment's judge (SCRIBODO_OBSERVER_CONFLICT_GATE=1): the verdict carries the two values it says
+ * disagree, which observer_model_judge locates in the texts. Measured on both planted novels 2026-11-14 (journal/
+ * observer-cycle2_quality.md, step 5): off-fault conflicts rose from 44 to 61 (Mars) and 41 to 83 (P&P); kept here
+ * gated by the author's rule for failed experiments. */
+static const char *k_judge_system_values =
+    "You check a novel for continuity errors. CANON is a fact the author has established. NEW is from the latest "
+    "text. First, in check, say what NEW states or implies about the same person, place or thing as CANON (details "
+    "such as appearance, dates, family ties, injuries, or whether something happened before count). Then canon_value: "
+    "the words of CANON that NEW contradicts, copied exactly from CANON, and new_value: the words of NEW that "
+    "contradict them, copied exactly from NEW; both empty unless the two cannot both be true. Then verdict: "
+    "conflict if CANON and NEW cannot both be true; consistent if they agree; unrelated if NEW says nothing about "
+    "what CANON establishes. Something NEW adds that CANON does not mention is not a conflict.";
+
 static cJSON *extract_schema(void)
 {
     const char *js =
@@ -43,10 +57,16 @@ static cJSON *extract_schema(void)
     return json_parse(js);
 }
 
-static cJSON *judge_schema(void)
+static cJSON *judge_schema(bool values)
 {
     /* "check" comes first: the model explains before it decides (measured:
      * conflict recall 4/6 -> 6/6). */
+    if (values)
+        return json_parse("{\"type\":\"object\",\"properties\":{\"check\":{\"type\":\"string\",\"maxLength\":300},"
+                          "\"canon_value\":{\"type\":\"string\",\"maxLength\":80},"
+                          "\"new_value\":{\"type\":\"string\",\"maxLength\":80},"
+                          "\"verdict\":{\"type\":\"string\",\"enum\":[\"conflict\",\"consistent\",\"unrelated\"]}},"
+                          "\"required\":[\"check\",\"canon_value\",\"new_value\",\"verdict\"]}");
     return json_parse("{\"type\":\"object\",\"properties\":{\"check\":{\"type\":\"string\",\"maxLength\":300},"
                        "\"verdict\":{\"type\":\"string\",\"enum\":[\"conflict\",\"consistent\",\"unrelated\"]}},"
                        "\"required\":[\"check\",\"verdict\"]}");
@@ -127,10 +147,14 @@ char *observer_model_extract(ObserverModel *model, const char *chunk, bool is_ch
     return out;
 }
 
-/* Two votes, CANON/NEW in both orders; a conflict only if both agree
- * (measured: removes most false alarms without losing real conflicts). */
+/* Two votes, CANON/NEW in both orders; a conflict only if both agree (measured: removes most false alarms without
+ * losing real conflicts). Under the conflict-gate experiment each vote must also name the canon value and the new
+ * value it says disagree, located in their texts by obs_values_in_texts (2026-11-14: 85 of 92 conflicts over two
+ * novels were additions the judge called conflicts; measured, the requirement did not reduce them; journal/
+ * observer-cycle2_quality.md, step 5). */
 bool observer_model_judge(ObserverModel *model, const char *canon, const char *statement, char *check, size_t checklen)
 {
+    const bool gate = experiments()->observer_conflict_gate;
     bool votes = true;
     check[0] = '\0';
     for (int pass = 0; pass < 2 && votes; pass++) {
@@ -143,12 +167,16 @@ bool observer_model_judge(ObserverModel *model, const char *canon, const char *s
             if (!user) return false;
             if (pass == 0) snprintf(user, n, "CANON: %s\nNEW: %s", canon, statement);
             else snprintf(user, n, "NEW: %s\nCANON: %s", statement, canon);
-            out = complete(model, k_judge_system, user, judge_schema(), 260);
+            out = complete(model, gate ? k_judge_system_values : k_judge_system, user, judge_schema(gate), gate ? 320 : 260);
             free(user);
         }
         cJSON *j = out ? json_parse(out) : NULL;
         cJSON *v = j ? cJSON_GetObjectItem(j, "verdict") : NULL, *c = j ? cJSON_GetObjectItem(j, "check") : NULL;
+        cJSON *cv = j ? cJSON_GetObjectItem(j, "canon_value") : NULL, *nv = j ? cJSON_GetObjectItem(j, "new_value") : NULL;
         votes = v && cJSON_IsString(v) && !strcmp(v->valuestring, "conflict");
+        if (votes && gate)
+            votes = cv && cJSON_IsString(cv) && nv && cJSON_IsString(nv) &&
+                    obs_values_in_texts(canon, statement, cv->valuestring, nv->valuestring);
         if (votes && pass == 0 && c && cJSON_IsString(c)) snprintf(check, checklen, "%s", c->valuestring);
         cJSON_Delete(j);
         free(out);
