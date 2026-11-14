@@ -164,7 +164,7 @@ run): `make test` 95,766 C checks and 193 Python tests, 0 failures; `make
 dbtest` 18,006, 0; `make crashtest` 133 rows, 129 deaths, 0 failures; `make
 uitest` 409, 0; `make uitest-db` 281, 0; `make analyze` 0 warnings across 87
 files; `make sanitize` 95,766, 0; `make tsan` 48,339, 0; every exit status 0;
-the fake-path yardstick byte-identical with `realflag` on three novels.
+the fake-path yardstick byte-identical with `realflag` on three novels. Hosted: 43630415936 CI success; 43630415947 Trusted acceptance success on `e1482c5`.
 
 ## Gates
 
