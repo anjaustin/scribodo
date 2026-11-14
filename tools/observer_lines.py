@@ -32,46 +32,43 @@ def split_fields(text):
 
 
 def complete(parts):
-    return len(parts) == len(FIELDS) and parts[8].strip().isdigit() and parts[9].strip().isdigit()
+    """Twelve fields, integers in start and len, and a type without a newline (a fragment joined in front of a record
+    would otherwise read as its type)."""
+    return len(parts) == len(FIELDS) and parts[8].strip().isdigit() and parts[9].strip().isdigit() and "\n" not in parts[0]
 
 
 def read(path):
     """Returns (rows, stats): rows are dicts over FIELDS (start and len as ints) plus 'line', the record's text as read
-    (physical lines joined with a newline); stats has lines, records, joined, malformed."""
+    (physical lines joined with a newline); stats has lines, records, joined, malformed (physical lines that belong to
+    no record). The pending physical lines are kept apart: a record may begin at any of them, so a fragment in front
+    of a record is dropped and counted rather than swallowing it (red-team 2026-11-14, second pass)."""
     rows, stats = [], {"lines": 0, "records": 0, "joined": 0, "malformed": 0}
-    buffer, nphys = None, 0
+    pending = []
     for line in open(path, encoding="utf-8"):
         line = line.rstrip("\n")
         stats["lines"] += 1
-        if buffer is None:
-            if not line or line.startswith("#"):
-                continue
-            buffer, nphys = line, 1
-        else:
-            buffer, nphys = buffer + "\n" + line, nphys + 1
-        parts = split_fields(buffer)
-        if complete(parts):
-            row = dict(zip(FIELDS, parts))
-            row["start"], row["len"], row["line"] = int(parts[8]), int(parts[9]), buffer
-            rows.append(row)
-            stats["records"] += 1
-            stats["joined"] += nphys > 1
-            buffer = None
-        elif len(parts) > len(FIELDS):
-            # The join overflowed: the earlier physical lines were a fragment. Count it malformed and read the last
-            # physical line on its own, so a fragment never swallows the record after it (red-team 2026-11-14).
-            stats["malformed"] += 1
-            buffer = None
-            parts = split_fields(line)
+        if not pending and (not line or line.startswith("#")):
+            continue
+        pending.append(line)
+        for start in range(len(pending)):
+            text = "\n".join(pending[start:])
+            parts = split_fields(text)
             if complete(parts):
                 row = dict(zip(FIELDS, parts))
-                row["start"], row["len"], row["line"] = int(parts[8]), int(parts[9]), line
+                row["start"], row["len"], row["line"] = int(parts[8]), int(parts[9]), text
                 rows.append(row)
                 stats["records"] += 1
-            elif line and not line.startswith("#"):
-                buffer, nphys = line, 1
-    if buffer is not None:
-        stats["malformed"] += 1
+                stats["joined"] += len(pending) - start > 1
+                stats["malformed"] += start
+                pending = []
+                break
+        else:
+            # Nothing complete yet: drop leading lines while the join already holds more than twelve fields, since
+            # no later line can mend that; what remains may still be the head of a record written across lines.
+            while pending and len(split_fields("\n".join(pending))) > len(FIELDS):
+                pending.pop(0)
+                stats["malformed"] += 1
+    stats["malformed"] += len(pending)
     return rows, stats
 
 

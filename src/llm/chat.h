@@ -38,6 +38,7 @@ typedef struct {
     char *via;       /* sent to / answered by a remote model ("Frontier · api.example.com"); NULL = this Mac */
     double ts;       /* when it was stored (loaded chats), else 0 */
     bool sequence_known; /* persisted DB sequence, never a window offset */
+    bool save_failed;    /* the store refused this turn's append; resaved when the store answers again */
     int64_t sequence;
     bool excerpt;    /* stored body is only a display range; not model history */
     bool excerpt_more;
@@ -138,6 +139,9 @@ typedef struct {
 ChatWindowInfo chat_window_info(ChatSession *s); /* lock held */
 long chat_find_sequence(ChatSession *s, int64_t sequence); /* lock held, -1 absent */
 void chat_mark_saved(ChatSession *s, size_t index, int64_t sequence);
+/* The store refused the append of message `index`: marked so the resave after a reconnect takes exactly these
+ * (never a reply whose done callback is still pending, never a file-loaded chat; REDTEAM-022 second pass). */
+void chat_mark_save_failed(ChatSession *s, size_t index);
 void chat_enable_window(ChatSession *s);
 /* Evict only saved prefix rows, idle and after persistence callbacks. Keep the
  * latest exchange even if it is larger than the normal 1 MiB retained tail. */

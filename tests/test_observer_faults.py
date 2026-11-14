@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -118,6 +119,32 @@ class ScoreTests(unittest.TestCase):
         rows = [l.split("\t") for l in s.stdout.splitlines()[1:]]
         self.assertEqual(rows[0][5], "Eyes: brown  versus blue")
         self.assertEqual(rows[1][5:], ["A|B", "The sign reads A|B. Second line.", "A|B"])
+
+
+class LinesTests(unittest.TestCase):
+    REC = "conflict|s|r|o|new|c|doc|ch1.md|5|3|q|canon"
+
+    def read(self, text):
+        d = Path(tempfile.mkdtemp())
+        (d / "f.txt").write_text(text, encoding="utf-8")
+        sys.path.insert(0, str(ROOT / "tools"))
+        import observer_lines
+        return observer_lines.read(str(d / "f.txt"))
+
+    def test_a_fragment_never_swallows_the_record_after_it(self):
+        rows, stats = self.read("junk fragment\n" + self.REC + "\n")           # no pipe in the fragment
+        self.assertEqual([r["type"] for r in rows], ["conflict"])
+        self.assertEqual((stats["records"], stats["joined"], stats["malformed"]), (1, 0, 1))
+        rows, stats = self.read("junk|frag\n" + self.REC + "\n")               # a pipe in the fragment
+        self.assertEqual(([r["type"] for r in rows], stats["records"], stats["malformed"]), (["conflict"], 1, 1))
+        two = "conflict|Eyes: brown\n\nversus blue|||new|c|doc|ch1.md|5|3|q|canon"
+        rows, stats = self.read("junk|frag\n" + two + "\n")                    # then a record written across lines
+        self.assertEqual(([r["subject"] for r in rows], stats["records"], stats["joined"], stats["malformed"]),
+                         (["Eyes: brown\n\nversus blue"], 1, 1, 1))
+        rows, stats = self.read(two + "\n# 1 findings\n")                       # alone: joined, nothing malformed
+        self.assertEqual((stats["records"], stats["joined"], stats["malformed"]), (1, 1, 0))
+        rows, stats = self.read(self.REC + "\ntrailing junk\n")                 # a leftover fragment at the end
+        self.assertEqual((stats["records"], stats["malformed"]), (1, 1))
 
 
 class SampleTests(unittest.TestCase):

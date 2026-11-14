@@ -30,7 +30,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 30
-    mem_limit: ${SCRIBODO_MARIADB_MEM_LIMIT:-768m}
+    mem_limit: ${SCRIBODO_MARIADB_MEM_LIMIT:-768m} # a cap, not a reservation; the CI stack sets smaller ones (acceptance.yml)
 
   qdrant:
     image: qdrant/qdrant:v1.20.0@sha256:9bfc89f9914fc14876a88c05270685921a55b8877b254a98bcc1cc2f0a424cd2

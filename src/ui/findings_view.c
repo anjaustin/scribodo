@@ -179,11 +179,12 @@ static bool is_selected(const FindingsView *v, size_t i) { return !strcmp(v->sel
 
 static const char k_disclosure[] = "Possible conflicts are suggestions: about 1 in 13 was real on the test novels. Each links to its source.";
 
-/* The disclosure line's height when the list holds a conflict, else 0. */
-static float disclosure_height(const FindingsView *v)
+/* The disclosure's height (wrapped to the pane's width) when the list holds a conflict, else 0. */
+static float disclosure_height(FindingsView *v, float w)
 {
     for (size_t i = 0; i < v->n; i++)
-        if (!strcmp(v->items[i].type, "conflict")) return v->label->line_height + 6.0f;
+        if (!strcmp(v->items[i].type, "conflict"))
+            return (float)wrap(v->label, k_disclosure, w - 2 * PAD, 4, NULL, NULL) * v->label->line_height + 6.0f;
     return 0.0f;
 }
 
@@ -209,7 +210,7 @@ void findings_view_update(FindingsView *v, Rectangle r)
     if (CheckCollisionPointRec(GetMousePosition(), r)) v->scroll -= GetMouseWheelMoveV().y * 30.0f;
     float total = 0;
     for (size_t i = 0; i < v->n; i++) total += item_height(v, i, r.width) + GAP;
-    total += disclosure_height(v);
+    total += disclosure_height(v, r.width);
     float max = total - r.height > 0 ? total - r.height : 0;
     if (v->scroll > max) v->scroll = max;
     if (v->scroll < 0) v->scroll = 0;
@@ -266,11 +267,13 @@ FindingAction findings_view_draw(FindingsView *v, Rectangle r, char *id_out, siz
     FindingAction act = FA_NONE;
     BeginScissorMode((int)r.x, (int)r.y, (int)r.width, (int)r.height);
     float y = r.y - v->scroll;
-    if (disclosure_height(v) > 0) {
+    float dh = disclosure_height(v, r.width);
+    if (dh > 0) {
         /* Measured and disclosed where the author decides (MEMORY-015 §4): the conflict path's precision on the test
          * novels, journal/observer-cycle2_quality.md step 4 (7 true in 92 shown), is 1 in 13. */
-        sfont_draw_utf8(v->label, k_disclosure, (int)strlen(k_disclosure), r.x, y, MUTED);
-        y += disclosure_height(v);
+        LineCtx dc = { v->label, r.x + PAD, y, v->label->line_height, MUTED };
+        wrap(v->label, k_disclosure, r.width - 2 * PAD, 4, draw_line, &dc);
+        y += dh;
     }
     for (size_t i = 0; i < v->n; i++) {
         Item *it = &v->items[i];

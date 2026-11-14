@@ -1794,9 +1794,10 @@ static void on_message_done(ChatSession *s, size_t index, void *ctx)
     if (copy.role == CHAT_ASSISTANT && !copy.error && !copy.is_edit && index >= 1) names_check(app, index);
     if (!app->chat_project[0]) { free(copy.content); return; }
     int64_t sequence = -1;
-    if (!chat_store_append_sequenced(app->store, app->chat_project, app->chat_id, app->chat_title, &copy, &sequence))
+    if (!chat_store_append_sequenced(app->store, app->chat_project, app->chat_id, app->chat_title, &copy, &sequence)) {
+        chat_mark_save_failed(s, index);
         set_status(app, store_says(app, "Could not save the chat to .scribodo/chats"));
-    else {
+    } else {
         if (sequence >= 0) chat_mark_saved(s, index, sequence);
         if (app->observer && copy.role == CHAT_ASSISTANT) observer_poke(app->observer);
     }
@@ -1833,19 +1834,20 @@ static void adopt_chat(App *app)
     app->lists_dirty = true;
 }
 
-/* Messages kept in memory while the store was offline are saved when it answers again (red-team 2026-11-14: the
- * status told the author to keep them and nothing re-appended them, so sending stayed refused). Only a store
- * project's messages carry sequences; the ones without one are the unsaved ones. */
+/* Messages whose append the store refused are saved when it answers again (red-team 2026-11-14: the status told
+ * the author to keep them and nothing re-appended them, so sending stayed refused). Exactly the marked ones: a reply
+ * whose done callback has not run yet carries no mark, and neither does a chat loaded from files before its project
+ * moved into the store (second pass: inferring "unsaved" from a missing sequence re-appended both). */
 static void resave_unsaved_chat(App *app)
 {
-    if (!app->chat_project[0] || !app->chat_id[0] || chat_busy(app->chat) || !database_history_project(app->chat_project)) return;
+    if (!app->chat_project[0] || !app->chat_id[0] || chat_busy(app->chat)) return;
     chat_lock(app->chat);
     size_t n = chat_count(app->chat), k = 0;
     ChatMessage *copy = calloc(n ? n : 1, sizeof(ChatMessage));
     size_t *at = calloc(n ? n : 1, sizeof(size_t));
     for (size_t i = 0; copy && at && i < n; i++) {
         const ChatMessage *m = chat_message(app->chat, i);
-        if (m->sequence_known) continue;
+        if (!m->save_failed) continue;
         copy[k] = *m;
         copy[k].content = strdup(m->content ? m->content : "");
         at[k++] = i;
@@ -4417,6 +4419,7 @@ int main(int argc, char **argv)
         editor_update(app.editor, app.editor_rect, idle && app.focus == FOCUS_DOC);
         memory_document_names(&app); /* dirty-buffer transitions fence preparation immediately */
         chat_view_set_can_apply(app.chat_view, editor_path(app.editor) != NULL && !editor_is_read_only(app.editor));
+        chat_view_set_note_disabled(app.chat_view, app.edit_mode); /* before the frame's hit test and draw */
         chat_view_update(app.chat_view, app.chat_list_rect, app.chat_input_rect, idle && app.focus == FOCUS_CHAT);
         ChatPageAction page_action = chat_view_take_page(app.chat_view);
         if (idle && page_action.kind != CHAT_PAGE_NONE) page_chat(&app, page_action);
@@ -4496,7 +4499,6 @@ int main(int argc, char **argv)
         }
         if (record_view_active(app.record))
             record_action(&app, record_view_draw(app.record, app.record_rect, app.focus == FOCUS_RECORD));
-        chat_view_set_note_disabled(app.chat_view, app.edit_mode);
         chat_view_draw(app.chat_view, app.chat_list_rect, app.chat_input_rect, app.focus == FOCUS_CHAT);
         if (app.observer_open && app.findings_rect.width > 0) {
             char fid[40] = "";

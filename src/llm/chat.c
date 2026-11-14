@@ -287,9 +287,17 @@ void chat_mark_saved(ChatSession *s, size_t index, int64_t sequence)
     if (index < s->count && sequence >= 0 && sequence <= INT_MAX) {
         s->msgs[index].sequence_known = true;
         s->msgs[index].sequence = sequence;
+        s->msgs[index].save_failed = false;
         s->windowed = true;
         s->version++;
     }
+    pthread_mutex_unlock(&s->mu);
+}
+
+void chat_mark_save_failed(ChatSession *s, size_t index)
+{
+    pthread_mutex_lock(&s->mu);
+    if (index < s->count) s->msgs[index].save_failed = true;
     pthread_mutex_unlock(&s->mu);
 }
 
@@ -1128,6 +1136,7 @@ typedef struct {
 /* Stage 1: the budget, and a copy of everything the stages read from the session, taken under the lock. */
 static void build_begin(ChatSession *s, ChatBuild *b)
 {
+    gate_clear(s); /* a gate armed by an earlier turn whose build failed never reaches this turn's reply */
     memset(b, 0, sizeof(*b));
     b->preparation_started = memory_budget_now_ms();
     b->budget_started = s->memory_enabled && !s->via_remote &&

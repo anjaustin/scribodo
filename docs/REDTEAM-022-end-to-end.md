@@ -56,9 +56,12 @@ lists only `.md`, `.txt` and `.markdown`, so a draft is not a document.
 
 **R3 — a chat append that failed was never retried (P3, fixed).** The status
 told the author to "keep" the messages, sending was then refused, and nothing
-re-appended them. `resave_unsaved_chat` runs when the store answers again and
-appends every message of a store project's chat that has no sequence, in
-order, then marks them saved.
+re-appended them. The refused append marks the message (`save_failed`,
+cleared by `chat_mark_saved`); `resave_unsaved_chat` runs when the store
+answers again and appends exactly the marked messages, in order. (The first
+version inferred "unsaved" from a missing sequence; the second pass showed that
+re-appended a reply whose done callback had not run yet and a chat loaded from
+files before its project moved into the store.)
 
 **R4 — conflict findings carried no disclosure of their measured precision (P2, fixed).**
 The badge read CONFLICT in red. It reads POSSIBLE CONFLICT, and a list that
@@ -154,7 +157,7 @@ waits for the job to be running); R25 — OBSERVER-001 still said 1.5 s (fixed).
 **R28 — a chat path over 1,012 bytes was cut into a sibling directory (P3, fixed: PATH_MAX + 32, refuse a cut).**
 **R29 — a failed attachment link was swallowed and the turn stored without it (P3, fixed: the append fails, as the importer's does).**
 **R30 — a damaged newest snapshot blocks recording an identical save (P3, considered, kept).** The reviewer proposed writing a fresh snapshot; the design fails closed so a damaged History entry is reported, not papered over, and `test_llm` `snapshot_reuse_integrity` pins that. The first attempt here changed it and the test caught it; reverted.
-**R31 — a recognised record line with invalid fields was dropped silently (P3, fixed: fail closed, as chats do since REDTEAM-010).**
+**R31 — a recognised record line with invalid fields was dropped silently (P3, fixed: fail closed, as chats do since REDTEAM-010).** Writes to a file project's notes or canon re-read the log first, so one such line now refuses new entries with "Could not save" until the file is repaired; the author is told rather than read short.
 **R32 — `db.c` returned allocation failures with the previous error text (P3, fixed: set_err); its migration comment said "one transaction" (fixed).**
 
 ### The workbench
@@ -208,6 +211,26 @@ reviewed-edit controller's layout (every edit request went out as a plain
 message and the exit freed a garbage pointer), and the window loader's note
 assertion ran after the test had stopped the store (a use after free the
 sanitizer build located in seconds).
+
+## Second pass over the remediations
+
+Two reviewers read the remediation commit through git objects while it was
+being gated. Confirmed and fixed on the tree that followed: `wait_chat`'s new
+timeout report named the next command's line (the wait had already advanced
+`pc`; it steps back to report); `observer_lines.read` still let a fragment
+without a pipe become a record's `type`, and lost a two-line record behind a
+piped fragment (the pending physical lines are now kept apart, a record may
+begin at any of them, a type with a newline is never complete; five shapes
+pinned in `test_observer_faults.py`); `resave_unsaved_chat` could re-append a
+reply finished in the same frame the store came online, and a file-loaded chat
+after its project moved into the store (R3 above). Plausible points adopted:
+a gate armed by a turn whose build failed is cleared at the next build's start;
+`sdb_chat_rename` refuses to nest into a caller's transaction, as the append
+does; a failed wrap keeps the previous layout in place instead of a partial
+one; the Note toggle's disabled state is set before the frame's hit test; the
+disclosure line wraps to the pane. Noted, not changed: the draft writer's 10 s
+interval is the only knob on its cost for very large documents; the compose
+caps are caps, not reservations.
 
 ## Deferred, with reasons
 

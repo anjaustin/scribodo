@@ -103,13 +103,17 @@ static void ensure_layout(Editor *e)
 {
     float w = e->text_w > 1.0f ? e->text_w : 600.0f;
     if (!e->layout_dirty && e->layout_width == w) return;
-    if (wrap_compute(&e->layout, &e->buf, w, adv_cb, e->font) < 0) {
-        /* Out of memory mid-wrap: the rows do not tile the buffer; try again next frame rather than draw and
-         * hit-test a partial layout (red-team 2026-11-14). */
+    WrapLayout fresh = { 0 };
+    if (wrap_compute(&fresh, &e->buf, w, adv_cb, e->font) < 0) {
+        /* Out of memory mid-wrap: the rows do not tile the buffer, so the previous layout stays in use and the
+         * next call tries again (red-team 2026-11-14; the staging shape chat_view uses). */
+        wrap_free(&fresh);
         e->layout_dirty = true;
         e->layout_width = -1.0f;
         return;
     }
+    wrap_free(&e->layout);
+    e->layout = fresh;
     e->layout_dirty = false;
     e->layout_width = w;
 }

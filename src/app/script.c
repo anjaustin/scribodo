@@ -986,7 +986,7 @@ bool script_frame(Script *s, ScriptHost *h)
             if (chat_busy(h->chat) && s->wait_chat > 0) return true;
             bool done = !chat_busy(h->chat);
             s->wait_chat = 0;
-            if (!done) report(s, false, "chat did not finish"); /* a hung send is a failure, not a pass-through (red-team 2026-11-14) */
+            if (!done) { s->pc--; report(s, false, "chat did not finish"); s->pc++; } /* its own line, not the next command's (red-team 2026-11-14) */
             new_batch(s); /* one more frame so chat_poll publishes completion */
             continue;
         }

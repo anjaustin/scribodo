@@ -308,7 +308,7 @@ bool sdb_chat_rename(Db *db, const char *project_id, const char *id, const char 
 {
     /* The previous title is kept (delete nothing, only archive; red-team 2026-11-14): one transaction, the old
      * title into conversation_titles, then the new one onto the row. */
-    if (!db_begin(db)) return false;
+    if (db_in_transaction(db) || !db_begin(db)) return false; /* one transaction, never nested into a caller's */
     double t = now_s();
     uint64_t changed = 0;
     DbArg keep[3] = { DB_D(t), DB_S(id), DB_S(project_id) };
