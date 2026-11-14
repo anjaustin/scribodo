@@ -110,7 +110,10 @@ void llm_server_rerank_config(LlmServerConfig *c, const char *app_dir)
     c->batch = 2048;
     c->embedding = false;
     c->rerank = true;
-    c->mem_fixed = 1024LL * 1024 * 1024; /* 1.2 GB of weights plus the 2K slot; to be measured like the embedder */
+    /* Measured 2026-11-14 with these arguments (llama-server's own breakdown): KV 224 MiB, Metal compute 360 MiB,
+     * CPU compute 64 MiB, 1,720 MiB of device memory projected with the 1,142 MiB weights; the process's physical
+     * footprint 342 MB at ready. The weights are the file (llm_server_mem_need adds it); the rest rounds up to 1 GiB. */
+    c->mem_fixed = 1024LL * 1024 * 1024;
     c->mem_per_token = 0;
 }
 

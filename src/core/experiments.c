@@ -13,6 +13,14 @@ static bool flag_is(const char *name, const char *value)
     return v && !strcmp(v, value);
 }
 
+/* A default-on feature: off only when its variable is exactly "off" or "0" (a measured default that the author
+ * can still switch off for a run or a measurement). */
+static bool flag_on(const char *name)
+{
+    const char *v = getenv(name);
+    return !(v && (!strcmp(v, "off") || !strcmp(v, "0")));
+}
+
 static void read_environment(void)
 {
     Experiments e = {
@@ -22,9 +30,10 @@ static void read_environment(void)
         .memory_excerpts = flag_is("SCRIBODO_MEMORY_EXCERPTS", "1"),
         .memory_small_units = flag_is("SCRIBODO_MEMORY_SMALL_UNITS", "1"),
         .semantic_debug = getenv("SCRIBODO_SEM_DEBUG") != NULL,
-        .memory_experiment = flag_is("SCRIBODO_MEMORY_EXPERIMENT", "1"),
+        .memory_experiment = flag_on("SCRIBODO_MEMORY_EXPERIMENT"),
         .memory_briefs = flag_is("SCRIBODO_MEMORY_BRIEFS", "1"),
-        .answer_pipeline = flag_is("SCRIBODO_ANSWER_PIPELINE", "verified"),
+        .answer_pipeline = flag_on("SCRIBODO_ANSWER_PIPELINE"),
+        .answer_pipeline_requested = flag_is("SCRIBODO_ANSWER_PIPELINE", "verified"),
         .memory_presentation_compact = flag_is("SCRIBODO_MEMORY_PRESENTATION", "compact"),
         .memory_presentation_episode = flag_is("SCRIBODO_MEMORY_PRESENTATION", "episode"),
         .observer_conflict_gate = flag_is("SCRIBODO_OBSERVER_CONFLICT_GATE", "1"),

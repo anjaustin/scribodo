@@ -112,6 +112,9 @@ What the product does not promise:
 ## 6. P0 slices, in order
 
 Each slice is default-off until its gate passes. Each gets a dated record.
+(2026-11-14: memory and the verified pipeline moved onto the default path at
+the author's direction, their gates and costs recorded in
+journal/answer-cycle4_default_path.md; consent per conversation unchanged.)
 
 **S1 — Deterministic recall view.** *Implemented 2026-11-07; record in [MEMORY-016](MEMORY-016-recall-view.md).* MEMORY-014 §5 P0. A host-rendered surface
 that takes a query and renders matching committed canon (exact current text,

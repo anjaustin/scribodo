@@ -139,15 +139,23 @@ static void test_experiments_read_once_and_reload(void)
     setenv("SCRIBODO_ANSWER_PARTS", "0", 1); setenv("SCRIBODO_ANSWER_BLOCK", "system", 1); setenv("SCRIBODO_MEMORY_TRACE", "yes", 1);
     experiments_reload();
     CHECK(!experiments()->answer_parts && !experiments()->answer_block_in_message && !experiments()->memory_trace); /* only the exact values count */
+    /* memory and the verified pipeline are on by default (2026-11-14); "off" or "0" turns each off, nothing else does */
+    unsetenv("SCRIBODO_MEMORY_EXPERIMENT"); unsetenv("SCRIBODO_ANSWER_PIPELINE"); unsetenv("SCRIBODO_MEMORY_BRIEFS");
+    experiments_reload();
+    e = experiments();
+    CHECK(e->memory_experiment && e->answer_pipeline && !e->answer_pipeline_requested && !e->memory_briefs);
     setenv("SCRIBODO_MEMORY_EXPERIMENT", "1", 1); setenv("SCRIBODO_MEMORY_BRIEFS", "1", 1); setenv("SCRIBODO_ANSWER_PIPELINE", "verified", 1);
     setenv("SCRIBODO_MEMORY_PRESENTATION", "episode", 1);
     experiments_reload();
     e = experiments();
-    CHECK(e->memory_experiment && e->memory_briefs && e->answer_pipeline && e->memory_presentation_episode && !e->memory_presentation_compact);
-    setenv("SCRIBODO_ANSWER_PIPELINE", "1", 1); setenv("SCRIBODO_MEMORY_PRESENTATION", "compact", 1);
+    CHECK(e->memory_experiment && e->memory_briefs && e->answer_pipeline && e->answer_pipeline_requested && e->memory_presentation_episode && !e->memory_presentation_compact);
+    setenv("SCRIBODO_ANSWER_PIPELINE", "off", 1); setenv("SCRIBODO_MEMORY_EXPERIMENT", "0", 1); setenv("SCRIBODO_MEMORY_PRESENTATION", "compact", 1);
     experiments_reload();
     e = experiments();
-    CHECK(!e->answer_pipeline && e->memory_presentation_compact && !e->memory_presentation_episode);
+    CHECK(!e->answer_pipeline && !e->memory_experiment && e->memory_presentation_compact && !e->memory_presentation_episode);
+    setenv("SCRIBODO_ANSWER_PIPELINE", "1", 1); setenv("SCRIBODO_MEMORY_EXPERIMENT", "yes", 1);
+    experiments_reload();
+    CHECK(experiments()->answer_pipeline && experiments()->memory_experiment); /* only "off" and "0" turn a default-on feature off */
     unsetenv("SCRIBODO_MEMORY_EXPERIMENT"); unsetenv("SCRIBODO_MEMORY_BRIEFS"); unsetenv("SCRIBODO_ANSWER_PIPELINE");
     unsetenv("SCRIBODO_MEMORY_PRESENTATION");
     unsetenv("SCRIBODO_ANSWER_PARTS"); unsetenv("SCRIBODO_ANSWER_BLOCK"); unsetenv("SCRIBODO_MEMORY_TRACE");

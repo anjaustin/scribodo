@@ -21,9 +21,13 @@ typedef struct {
     bool memory_excerpts;         /* SCRIBODO_MEMORY_EXCERPTS=1: the query-window excerpt variant (MEMORY-022: failed its gate) */
     bool memory_small_units;      /* SCRIBODO_MEMORY_SMALL_UNITS=1: 128-token document units, 16-unit packet (MEMORY-022: not promoted) */
     bool semantic_debug;          /* SCRIBODO_SEM_DEBUG set: failed Qdrant calls logged to stderr */
-    bool memory_experiment;       /* SCRIBODO_MEMORY_EXPERIMENT=1: local memory (MEMORY-003 onward); every memory flag below needs it */
+    bool memory_experiment;       /* local memory (MEMORY-003 onward): ON by default since 2026-11-14 (journal/answer-cycle4_default_path.md);
+                                     SCRIBODO_MEMORY_EXPERIMENT=0 turns it off; consent stays per conversation; every memory flag below needs it */
     bool memory_briefs;           /* SCRIBODO_MEMORY_BRIEFS=1: generated source-linked briefs, T1 (MEMORY-009: gated, default off) */
-    bool answer_pipeline;         /* SCRIBODO_ANSWER_PIPELINE=verified: the verified-answer pipeline (journal/answer-cycle2_pipeline_live.md, pass 6) */
+    bool answer_pipeline_requested; /* SCRIBODO_ANSWER_PIPELINE=verified set explicitly: with the fake backend the pipeline runs
+                                       only when asked for (its fixture scores but nothing extracts), so UI scripts keep the recall path */
+    bool answer_pipeline;         /* the verified-answer pipeline (journal/answer-cycle2_pipeline_live.md, pass 6): ON by default since 2026-11-14
+                                     for conversations with memory on; SCRIBODO_ANSWER_PIPELINE=off selects the plain composer */
     bool memory_presentation_compact; /* SCRIBODO_MEMORY_PRESENTATION=compact: archived presentation (MEMORY-011: failed, kept for the harness) */
     bool memory_presentation_episode; /* SCRIBODO_MEMORY_PRESENTATION=episode: archived presentation (MEMORY-011: failed, kept for the harness) */
     bool observer_conflict_gate;  /* SCRIBODO_OBSERVER_CONFLICT_GATE=1: the canon candidate step ignores shared titles and the judge must name

@@ -147,13 +147,15 @@ On first launch the app checks the model file against its pinned hash (once), th
 - If the store is down, documents stay editable; notes, canon, chats and History pause until it's back. A project not yet moved keeps using its files.
 - Set `SCRIBODO_STORE=off` to run without it.
 
-**Experimental local conversation memory:** launch with
-`SCRIBODO_MEMORY_EXPERIMENT=1`, open a stored chat, and right-click it to explicitly
-enable/disable/rebuild memory. This retrieves older chat and currently attached
+**Local conversation memory** (on by default since 2026-11-14; `SCRIBODO_MEMORY_EXPERIMENT=off`
+runs without it): open a stored chat and right-click it to explicitly
+enable/disable/rebuild memory for that conversation. This retrieves older chat and currently attached
 saved local revision excerpts, never silently exports them to a remote provider,
 and shows read-only as-of **Sources**. Generated T1 briefs are a second opt-in
 behind `SCRIBODO_MEMORY_BRIEFS=1`: locally generated, source-linked and never
-canon. Everything here is default-off, and unsaved buffers are foreground-only.
+canon. Memory is available on every launch but reads nothing into a request until the author turns it on for that
+conversation; briefs stay default-off; unsaved buffers are foreground-only. In a conversation with memory on, the
+verified-answer pipeline answers (`SCRIBODO_ANSWER_PIPELINE`, below).
 The current slice is [MEMORY-009](docs/MEMORY-009-resource-and-brief-experiment.md);
 the direction after the continuity experiments is
 [MEMORY-014](docs/MEMORY-014-canon-first-continuity.md).
@@ -262,13 +264,13 @@ in [`docs/TESTING.md`](docs/TESTING.md).
 | `SCRIBODO_PROFILE` | `~/Library/Application Support/Scribodo/profile.json` | Author profile. |
 | `SCRIBODO_BACKUPS` | `~/Library/Application Support/Scribodo/backups` | Where **Back up now** writes. |
 | `SCRIBODO_PROSE_FONT` | system fonts | A font file tried first for prose text. |
-| `SCRIBODO_MEMORY_EXPERIMENT` | unset | `1` enables the opt-in local memory experiment described above. |
+| `SCRIBODO_MEMORY_EXPERIMENT` | on | Local memory as described above is on since 2026-11-14 (`journal/answer-cycle4_default_path.md`); `off` or `0` runs without it. Consent is still given per conversation. |
 | `SCRIBODO_MEMORY_BRIEFS` | unset | `1` additionally enables generated T1 briefs. Requires the experiment flag. |
 | `SCRIBODO_MEMORY_PRESENTATION` | `legacy` | `compact` or `episode` selects an experimental source layout for memory requests. Diagnostic only; requires the experiment flag and never changes what is eligible. |
 | `SCRIBODO_MEMORY_TRACE` | unset | `1` logs local preparation timings and counts, not prompts or source text. |
 | `SCRIBODO_MEMORY_EXCERPTS` | unset | `1` selects the failed query-window development variant. Reproduction only; off by default. Requires local memory. |
 | `SCRIBODO_MEMORY_SMALL_UNITS` | unset | `1` tests 128-token saved-document units and a 16-unit candidate packet. Failed its 14/14 development reach target; off by default. Rebuild memory to change existing units. |
-| `SCRIBODO_ANSWER_PIPELINE` | unset | `verified` runs the verified-answer pipeline experiment: the local Qwen3-Reranker picks one unit from 64 candidates, one extraction call copies the stating sentence, the span is byte-checked against the unit, and only that span reaches the model. Requires the memory experiment and the pinned reranker GGUF (`SCRIBODO_RERANK_MODEL`). Measured, not promoted; see `docs/MODEL-002-qwen3-reranker.md`. |
+| `SCRIBODO_ANSWER_PIPELINE` | on | The verified-answer pipeline answers in conversations with memory on, since 2026-11-14: the local Qwen3-Reranker picks one unit from 64 candidates, one extraction call copies the stating sentence, the span is byte-checked against the unit, and only that span reaches the model (0 fabrications shown in any recorded run; 10 to 15 s of reranking before the reply). `off` or `0` selects the plain composer. Needs the pinned reranker GGUF (`SCRIBODO_RERANK_MODEL`); without the file the app says so on stderr and answers plainly. See `docs/MODEL-002-qwen3-reranker.md`. |
 | `SCRIBODO_ANSWER_BLOCK` | unset | With the verified pipeline, `message` places the verified block at the top of the author's newest message (the pass 3a shape); the default places it in the system message after the composer instruction (pass 3b, measured as the better shape in journal `answer-cycle2_pipeline_live.md`). Kept for repeat measurement. |
 | `SCRIBODO_OBSERVER_CONFLICT_GATE` | unset | `1` turns on the observer's conflict-gate experiment: shared titles do not pair a statement with a canon entry, and a conflict verdict must name the two disagreeing values, found in the texts. Measured on both planted novels 2026-11-14 and worse than the default (more off-fault conflicts, two faults lost); kept for repeat measurement, off by default (journal `observer-cycle2_quality.md`, step 5). |
 | `SCRIBODO_ANSWER_PARTS` | unset | With the verified pipeline, `1` splits a multi-part question into its parts (each with the request's context sentence), retrieves and reranks one candidate pool per part and assigns the two verified spans as a maximum-score matching. Measured live and rejected (journal `answer-cycle3_relation.md`, pass 7): a part with no manuscript answer still gets a slot. Kept for repeat measurement; the default is one pool for the whole request. |

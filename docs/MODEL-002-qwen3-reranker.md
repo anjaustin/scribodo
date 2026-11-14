@@ -1,6 +1,6 @@
 # MODEL-002: Qwen3-Reranker-0.6B as the verified-answer pipeline's selector
 
-**Date:** 2026-11-10. **Status:** experiment runtime, pinned; not a product default.
+**Date:** 2026-11-10. **Status:** pinned runtime; on the default path since 2026-11-14 for conversations with memory on (journal/answer-cycle4_default_path.md; its memory figure measured there, 1 GiB beside the weights confirmed).
 
 ## Why a second specialist
 
@@ -56,10 +56,14 @@ inside the figures above.
 
 About 0.15 s per pair on this Mac. The pipeline scores up to 64 candidates
 per question, so selection alone is up to 10 s before extraction and the
-reply. That is why the pipeline is an experiment behind
+reply. That is why the pipeline was an experiment behind
 `SCRIBODO_ANSWER_PIPELINE=verified` with its own 90 s deadline, not a
 foreground default: the live measurement records the wall time with the
-answers.
+answers. On 2026-11-14 the author put the measured-best paths on the default
+(journal/answer-cycle4_default_path.md): the pipeline answers whenever a
+conversation has memory on, which the author grants per conversation, so the
+cost is paid only where the author asked for memory; `=off` selects the plain
+composer.
 
 ## Saturation
 

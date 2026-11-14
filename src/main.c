@@ -3738,15 +3738,23 @@ int main(int argc, char **argv)
         setenv("SCRIBODO_MODEL_SETTINGS", mp, 1);
     }
     model_settings_load(&app.model);
-    /* Verified-answer pipeline experiment: requires the memory experiment. */
-    app.answer_pipeline = experiments()->answer_pipeline && experiments()->memory_experiment;
+    /* The verified-answer pipeline (default on since 2026-11-14) runs for conversations with memory on; it needs the
+     * memory experiment and, with a real model, the pinned reranker file. */
     const char *llm_mode = getenv("SCRIBODO_LLM");
     bool fake = (llm_mode && !strcmp(llm_mode, "fake")) || (script_path && !(llm_mode && !strcmp(llm_mode, "real")));
+    /* With the fake backend nothing can extract a span, so the pipeline runs only when a test asks for its fixture. */
+    app.answer_pipeline = experiments()->answer_pipeline && experiments()->memory_experiment &&
+                          (!fake || experiments()->answer_pipeline_requested);
     if (!fake) {
         LlmServerConfig cfg, ecfg, rcfg;
         llm_server_default_config(&cfg, GetApplicationDirectory());
         llm_server_embed_config(&ecfg, GetApplicationDirectory());
         llm_server_rerank_config(&rcfg, GetApplicationDirectory());
+        if (app.answer_pipeline && access(rcfg.model_path, R_OK) != 0) {
+            /* No reranker on this Mac: the plain composer answers, and the toolbar's memory line says why. */
+            app.answer_pipeline = false;
+            fprintf(stderr, "scribodo: no reranker model at %s; answers are not verified (see docs/MODEL-002-qwen3-reranker.md)\n", rcfg.model_path);
+        }
         /* The author's context per conversation, as far as memory allows
          * (the other servers are about to start). */
         const ModelSettingInfo *ci = model_setting_info(7);

@@ -70,7 +70,9 @@ five such axes for at least 24 reachable combinations; live runs exercise two.
 - **2026-11-14:** `SCRIBODO_OBSERVER_CONFLICT_GATE` joined the table (eleven
   fields): the observer's conflict gate, measured on both planted novels and
   worse than the default (`journal/observer-cycle2_quality.md`, step 5), kept
-  gated off by the rule above. No column.
+  gated off by the rule above. No column. The same day `SCRIBODO_MEMORY_EXPERIMENT`
+  and `SCRIBODO_ANSWER_PIPELINE` became default-on fields (`off` or `0` turns
+  each off) at the author's direction, journal/answer-cycle4_default_path.md.
 
 ## Open — answer receipts and trace lines are an unversioned contract (P2)
 
@@ -212,7 +214,7 @@ first exhausts client ports within the window.
   connections per sweep. Measure the `TIME_WAIT` count after one run before and
   after; the number above is the baseline.
 
-## Open — the reranker server's memory figure is a placeholder
+## Done — the reranker server's memory figure, measured 2026-11-14
 
 **Registered:** 2026-11-10 (REDTEAM-021 R4). `llm_server_rerank_config` in
 `src/llm/server.c` sets `mem_fixed` to 1 GiB and `mem_per_token` to 0 without
@@ -222,7 +224,14 @@ breakdown (MODEL-001). The context fit subtracts the figure when
 chat model's context fit too optimistic on a 16 GB machine with all three
 servers running. Remediation: measure the reranker at `-c 2048 -b 2048` the
 way the embedder was measured and replace the constant; required before the
-pipeline is anything but an experiment flag.
+pipeline is anything but an experiment flag. **Measured 2026-11-14** with the
+app's arguments (`-c 2048 -b 2048 -ub 2048 -fa off -ctk bf16 -ctv bf16`,
+llama-server's own breakdown): KV 224 MiB, Metal compute 360 MiB, CPU compute
+64 MiB, 1,720 MiB of device memory projected with the 1,142 MiB weights, the
+process's physical footprint 342 MB at ready and after a scored pair. The
+1 GiB figure beside the weights stands as measured (within 10 percent, on the
+high side); the comment in `server.c` carries the numbers
+(journal/answer-cycle4_default_path.md). **Entry closed.**
 
 ## Open — spawned tools inherit the app's descriptors (P3)
 

@@ -42,7 +42,13 @@ measurement that closes it. Items run one at a time unless marked otherwise.
    gate does not arm on it however it is worded, while an unmarked turn keeps
    today's rule (a question ends with "?"). Still open on notes: a check of the
    acknowledgement against the note and its sources, and the memory record
-   carrying the kind.
+   carrying the kind. *Default path 2026-11-14* (`answer-cycle4_default_path.md`):
+   at the author's direction ("all the best code and features on the default
+   path") local memory and the verified pipeline are what a plain launch runs,
+   the pipeline answering in every conversation the author gives memory to;
+   each flag's measured record was audited first and no other flag's default
+   moved (every other experiment measured worse or is a diagnostic). The
+   reranker's memory figure, the recorded blocker, was measured the same day.
 2. **Generalisation: the second manuscript** (GAP-001, LANDSCAPE rows 12 and
    20). *A Princess of Mars*, imported, with 8 boundary cases and 15 reach
    tasks written before any run. Run reach and the verified pipeline once at
