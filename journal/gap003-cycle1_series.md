@@ -560,4 +560,7 @@ it. The measurement owed is the real-model soak with the observer on
 against the count under wait mode, and the send's time to first token with
 the observer on against off. Gates on the tree with it
 (`build/observer/cycle3-gates/`): test 95,744 C checks and 192 Python tests,
-analyze 0/87, sanitize 95,744, tsan 48,339, dbtest 18,001, every exit 0.
+analyze 0/87, sanitize 95,744, tsan 48,339, dbtest 18,001, every exit 0. Committed as `f0a6837`; on that commit's
+own tree `make test` 95,719 C checks and 192 Python tests, 0 failures, exit 0; on the tree with the two steps after
+it (`build/observer/cycle3b-gates/`) test 95,748 / analyze 0 / sanitize 95,748 / tsan 48,339 / dbtest 18,001 /
+uitest 409 assertions, every exit 0. Yardstick `waitmode` byte-identical with `realflag` (717 / 348 / 948).

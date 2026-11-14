@@ -582,6 +582,13 @@ hosted acceptance runner was idle throughout (the chain waited for it).
 
 ## Gates
 
+Step 5 (the gate flagged off, `c38117d`): the five gates ran on the tree with the three steps of 2026-11-14 (wait mode,
+this step, the note turn; `build/observer/cycle3b-gates/`): `make test` 95,748 C checks and 192 Python tests, 0
+failures; `make analyze` 0 warnings across 87 source files; `make sanitize` 95,748, 0; `make tsan` 48,339, 0; `make
+dbtest` 18,001, 0; `make uitest` 409 assertions in 23 scripts, 0 failures; every exit status 0. This commit's own tree:
+`make test` 95,734 C checks and 192 Python tests, 0 failures, exit 0 (`test-c38117d.log`). Yardstick `gateflag`
+byte-identical with `realflag` on pp, mars and heights (717 / 348 / 948).
+
 On this tree (`build/observer/realflag-gates/gates-*.log`, `gates-exit.txt`):
 `make test` 95,994 C checks and 186 Python tests, 0 failures; `make analyze`
 0 warnings across 87 source files; `make sanitize` 95,994, 0; `make tsan`

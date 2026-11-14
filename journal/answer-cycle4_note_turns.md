@@ -119,3 +119,9 @@ Not built here, recorded in PRODUCT-GAPS item 1: the acknowledgement check
 record storing the turn as the author's note rather than a chat turn. No
 prompt or request text changed, so no model measurement was owed; the
 change is measured by the tests above and the UI script.
+
+Gates on the committed tree (`9f921de`, `build/observer/cycle3b-gates/`): `make test` 95,748 C checks and 192
+Python tests, 0 failures; `make analyze` 0 warnings across 87 source files; `make sanitize` 95,748, 0; `make tsan`
+48,339, 0; `make dbtest` 18,001, 0; `make uitest` 409 assertions in 23 scripts, 0 failures (the first full run of
+the suite on this tree failed one script while the Mac slept on a dying battery and a second linked objects left
+stale by a same-second checkout; the clean run is `gates-uitest3.log`); every exit status 0.
