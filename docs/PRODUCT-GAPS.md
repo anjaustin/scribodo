@@ -83,10 +83,11 @@ measurement that closes it. Items run one at a time unless marked otherwise.
    chat"); one observer call is about 26 s uncontended, so the remedy is a
    scheduling change for the author to choose (disclosure, cadence-aware
    starts, or a bounded hold on the send). Still open: that remedy, a time-to-first-token row
-   for memory on, the Docker VM's memory cap (measured: the fit's free figure
-   falls 3 GB after store work because the VM keeps the containers' cache), and the
-   author's agreement on the budgets (the worst-frame row as an absolute or
-   a rate).
+   for memory on, ~~the Docker VM's memory cap~~ (pinned to 3 GB 2026-11-14 at
+   the author's direction, MEMORY-019 "What is next"), and the
+   author's agreement on the budgets: *agreed 2026-11-14*, the worst-frame
+   row as a rate (at most 0.25 percent of frames above 50 ms, none above
+   150 ms), the rest as proposed (MEMORY-019, "Budgets").
 6. **GAP-001 beyond selection.** Observer precision and recall by finding type
    on both novels; author-rated usefulness on complete sessions. *Started
    2026-11-13* (`journal/observer-cycle2_quality.md`): the observer replay
@@ -113,9 +114,13 @@ measurement that closes it. Items run one at a time unless marked otherwise.
    canon entry with a statement about someone else who shares a surname or
    a title; audited precision over 105 findings entity 0.38, event 0.65,
    question 7 of 15, relationship 6 of 10. Both novels: recall 7 of 20,
-   conflicts 7 true in 92, entity 0.43, event 0.75. The thresholds are the
-   author's to set; the first change to measure is a gate on the conflict
-   path before the judge call.
+   conflicts 7 true in 92, entity 0.43, event 0.75. *Thresholds agreed
+   2026-11-14* (journal, "Thresholds, agreed"): recall at least 0.50 and
+   place 1.00, conflict precision at least 0.50, entity 0.60 with empties
+   at most 0.10, event 0.80, question 0.60, relationship 0.75, no row below
+   today's value. First change to measure: the candidate step ignoring
+   shared titles and a judge whose two disagreeing values must occur in the
+   texts, reran on both planted copies.
 7. **GAP-002 distribution.** Signed app, guided model and service setup,
    upgrade and uninstall, proven on a clean Mac.
 8. **GAP-005 real input and accessibility.** The IME, dead-key, layout,

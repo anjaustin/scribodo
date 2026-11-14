@@ -476,6 +476,30 @@ The author sets the thresholds from these; the first change measured
 against them should be the conflict path's gate, which the harness scores
 in about seven hours of model time for both novels.
 
+**Thresholds, agreed 2026-11-14.** The author asked for them to be set from
+the tests ("as you see fit according to the tests"); set from the two-novel
+table, each a floor a change must meet or raise, and no row may fall below
+its value today when a change ships:
+
+| measure | today | threshold |
+|---|---|---|
+| planted-fault recall, both novels | 7 / 20 | at least 0.50 |
+| … place | 4 / 4 | 1.00 |
+| conflict findings true of shown | 7 / 92 (0.08) | at least 0.50 |
+| entity precision | 0.43 | at least 0.60 |
+| … empty entities | 15 / 80 (0.19) | at most 0.10 |
+| event precision | 0.75 | at least 0.80 |
+| question precision | 7 / 16 | at least 0.60 |
+| relationship precision | 9 / 14 | at least 0.75 |
+
+The remedy chosen for the conflict path (the author: "what makes the most
+sense"): two software changes measured together, a candidate step that does
+not count a shared title or honorific (Mr, Mrs, Miss, Lady, Sir, Captain…)
+as a shared name, and a judge whose verdict carries the two values it says
+disagree, accepted only when each value occurs in its side's text. The
+planted copies of both novels are rerun with them; recall must hold at 7 of
+20 or rise and the off-fault conflicts must fall from 85.
+
 ## Gates
 
 On this tree (`build/observer/realflag-gates/gates-*.log`, `gates-exit.txt`):

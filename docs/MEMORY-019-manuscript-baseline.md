@@ -201,7 +201,7 @@ What the series says:
    cache, reclaimable, not a leak claim either way. The soak below samples
    the store's own size and backlog instead of inferring them from RSS.
 
-### Proposed budgets (2026-11-13, awaiting the author's agreement)
+### Budgets (proposed 2026-11-13, agreed by the author 2026-11-14)
 
 Stated at about twice the series' median where the series is tight, and as
 the measured quantity where the wall is not the right unit. Each is a budget
@@ -234,9 +234,12 @@ crossed 50 ms (that report carried the maximum only). Since 2026-11-13
 crossed 50 ms 196 times in 97,492 frames (0.20 percent, about 6.7 per
 minute, worst 70.6 ms) and the 40-minute real-model soak 17 times in 123,455
 (0.014 percent, about 0.4 per minute, worst 131.5 ms, streaming included).
-The row can now be agreed as an absolute (no frame above 50 ms, which the
-soaks fail) or restated as a rate, for which these two counts are the
-evidence; the author's call.
+The row is agreed as a rate, the author having asked for the line to be set
+for best performance (2026-11-14): **at most 0.25 percent of a soak's frames
+above 50 ms, and none above 150 ms**, which both soaks pass (0.20 and 0.014
+percent; worst 70.6 and 131.5 ms) and which a regression to the two-hour
+soak's unmeasured count would be read against. The other rows are adopted as
+proposed; the table is the acceptance line from this date.
 
 ## Soak and restart (2026-11-13)
 
@@ -334,8 +337,9 @@ Both real-model runs again on the fixed build, idle machine, AC power
 
 ## What is next in S4
 
-- The author's agreement on the budgets, the worst-frame row as an absolute
-  or a rate now that `FRAME_METRICS` counts frames above 50 ms.
+- ~~The author's agreement on the budgets~~ Agreed 2026-11-14: the table
+  above, the worst-frame row as a rate (0.25 percent above 50 ms, none above
+  150 ms).
 - The context after store work: `sysmem_available` reads the machine
   correctly, and what moves it is the Docker virtual machine, whose resident
   memory rose from 1.6 to 4.4 GB over two acceptance runs and did not come
@@ -348,7 +352,16 @@ Both real-model runs again on the fixed build, idle machine, AC power
   memory above a floor as available: the VM gave back 2.3 GB within a
   minute of the model loading (its balloon) while thirty idle minutes
   returned nothing, so the pre-load figure understates what the model would
-  get by about that much (journal, the sampler's last hour).
+  get by about that much (journal, the sampler's last hour). **Pinned
+  2026-11-14 at the author's direction: 3,072 MiB** (`MemoryMiB` in Docker
+  Desktop's `settings-store.json`; `docker info` reads 2.84 GiB). The VM's
+  first start at that size exited unexpectedly while the services' health
+  checks ran and came up clean on relaunch; MariaDB lost the last DDL before
+  the exit (a dropped test database reappeared and was dropped again). At
+  rest with both containers healthy (MariaDB 194 MiB, Qdrant 510 MiB) the VM
+  holds 2.2 GB resident and `sysmem_available` reads 5.1 GB with the rest of
+  the author's desktop open; the launch-time fit can no longer be moved by
+  more than the VM's cap, which is the point.
 - A time-to-first-token row for memory on (the soak's 35 sends: 3.7 to 20.5 s
   at 3,138 to 13,179 prompt tokens), the author's decision on its form.
 - The observer's scheduling under chat: the author's choice among the three
