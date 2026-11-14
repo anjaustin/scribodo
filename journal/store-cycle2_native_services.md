@@ -116,5 +116,5 @@ and the status fix (`build/observer/native-services/final-*.log`): `make test`
 uitest-db` 281, 0; `make analyze` 0 warnings across 87 source files; `make
 sanitize` 95,766, 0; `make tsan` 48,339, 0; earlier the same evening on the same
 services `make dbtest` 18,006, 0, `make crashtest` 133 rows, 0 failures, and the
-backup rehearsal clean; every exit status 0. Hosted: recorded below when the
-first native acceptance run reports.
+backup rehearsal clean; every exit status 0. Hosted: CI and Trusted acceptance passed on `d77f35e` (runs 43640697926 and
+43640697913), the acceptance job on native services for the first time.
