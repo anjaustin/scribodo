@@ -1305,6 +1305,16 @@ static void memory_pipeline(ChatSession *s, ChatBuild *b, MemoryStage *m)
     answer_pipeline_run(m->db, pipeline_vectors, s->rerank, s->server, &pscope, &m->documents, m->query, m->before,
                         &s->cancel, pipeline_deadline, &pipeline);
     semantic_client_destroy(pipeline_vectors);
+    if (!strcmp(pipeline.status, "no_candidates")) {
+        /* Nothing to verify: no document unit reached the reranker (a conversation with memory on and no documents
+         * attached is the common case). The recall plan answers from the chat's own history as it always has, and
+         * the request never claims the manuscript was searched (measured 2026-11-14: a 40-minute soak of such a
+         * conversation had every reply abstain, journal/answer-cycle4_default_path.md). */
+        snprintf(b->memory_notice, sizeof(b->memory_notice), "Verified pipeline: no document passages to score; recalled from the chat instead.");
+        if (experiments()->memory_trace) answer_trace_pipeline(stderr, &pipeline, b->req ? strlen(b->req) : 0, b->first_history);
+        answer_pipeline_result_free(&pipeline);
+        return;
+    }
     if (pipeline.scored && pipeline.score_failures == pipeline.scored) {
         /* Every score failed (the reranker refused or was unavailable): a capacity failure, not a search result.
          * The request keeps its plain shape and the notice says what happened. */

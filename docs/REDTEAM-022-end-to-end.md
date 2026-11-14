@@ -212,6 +212,16 @@ message and the exit freed a garbage pointer), and the window loader's note
 assertion ran after the test had stopped the store (a use after free the
 sanitizer build located in seconds).
 
+**R44 — with the pipeline on, a memory-on conversation without documents abstained on every question (P2, fixed).**
+Found by the default path's own measurement (`journal/answer-cycle4_default_path.md`,
+"Measured"): the pipeline keeps only document units, so a chat with memory on and
+nothing attached reached `no_candidates`, the request was rebuilt around "No
+verified passage was found", the gate armed, and a 40-minute soak of such a
+conversation had 23 abstentions in 23 replies while the reranker scored nothing.
+`memory_pipeline` now returns to the recall plan on `no_candidates` (nothing to
+verify is not a search result), with the notice "no document passages to score;
+recalled from the chat instead"; verified by a further soak (journal).
+
 ## Second pass over the remediations
 
 Two reviewers read the remediation commit through git objects while it was
@@ -263,5 +273,6 @@ had passed vacuously before R35 (both steps follow "memory disabled for this
 conversation"; they now state `expect memory_sources_none`); the chain was rerun
 after each fix.
 
-Hosted: CI and Trusted acceptance verdicts are recorded in the journal when
-the commits are pushed.
+Hosted: CI and Trusted acceptance passed on `8c6efc9` with `52d44fe` (runs
+43621647190 and 43621647088) and on the second pass `e5ddcd5` (43624101043 and
+43624100974).
