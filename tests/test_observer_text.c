@@ -63,6 +63,10 @@ static void test_first_sentence(void)
     CHECK(first_sentence_is("No period at all", "No period at all"));
     CHECK(first_sentence_is("It ends with K.", "It ends with K."));
     CHECK(first_sentence_is("Capt. Powell rode. Then he fell.", "Capt. Powell rode."));
+    CHECK(first_sentence_is("The new text introduces 'Mrs. Collins' as a friend. Then more.",
+                            "The new text introduces 'Mrs. Collins' as a friend."));
+    CHECK(first_sentence_is("A person named (Mr. Gardiner) writes. Then more.", "A person named (Mr. Gardiner) writes."));
+    CHECK(first_sentence_is("It names **Mr. Darcy** of Pemberley. Then more.", "It names **Mr. Darcy** of Pemberley."));
 }
 
 int main(void)

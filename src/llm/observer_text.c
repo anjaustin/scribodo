@@ -266,16 +266,17 @@ int obs_overlap(const char *a, const char *b)
 
 /* Cuts s at the end of its first sentence: a period that ends the text or is followed by a space and a capital,
  * unless the period closes an initial ("James K. Powell") or a title ("Mr. Bennet"), which the real model's
- * explanations carry: a conflict's content read "Canon states Captain James K." before this
- * (journal/observer-cycle2_quality.md, step 3). */
+ * explanations carry: a conflict's content read "Canon states Captain James K." before this, and "the new text
+ * introduces 'Mrs." when the title opened a quotation (journal/observer-cycle2_quality.md, steps 3 and 4). */
 void obs_first_sentence(char *s)
 {
     static const char *const titles[] = { "Mr", "Mrs", "Ms", "Dr", "St", "Capt", "Col", "Lt", "Gen", "Prof", "Sgt",
                                           "Jr", "Sr", "Rev", "Hon" };
     for (char *end = s; (end = strchr(end, '.')) != NULL; end++) {
         if (!(end[1] == '\0' || (end[1] == ' ' && end[2] >= 'A' && end[2] <= 'Z'))) continue;
-        const char *w = end; /* the word before the period */
+        const char *w = end; /* the word before the period, without an opening quote, bracket or asterisk */
         while (w > s && w[-1] != ' ') w--;
+        while (w < end && !((*w >= 'A' && *w <= 'Z') || (*w >= 'a' && *w <= 'z') || (*w >= '0' && *w <= '9'))) w++;
         size_t wl = (size_t)(end - w);
         bool abbrev = wl == 1 && *w >= 'A' && *w <= 'Z';
         for (size_t i = 0; !abbrev && i < sizeof(titles) / sizeof(titles[0]); i++)
