@@ -499,3 +499,5 @@ Step 4 (the second first-sentence fix in C, the journal and docs), on the tree w
 (3 more for the new cases) and 192 Python tests, 0 failures; `make analyze` 0 warnings across 87 source files;
 `make sanitize` 95,710, 0; `make tsan` 48,329, 0; `make dbtest` 18,000, 0; every exit status 0. Yardstick
 `observer_replay_run.sh firstsent2` byte-identical with `realflag` on pp, mars and heights (717, 348, 948).
+Hosted: CI and Trusted acceptance passed on `452a6ae` (runs 43501766672 and 43501766788), on `5e7e9b8`
+with `e290e7d` (43512619083 and 43512619064) and on `44d8c0f` with `754ac0d` (43552119722 and 43552119645).
