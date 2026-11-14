@@ -525,3 +525,39 @@ slot); a third is now on the table for the author: let the fit count the
 Docker VM's resident memory above a floor as available, since the VM yields
 it under pressure, measured here once and to be measured again before it is
 relied on.
+
+**Decided and pinned (2026-11-14).** The author chose the pin: Docker Desktop's
+VM is set to 3,072 MiB (`MemoryMiB` in `settings-store.json`; `docker info`
+reads 2.84 GiB). The VM's first start at that size exited while the services'
+health checks ran and came up clean on relaunch; MariaDB lost the last DDL
+before the exit (a dropped test database reappeared; dropped again). At rest
+with both containers healthy (MariaDB 194 MiB, Qdrant 510 MiB) the VM holds
+2.2 GB resident and `sysmem_available` reads 5.1 GB beside the author's open
+desktop; the two hosted runs after the pin passed (43558421428 and
+43558421560), with the containers at 193 and 541 MiB inside the VM's cap. The
+fit's figure can no longer move by more than the cap.
+
+## The observer's wait mode, built (2026-11-14); measured next
+
+The author's answer to the scheduling remedies: "Can the Observer just go
+into a wait mode until the chat settles?" Built as a backoff on the idleness
+a job needs: `idle_required` starts at the 1.5 s IDLE_DELAY; each time chat
+becomes active while a job is running (the job is cancelled, as before) the
+requirement doubles when the job unwinds, to a cap of 120 s; a job that
+completes resets it to 1.5 s. While it waits above the base the status reads
+"Waiting for the chat to settle (N s)…" instead of "Waiting while you chat…".
+Under the measured cadence (a send every 68 s with about 15 s idle between
+replies) the observer would have tried at 1.5, 3, 6 and 12 s and then asked
+for 24 s and more, which the gaps never give: four cancelled calls instead
+of one every cycle, no model time spent on work the next send discards, and
+the send no longer waits on cancelling a background call. `test_llm`
+`observer_wait_mode` pins it with the fake backend held inside a job
+(`SCRIBODO_FAKE_EXTRACT_MS`, a test hook): one cancellation, 3.0 s required,
+the status text, no job for the first 1.5 s of idleness, then the job and the
+reset. `observer_idle_required` and `observer_chat_cancels` are exposed for
+it. The measurement owed is the real-model soak with the observer on
+(`history_frame_soak.sh --observer`): the earlier run's 35 cancelled calls
+against the count under wait mode, and the send's time to first token with
+the observer on against off. Gates on the tree with it
+(`build/observer/cycle3-gates/`): test 95,744 C checks and 192 Python tests,
+analyze 0/87, sanitize 95,744, tsan 48,339, dbtest 18,001, every exit 0.

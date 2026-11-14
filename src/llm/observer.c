@@ -38,6 +38,7 @@
 #define CHUNK_MAX 3000        /* bytes of new text per extraction request */
 #define PIECE_MAX 2000        /* longest piece of one paragraph or message */
 #define IDLE_DELAY 1.5        /* seconds of chat idleness before observer work */
+#define IDLE_MAX 120.0        /* the idleness required after repeated cancellations by chat (wait mode) */
 #define RETRY_DELAY 5.0       /* after a failed request */
 #define MAX_JUDGE_PAIRS 24    /* canon checks per job: 8 findings x 3 entries, so none are skipped */
 #define MAX_DOC_BYTES (16u << 20) /* the editor's own limit is lower */
@@ -85,6 +86,10 @@ struct Observer {
     char project[PATH_MAX];
     uint64_t gen;            /* bumps on project change: stale results are discarded */
     double idle_since;       /* last time chat was active */
+    double idle_required;    /* idleness a job needs: IDLE_DELAY, doubled each time chat cancels a running job, up
+                              * to IDLE_MAX; back to IDLE_DELAY when a job completes (wait mode, 2026-11-14) */
+    bool cancelled_by_chat;  /* the running job was cancelled by chat becoming active */
+    unsigned chat_cancels;   /* jobs cancelled by chat, for tests and the status line */
     double retry_at;
     atomic_bool cancel;
     atomic_bool chat_active;
@@ -898,11 +903,18 @@ static void *worker(void *arg)
         bool waiting_shown = false;
         while (!o->stop) {
             double t = now_s();
-            bool idle = !atomic_load(&o->chat_active) && t - o->idle_since >= IDLE_DELAY;
+            bool idle = !atomic_load(&o->chat_active) && t - o->idle_since >= o->idle_required;
             bool ready = (o->poked || o->rebuild) && o->project[0] && o->enabled && t >= o->retry_at;
             if (ready && idle) break;
             if (ready && !idle && !waiting_shown) {
-                snprintf(o->status, sizeof(o->status), "Waiting while you chat\xE2\x80\xA6");
+                /* Wait mode: after chat has cancelled a running job, the observer asks for more idleness before it
+                 * starts again (doubling to IDLE_MAX), so a chat that sends every minute no longer costs a model call
+                 * that is cancelled twelve seconds in and a job that restarts from its beginning each time
+                 * (journal/gap003-cycle1_series.md, "the observer starves under continuous chat"). */
+                if (o->idle_required > IDLE_DELAY)
+                    snprintf(o->status, sizeof(o->status), "Waiting for the chat to settle (%.0f s)\xE2\x80\xA6", o->idle_required);
+                else
+                    snprintf(o->status, sizeof(o->status), "Waiting while you chat\xE2\x80\xA6");
                 waiting_shown = true;
             }
             struct timespec ts;
@@ -1028,6 +1040,7 @@ static void *worker(void *arg)
             o->version++;
             o->jobs_done++;
             o->io_error = false;
+            o->idle_required = IDLE_DELAY; /* a job got through: the chat has settled */
         } else if (io && gen == o->gen) {
             /* Findings were written but progress couldn't be: back off a
              * minute (saves don't cut it short) rather than re-asking the
@@ -1045,6 +1058,11 @@ static void *worker(void *arg)
             /* Admission is polled on this worker, never on the UI thread.
              * Avoid a hot retry loop while foreground intent remains queued. */
             o->retry_at = now_s() + 0.2;
+        }
+        if (o->cancelled_by_chat) {
+            o->cancelled_by_chat = false;
+            o->chat_cancels++;
+            o->idle_required = o->idle_required * 2 > IDLE_MAX ? IDLE_MAX : o->idle_required * 2;
         }
         pthread_mutex_unlock(&o->mu);
     }
@@ -1066,6 +1084,7 @@ Observer *observer_create(StoreManager *store, LlmServer *server, SemanticClient
     atomic_init(&o->cancel, false);
     atomic_init(&o->chat_active, false);
     o->idle_since = now_s() - IDLE_DELAY;
+    o->idle_required = IDLE_DELAY;
     snprintf(o->status, sizeof(o->status), "Open a document to start");
     if (pthread_create(&o->thread, NULL, worker, o) != 0) {
         pthread_mutex_destroy(&o->mu);
@@ -1158,6 +1177,7 @@ void observer_set_chat_active(Observer *o, bool active)
         atomic_store(&o->cancel, true); /* the job is retried once chat is idle */
         pthread_mutex_lock(&o->mu);
         o->idle_since = now_s();
+        if (o->running) o->cancelled_by_chat = true; /* counted when the job unwinds */
         pthread_mutex_unlock(&o->mu);
     } else if (was) {
         pthread_mutex_lock(&o->mu);
@@ -1175,6 +1195,22 @@ void observer_set_enabled(Observer *o, bool enabled)
     snprintf(o->status, sizeof(o->status), "%s", enabled ? "Starting\xE2\x80\xA6" : "Paused");
     pthread_cond_signal(&o->cv);
     pthread_mutex_unlock(&o->mu);
+}
+
+double observer_idle_required(Observer *o)
+{
+    pthread_mutex_lock(&o->mu);
+    double d = o->idle_required;
+    pthread_mutex_unlock(&o->mu);
+    return d;
+}
+
+unsigned observer_chat_cancels(Observer *o)
+{
+    pthread_mutex_lock(&o->mu);
+    unsigned n = o->chat_cancels;
+    pthread_mutex_unlock(&o->mu);
+    return n;
 }
 
 void observer_status(Observer *o, char *out, size_t outlen)

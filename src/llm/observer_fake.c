@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <strings.h>
 
 #include "cJSON.h"
@@ -77,6 +78,10 @@ static bool rel_pattern(const char *sent, char *a, char *rel, char *b)
 
 char *obs_fake_extract(const char *chunk)
 {
+    /* Test hook: SCRIBODO_FAKE_EXTRACT_MS holds the fake backend inside a job for that many milliseconds, so a test can
+     * make chat active while a job is running (the observer's wait mode, 2026-11-14). Unset in the product. */
+    const char *slow = getenv("SCRIBODO_FAKE_EXTRACT_MS");
+    if (slow && atoi(slow) > 0) usleep((useconds_t)atoi(slow) * 1000);
     cJSON *root = cJSON_CreateObject();
     cJSON *arr = cJSON_AddArrayToObject(root, "findings");
     size_t n = strlen(chunk);

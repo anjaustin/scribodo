@@ -56,6 +56,11 @@ void observer_poke(Observer *o);
 /* Call every frame. While true, observer requests are cancelled and none
  * start; work resumes once chat has been idle for a short while. */
 void observer_set_chat_active(Observer *o, bool active);
+
+/* Wait mode (2026-11-14): the idleness a job needs now (IDLE_DELAY, doubled to IDLE_MAX each time chat cancels a
+ * running job, reset when a job completes) and how many jobs chat has cancelled. */
+double observer_idle_required(Observer *o);
+unsigned observer_chat_cancels(Observer *o);
 /* Pause/resume (e.g. a setting); paused observers finish nothing new. */
 void observer_set_enabled(Observer *o, bool enabled);
 

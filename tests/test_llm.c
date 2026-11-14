@@ -1438,6 +1438,13 @@ static bool wait_jobs(Observer *o, unsigned want, double secs)
     return false;
 }
 
+static double wall_s(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+}
+
 static size_t count_findings(const char *proj, const char *type, const char *status, Record **out)
 {
     Record *list = NULL;
@@ -1580,6 +1587,44 @@ static bool has_finding(const char *proj, const char *needle, Record *out_copy_s
     }
     records_free(list, n);
     return found;
+}
+
+/* Wait mode (2026-11-14): chat cancelling a running job doubles the idleness the next job needs (1.5 s to 3 s), the
+ * status says so, and a completed job resets it. The fake backend is held inside the job by SCRIBODO_FAKE_EXTRACT_MS. */
+static void test_observer_wait_mode(void)
+{
+    char proj[700], doc[800];
+    snprintf(proj, sizeof(proj), "%s/obs-wait", g_dir);
+    mkdir(proj, 0755);
+    snprintf(doc, sizeof(doc), "%s/ch1.md", proj);
+    FILE *f = fopen(doc, "wb");
+    fputs("The fog came in off the fjord.\n\nZo\xC3\xAB's eyes are brown. Dvo\xC5\x99\xC3\xA1k waited.\n", f);
+    fclose(f);
+    setenv("SCRIBODO_FAKE_EXTRACT_MS", "600", 1);
+    Observer *o = observer_create(g_store, NULL, NULL);
+    CHECK(o != NULL);
+    if (!o) { unsetenv("SCRIBODO_FAKE_EXTRACT_MS"); return; }
+    CHECK(observer_idle_required(o) == 1.5 && observer_chat_cancels(o) == 0);
+    observer_set_project(o, proj);
+    usleep(300000); /* inside the held job */
+    observer_set_chat_active(o, true);
+    double t0 = wall_s();
+    while (observer_chat_cancels(o) == 0 && wall_s() - t0 < 5) usleep(20000);
+    CHECK(observer_chat_cancels(o) == 1);
+    CHECK(observer_idle_required(o) == 3.0);
+    CHECK(observer_jobs_done(o) == 0);
+    usleep(300000);
+    char st[200];
+    observer_status(o, st, sizeof(st));
+    CHECK(strstr(st, "Waiting for the chat to settle (3 s)") != NULL);
+    unsetenv("SCRIBODO_FAKE_EXTRACT_MS");
+    observer_set_chat_active(o, false);
+    /* the job starts only after 3 s of idleness, then completes and the requirement resets */
+    usleep(1500000);
+    CHECK(observer_jobs_done(o) == 0);
+    CHECK(wait_jobs(o, 1, 10));
+    CHECK(observer_idle_required(o) == 1.5 && observer_chat_cancels(o) == 1);
+    observer_destroy(o);
 }
 
 static void test_observer_redteam(void)
@@ -2613,6 +2658,7 @@ int main(int argc, char **argv)
         { "snapshot_name_exhaustion", test_snapshot_name_exhaustion },
         { "snapshot_reuse_integrity", test_snapshot_reuse_integrity },
         { "observer_run", test_observer_run },
+        { "observer_wait_mode", test_observer_wait_mode },
         { "observer_redteam", test_observer_redteam },
         { "recent_and_renames", test_recent_and_renames },
         { "multi_doc_request", test_multi_doc_request },
