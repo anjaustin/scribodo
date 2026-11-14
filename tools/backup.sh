@@ -20,9 +20,8 @@
 # <project>-<time>. Restore with tools/restore.sh.
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
-export PATH="$HOME/.docker/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
+. "$(dirname "$0")/services_lib.sh"
 export SCRIBODO_SECRETS="${SCRIBODO_SECRETS:-$HOME/Library/Application Support/Scribodo/services}"
-compose() { docker compose -p "${SCRIBODO_COMPOSE_PROJECT:-scribodo}" -f "$here/docker/compose.yml" "$@"; }
 
 # verify: every listed file present and unchanged, and nothing else: no
 # extra files, no links or other non-regular entries. (Checksums kept in
@@ -107,12 +106,10 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 mkdir "$dest/files"
 
-# 1. The store: one consistent snapshot. The root password is read inside
-# the container (never on a command line); the dump streams out compressed.
+# 1. The store: one consistent snapshot (services_lib.sh dump_db: the root password never on a command line);
+# the dump streams out compressed.
 if [ "$nodb" = 0 ]; then
-compose exec -T mariadb sh -c \
-    'MYSQL_PWD="$(cat /run/secrets/db_root_password)" exec mariadb-dump -uroot --single-transaction --quick --routines --triggers --hex-blob --default-character-set=utf8mb4 "$1"' \
-    sh "$db" | gzip -9 > "$dest/db.sql.gz.part"
+dump_db "$db" | gzip -9 > "$dest/db.sql.gz.part"
 # a dump that ended early has no completion line
 gzip -dc "$dest/db.sql.gz.part" | tail -1 | grep -q '^-- Dump completed' || { echo "the database dump is incomplete" >&2; exit 1; }
 mv "$dest/db.sql.gz.part" "$dest/db.sql.gz"
@@ -127,7 +124,7 @@ pid=""
 [ -f "$project/.scribodo/store.json" ] &&
     pid="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("project_id",""))' "$project/.scribodo/store.json" 2>/dev/null || true)"
 schema=""
-[ "$nodb" = 1 ] || schema="$(compose exec -T mariadb sh -c 'MYSQL_PWD="$(cat /run/secrets/db_root_password)" exec mariadb -uroot -N -e "SELECT MAX(version) FROM schema_migrations" "$1"' sh "$db" 2>/dev/null || echo "")"
+[ "$nodb" = 1 ] || schema="$(rootsql -N -e "SELECT MAX(version) FROM schema_migrations" "$db" 2>/dev/null || echo "")"
 python3 -I - "$dest/manifest.json" "$stamp" "$db" "$project" "$name" "$pid" "$schema" "$nodb" "${with:+1}" <<'EOF'
 import json, sys
 out, stamp, db, path, name, pid, schema, nodb, export = sys.argv[1:]

@@ -25,10 +25,14 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64, scribodo-trusted]
     timeout-minutes: 90
     env:
+      # The services run natively on the runner (the author's Mac; tools/services_lib.sh): their own data under the
+      # job's temporary folder, on ports beside the author's, purged at the end. The compose project name stays for a
+      # run that sets SCRIBODO_SERVICES=docker by hand.
+      SCRIBODO_SERVICES: native
       SCRIBODO_COMPOSE_PROJECT: scribodo-ci
       SCRIBODO_DB_PORT: "33062"
       SCRIBODO_QDRANT_PORT: "6334"
-      # The runner shares the author's Docker VM (pinned to 3,072 MiB) with the local stack; both stacks' caps fit.
+      # For a docker-mode run on the shared VM (pinned to 3,072 MiB): both stacks' caps fit.
       SCRIBODO_MARIADB_MEM_LIMIT: "512m"
       SCRIBODO_QDRANT_MEM_LIMIT: "768m"
     steps:
@@ -45,6 +49,8 @@ jobs:
           brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
           echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
 
+      - name: Fetch the pinned Qdrant binary
+        run: make qdrant
       - name: Start pinned local services
         run: tools/services.sh up
 

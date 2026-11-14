@@ -122,7 +122,7 @@ bounded-history foundation is tracked in
 
 ## Building
 
-Requirements: the Xcode command line tools (Apple clang, `make`), Homebrew's `openssl@3` and `cmake` (`brew install openssl@3 cmake`; the MariaDB connector is built from source with the static OpenSSL libraries), `python3`, and Docker Desktop for the store (`make dbtest`, `make uitest-db`, `make crashtest`). Every other dependency is vendored as a pinned git submodule, and raylib is compiled from source. `make uitest` opens windows, so it needs an unlocked console.
+Requirements: the Xcode command line tools (Apple clang, `make`), Homebrew's `openssl@3` and `cmake` (`brew install openssl@3 cmake`; the MariaDB connector is built from source with the static OpenSSL libraries), `python3`, and the store's two services, either native (`brew install mariadb@11.4` and `make qdrant`, recommended on a 16 GB Mac) or Docker Desktop (`make dbtest`, `make uitest-db` and `make crashtest` need one of them). Every other dependency is vendored as a pinned git submodule, and raylib is compiled from source. `make uitest` opens windows, so it needs an unlocked console.
 
 ```sh
 git clone --recursive https://github.com/anjaustin/scribodo.git
@@ -140,7 +140,7 @@ Full dependency history is not needed to build; see the
 
 On first launch the app checks the model file against its pinned hash (once), then starts `llama-server` in the background. The toolbar shows the model's status, which turns green when it's ready. The server listens only on a private Unix socket, uses a fresh API key each launch, and stops when the app quits.
 
-**The project store:** chats, notes, canon, findings, History and the observer's progress live in a local MariaDB (SOW §5), run in Docker. `tools/services.sh up` starts it (MariaDB 11.4 and Qdrant, localhost only, with generated credentials). The app starts it too if Docker is running.
+**The project store:** chats, notes, canon, findings, History and the observer's progress live in a local MariaDB (SOW §5) beside a Qdrant index. `tools/services.sh up` starts both (MariaDB 11.4 and Qdrant 1.20, localhost only, with generated credentials), and the app starts them too. They run one of two ways: **natively** on this Mac (MariaDB from Homebrew, `brew install mariadb@11.4`; Qdrant as the pinned release binary, `make qdrant`), the recommended default on a machine whose memory is for the model, since the Docker virtual machine held about 1.9 GB beside services that use 0.3 GB and cost the chat model three quarters of its context (journal/store-cycle2_native_services.md); or in **Docker** (`docker/compose.yml`, images pinned by digest), an installation option for a machine with memory to spare. `SCRIBODO_SERVICES=native|docker` chooses; unset, the mode the last `up` used, else native when its binaries are present. `tools/services.sh migrate-from-docker` moves an existing store from the containers to the native services and keeps the dump.
 - The first time a project is opened with the store up, its `.scribodo/` files are moved in. The old files are kept in `.scribodo/legacy-…`.
 - Documents stay plain files in the folder, and a rename keeps each document's id, so History and sources follow it.
 - Failed notes/history reads stop migration without switching authority. Making a copied folder its own project uses a private snapshot: retries do not duplicate chats or mix in later changes from the original.
@@ -239,7 +239,7 @@ You can also drop a `.md` or `.txt` file onto the window to open it. Press ⌘S 
 - If another program changed the file since you opened it, Scribodo leaves that version in place and writes yours to a sibling `… (Scribodo conflict <date> <time>).md`. Saving again within 30 seconds, without further edits, overwrites the disk version.
 - Files that are write-protected or contain invalid UTF-8 open read-only.
 - While a document has unsaved edits, its whole text is written beside it every ten seconds (`<name>.scribodo-XXXXXX`, the same name a save's temp file has). If the app or the Mac dies before you save, the next open keeps that text beside the document as `<name> (Scribodo recovered <date> <time>).md` and opens it; nothing is overwritten. A clean save removes the draft.
-- The project store (chats, notes, canon, History) is a MariaDB inside Docker Desktop's virtual machine. Its commits are durable against the app or the database dying, which the interruption matrix tests; whether a commit survives the Mac losing power depends on the virtual machine flushing its disk, which Scribodo cannot test or guarantee. Documents are files on your disk and do not depend on it. **Back up now** exports the whole store to files.
+- The project store (chats, notes, canon, History) is a MariaDB. Its commits are durable against the app or the database dying, which the interruption matrix tests. Run natively, its fsync reaches your disk, so an acknowledged commit survives the Mac losing power as far as the disk does; run in Docker, that depends on the virtual machine flushing its disk, which Scribodo cannot test or guarantee. Documents are files on your disk either way. **Back up now** exports the whole store to files.
 
 See [`docs/REDTEAM-001-editor-spike.md`](docs/REDTEAM-001-editor-spike.md) and [`docs/REDTEAM-022-end-to-end.md`](docs/REDTEAM-022-end-to-end.md) for the reviews behind these behaviors.
 

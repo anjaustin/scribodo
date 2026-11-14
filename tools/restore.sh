@@ -20,11 +20,7 @@
 #     it from the restored store.
 # The app must not be running.
 set -euo pipefail
-here="$(cd "$(dirname "$0")/.." && pwd)"
-export PATH="$HOME/.docker/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
-export SCRIBODO_SECRETS="${SCRIBODO_SECRETS:-$HOME/Library/Application Support/Scribodo/services}"
-compose() { docker compose -p "${SCRIBODO_COMPOSE_PROJECT:-scribodo}" -f "$here/docker/compose.yml" "$@"; }
-rootsql() { compose exec -T mariadb sh -c 'MYSQL_PWD="$(cat /run/secrets/db_root_password)" exec mariadb -uroot "$@"' sh "$@"; }
+. "$(dirname "$0")/services_lib.sh"
 
 b="${1:?usage: $0 BACKUP_DIR --to FOLDER [--db NAME] [--replace]}"
 shift
@@ -66,33 +62,11 @@ if [ "$withdb" = 1 ]; then
         echo "database $db already has data; --replace overwrites it (every project in it goes back to the backup)" >&2; exit 2
     fi
     printf 'CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4;\nGRANT ALL ON `%s`.* TO '"'"'scribodo'"'"'@'"'"'%%'"'"';\n' "$db" "$db" | rootsql
-    # Loaded by a one-time user that can reach only this database, in the
-    # client's sandbox (no \! shell, no file access). Its password is made
-    # and used inside the container, never on a command line.
-    gzip -dc "$b/db.sql.gz" | compose exec -T mariadb sh -c '
-        set -e
-        db=$1
-        u=scribodo_restore_$$
-        pw=$(head -c 18 /dev/urandom | od -An -tx1 | tr -d " \n")
-        MYSQL_PWD="$(cat /run/secrets/db_root_password)" mariadb -uroot <<EOF
-CREATE USER '"'"'$u'"'"'@'"'"'localhost'"'"' IDENTIFIED BY '"'"'$pw'"'"';
-GRANT ALL ON \`$db\`.* TO '"'"'$u'"'"'@'"'"'localhost'"'"';
-EOF
-        rc=0
-        MYSQL_PWD="$pw" mariadb --sandbox -u"$u" "$db" || rc=$?
-        MYSQL_PWD="$(cat /run/secrets/db_root_password)" mariadb -uroot <<EOF
-DROP USER IF EXISTS '"'"'$u'"'"'@'"'"'localhost'"'"';
-EOF
-        exit $rc' sh "$db"
+    # Loaded by a one-time user that can reach only this database, in the client's sandbox (services_lib.sh
+    # load_dump; its password is made and used by the loader, never on a command line).
+    gzip -dc "$b/db.sql.gz" | load_dump "$db"
     # The index described the database before; it's rebuilt from the store.
-    key="$(cat "$SCRIBODO_SECRETS/qdrant_api_key" 2>/dev/null || true)"
-    if [ -n "$key" ]; then
-        qport="${SCRIBODO_QDRANT_PORT:-6333}"
-        for c in $(curl -s -H @<(printf 'Authorization: Bearer %s\n' "$key") "http://127.0.0.1:$qport/collections" |
-                   python3 -I -c 'import json,sys; print(" ".join(c["name"] for c in json.load(sys.stdin)["result"]["collections"]))' 2>/dev/null); do
-            case "$c" in "${db}__"*) curl -s -o /dev/null -X DELETE -H @<(printf 'Authorization: Bearer %s\n' "$key") "http://127.0.0.1:$qport/collections/$c" ;; esac
-        done
-    fi
+    qdrant_delete_collections "$db"
 fi
 
 # The folder.

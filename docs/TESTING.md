@@ -449,6 +449,14 @@ modify a database while any Scribodo process is running.
   literal escaped backslashes and missing legacy timestamps remain supported.
   Truncation flags and fractional timestamps round-trip, and a later rename still
   follows a fractional-time source.
+- The database-backed targets (`make dbtest`, `make uitest-db`, `make crashtest`,
+  `tools/backuptest.sh`) run against whichever services `tools/services.sh` is
+  configured for: native (the recommended default since 2026-11-14, MariaDB from
+  Homebrew and the pinned Qdrant binary from `make qdrant`) or Docker
+  (`SCRIBODO_SERVICES=docker`). A second instance for a measurement or a CI job
+  takes its own `SCRIBODO_SECRETS` folder and `SCRIBODO_DB_PORT` /
+  `SCRIBODO_QDRANT_PORT`; `purge` refuses the author's own store unless asked
+  (journal/store-cycle2_native_services.md).
 - `tests/test_backup.py` runs in `make test` without Docker or a display. It checks
   successful verification, symlink/special-file refusal, destination safety,
   cleanup after verification failure, and complete checksums for unusual names

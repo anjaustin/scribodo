@@ -103,9 +103,10 @@ started with an 8K slot.** The same launch with `SCRIBODO_ANSWER_PIPELINE=off`
 (`~/Library/Logs/Scribodo/llama-server.log`, `n_ctx_slot = 8192` and `32768`
 alternating with the two arms). That is the cost of the reranker being resident
 at launch on a 16 GB machine beside the 3 GB Docker VM: the plain composer's
-context is a quarter of what it was. The author decides whether that trade
-holds; the alternative is a reranker started on demand, which moves the memory
-pressure to the first verified question instead of removing it.
+context is a quarter of what it was. The author's answer the same evening was
+to take the services out of the VM (journal/store-cycle2_native_services.md):
+with MariaDB and Qdrant native and Docker Desktop quit, the same three-server
+launch fits a 24K context, one step short of 32K.
 
 **The 40-minute soak with the observer on, pipeline on** (`build/observer/
 default-path/soak-pipeline-observer-40.log`, `tools/history_frame_soak.sh

@@ -160,8 +160,12 @@ Avoid treating one successful demonstration as a general accuracy claim.
 
 ## GAP-002 — Turnkey installation and release distribution
 
-**Gap:** Source builds, model acquisition and Docker-backed services still impose
+**Gap:** Source builds, model acquisition and the services' setup still impose
 developer setup. Acceptance on the development Mac is not clean-machine proof.
+Since 2026-11-14 the services run natively (Homebrew MariaDB 11.4, the pinned
+Qdrant binary) as the recommended default on constrained machines, with Docker
+kept as an installation option (journal/store-cycle2_native_services.md); the
+guided setup owes the author the choice and the reranker file.
 
 **Next work:** Signed/notarized distribution, guided model/service setup, clear
 health/error reporting, upgrade and migration handling, and uninstall behavior.

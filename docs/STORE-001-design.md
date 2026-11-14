@@ -9,11 +9,11 @@ Today the structured data is in files under `<project>/.scribodo/`: chats, notes
 
 ## Services
 
-- **Containers:** MariaDB 11.4 LTS and Qdrant run in Docker (`docker/compose.yml`), pinned by digest and listening on `127.0.0.1` only. Credentials are generated once into `~/Library/Application Support/Scribodo/services/` (folder mode 0700) by `tools/services.sh`. Verified: wrong passwords and missing API keys are refused, and the LAN address can't reach either service.
+- **Services:** MariaDB 11.4 LTS and Qdrant run natively on this Mac (Homebrew `mariadb@11.4`, the pinned Qdrant 1.20.0 release binary, `tools/services.sh` in native mode; the recommended default since 2026-11-14, journal/store-cycle2_native_services.md) or in Docker (`docker/compose.yml`, pinned by digest), both listening on `127.0.0.1` only. Credentials are generated once into `~/Library/Application Support/Scribodo/services/` (folder mode 0700) by `tools/services.sh`. Verified: wrong passwords and missing API keys are refused, and the LAN address can't reach either service.
 - **Client:** MariaDB Connector/C 3.4.11 is a pinned submodule, built static against Homebrew's static OpenSSL. It depends only on system libraries.
 - **App lifecycle:**
-  - At launch the app checks the database. If it's down and Docker is running, it starts the services (`compose up -d`) and shows "Starting local services…".
-  - Services keep running when the app quits (`restart: unless-stopped`).
+  - At launch the app checks the database. If it's down, it runs `tools/services.sh up` (native, or `compose up -d` in docker mode) and shows "Starting local services…".
+  - Services keep running when the app quits (native: their own processes; docker: `restart: unless-stopped`).
   - Writing documents never waits on the database. Manuscripts are plain files in the project folder.
 
 ## Schema (migration 001)
@@ -135,7 +135,7 @@ Qdrant isn't backed up. When a project's collection is missing, the next sync re
 There is one authority per project, and nothing to merge:
 - **A project not yet moved to the store** (no `.scribodo/store.json`) keeps working on its local files, exactly as before. It's imported the first time it's opened with the database up.
 - **A project in the store, with the database down:** documents stay fully editable and saveable, since they're plain files. Notes, canon, chats, History and the observer pause behind a banner: "Project store offline — your documents are unaffected". They resume when the database is back.
-- **Self-repair:** at launch, if the database is unreachable and Docker is running, the app runs `tools/services.sh up` itself and retries.
+- **Self-repair:** at launch, if the database is unreachable, the app runs `tools/services.sh up` itself (whichever mode is configured) and retries.
 
 Merging offline file writes into the database later was rejected. Record version numbers and message sequences would restart in the new files and collide with the database's, needing renumbering rules that are easy to get wrong.
 

@@ -90,7 +90,7 @@ author's profile name.
 Scripts keep their own in the fixture folder, like the profile; a provider's
 name and host can no longer reach a failed run's uploaded artefacts.
 
-**R9 — MariaDB's durability runs through Docker Desktop's virtual disk (P2, recorded).**
+**R9 — MariaDB's durability runs through Docker Desktop's virtual disk (P2, recorded; closed for the native default the same evening).**
 An `fsync` inside the Linux guest reaches the Mac's disk only if the hypervisor
 flushes; GAP-004 names the limit and the README's saving section now says it
 beside the backup instructions. The mitigation the product has is the backup;

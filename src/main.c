@@ -355,6 +355,21 @@ static void set_status(App *app, const char *msg)
     app->status_time = GetTime();
 }
 
+/* A status that follows another within two seconds joins it instead of replacing it: on the native store the import
+ * of a restored project finished one frame after "Restored as …" was set, so the author never saw the restore
+ * reported (measured 2026-11-14, journal/store-cycle2_native_services.md). */
+static void set_status_after(App *app, const char *msg)
+{
+    if (app->status[0] && GetTime() - app->status_time < 2.0 && !strstr(app->status, msg)) {
+        char joined[sizeof(app->status)];
+        snprintf(joined, sizeof(joined), "%s \xC2\xB7 %s", app->status, msg);
+        snprintf(app->status, sizeof(app->status), "%s", joined);
+        app->status_time = GetTime();
+        return;
+    }
+    set_status(app, msg);
+}
+
 /* A storage failure, explained: while the project store is offline the
  * file name in `fallback` would mislead. */
 static const char *store_says(App *app, const char *fallback)
@@ -735,7 +750,7 @@ static void import_poll(App *app)
     if (current) {
         if (ok) {
             app->store_just_moved = true;
-            set_status(app, "This project is now kept in the project store (its old files are in .scribodo/legacy-\xE2\x80\xA6)");
+            set_status_after(app, "This project is now kept in the project store (its old files are in .scribodo/legacy-\xE2\x80\xA6)");
         } else set_status(app, why);
         app->lists_dirty = true;
         app->findings_version = UINT64_MAX;

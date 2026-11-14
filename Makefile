@@ -494,6 +494,19 @@ $(LLAMA_BIN):
 
 # The pinned BF16 GGUF (docs/MODEL-001). The app also finds an existing copy
 # in the Hugging Face cache, so this only downloads when neither exists.
+# Qdrant for the native services (tools/services.sh): the pinned release binary for Apple Silicon, hash-checked like
+# the model. The container pins the same version by image digest (docker/compose.yml).
+QDRANT_VERSION := 1.20.0
+QDRANT_SHA256  := 531904e822050790bb8c1da6705f801ee48b91eb4c229d0d605ff06f6331b20a
+QDRANT_URL     := https://github.com/qdrant/qdrant/releases/download/v$(QDRANT_VERSION)/qdrant-aarch64-apple-darwin.tar.gz
+QDRANT_BIN     := $(BUILD)/qdrant/qdrant
+qdrant: $(QDRANT_BIN)
+$(QDRANT_BIN):
+	@mkdir -p $(BUILD)/qdrant && curl -fL --progress-bar -o $(BUILD)/qdrant/qdrant.tar.gz.part "$(QDRANT_URL)" && \
+	  echo "$(QDRANT_SHA256)  $(BUILD)/qdrant/qdrant.tar.gz.part" | shasum -a 256 -c - && \
+	  tar xzf $(BUILD)/qdrant/qdrant.tar.gz.part -C $(BUILD)/qdrant qdrant && rm $(BUILD)/qdrant/qdrant.tar.gz.part && chmod 755 $(QDRANT_BIN) && \
+	  $(QDRANT_BIN) --version 2>/dev/null | grep -q "qdrant $(QDRANT_VERSION)"
+
 MODEL_DIR    := $(HOME)/Library/Application Support/Scribodo/models
 MODEL_FILE   := $(MODEL_DIR)/LFM3-1.7B-BF16.gguf
 MODEL_URL    := https://huggingface.co/LiquidAI/LFM3-1.7B-GGUF/resolve/cd0c74c575b5c416f3011b5b4c298077f26ca8c2/LFM3-1.7B-BF16.gguf
