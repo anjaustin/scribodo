@@ -106,7 +106,16 @@ measurement that closes it. Items run one at a time unless marked otherwise.
    3 of 4. Three harness defects (newlines in fields, spans in characters
    not bytes, a tick limit) found and fixed before the numbers were read;
    one small product fix (the conflict content's first sentence no longer
-   cut at an initial). *Pride and Prejudice* runs next on the same harness.
+   cut at an initial). *Pride and Prejudice scored 2026-11-14* (journal step
+   4): recall 2 of 10 (place 1/1, kinship 1/5, timeline 0/2, appearance
+   0/1, event-order 0/1; six misses never extracted, two extracted and
+   passed by the judge); the conflict path 2 true in 43, most pairing a
+   canon entry with a statement about someone else who shares a surname or
+   a title; audited precision over 105 findings entity 0.38, event 0.65,
+   question 7 of 15, relationship 6 of 10. Both novels: recall 7 of 20,
+   conflicts 7 true in 92, entity 0.43, event 0.75. The thresholds are the
+   author's to set; the first change to measure is a gate on the conflict
+   path before the judge call.
 7. **GAP-002 distribution.** Signed app, guided model and service setup,
    upgrade and uninstall, proven on a clean Mac.
 8. **GAP-005 real input and accessibility.** The IME, dead-key, layout,

@@ -310,6 +310,172 @@ appearance and timeline; conflict precision about 0.10 with ten canon
 entries; entity precision 0.48, event precision 0.85. *Pride and Prejudice*
 runs next, same harness, before anything is tuned.
 
+## Step 4, done: *Pride and Prejudice*, scored
+
+**Runs** (2026-11-13/14, started after the hosted runs for `5e7e9b8` had
+finished, so no second model shared the Mac; slot context 8192 both). The
+unplanted copy started 21:47:57Z and ran 6,092 s: 688 findings, 268 jobs, 268
+model calls, "Up to date" (22.7 s a job; *Mars* 24.5). The planted copy with
+its ten canon statements started 23:29:59Z and ran 13,891 s: 732 findings, 268
+jobs, 2,392 model calls (268 extractions and 2,124 judge calls, 7.9 a job),
+"Up to date". The Mac went to battery at 00:50Z (the power log) and ended at
+30% at 03:21Z, so the planted run's last two and a half hours were on
+battery; its wall time is not comparable with the unplanted run's, and
+recall and content are not timing (the base run was on AC throughout). Both
+files parsed whole: 688 and 732 physical lines, as many records, none
+joined, so the escaping emitter did its work on this model's newlines.
+
+**Recall by type, planted copy: 2 of 10.**
+
+| type | found / planted | found | missed |
+|---|---|---|---|
+| place | 1 / 1 | P3 | |
+| kinship | 1 / 5 | P9 | P1, P4, P5, P7 |
+| timeline | 0 / 2 | | P2, P6 |
+| appearance | 0 / 1 | | P8 |
+| event-order | 0 / 1 | | P10 |
+
+Where the eight misses stopped:
+
+- **Never extracted** (no finding of any type on the planted sentence):
+  P2 (Bingley's twelve thousand a year), P4 (Collins as Mrs. Bennet's
+  brother), P5 (three daughters), P6 (married above forty years), P8
+  (Charlotte barely nineteen), P10 (Mrs. Gardiner never in Derbyshire). Six
+  of eight.
+- **Extracted, not judged a conflict:** P1 ("Lydia, as the eldest of the
+  five sisters") became an event finding whose content repeats the planted
+  claim, "Lydia, as the eldest of five sisters … presided over the other",
+  beside the canon "Lydia is the youngest of the Bennet sisters"; P7 ("Mr.
+  Gardiner, Mr. Bennet's younger brother") became an event finding that
+  garbles it ("sent by Mr. Bennet's younger brother") beside the canon "Mr.
+  Gardiner is Mrs. Bennet's brother". The judge had both pairs in reach and
+  passed them.
+
+Over both novels: 7 of 20 planted faults found (place 4/4, event-order 1/2,
+kinship 2/7, timeline 0/4, appearance 0/3). Of the 13 misses, 9 were never
+extracted, 3 were extracted and passed by the judge, 1 was credited to the
+fault sharing its anchor. Numbers in a subordinate clause (an income, a
+count of daughters, an age, a span of years) are what the extraction leaves
+out; it takes the clause's event or person and drops the figure.
+
+**The conflict path's precision, planted copy.** 43 conflict findings, the
+unplanted copy none: 2 on a fault, 41 on no fault. By canon entry cited:
+Lady Catherine the aunt 19, Pemberley in Derbyshire 8, married
+three-and-twenty years 6, Mr. Gardiner the brother 5, Charlotte's age 3,
+Lydia the youngest 2. Twelve of the 41 read: as on *Mars*, none is a
+contradiction, and here most pair a canon entry with a statement about
+someone else entirely ("Canon: Charlotte Lucas is about twenty-seven. the
+new text: Maria Lucas — a young woman…"; "Canon: Lady Catherine de Bourgh is
+Mr. Darcy's aunt. the new text: Mr. Wickham — the man whose removal from the
+corps…"). The candidate step (`job_canon_candidates`, the two best entries by
+shared words) sends the judge pairs that share a surname or a title, and
+the judge, twice, calls the pair a conflict. Over both novels the conflict
+path's precision is 7 of 92, about 0.08, and the judge calls took the
+planted runs from 3,498 to 6,066 s and from 6,092 to 13,891 s. The three
+structural remedies of step 3 stand; the second (a software gate before the
+model: shared subject *and* attribute) addresses exactly what these twelve
+show, and the first (values that must occur in each side's text) would have
+refused all twelve.
+
+**A second cut at the first sentence.** 7 of the 43 conflict contents end
+"the new text introduces 'Mrs." or "'Mr.": the title opened a quotation, and
+the fix of step 3 compared the word with its opening quote mark. The word
+before the period is now read past an opening quote, bracket or asterisk;
+`test_observer_text` adds the three cases. Fake-path yardstick and gates in
+the Gates section (`firstsent2`).
+
+**Precision by type, audited (unplanted copy).** Seed 20261113, 40 a type
+where that many exist: 40 entity of 354, 40 event of 309, the 15 questions,
+the 10 relationships; 105 lines (`tools/observer_sample.py 20261113 40
+build/observer/real-pp-base.txt`). Audited by Claude from each line's quote
+and the novel's text, with two passages read in the chapter (the question
+Mr. Bennet does not answer is Jane's or Elizabeth's, not Mr. Gardiner's;
+Elizabeth is met by her father on the stairs before the fireplace).
+
+| type | sampled | right | wrong | empty | precision (right / sampled) |
+|---|---|---|---|---|---|
+| entity | 40 | 15 | 19 | 6 | 0.38 |
+| event | 40 | 26 | 14 | 0 | 0.65 |
+| question | 15 | 7 | 6 | 2 | 0.47 |
+| relationship | 10 | 6 | 4 | 0 | 0.60 |
+
+Entity verdicts by record index: right 4, 15, 33, 48, 133, 144, 153, 156,
+182, 200, 222, 246, 249, 258, 263. Wrong 7 (Bingley "advises Elizabeth and
+returns to his house": the quote says he followed advice), 24 ("Charlotte
+Longbourn", "the match of Lucas and Elizabeth"), 26 ("Charlotte Lucas (Mrs.
+Collins' husband)", the instrument a marriage), 36 ("Darcy (Fitzwilliam)",
+two people), 56 ("Elizabeth (the narrator's friend)", a description the
+quote does not hold), 66 (Jane intends to visit Epsom: Mrs. Bennet's plan for
+her husband), 68 (Fitzwilliam's sentence inverted), 138 (a description the
+quote does not hold), 155 ("Lydia's family (sister) — Mr. Gardiner's sister"
+from "How is half such a sum to be repaid?"), 170 ("Miss Bennet (Elizabeth's
+mother)"), 186 (Miss De Bourgh "a possible match in his neighbourhood"), 201
+(Mr. Bennet "does not answer Mr. Gardiner's question": Jane's or
+Elizabeth's), 234 ("Mrs. (Lady) Bennet / 'your sister'": Jane), 255 (Mrs.
+Jenkinson "at Hunsford": Rosings), 282 ("Sarah Bennet — another daughter":
+the maid), 307 ("Wickham's refusal of Darcy"), 334 (the housekeeper "takes
+over after Mrs. Bennet vents her feelings on her absence"), 350 ("your own
+case": Darcy's letter on Jane's marriage read as "the narrator's previous
+marriage decision"), 351 ("your resentment": Elizabeth's, read as the
+narrator's). Empty 9 ("Brotherly pride"), 67 ("February"), 84 ("Her aunt"),
+91 ("I"), 326 ("muslin"), 347 ("you (the other person)").
+
+Event verdicts: right 354, 363, 367, 379, 392, 401, 404, 418, 424, 427,
+434, 437, 460, 481, 494, 514, 520, 551, 556, 579, 596, 616, 620, 622, 631,
+651. Wrong 386 (Sir William "striking Darcy forcibly": the allusion struck
+him), 400 (Elizabeth's question put to Darcy: to Lady Catherine), 465
+(Elizabeth's acquaintance with Bingley: Jane's), 477 ("stood by Mrs.
+Annesley": by Elizabeth), 500 ("journey to Rosings": to Mr. Gardiner's), 516
+("Miss Bingley's explanation": Darcy's), 534 (Bingley saw Wickham "the
+morning after he meets Darcy"), 544 (Darcy an inmate of Bingley's house:
+inverted), 567 (Lizzy blamed "for possibly marrying Collins": for refusing
+him), 568 (Mrs. Bennet "must go to Newcastle": Lydia), 576 ("Mr. Gardiner's
+return": Mr. Bennet's), 592 ("Proposal of Mr. Collins and Lady Lucas"), 611
+(a conditional read as a decision), 619 (Lady Catherine deciding against
+him: Elizabeth acknowledging to her).
+
+Question verdicts: right 665, 666, 668, 670, 671, 672, 676. Wrong 663 (a
+clause the quote does not hold), 669 (Jane at Pemberley), 673 ("He asks":
+Elizabeth asks her father), 674 (she went to meet him: he came a day early),
+675 (Lydia at the wedding: Darcy), 677 (Bingley's manners: Darcy's). Empty
+664 (a dread, not a question), 667 (asked and answered in the next line).
+Relationship verdicts: right 678, 679, 680, 684, 685, 687. Wrong 681
+("opposite side", "cold toward her"), 682 (who will not let whom smile,
+inverted), 683 (Darcy's "sense of her inferiority" read as his own), 686
+(the brother named as Mr. Bennet; "agrees to go to Gracechurch Street",
+where he lives).
+
+Reading the wrong ones: attribution and inversion again lead (who speaks,
+who acts on whom, whose feeling it is: 544, 683, 682, 567, 400, 465, 477,
+576, 619, 673, 674, 677), then a misnamed subject (Charlotte Longbourn,
+Sarah Bennet a daughter, Miss Bennet a mother, Darcy (Fitzwilliam)), then
+the letter voice (Darcy's letter read as "the narrator"). *Pride and
+Prejudice* is dialogue and free indirect speech, and the model loses the
+speaker; *Mars* is first-person narration, and it fared better on every
+type. Over both novels: entity 34 of 80 right (0.43), event 60 of 80
+(0.75), question 7 of 16, relationship 9 of 14.
+
+**The numbers on the table for the author.** Two novels, same harness,
+nothing tuned:
+
+| measure | Mars | Pride and Prejudice | both |
+|---|---|---|---|
+| planted-fault recall | 5 / 10 | 2 / 10 | 7 / 20 |
+| … place | 3 / 3 | 1 / 1 | 4 / 4 |
+| … event-order | 1 / 1 | 0 / 1 | 1 / 2 |
+| … kinship | 1 / 2 | 1 / 5 | 2 / 7 |
+| … timeline | 0 / 2 | 0 / 2 | 0 / 4 |
+| … appearance | 0 / 2 | 0 / 1 | 0 / 3 |
+| conflict findings true / shown | 5 / 49 | 2 / 43 | 7 / 92 |
+| entity precision (empty) | 0.48 (9/40) | 0.38 (6/40) | 0.43 |
+| event precision | 0.85 | 0.65 | 0.75 |
+| question precision | 0 / 1 | 7 / 15 | 7 / 16 |
+| relationship precision | 3 / 4 | 6 / 10 | 9 / 14 |
+
+The author sets the thresholds from these; the first change measured
+against them should be the conflict path's gate, which the harness scores
+in about seven hours of model time for both novels.
+
 ## Gates
 
 On this tree (`build/observer/realflag-gates/gates-*.log`, `gates-exit.txt`):
@@ -328,3 +494,8 @@ method of this entry, 8 more than the step 2 tree by the same method for `test_f
 0 warnings across 87 source files; `make sanitize` 95,707, 0; `make tsan` 48,329, 0; `make dbtest` 18,000, 0;
 every exit status 0. Yardsticks: `observer_replay_run.sh escfix` (the escaping emitter) and `firstsent` (the
 first-sentence fix) both byte-identical with `realflag` on pp, mars and heights (717, 348, 948).
+Step 4 (the second first-sentence fix in C, the journal and docs), on the tree with all of it
+(`build/observer/cycle2b-gates/`, `summary.txt`): `make test` exit 0, per-binary tallies summed 95,710 C checks
+(3 more for the new cases) and 192 Python tests, 0 failures; `make analyze` 0 warnings across 87 source files;
+`make sanitize` 95,710, 0; `make tsan` 48,329, 0; `make dbtest` 18,000, 0; every exit status 0. Yardstick
+`observer_replay_run.sh firstsent2` byte-identical with `realflag` on pp, mars and heights (717, 348, 948).
