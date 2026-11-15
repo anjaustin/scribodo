@@ -146,6 +146,14 @@ $(BUILD)/answer_gate_replay: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tools/answer_gate
 $(BUILD)/observer_replay: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tools/observer_replay.o
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
 
+# Diagnostic: the observer's canon candidate score over tab-separated pairs (tools/observer_sentence_pairs.py).
+$(BUILD)/observer_overlap: $(BUILD)/src/llm/observer_text.o $(BUILD)/src/core/experiments.o $(BUILD)/src/core/utf8.o $(BUILD)/tools/observer_overlap.o
+	$(CC) $(CFLAGS) $^ -o $@
+
+# Diagnostic: the observer's judge alone over canon/statement pairs, with the real model (GAP-001).
+$(BUILD)/observer_judge_pairs: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tools/observer_judge_pairs.o
+	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
+
 $(BUILD)/test_components: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_state_fixture.o $(BUILD)/tests/test_components.o
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
 
@@ -276,6 +284,7 @@ test: $(TESTS)
 	$(WATCHDOG) $(TEST_TIMEOUT) test_sysmem_sample python3 tests/test_sysmem_sample.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_observer_faults python3 tests/test_observer_faults.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_observer_judge_score python3 tests/test_observer_judge_score.py
+	$(WATCHDOG) $(TEST_TIMEOUT) test_observer_sentence_pairs python3 tests/test_observer_sentence_pairs.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_probes python3 tests/test_answer_probes.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_live_capture python3 tests/test_answer_live_capture.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_live_audit python3 tests/test_answer_live_audit.py
@@ -413,7 +422,7 @@ $(BUILD)/venv-%/.locked: tools/envs/venv-%.lock
 	cp $< $@
 
 # Every diagnostic tool binary (the Python tools need no build).
-tools: $(BUILD)/answer_gate_replay $(BUILD)/observer_replay $(BUILD)/test_crash_points
+tools: $(BUILD)/answer_gate_replay $(BUILD)/observer_replay $(BUILD)/observer_judge_pairs $(BUILD)/observer_overlap $(BUILD)/test_crash_points
 # Process death at every kill point, against the local MariaDB (tools/services.sh up); one fresh database per death.
 crashtest: $(BUILD)/test_crash_points
 	$(WATCHDOG) 900 crash-points ./$(BUILD)/test_crash_points

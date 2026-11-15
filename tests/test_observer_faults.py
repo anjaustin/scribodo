@@ -66,6 +66,31 @@ class PlantTests(unittest.TestCase):
         self.assertIn("A1: anchor occurs 2 times", r.stderr)
         self.assertFalse(dst.exists())
 
+    def test_an_anchor_cut_at_a_title_or_initial_writes_nothing(self):
+        text = "They dined at Mr. Philips's. It rained. Captain James K. Powell rode west.\n"
+        for cut in ("They dined at Mr.", "Captain James K.", "They dined"):
+            bad = {"novel": "t", "faults": [dict(FAULTS["faults"][0], file="ch1.md", anchor=cut)]}
+            r, dst = plant(bad, {"ch1.md": text})
+            self.assertEqual(r.returncode, 2, cut)
+            self.assertIn("anchor does not end a sentence", r.stderr)
+            self.assertFalse(dst.exists())
+        ok = {"novel": "t", "faults": [dict(FAULTS["faults"][0], file="ch1.md", anchor="They dined at Mr. Philips's.")]}
+        r, dst = plant(ok, {"ch1.md": text})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Mr. Philips's. Her eyes were brown. It rained.", (dst / "ch1.md").read_text(encoding="utf-8"))
+
+    def test_an_anchor_cut_at_a_title_or_initial_writes_nothing(self):
+        text = "They dined at Mr. Philips's house. Then James K. Powell rode off.\n"
+        for anchor in ("They dined at Mr.", "Then James K.", "They dined at Mr"):
+            bad = {"novel": "t", "faults": [dict(FAULTS["faults"][0], file="ch1.md", anchor=anchor)]}
+            r, dst = plant(bad, {"ch1.md": text})
+            self.assertEqual(r.returncode, 2, anchor)
+            self.assertIn("A1: anchor does not end a sentence", r.stderr)
+            self.assertFalse(dst.exists())
+        good = {"novel": "t", "faults": [dict(FAULTS["faults"][0], file="ch1.md", anchor="They dined at Mr. Philips's house.")]}
+        r, dst = plant(good, {"ch1.md": text})
+        self.assertEqual(r.returncode, 0, r.stderr)
+
 
 class ScoreTests(unittest.TestCase):
     def test_recall_by_type_from_overlapping_conflict_spans(self):

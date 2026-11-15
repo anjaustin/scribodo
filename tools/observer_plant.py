@@ -8,12 +8,27 @@ the anchor (the original text is kept whole: a planted fault is an addition that
 Writes DST_DIR/<file> for every .md in SRC_DIR, DST_DIR/faults-applied.json with the offset and length of each
 inserted sentence in its file in bytes (offset, length: for slicing the file) and in characters (char_offset,
 char_length: the unit of the observer's source spans, which the scorer compares against), and prints the `--canon` arguments the replay needs (one per distinct canon statement),
-so the judge path has the original facts to compare against. Exit 2 if any anchor is missing or ambiguous: the list
-is then wrong and nothing is written."""
+so the judge path has the original facts to compare against. Exit 2 if any anchor is missing, ambiguous or stops short of a sentence's end: the list
+is then wrong and nothing is written. An anchor must also end a sentence: one that stops at a title or an initial
+("... at Mr.") would put the insert inside a sentence ("at Mr. Mr. Collins, who was ..."), as two Pride and
+Prejudice anchors did until 2026-11-15 (journal/observer-cycle2_quality.md, step 7)."""
 import json
 import os
+import re
 import shutil
 import sys
+
+ABBREVIATIONS = {"mr", "mrs", "ms", "dr", "st", "capt", "col", "lt", "gen", "prof", "sgt", "jr", "sr", "rev", "hon"}
+
+
+def ends_sentence(anchor, after):
+    """True when the anchor ends with sentence punctuation (closing quotes allowed), its last word is not a title or
+    an initial, and what follows in the text is a space, a line end or the end of the file."""
+    m = re.search(r"(\S+?)[.!?][\"'\u201d\u2019)]*$", anchor)
+    if not m or (after and not after[0].isspace()):
+        return False
+    word = m.group(1).lstrip("\"'\u201c\u2018(")
+    return not (word.lower() in ABBREVIATIONS or (len(word) == 1 and word.isupper()))
 
 
 def plan(faults, src):
@@ -29,6 +44,18 @@ def plan(faults, src):
         n = texts[f["file"]].count(f["anchor"])
         if n != 1:
             errors.append(f"{f['id']}: anchor occurs {n} times in {f['file']}, needs exactly 1")
+        else:
+            text = texts[f["file"]]
+            end = text.index(f["anchor"]) + len(f["anchor"])
+            if not ends_sentence(f["anchor"], text[end:end + 1]):
+                errors.append(f"{f['id']}: anchor does not end a sentence in {f['file']} (it ends at "
+                              f"{f['anchor'][-12:]!r}); the insert would land inside one")
+            continue
+        text = texts[f["file"]]
+        end = text.index(f["anchor"]) + len(f["anchor"])
+        if not ends_sentence(f["anchor"], text[end:end + 1]):
+            errors.append(f"{f['id']}: anchor does not end a sentence in {f['file']} (it stops at "
+                          f"{f['anchor'][-12:]!r}); the insert would land inside one")
     return texts, errors
 
 

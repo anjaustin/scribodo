@@ -635,7 +635,81 @@ the source sentences of a document directly (the sentence, not the model's
 paraphrase of it) when choosing what the judge sees, and measure reach
 offline with this log before any model run.
 
+## Step 7, done: the bedrock of the misses, and the judge shown sentences
+
+**Where each planted fault is lost**, traced through the two step 6 runs (findings, judge log, recorded
+conflicts; a fault counts at a stage only with its own canon entry):
+
+| stage | faults | which |
+|---|---|---|
+| never extracted: no finding's quote touches the planted sentence | 10 | M1 M5 M7; P2 P4 P5 P6 P8 P9 P10 |
+| extracted, never paired with its own canon entry | 0 | |
+| paired with its own canon entry, the judge said no | 4 | M2 M4 M9 P7 |
+| recorded as a conflict | 6 | M3 M6 M8 M10 P1 P3 |
+
+Pairing never failed: everything extracted met its own canon entry. Extraction is the bedrock loss, and by design:
+each request is 3,000 bytes (about 30 sentences) and asks for at most 8 findings; over the whole novel a finding's
+quote touches 25 % of *Mars*'s sentences (570 of 2,260; 19 % of its characters) and 14 % of *Pride and
+Prejudice*'s (852 of 6,248; 11 %). A fact in the other three quarters never reaches the canon check, whatever the
+judge would say. Of the four judge misses, three (M2, M4, M9) were shown a description of a *different* sentence,
+the planted one buried in a long quote; P7's description was garbled while its quote was verbatim.
+
+**A harness defect, found by a new check.** `observer_plant.py` now refuses an anchor that does not end a sentence
+(a title or initial before its period, or text such as a closing quotation mark straight after it;
+`ends_sentence`, `test_an_anchor_cut_at_a_title_or_initial_writes_nothing`). Five of the twenty committed faults
+failed it: P4, P5 and P8 were anchored at "Mr." and landed inside a sentence (*"at Mr. Mr. Collins, who was Mrs.
+Bennet's own brother..."*), and M7 and M9 before a closing quote, so a narrator's sentence sat inside a character's
+speech. Their anchors now run to the sentence's end; the other fifteen plant byte-identically. Every recall figure
+before this step measured those five garbled (M9's step 3 find among them).
+
+**The suggestion measured offline: pair source sentences, not the model's statements, with canon.** Every
+sentence of the corrected planted copies was scored against every canon entry with the product's own
+`obs_overlap` (`build/observer_overlap`, `tools/observer_sentence_pairs.py`); a fault is *reached* when its own
+sentence is paired with its own canon entry.
+
+| pairing | *Mars* reached | *P&P* reached | judge pairs, both novels |
+|---|---|---|---|
+| today: the model's statements (step 6) | 7 / 10 | 3 / 10 | 2,538 |
+| sentences, score at least 2, two best entries | 9 / 10 | 10 / 10 | 4,013 |
+| sentences, score at least 3, two best entries | 6 / 10 | 10 / 10 | 2,243 |
+| sentences, score at least 5, two best entries | 4 / 10 | 8 / 10 | 311 |
+
+M7 (*Her golden hair fell loose...*) shares only "hair" with *Dejah Thoris's hair is coal black*: no lexical rule
+reaches a sentence that names no one.
+
+**The judge shown a bare sentence, on the real model** (`build/observer_judge_pairs`, the product's
+`observer_model_judge` over a file of pairs; `build/observer/sentence-cycle/`, 225 pairs, 868 s): the twenty
+fault sentences against their own canon entries (the five corrected ones judged on their corrected text) and 200
+pairs drawn with seed 20261115 from the sentences on no fault under "score at least 3, two best", 100 a novel. Those
+are the novels' own sentences, so a conflict on one is false.
+
+| | faults flagged | ordinary sentences called conflicts |
+|---|---|---|
+| two votes (the product's rule), *Mars* | 9 / 10 | 9 / 100 |
+| two votes, *P&P* | 5 / 10 | 1 / 100 |
+| first vote only, both | 17 / 20 | 22 / 200 |
+
+The judge finds 14 of 20 faults when shown the sentence, against 6 of 10 when shown the model's description of a
+reached fault (step 6). The second vote costs three faults (P4, P5, P10: conflict with CANON first, consistent
+with NEW first) and halves the false alarms, so it stays. The other three misses are the model's reasoning (M9
+"consistent" with Zodanga against Helium; P6 reads three-and-twenty as 32; P7 holds a second brother consistent).
+*Mars*'s false alarms are mostly sentences paired with the wrong entry (*Thirty days after the capture of Dejah
+Thoris... his vessel had reached Helium* against *Dejah Thoris is the Princess of Helium*).
+
+**Projected** for "score at least 3, two best, two votes" (the rates above applied to the grid, not yet run end to
+end): recall about 11 of 20 (*Mars* 6, *P&P* 5; today 6 of 20 by the strict count), false conflicts about 60 on
+*Mars* and 16 on *P&P* (today 46 and 44), judge pairs about the same as today. Recall would pass 0.50; precision
+(about 0.09 and 0.24 against 0.08 and 0.04 today) stays far from 0.50. The next step builds the sentence pairing
+into the observer behind an experiment flag, beside the statement pairing, and measures it end to end on both
+corrected planted copies; precision is then the open problem, and the judge's wrong-entry conflicts its first
+target.
+
 ## Gates
+
+Step 7 (the planter's sentence check, the corrected fixture, three diagnostic tools; no product code changed,
+`build/observer/sentence-gates/`): `make test` 95,773 C checks and 200 Python tests, 0 failures; `make analyze` 0
+warnings across 87 source files; `make sanitize` 95,773, 0; every exit status 0; `make tools` builds without warnings.
+Step 6's commit `a36988d`: CI and Trusted acceptance passed (runs 43699034685 and 43699034755).
 
 Step 6 (the judge log and its scorer; no product behaviour changed, `build/observer/judge-gates/`): `make test` 95,773
 C checks and 197 Python tests, 0 failures; `make analyze` 0 warnings across 87 source files; `make sanitize` 95,773,

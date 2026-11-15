@@ -139,7 +139,15 @@ measurement that closes it. Items run one at a time unless marked otherwise.
    of 20 planted faults ever reach the judge with their own canon entry, so
    recall is capped by extraction. Next: choose what the judge sees from
    the source sentences rather than the model's paraphrase, reach measured
-   offline first.
+   offline first. *Bedrock traced 2026-11-15* (journal step 7): half the
+   planted faults are never extracted (a finding's quote touches 25 % of
+   *Mars*'s sentences, 14 % of *P&P*'s); five of the twenty faults were
+   planted mid-sentence or inside speech (fixture corrected, the planter now
+   refuses such anchors). Pairing source sentences with canon by the
+   product's own score reaches 16 of 20 at today's judge cost, and the real
+   judge shown the sentence flags 14 of 20 faults with 10 false in 200
+   ordinary sentences; projected recall about 0.55, precision still about
+   0.1 to 0.25. Next: build it behind a flag and measure end to end.
 7. **GAP-002 distribution.** Signed app, guided model and service setup,
    upgrade and uninstall, proven on a clean Mac.
 8. **GAP-005 real input and accessibility.** The IME, dead-key, layout,
