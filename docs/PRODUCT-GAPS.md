@@ -12,7 +12,7 @@ features are absent. Keep the original numbering for future follow-up.
 
 | ID | Gap | Priority | Status |
 |---|---|---|---|
-| GAP-001 | Broad AI usefulness and accuracy evaluation | **P0** (2026-11-11) | Started: a second, held-out manuscript (A Princess of Mars) with questions written before any run; see the 2026-11-11 section |
+| GAP-001 | Broad AI usefulness and accuracy evaluation | **P0** (2026-11-11) | Under way: two held-out manuscripts with questions written before any run (*A Princess of Mars* 2026-11-11, *Wuthering Heights* 2026-11-12), and the observer's planted-fault and audited-precision harness on both planted novels (item 6) |
 | GAP-002 | Turnkey installation and release distribution | **P0** (2026-11-11) | Not started |
 | GAP-003 | Whole-manuscript scale and sustained-use evidence | **P0** | Under way: bounded history done; budgets agreed 2026-11-14; the series, soak and restart runs in MEMORY-019 and `journal/gap003-cycle1_series.md`; open: the observer's scheduling under continuous chat and a memory-on time-to-first-token row |
 | GAP-004 | Deterministic crash/recovery interruption coverage | **P0** (2026-11-11) | Done 2026-11-12 for the six transitions named: `GAP-004-interruption-matrix.md`, 133 rows (129 process deaths, 1,478 checks), 0 failures as of 2026-11-14 after migration 018 (129 and 125 on 2026-11-12); three defects found and repaired, one finding decided and built (stray save temps are kept and offered on load); limits stated (process death is not power loss) |
@@ -62,7 +62,7 @@ measurement that closes it. Items run one at a time unless marked otherwise.
    commits, marker replacement, archival cleanup and migration receipts;
    disk-full and read-only cases. Closes with the transition/failure matrix. *Started
    2026-11-11* (`journal/gap004-cycle1_migration.md`): `core/crash_point.h`
-   and `make crashtest`; all six rows and the app's small-file writer hold (129 matrix rows, 125 deaths); the import and fork rows
+   and `make crashtest`; all six rows and the app's small-file writer hold (129 matrix rows, 125 deaths, on 2026-11-12; 133 and 129 after migration 018); the import and fork rows
    each found and repaired a move that a plain open never finished, the disk
    row a misleading refusal. *Done 2026-11-12* within the limits the matrix states.
    The matrix is `GAP-004-interruption-matrix.md`.
@@ -205,7 +205,7 @@ recover from failed setup without source-code or shell expertise.
 projects, accumulated history and long editing sessions need workload-level
 latency, memory, storage and observer-backlog budgets.
 
-**Next work:**
+**Next work (as recorded 2026-11-06; status in the working order, item 5):**
 
 1. Define repeatable representative and stress projects, including manuscript
    text, many chats, revisions, notes/canon and observer work.

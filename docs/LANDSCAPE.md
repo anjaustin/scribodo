@@ -1,6 +1,6 @@
 # Scribodo: capabilities and gaps
 
-**Date:** 2026-11-14. **Tree:** the default-path and red-team commits of 2026-11-14 (REDTEAM-022); first written 2026-11-11 at `5b62793` (AUDIT-003).
+**Date:** 2026-11-14, rows 20 and 21 and "Reading the table" corrected 2026-11-15 (AUDIT-004 F8). **Tree:** the default-path and red-team commits of 2026-11-14 (REDTEAM-022); first written 2026-11-11 at `5b62793` (AUDIT-003).
 
 One table, one row per area of the product. *Capability* is what works today
 and the dated record that measured it. *Gap* is what is missing, unmeasured or
@@ -51,15 +51,16 @@ The landscape ahead has three fronts, in the order the records argue for:
    (PRODUCT-GAPS working order item 1, `journal/answer-cycle4_window.md`);
    faithful use stays open on the composer's other variation.
 2. **Generalisation (rows 12 and 20).** Every selection fix is general in form
-   and was chosen against one book and eight questions. A second manuscript
-   of a different shape, with questions written before the pipeline sees them,
-   decides whether the next fix is a class fix or another instance. Until it
-   runs, no selection number here is a claim about an author's book.
+   and was first chosen against one book and eight questions. Two held-out
+   novels with questions written before any run (*A Princess of Mars* from
+   2026-11-11, *Wuthering Heights* from 2026-11-12; row 20) now test whether a
+   fix is a class fix or another instance. No selection number here is yet a
+   claim about an author's own book: none has been measured.
 3. **Product readiness (rows 17, 19, 4, 5, 9).** The five gaps in
-   PRODUCT-GAPS are unchanged since 2026-11-06 apart from GAP-003's
-   foundation. They are work, not research: budgets and soak runs,
-   installation, crash points, input and accessibility, and an evaluation
-   corpus for the observer.
+   PRODUCT-GAPS: GAP-004's crash points are done (2026-11-12); GAP-003 has
+   agreed budgets and a measured series, with the observer's scheduling under
+   continuous chat open; installation, input and accessibility have not
+   started; the observer's evaluation corpus is under way (GAP-001).
 
 Row 21 runs underneath all three. The register's P1 entry (experiment flags
 without a lifecycle) is the one that compounds: each front above is run as an
