@@ -96,6 +96,7 @@ TESTS += $(BUILD)/test_memory_document_cache $(BUILD)/test_memory_budget $(BUILD
 TESTS += $(BUILD)/test_http_deadlines $(BUILD)/test_db_deadlines $(BUILD)/test_memory_brief_model
 TESTS += $(BUILD)/test_http_poll_errno
 TESTS += $(BUILD)/test_draft_controller $(BUILD)/test_script_host $(BUILD)/test_startup_env
+TESTS += $(BUILD)/test_services
 
 .PHONY: all run test analyze analyzetest uitest uitest-real sanitize tsan cstest dbtest crashtest envs tools uitest-db backuptest servicestest remotetest offlinetest dependency-report qdrant clean distclean llama model llmtest
 
@@ -167,6 +168,10 @@ $(BUILD)/observer_overlap: $(BUILD)/src/llm/observer_text.o $(BUILD)/src/core/ex
 
 # Diagnostic: the observer's judge alone over canon/statement pairs, with the real model (GAP-001).
 $(BUILD)/observer_judge_pairs: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tools/observer_judge_pairs.o
+	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
+
+# The services layer from the app's side: tools/services.sh's exit-code contract through the supervisor.
+$(BUILD)/test_services: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_state_fixture.o $(BUILD)/tests/test_services.o
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
 
 $(BUILD)/test_components: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_state_fixture.o $(BUILD)/tests/test_components.o

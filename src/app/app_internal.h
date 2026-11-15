@@ -270,6 +270,7 @@ typedef struct {
     char store_why[256];          /* why it's offline */
     StoreManager *store;
     ServiceSupervisor services;
+    const char *services_headline; /* why the last `services.sh up` failed (static), NULL once one succeeds */
     /* A backup running in the background (Explorer: PROJECT). */
     BackupJob backup;
     char backup_label[160];

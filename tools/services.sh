@@ -5,6 +5,18 @@
 # (tools/services_lib.sh says how the mode is chosen; SCRIBODO_SERVICES=native|docker forces one for this call without
 # changing the remembered mode). Credentials are generated once into a 0700 folder in Application Support and never
 # printed. Everything binds to 127.0.0.1.
+#
+# Exit codes: the contract the app reads (src/app/service_supervisor.h, SERVICES_EXIT_*; tests/test_services.c pins
+# both). The last line on stderr says what happened in words; the app shows it beside the code's sentence.
+#   0   done
+#   1   failed for any other reason
+#   2   refused: the decision is the author's (`up` over credentials whose store is still in the containers:
+#       migrate-from-docker moves it; a purge or migration guard; a usage error)
+#   3   MariaDB is not installed, or is not the version the store is pinned to
+#   4   Qdrant is not built (make qdrant)
+#   5   a service's port is taken by another program
+#   6   docker mode, and Docker is not running
+#   75  another services.sh held this store's lock for five minutes (lockf's EX_TEMPFAIL)
 set -euo pipefail
 . "$(dirname "$0")/services_lib.sh"
 
@@ -16,6 +28,12 @@ case "${1:-status}" in
             SCRIBODO_SERVICES_LOCKED=1 exec /usr/bin/lockf -k -t 300 "$SCRIBODO_SECRETS/.services.lock" "$0" "$@"
         fi ;;
 esac
+
+# Codes 3 to 6 mean what the header says and nothing else: a command that fails under `set -e` with one of them (curl,
+# docker compose) leaves as 1. `leave` is how the script says one of them on purpose.
+contract_exit=""
+leave() { contract_exit=1; exit "$1"; }
+trap 'rc=$?; if [ -z "$contract_exit" ] && [ "$rc" -ge 3 ] && [ "$rc" -le 6 ]; then exit 1; fi' EXIT
 
 had_credentials=0
 [ -s "$SCRIBODO_SECRETS/db_root_password" ] && had_credentials=1
@@ -89,15 +107,15 @@ with open(pidfile, "w") as f:
 PY
 }
 
-native_need() {
+native_need() { # returns 3 (MariaDB) or 4 (Qdrant), the exit codes above
     local missing=0
-    [ -x "$MARIADB_BIN/mariadbd" ] || { echo "MariaDB 11.4 isn't installed: brew install mariadb@11.4 (or set SCRIBODO_MARIADB_BIN)" >&2; missing=1; }
-    [ -x "$QDRANT_BIN" ] || { echo "Qdrant isn't built: make qdrant (the pinned 1.20.0 release binary; or set SCRIBODO_QDRANT_BIN)" >&2; missing=1; }
-    [ "$missing" = 0 ] || return 1
+    [ -x "$QDRANT_BIN" ] || { echo "Qdrant isn't built: make qdrant (the pinned 1.20.0 release binary; or set SCRIBODO_QDRANT_BIN)" >&2; missing=4; }
+    [ -x "$MARIADB_BIN/mariadbd" ] || { echo "MariaDB 11.4 isn't installed: brew install mariadb@11.4 (or set SCRIBODO_MARIADB_BIN)" >&2; missing=3; }
+    [ "$missing" = 0 ] || return "$missing"
     # Homebrew's formula is not pinned the way the container image is: the series is (REDTEAM-023), and `brew upgrade`
     # within 11.4 is a patch release.
     "$MARIADB_BIN/mariadbd" --no-defaults --version 2>/dev/null | grep -q " 11\.4\." ||
-        { echo "MariaDB at $MARIADB_BIN is not the 11.4 series the store is built and tested on" >&2; return 1; }
+        { echo "MariaDB at $MARIADB_BIN is not the 11.4 series the store is built and tested on" >&2; return 3; }
 }
 
 mariadbd_args() {
@@ -164,7 +182,7 @@ FLUSH PRIVILEGES;"
 }
 
 native_up() {
-    native_need || return 1
+    native_need || return $?
     # Credentials that existed before this call belong to a store; with no native store beside them and no remembered
     # native mode (a purged native store remembers it), that store is the containers'. Starting an empty native store
     # over it would show the author an empty project store and offer to re-import stale files (REDTEAM-023): migrate
@@ -179,7 +197,7 @@ native_up() {
     native_init || return 1
     if ! m_alive; then
         if port_taken "$SCRIBODO_DB_PORT"; then
-            echo "port $SCRIBODO_DB_PORT is taken (the Docker containers? SCRIBODO_SERVICES=docker $0 down)" >&2; return 1
+            echo "port $SCRIBODO_DB_PORT is taken (the Docker containers? SCRIBODO_SERVICES=docker $0 down)" >&2; return 5
         fi
         start_mariadbd --port="$SCRIBODO_DB_PORT" --bind-address=127.0.0.1 || return 1
     fi
@@ -200,7 +218,7 @@ SQL
     # secrets.
     if ! q_alive; then
         if port_taken "$SCRIBODO_QDRANT_PORT"; then
-            echo "port $SCRIBODO_QDRANT_PORT is taken (the Docker containers? SCRIBODO_SERVICES=docker $0 down)" >&2; return 1
+            echo "port $SCRIBODO_QDRANT_PORT is taken (the Docker containers? SCRIBODO_SERVICES=docker $0 down)" >&2; return 5
         fi
         cat > "$qdata/config.yaml" <<EOF || return 1
 log_level: INFO
@@ -269,11 +287,11 @@ case "${1:-status}" in
     mode) echo "$mode" ;;
     up)
         if [ "$mode" = native ]; then
-            native_up || exit $?
+            native_up || leave $?
             remember_mode native
             native_status
         else
-            docker info >/dev/null 2>&1 || { echo "Docker isn't running (start Docker Desktop, or install the native services: brew install mariadb@11.4 && make qdrant, then tools/services.sh migrate-from-docker)" >&2; exit 1; }
+            docker info >/dev/null 2>&1 || { echo "Docker isn't running (start Docker Desktop, or install the native services: brew install mariadb@11.4 && make qdrant, then tools/services.sh migrate-from-docker)" >&2; leave 6; }
             secrets docker
             compose up -d --wait --wait-timeout 180
             remember_mode docker
@@ -319,8 +337,8 @@ case "${1:-status}" in
         # migration created removed, a replaced native store reloaded from its dump (REDTEAM-023).
         [ -z "${SCRIBODO_SERVICES:-}" ] || { echo "unset SCRIBODO_SERVICES for the migration" >&2; exit 2; }
         app_running && { echo "quit Scribodo first (it would keep writing to the store being moved)" >&2; exit 2; }
-        native_need || exit 1
-        docker info >/dev/null 2>&1 || { echo "Docker isn't running; the store to move is in its containers" >&2; exit 1; }
+        native_need || leave $?
+        docker info >/dev/null 2>&1 || { echo "Docker isn't running; the store to move is in its containers" >&2; leave 6; }
         prior="$mode"
         native_existed=0; native_store_exists && native_existed=1
         native_was_up=0; m_alive && native_was_up=1

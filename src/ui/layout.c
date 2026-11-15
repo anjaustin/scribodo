@@ -127,9 +127,10 @@ static void update_labels(App *app)
         snprintf(app->store_label, sizeof(app->store_label), "\xE2\x97\x8F Project store");
         app->store_color = COL_OK;
     } else {
-        snprintf(app->store_label, sizeof(app->store_label), "\xE2\x97\x8F Project store offline%s",
-                  app->store_inspection.blocked_by != PROJECT_STORE_BLOCK_NONE
-                      ? " \xC2\xB7 notes, canon, chats and History paused" : "");
+        bool paused = app->store_inspection.blocked_by != PROJECT_STORE_BLOCK_NONE;
+        const char *why = paused ? "notes, canon, chats and History paused" : app->services_headline;
+        snprintf(app->store_label, sizeof(app->store_label), "\xE2\x97\x8F Project store offline%s%s", why ? " \xC2\xB7 " : "",
+                 why ? why : "");
         app->store_color = app->store_inspection.blocked_by != PROJECT_STORE_BLOCK_NONE ? COL_ERR : COL_WARN;
     }
     app->model_color = ls == LLM_READY ? COL_OK : ls == LLM_FAILED ? COL_ERR : COL_WARN;

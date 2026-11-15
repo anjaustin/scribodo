@@ -1774,6 +1774,16 @@ int main(int argc, char **argv)
                 app.services_started = true;
                 app.services_started_at = GetTime();
             }
+            if (service_result.reachable || service_result.command_succeeded) {
+                app.services_headline = NULL;
+            } else if (service_result.command_attempted) {
+                /* The script's reason reaches the author: once in the status line, and its sentence on the badge. */
+                char why[sizeof(app.store_why)];
+                service_supervisor_describe(&service_result, why, sizeof(why));
+                if (strcmp(why, app.store_why)) set_status(&app, why);
+                snprintf(app.store_why, sizeof(app.store_why), "%s", why);
+                app.services_headline = service_supervisor_headline(&service_result);
+            }
             if (service_result.reachable) {
                 cancel_history(&app);
                 app.store_why[0] = '\0';
