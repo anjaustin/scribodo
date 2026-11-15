@@ -24,9 +24,10 @@ typedef struct {
 
 typedef struct Db Db;
 
-/* Defaults: 127.0.0.1:33061, user/database "scribodo", password from
- * ~/Library/Application Support/Scribodo/services/db_password (or
- * $SCRIBODO_SECRETS). False if the password can't be read. */
+/* Defaults: 127.0.0.1 on SCRIBODO_DEFAULT_DB_PORT (or $SCRIBODO_DB_PORT),
+ * user/database "scribodo", password from db_password in
+ * ~/SCRIBODO_DEFAULT_SECRETS_DIR (or $SCRIBODO_SECRETS); app/service_defaults.h.
+ * False if the password can't be read. */
 bool db_config_default(DbConfig *c, char *err, size_t errlen);
 
 Db *db_open(const DbConfig *c, char *err, size_t errlen);

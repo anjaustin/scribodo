@@ -20,8 +20,7 @@
 # <project>-<time>. Restore with tools/restore.sh.
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
-. "$(dirname "$0")/services_lib.sh"
-export SCRIBODO_SECRETS="${SCRIBODO_SECRETS:-$HOME/Library/Application Support/Scribodo/services}"
+. "$(dirname "$0")/services_lib.sh"   # SCRIBODO_SECRETS and the ports, with their defaults
 
 # verify: every listed file present and unchanged, and nothing else: no
 # extra files, no links or other non-regular entries. (Checksums kept in

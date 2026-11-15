@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "app/service_defaults.h"
+
 bool admin_name(const char *sql_fmt, const char *name);
 
 /* Create the throwaway database as root and grant it to the app user. */
@@ -14,7 +16,7 @@ bool admin_name(const char *sql_fmt, const char *name)
     const char *secrets = getenv("SCRIBODO_SECRETS");
     char path[1024], pw[200] = "";
     if (secrets && secrets[0]) snprintf(path, sizeof(path), "%s/db_root_password", secrets);
-    else snprintf(path, sizeof(path), "%s/Library/Application Support/Scribodo/services/db_root_password", home);
+    else snprintf(path, sizeof(path), "%s/" SCRIBODO_DEFAULT_SECRETS_DIR "/db_root_password", home);
     FILE *f = fopen(path, "rb");
     if (!f) return false;
     pw[fread(pw, 1, sizeof(pw) - 1, f)] = '\0';
@@ -25,7 +27,7 @@ bool admin_name(const char *sql_fmt, const char *name)
     mysql_options(m, MYSQL_OPT_CONNECT_TIMEOUT, &t);
     const char *configured_port = getenv("SCRIBODO_DB_PORT");
     char *port_end = NULL;
-    unsigned long parsed_port = configured_port ? strtoul(configured_port, &port_end, 10) : 33061;
+    unsigned long parsed_port = configured_port ? strtoul(configured_port, &port_end, 10) : SCRIBODO_DEFAULT_DB_PORT;
     unsigned port = configured_port && (!configured_port[0] || !port_end || *port_end || parsed_port > 65535) ? 0 : (unsigned)parsed_port;
     bool ok = port && mysql_real_connect(m, "127.0.0.1", "root", pw, NULL, port, NULL, 0) != NULL;
     char sql[512];

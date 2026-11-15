@@ -119,9 +119,10 @@ native_need() { # returns 3 (MariaDB) or 4 (Qdrant), the exit codes above
 }
 
 mariadbd_args() {
+    local flags
+    read -r -a flags <<< "$SCRIBODO_MARIADB_SERVER_FLAGS"   # tools/services.defaults: the container's settings too
     printf '%s\n' --no-defaults --datadir="$mdata/data" --socket="$sock" --pid-file="$mpid" \
-        --log-error="$SCRIBODO_LOGS/mariadb.log" --character-set-server=utf8mb4 --collation-server=utf8mb4_uca1400_ai_ci \
-        --innodb-buffer-pool-size=128M --max-connections=32 --skip-name-resolve
+        --log-error="$SCRIBODO_LOGS/mariadb.log" "${flags[@]}"
 }
 
 start_mariadbd() { # start_mariadbd EXTRA...: wait for the socket

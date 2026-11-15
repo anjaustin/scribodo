@@ -16,14 +16,15 @@
 #include <unistd.h>
 
 #include "core/json.h"
+#include "app/service_defaults.h"
 
 /* Paths catch ordinary mistakes; descriptor identity also catches a hard link
  * outside the service directory. No service credential contents are read. */
 static bool service_secret(const char *path, const struct stat *opened)
 {
-    if (strstr(path, "/Scribodo/services/")) return true;
+    if (strstr(path, SCRIBODO_SERVICES_DIR_TAIL "/")) return true;
     char defaults[PATH_MAX];
-    int n = snprintf(defaults, sizeof(defaults), "%s/Library/Application Support/Scribodo/services",
+    int n = snprintf(defaults, sizeof(defaults), "%s/" SCRIBODO_DEFAULT_SECRETS_DIR,
                      getenv("HOME") ? getenv("HOME") : "");
     if (n < 0 || (size_t)n >= sizeof(defaults)) return true;
     const char *roots[] = { defaults, getenv("SCRIBODO_SECRETS") };

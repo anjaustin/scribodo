@@ -8,12 +8,9 @@ services:
   mariadb:
     image: mariadb:11.4.13@sha256:d1891ede5a559f1086f55053bb8cc1569b0298338c4d72d71725a7f74f6ba620
     restart: unless-stopped
-    command:
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_uca1400_ai_ci
-      - --innodb-buffer-pool-size=128M
-      - --max-connections=32
-      - --skip-name-resolve
+    # The server's settings and both host ports come from tools/services.defaults through tools/services.sh; this
+    # file keeps no copy of them (AUDIT-004 F6). 3306 and 6333 below are the images' own ports inside the containers.
+    command: ${SCRIBODO_MARIADB_SERVER_FLAGS:?run tools/services.sh}
     environment:
       MARIADB_DATABASE: scribodo
       MARIADB_USER: scribodo
@@ -22,7 +19,7 @@ services:
     secrets: [db_password, db_root_password]
     security_opt: ["no-new-privileges:true"]
     ports:
-      - "127.0.0.1:${SCRIBODO_DB_PORT:-33061}:3306"
+      - "127.0.0.1:${SCRIBODO_DB_PORT:?run tools/services.sh}:3306"
     volumes:
       - mariadb:/var/lib/mysql
     healthcheck:
@@ -41,7 +38,7 @@ services:
       QDRANT__TELEMETRY_DISABLED: "true"
     security_opt: ["no-new-privileges:true"]
     ports:
-      - "127.0.0.1:${SCRIBODO_QDRANT_PORT:-6333}:6333"
+      - "127.0.0.1:${SCRIBODO_QDRANT_PORT:?run tools/services.sh}:6333"
     volumes:
       - qdrant:/qdrant/storage
     healthcheck:

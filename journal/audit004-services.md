@@ -46,3 +46,35 @@ store (2, "migrate-from-docker"), and a port held by the test itself (5, the por
 refusal returning 1) fails the test.
 
 **Gates (item 1 tree):** `make test` exit 0; `make analyze` exit 0 (0 warnings, 87 files); `make sanitize` exit 0.
+
+## Item 2 — the defaults written once
+
+**Before:** ports 33061/6333 in `services_lib.sh`, `compose.yml`, `db.c`, `semantic.c` (and `tests/db_admin.c`); the
+secrets folder in `services_lib.sh` (twice), `db.c`, `semantic.c`, `remote.c`, `backup.sh`, `tests/db_admin.c`; the
+MariaDB server flags in `compose.yml` and `services.sh`.
+
+**Now:** `tools/services.defaults` (plain shell assignments) is the source. `services_lib.sh` sources it and exports
+`SCRIBODO_MARIADB_SERVER_FLAGS`; `services.sh` builds `mariadbd`'s arguments from it (output byte-identical to the
+old list, checked by evaluating `mariadbd_args` before and after); `docker/compose.yml` keeps no copy: its host ports
+are `${SCRIBODO_DB_PORT:?run tools/services.sh}` / `${SCRIBODO_QDRANT_PORT:?…}` and its MariaDB `command` is the
+string `${SCRIBODO_MARIADB_SERVER_FLAGS:?…}`. Checked with `docker compose config` (the CLI only, no daemon):
+the string becomes the same five-element command list, the ports resolve, and an unset port fails with "run
+tools/services.sh" (as the unset secrets folder already did). The C side reads `src/app/service_defaults.h`
+(`db.c`, `semantic.c`, `remote.c`, `tests/db_admin.c`); `backup.sh`'s redundant default after sourcing the library is
+gone.
+
+**Decision:** a tracked header plus a test, not a generated header. Generating it would need an order-only
+dependency in every rule that compiles those sources directly (the fault, crash and tsan builds, `analyze`), in a
+Makefile other streams are editing; the test makes the two copies one value in practice.
+
+**Gates (item 2 tree):** `make test` exit 0; `make analyze` exit 0; `make sanitize` exit 0.
+
+**Test:** `tests/test_service_defaults.py` (in `make test`): compiles the header and compares its values with the
+file; sources the library under a throwaway HOME with no `SCRIBODO_*` set and compares ports, secrets folder and
+exported flags; checks `mariadbd_args` uses the variable; checks Compose has no defaults; fails if any of the product
+files writes the port, the folder or a server flag literally. A mutation (header port 33062) fails it.
+
+Not changed: the in-container ports in Compose (3306, 6333, the healthcheck) are the images' own; the experiment and
+benchmark tools under `tools/` that still default the port or folder themselves (`history_bench.sh`,
+`memory_pipeline_soak.*`, `memory_quality_eval.*`, `memory_reach_eval.c`, `store_growth_sample.sh`, `backuptest.sh`,
+`offlinetest.sh`) are outside the product path and this stream's scope.

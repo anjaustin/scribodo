@@ -15,6 +15,7 @@
 #include <sys/socket.h>
 #include <time.h>
 #include "core/deadline_clock.h"
+#include "app/service_defaults.h"
 
 struct Db {
     MYSQL *m;
@@ -47,7 +48,7 @@ bool db_config_default(DbConfig *c, char *err, size_t errlen)
     memset(c, 0, sizeof(*c));
     snprintf(c->host, sizeof(c->host), "127.0.0.1");
     const char *port = getenv("SCRIBODO_DB_PORT");
-    c->port = port ? (unsigned)atoi(port) : 33061;
+    c->port = port ? (unsigned)atoi(port) : SCRIBODO_DEFAULT_DB_PORT;
     snprintf(c->user, sizeof(c->user), "scribodo");
     snprintf(c->database, sizeof(c->database), "scribodo");
     c->timeout_s = 5;
@@ -55,7 +56,7 @@ bool db_config_default(DbConfig *c, char *err, size_t errlen)
     const char *dir = getenv("SCRIBODO_SECRETS");
     const char *home = getenv("HOME");
     if (dir) snprintf(path, sizeof(path), "%s/db_password", dir);
-    else snprintf(path, sizeof(path), "%s/Library/Application Support/Scribodo/services/db_password", home ? home : "");
+    else snprintf(path, sizeof(path), "%s/" SCRIBODO_DEFAULT_SECRETS_DIR "/db_password", home ? home : "");
     FILE *f = fopen(path, "rb");
     if (!f) {
         snprintf(err, errlen, "The database password isn't set up (run tools/services.sh up)");

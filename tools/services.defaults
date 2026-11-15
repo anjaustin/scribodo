@@ -1,0 +1,14 @@
+# The local services' defaults, written once (AUDIT-004 F6). Sourced by tools/services_lib.sh, which exports what
+# docker/compose.yml reads (the Compose file has no defaults of its own); the C side has the same values in
+# src/app/service_defaults.h. tests/test_service_defaults.py fails if any copy disagrees or a literal reappears.
+# Plain assignments only: this file is also read by that test.
+
+# Ports on 127.0.0.1 (SCRIBODO_DB_PORT and SCRIBODO_QDRANT_PORT override them).
+SCRIBODO_DEFAULT_DB_PORT=33061
+SCRIBODO_DEFAULT_QDRANT_PORT=6333
+
+# The secrets folder, under $HOME (SCRIBODO_SECRETS overrides it).
+SCRIBODO_DEFAULT_SECRETS_DIR="Library/Application Support/Scribodo/services"
+
+# The MariaDB server's settings beyond its paths and listener, the same for the native server and the container.
+SCRIBODO_MARIADB_SERVER_FLAGS="--character-set-server=utf8mb4 --collation-server=utf8mb4_uca1400_ai_ci --innodb-buffer-pool-size=128M --max-connections=32 --skip-name-resolve"

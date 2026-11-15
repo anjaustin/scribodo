@@ -9,18 +9,20 @@
 # containers before native mode existed: never start them on an empty native store, REDTEAM-023); else native when
 # its binaries are installed, docker otherwise.
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/services.defaults"
+export SCRIBODO_MARIADB_SERVER_FLAGS   # docker/compose.yml's MariaDB command
 export PATH="$HOME/.docker/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
-export SCRIBODO_SECRETS="${SCRIBODO_SECRETS:-$HOME/Library/Application Support/Scribodo/services}"
+DEFAULT_SECRETS="$HOME/$SCRIBODO_DEFAULT_SECRETS_DIR"
+export SCRIBODO_SECRETS="${SCRIBODO_SECRETS:-$DEFAULT_SECRETS}"
 # One spelling of the folder for everything that names it (the pid files' argument markers, the socket's hash): a
 # trailing slash, a doubled one or /tmp against /private/tmp would otherwise make a running store look stopped
 # (REDTEAM-023).
 if [ -d "$SCRIBODO_SECRETS" ]; then SCRIBODO_SECRETS="$(cd "$SCRIBODO_SECRETS" && pwd -P)"; export SCRIBODO_SECRETS; fi
-export SCRIBODO_DB_PORT="${SCRIBODO_DB_PORT:-33061}"
-export SCRIBODO_QDRANT_PORT="${SCRIBODO_QDRANT_PORT:-6333}"
+export SCRIBODO_DB_PORT="${SCRIBODO_DB_PORT:-$SCRIBODO_DEFAULT_DB_PORT}"
+export SCRIBODO_QDRANT_PORT="${SCRIBODO_QDRANT_PORT:-$SCRIBODO_DEFAULT_QDRANT_PORT}"
 MARIADB_BIN="${SCRIBODO_MARIADB_BIN:-/opt/homebrew/opt/mariadb@11.4/bin}"
 QDRANT_BIN="${SCRIBODO_QDRANT_BIN:-$here/build/qdrant/qdrant}"
 SCRIBODO_LOGS="${SCRIBODO_LOGS:-$HOME/Library/Logs/Scribodo}"
-DEFAULT_SECRETS="$HOME/Library/Application Support/Scribodo/services"
 
 native_store_exists() { [ -d "$SCRIBODO_SECRETS/mariadb/data/mysql" ]; }
 

@@ -4,6 +4,7 @@
 #include "memory_vectors.h"
 
 #include "core/utf8.h"
+#include "app/service_defaults.h"
 
 #include <CommonCrypto/CommonDigest.h>
 #include <limits.h>
@@ -62,13 +63,13 @@ SemanticClient *semantic_client_create(StoreManager *store, LlmServer *embed)
     if (!client) return NULL;
     client->store = store;
     client->embed = embed;
-    snprintf(client->qport, sizeof(client->qport), "tcp:6333");
+    snprintf(client->qport, sizeof(client->qport), "tcp:%d", SCRIBODO_DEFAULT_QDRANT_PORT);
     const char *port = getenv("SCRIBODO_QDRANT_PORT");
     if (port) snprintf(client->qport, sizeof(client->qport), "tcp:%d", atoi(port));
     char path[1024];
     const char *dir = getenv("SCRIBODO_SECRETS"), *home = getenv("HOME");
     if (dir) snprintf(path, sizeof(path), "%s/qdrant_api_key", dir);
-    else snprintf(path, sizeof(path), "%s/Library/Application Support/Scribodo/services/qdrant_api_key", home ? home : "");
+    else snprintf(path, sizeof(path), "%s/" SCRIBODO_DEFAULT_SECRETS_DIR "/qdrant_api_key", home ? home : "");
     FILE *f = fopen(path, "rb");
     if (f) {
         client->qkey[fread(client->qkey, 1, sizeof(client->qkey) - 1, f)] = '\0';
