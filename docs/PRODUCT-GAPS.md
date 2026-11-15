@@ -153,7 +153,11 @@ measurement that closes it. Items run one at a time unless marked otherwise.
    (precision 0.14 and 0.28, against 0.06 before). Scored offline on the
    recorded replies, step 6's rule "the same subject and a differing
    attribute" holds on both novels on this path (4 of 5, 5 of 7) at recall 9
-   of 20. Next: that rule as a second co-signer, under the same flag.
+   of 20. *Same-subject co-signer built 2026-11-15* (journal step 9, same
+   flag): the C port agrees with the Python on 67,943 pairs, so both novels
+   clear 0.50 conflict precision at recall 9 of 20; accented names and
+   sentences opening on a pronoun never co-sign (a missed disclosure, never a
+   false one). Next: recall above 0.50 with precision held, then default on.
 7. **GAP-002 distribution.** Signed app, guided model and service setup,
    upgrade and uninstall, proven on a clean Mac.
 8. **GAP-005 real input and accessibility.** The IME, dead-key, layout,

@@ -170,6 +170,22 @@ static void test_attributes_differ(void)
     CHECK(!obs_attributes_differ("", "anything at all 12"));
 }
 
+static void test_same_subject(void)
+{
+    CHECK(obs_same_subject("Kantos Kan is a padwar in the navy of Helium.", "Kantos Kan was a padwar of Zodanga."));
+    CHECK(obs_same_subject("Sola's father is Tars Tarkas.", "It was then that Sola's mother spoke."));    /* a possessive */
+    CHECK(obs_same_subject("Kantos Kan \xE2\x80\x94 a padwar of Helium.", "Kantos Kan rose."));          /* before the dash */
+    CHECK(!obs_same_subject("Powell left for the valley on March 3, 1866.", "It had been the third of May when Powell rode."));
+    CHECK(!obs_same_subject("Mr. Darcy is tall.", "Mr. Bingley is tall."));                                   /* a title alone */
+    CHECK(!obs_same_subject("Mr. Darcy is tall.", "He said Darcy was tall."));                                /* not leading */
+    CHECK(obs_same_subject("Mr. Darcy is tall.", "\xE2\x80\x9C" "Darcy is short,\xE2\x80\x9D she said."));       /* quotes skipped */
+    CHECK(obs_same_subject("Sola is here.", "\xE2\x80\x9C" "Sola's eyes,\xE2\x80\x9D he said."));
+    /* Known limit of the frozen rule: ASCII names only, so an accented name never co-signs (a missed disclosure,
+     * never a false one). */
+    CHECK(!obs_same_subject("Zo\xC3\xAB's eyes are green.", "Zo\xC3\xAB's eyes are brown."));
+    CHECK(!obs_same_subject("", "Sola is here."));
+}
+
 int main(void)
 {
     const TestCase tests[] = {
@@ -180,6 +196,7 @@ int main(void)
         { "statement_clips_by_characters", test_statement_clips_by_characters },
         { "sentence_end", test_sentence_end },
         { "attributes_differ", test_attributes_differ },
+        { "same_subject", test_same_subject },
     };
     return run_tests(tests, sizeof(tests) / sizeof(tests[0]));
 }

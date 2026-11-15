@@ -694,7 +694,7 @@ static int job_canon_candidates(JobRun *r, const char *stmt, size_t cand[4])
  * (document and character span, or chat and message), the canon entry, the statement as the judge saw it, both raw
  * replies (the second absent when the first was not a conflict), and the two-vote verdict before any dedupe. */
 static void judge_log_line(JobRun *r, const Cand *cd, bool sentence, size_t c, const char *stmt, char *replies[2], bool conflict,
-                           bool attributes)
+                           bool attributes, bool subject)
 {
     FILE *f = r->o->judge_log;
     if (!f) return;
@@ -709,6 +709,7 @@ static void judge_log_line(JobRun *r, const Cand *cd, bool sentence, size_t c, c
     cJSON_AddStringToObject(j, "type", cd->type);
     cJSON_AddStringToObject(j, "path", sentence ? "sentence" : "statement");
     if (sentence) cJSON_AddBoolToObject(j, "attributes", attributes);
+    if (sentence) cJSON_AddBoolToObject(j, "subject", subject);
     cJSON_AddStringToObject(j, "canon_id", r->canon[c].id);
     cJSON_AddStringToObject(j, "canon", record_current(&r->canon[c])->content);
     cJSON_AddStringToObject(j, "statement", stmt);
@@ -729,12 +730,14 @@ static bool job_judge_pair(JobRun *r, bool sentence, size_t i, size_t c, const c
     char *replies[2] = { NULL, NULL };
     bool conflict = backend_judge(r->o, v->content, stmt, check, sizeof(check), r->o->judge_log ? replies : NULL);
     if (atomic_load(&r->o->cancel)) { free(replies[0]); free(replies[1]); return false; }
-    /* A sentence conflict is co-signed by software that never sees the model: the two texts must state different
-     * values of one kind (measured on 220 judged pairs: false alarms 10 to 6 in 200, no fault lost; step 7). */
+    /* A sentence conflict is co-signed by software that never sees the model: the two texts must be about the same
+     * someone and state different values of one kind (step 8, scored on the recorded replies of both planted
+     * novels: 4 true of 5 kept and 5 of 7, against 6 of 42 and 5 of 18 with the attribute check alone). */
     const bool attributes = sentence && obs_attributes_differ(v->content, stmt);
-    judge_log_line(r, cd, sentence, c, stmt, replies, conflict, attributes);
+    const bool subject = sentence && obs_same_subject(v->content, stmt);
+    judge_log_line(r, cd, sentence, c, stmt, replies, conflict, attributes, subject);
     free(replies[0]); free(replies[1]);
-    if (sentence) conflict = conflict && attributes;
+    if (sentence) conflict = conflict && attributes && subject;
     for (size_t q = 0; conflict && q < r->nconf; q++) { /* same canon, same passage: once */
         const Cand *other = conflict_cand(r, &r->conflicts[q]);
         if (!strcmp(r->conflicts[q].canon_id, r->canon[c].id) && other->src.start == cd->src.start &&

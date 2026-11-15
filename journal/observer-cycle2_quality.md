@@ -748,7 +748,26 @@ subject; a source sentence keeps the author's. With it, both novels clear 0.50 f
 *Mars* faults whose sentences open on "It", not a name (M4 *It had been the third of May when Powell...*, M5 *It was only two years after...* in the narrator's "I"): recall 9 of 20. The next step ports `subjects`
 to C as a second co-signer, under the same flag.
 
+## Step 9, done: the same-subject co-signer, under the same flag
+
+`obs_same_subject` (C, `observer_text.c`) is step 6's `subjects` word for word: the leading run of capitalised
+words before the first " — ", titles and two-letter words dropped, plus every name before "'s". A sentence
+conflict now needs the judge's two votes, a differing attribute and a shared subject; the judge log records
+`subject` beside `attributes`. Differential against the Python over every recorded judge call and 60,000 random
+sentence pairs from the three novels plus edge strings: 0 of 67,943 disagree, so the offline score of step 8 is
+the product's: *Mars* 4 true of 5 shown, *P&P* 5 of 7, recall 9 of 20, both above the 0.50 precision threshold.
+
+Known limits, recorded rather than tuned: the rule reads ASCII names only, so an accented name (*Zoë's*) never
+co-signs, and a sentence that opens on a pronoun or the narrator's "I" never does (M4, M5); both lose a disclosure,
+never add a false one. Flag off nothing changes; flag on, the fake yardstick is identical to step 8's.
+
 ## Gates
+
+Step 9 (`obs_same_subject` and its log field, under `SCRIBODO_OBSERVER_SENTENCES`; `build/observer/step9-gates/`):
+`make test` 95,807 C checks and 200 Python tests, 0 failures; `make analyze` 0 warnings across 87 source files;
+`make sanitize` 95,807, 0; every exit status 0 (`exit.txt`). Fake yardstick flag off (`subjoff`) byte-identical with
+`judgelog` (717 / 348 / 948); flag on (`subjon`) identical to `senton`. Step 8's commit `b492605`: CI passed
+(run 43764798498).
 
 Step 8 (sentence pairing behind `SCRIBODO_OBSERVER_SENTENCES`, the co-signer, the planter's rewritten sentence
 check; `build/observer/step8-gates/`): `make test` 95,797 C checks and 200 Python tests, 0 failures; `make analyze`

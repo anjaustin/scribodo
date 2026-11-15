@@ -123,6 +123,11 @@ size_t obs_sentence_end(const char *s, size_t n);
  * frozen in step 6). The software co-signer of a sentence conflict. */
 bool obs_attributes_differ(const char *canon, const char *text);
 
+/* A canon entry and a sentence are about the same someone: the leading capitalised names (titles and words of two
+ * letters dropped; the part before " — " when there is one) or a name before "'s" shared by both
+ * (tools/observer_judge_score.py same_subject, frozen in step 6). The second co-signer of a sentence conflict. */
+bool obs_same_subject(const char *canon, const char *text);
+
 /* The fake backend's answers (deterministic; same JSON as the model). */
 char *obs_fake_extract(const char *chunk);
 char *obs_fake_judge(const char *canon, const char *statement);

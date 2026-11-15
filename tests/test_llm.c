@@ -1510,7 +1510,7 @@ static void test_observer_judge_log(void)
 }
 
 /* Sentence pairing (SCRIBODO_OBSERVER_SENTENCES=1): the document's own sentence is judged against canon and, with the
- * judge's votes and a differing attribute, recorded as the conflict, sourced at that sentence; a sentence the judge
+ * judge's votes, the same subject and a differing attribute, recorded as the conflict, sourced at that sentence; a sentence the judge
  * might call a conflict but that states the same colour is co-signed by no attribute and dropped; the flag off restores
  * the statement path. */
 static void test_observer_sentence_pairs(void)
@@ -1521,14 +1521,14 @@ static void test_observer_sentence_pairs(void)
     snprintf(proj, sizeof(proj), "%s/obs-sentences", g_dir);
     mkdir(proj, 0755);
     snprintf(doc, sizeof(doc), "%s/ch1.md", proj);
-    const char *text = "The fog came in off the fjord. Mr. Dvo\xC5\x99\xC3\xA1k waited. Zo\xC3\xAB's eyes are brown.\n\n"
-                       "\xE2\x80\x9CZo\xC3\xAB's eyes are green,\xE2\x80\x9D her mother said. Zo\xC3\xAB's eyes are green.\n";
+    const char *text = "The fog came in off the fjord. Mr. Dvo\xC5\x99\xC3\xA1k waited. Sola's eyes are brown.\n\n"
+                       "\xE2\x80\x9CSola's eyes are green,\xE2\x80\x9D her mother said. Sola's eyes are green.\n";
     FILE *f = fopen(doc, "wb");
     fputs(text, f);
     fclose(f);
     char cid[40];
     records_new_id(REC_CANON, cid, sizeof(cid));
-    CHECK(records_append(g_store, proj, REC_CANON, cid, "committed", "Zo\xC3\xAB's eyes are green.", NULL, 0, NULL));
+    CHECK(records_append(g_store, proj, REC_CANON, cid, "committed", "Sola's eyes are green.", NULL, 0, NULL));
     snprintf(logpath, sizeof(logpath), "%s/sentences.jsonl", g_dir);
     FILE *log = fopen(logpath, "w");
     Observer *o = observer_create(g_store, NULL, NULL);
@@ -1543,7 +1543,7 @@ static void test_observer_sentence_pairs(void)
     Record *list = NULL;
     size_t n = records_list(g_store, proj, REC_FINDING, &list), conflicts = 0;
     bool sourced = false;
-    const char *want = "Zo\xC3\xAB's eyes are brown.";
+    const char *want = "Sola's eyes are brown.";
     size_t want_start = 0; /* characters before it: "The fog came in off the fjord. Mr. Dvořák waited. " */
     for (const char *p = text; p < strstr(text, want); p++) want_start += ((unsigned char)*p & 0xC0) != 0x80;
     for (size_t i = 0; i < n; i++) {
@@ -1551,7 +1551,7 @@ static void test_observer_sentence_pairs(void)
         if (strcmp(v->finding.type, "conflict")) continue;
         conflicts++;
         sourced = !strcmp(v->finding.related, cid) && v->nsources == 1 && v->sources[0].quote &&
-                  !strcmp(v->sources[0].quote, want) && v->sources[0].start == want_start && v->sources[0].len == 21 &&
+                  !strcmp(v->sources[0].quote, want) && v->sources[0].start == want_start && v->sources[0].len == 22 &&
                   v->sources[0].revision[0] != '\0';
     }
     CHECK(conflicts == 1 && sourced);

@@ -544,3 +544,65 @@ bool obs_attributes_differ(const char *canon, const char *text)
     free(a);
     return d;
 }
+
+/* Python's \w at a byte: ASCII letters, digits and underscore; a multi-byte character counts as a word character
+ * unless it is punctuation or a space (U+0080 to U+00BF, U+2000 to U+206F, U+3000 to U+303F), the quotes and dashes
+ * fiction puts beside a name. */
+static bool py_word_at(const unsigned char *u, size_t i)
+{
+    if (u[i] < 0x80) return ascii_alpha(u[i]) || ascii_digit(u[i]) || u[i] == '_';
+    while (i > 0 && (u[i] & 0xC0) == 0x80) i--; /* back to the character's first byte */
+    unsigned cp;
+    if ((u[i] & 0xE0) == 0xC0 && (u[i + 1] & 0xC0) == 0x80) cp = (u[i] & 0x1Fu) << 6 | (u[i + 1] & 0x3Fu);
+    else if ((u[i] & 0xF0) == 0xE0 && (u[i + 1] & 0xC0) == 0x80 && (u[i + 2] & 0xC0) == 0x80)
+        cp = (u[i] & 0x0Fu) << 12 | (u[i + 1] & 0x3Fu) << 6 | (u[i + 2] & 0x3Fu);
+    else return true;
+    return !((cp >= 0x80 && cp <= 0xBF) || (cp >= 0x2000 && cp <= 0x206F) || (cp >= 0x3000 && cp <= 0x303F));
+}
+
+/* tools/observer_judge_score.py subjects(), frozen in step 6: who a sentence is about. The leading run of
+ * re.findall(r"[A-Z][a-z]+|[A-Z]\.|[a-z]+") over the text before its first " — " (stopping at the first lower-case
+ * word), kept when longer than two letters and not on the title list, plus every name before "'s". */
+static void subject_set(const char *text, WordSet *out)
+{
+    const unsigned char *u = (const unsigned char *)text;
+    const char *dash = strstr(text, " \xE2\x80\x94 ");
+    size_t head = dash ? (size_t)(dash - text) : strlen(text);
+    for (size_t i = 0; i < head;) {
+        size_t w = cap_word(u + i);
+        if (w && i + w > head) w = head - i; /* the regex sees only the head */
+        if (w >= 2) {
+            char low[ATTR_LEN];
+            if (w > 2 && w < ATTR_LEN) {
+                for (size_t q = 0; q < w; q++) low[q] = (char)(u[i + q] >= 'A' && u[i + q] <= 'Z' ? u[i + q] + 32 : u[i + q]);
+                if (!in_list(k_place_titles, low, w)) set_add(out, text + i, w);
+            }
+            i += w;
+        } else if (u[i] >= 'A' && u[i] <= 'Z' && i + 1 < head && u[i + 1] == '.') {
+            i += 2; /* an initial: part of the run, never a subject */
+        } else if (u[i] >= 'a' && u[i] <= 'z') {
+            break;
+        } else {
+            i++;
+        }
+    }
+    for (size_t i = 0; u[i]; i++) {
+        if (i > 0 && py_word_at(u, i - 1)) continue;
+        size_t w = cap_word(u + i);
+        if (!w || u[i + w] != '\'' || u[i + w + 1] != 's' || (u[i + w + 2] && py_word_at(u, i + w + 2))) continue;
+        if (w < ATTR_LEN) set_add(out, text + i, w);
+    }
+}
+
+bool obs_same_subject(const char *canon, const char *text)
+{
+    WordSet *a = calloc(2, sizeof(WordSet));
+    if (!a) return true; /* cannot check: the other co-signers stand */
+    subject_set(canon, &a[0]);
+    subject_set(text, &a[1]);
+    bool shared = false;
+    for (size_t i = 0; i < a[0].n && !shared; i++)
+        for (size_t j = 0; j < a[1].n && !shared; j++) shared = !strcmp(a[0].w[i], a[1].w[j]);
+    free(a);
+    return shared;
+}
