@@ -766,8 +766,9 @@ never add a false one. Flag off nothing changes; flag on, the fake yardstick is 
 Step 9 (`obs_same_subject` and its log field, under `SCRIBODO_OBSERVER_SENTENCES`; `build/observer/step9-gates/`):
 `make test` 95,807 C checks and 200 Python tests, 0 failures; `make analyze` 0 warnings across 87 source files;
 `make sanitize` 95,807, 0; every exit status 0 (`exit.txt`). Fake yardstick flag off (`subjoff`) byte-identical with
-`judgelog` (717 / 348 / 948); flag on (`subjon`) identical to `senton`. Step 8's commit `b492605`: CI passed
-(run 43764798498).
+`judgelog` (717 / 348 / 948); flag on (`subjon`) identical to `senton`. Step 8's commit `b492605`: CI and Trusted acceptance passed
+(runs 43764798498 and 43764798490). Step 9's commit `12ed760`: CI and Trusted acceptance passed (runs 43765406266
+and 43765406284).
 
 Step 8 (sentence pairing behind `SCRIBODO_OBSERVER_SENTENCES`, the co-signer, the planter's rewritten sentence
 check; `build/observer/step8-gates/`): `make test` 95,797 C checks and 200 Python tests, 0 failures; `make analyze`
