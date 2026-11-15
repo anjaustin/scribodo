@@ -218,3 +218,6 @@ pipeline requested); `make uitest-real` 35; `tools/backuptest.sh` 17 of 17; `mak
 Docker and all 21 with it (`servicestest-docker.log`), no rehearsal container or volume left. The first full gate run
 of this round failed in two places, both found and fixed before this one: the second store-UI run (R22) and two
 rehearsal steps that searched for the unnormalised `/tmp` spelling after the secrets folder gained one spelling.
+
+Hosted: CI and Trusted acceptance passed on `d751fcb` with `04f293d` (runs 43668332773 and 43668332778), the
+acceptance job running `make servicestest` and the hardened native services on the runner for the first time.
