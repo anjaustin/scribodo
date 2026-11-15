@@ -404,6 +404,36 @@ bool chat_store_append_sequenced(StoreManager *manager, const char *project_dir,
     return project_store_chat_append_sequenced(manager, project_dir, id, title, message, sequence);
 }
 
+size_t chat_store_resave_failed(StoreManager *manager, ChatSession *chat, const char *project_dir, const char *id,
+                                const char *title, bool *ok)
+{
+    if (ok) *ok = true;
+    if (!chat || chat_busy(chat)) return 0;
+    chat_lock(chat);
+    size_t n = chat_count(chat), k = 0;
+    ChatMessage *copy = calloc(n ? n : 1, sizeof(ChatMessage));
+    size_t *at = calloc(n ? n : 1, sizeof(size_t));
+    for (size_t i = 0; copy && at && i < n; i++) {
+        const ChatMessage *m = chat_message(chat, i);
+        if (!m->save_failed) continue;
+        copy[k] = *m;
+        copy[k].content = strdup(m->content ? m->content : "");
+        at[k++] = i;
+    }
+    chat_unlock(chat);
+    bool saved = true;
+    for (size_t j = 0; saved && j < k; j++) {
+        int64_t sequence = -1;
+        saved = copy[j].content && chat_store_append_sequenced(manager, project_dir, id, title, &copy[j], &sequence);
+        if (saved && sequence >= 0) chat_mark_saved(chat, at[j], sequence);
+    }
+    for (size_t j = 0; copy && j < k; j++) free(copy[j].content);
+    free(copy);
+    free(at);
+    if (ok) *ok = saved;
+    return k;
+}
+
 bool chat_store_window(StoreManager *manager, const char *project_dir, const char *id,
                         const ChatWindowRequest *request, ChatWindowPage *out)
 {

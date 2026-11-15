@@ -25,6 +25,7 @@
 #include "../src/app/project_session.h"
 #include "../src/app/explorer_snapshot.h"
 #include "../src/app/chat_store.h"
+#include "../src/app/local_models.h"
 #include "core/experiments.h"
 #include "llm/memory_tokens.h"
 #include "llm/context_planner.h"
@@ -563,6 +564,61 @@ static void test_chat_store(void)
     CHECK(k >= 1 && !strcmp(list[0].title, "Who is Zoë"));
     free(list);
     CHECK(!chat_store_append(g_store, g_dir, "../../etc/passwd", "x", &u)); /* ids can't escape */
+}
+
+/* The resave after a reconnect appends exactly the messages marked save_failed, in order (red-team 2026-11-14);
+ * moved out of main.c (AUDIT-004 F3). The file store returns no sequence, so the marks stay. */
+static void test_chat_store_resave_failed(void)
+{
+    ChatSession *s = chat_create(NULL);
+    CHECK(s != NULL);
+    if (!s) return;
+    ChatMessage msgs[] = {
+        { .role = CHAT_USER, .content = "kept already" },
+        { .role = CHAT_ASSISTANT, .content = "refused reply" },
+        { .role = CHAT_USER, .content = "also kept" },
+        { .role = CHAT_ASSISTANT, .content = "refused second" },
+    };
+    CHECK(chat_load_messages(s, msgs, 4));
+    bool ok = false;
+    CHECK(chat_store_resave_failed(g_store, s, g_dir, "20261115-000000-beef", "Resave", &ok) == 0 && ok); /* nothing marked */
+    char path[1200];
+    snprintf(path, sizeof(path), "%s/.scribodo/chats/20261115-000000-beef.jsonl", g_dir);
+    CHECK(access(path, F_OK) != 0);
+    chat_mark_save_failed(s, 1);
+    chat_mark_save_failed(s, 3);
+    ok = false;
+    CHECK(chat_store_resave_failed(g_store, s, g_dir, "20261115-000000-beef", "Resave", &ok) == 2 && ok);
+    ChatMessage *loaded = NULL;
+    size_t n = 0;
+    CHECK(chat_store_load(g_store, g_dir, "20261115-000000-beef", &loaded, &n) && n == 2);
+    CHECK(n == 2 && !strcmp(loaded[0].content, "refused reply") && !strcmp(loaded[1].content, "refused second"));
+    CHECK(n == 2 && loaded[0].role == CHAT_ASSISTANT && loaded[1].role == CHAT_ASSISTANT);
+    chat_store_free_messages(loaded, n);
+    ok = true;
+    CHECK(chat_store_resave_failed(g_store, s, g_dir, "../escape", "x", &ok) == 2 && !ok); /* refused: reported */
+    CHECK(chat_store_resave_failed(g_store, NULL, g_dir, "20261115-000000-beef", "x", &ok) == 0 && ok);
+    chat_destroy(s);
+}
+
+/* Startup checks moved out of main() (AUDIT-004 F3): a missing reranker turns the pipeline off; nothing is reaped
+ * where no window ever ran. */
+static void test_local_models_checks(void)
+{
+    LlmServerConfig chat, embed, rerank;
+    memset(&chat, 0, sizeof(chat));
+    snprintf(chat.run_dir, sizeof(chat.run_dir), "%s/no-window-ran-here", g_dir);
+    embed = rerank = chat;
+    snprintf(rerank.model_path, sizeof(rerank.model_path), "%s/missing-reranker.gguf", g_dir);
+    CHECK(!local_models_reranker_present(&rerank));
+    snprintf(rerank.model_path, sizeof(rerank.model_path), "%s/present-reranker.gguf", g_dir);
+    FILE *f = fopen(rerank.model_path, "wb");
+    CHECK(f != NULL);
+    if (f) fclose(f);
+    CHECK(local_models_reranker_present(&rerank));
+    CHECK(unlink(rerank.model_path) == 0);
+    CHECK(local_models_reap_orphans(&chat, &embed, &rerank) == 0);
+    CHECK(local_models_reap_orphans(&chat, &embed, NULL) == 0);
 }
 
 typedef struct {
@@ -2772,6 +2828,8 @@ int main(int argc, char **argv)
         { "window_storage_release", test_window_storage_release },
         { "chat_store", test_chat_store },
         { "chat_store_read_failures", test_chat_store_read_failures },
+        { "chat_store_resave_failed", test_chat_store_resave_failed },
+        { "local_models_checks", test_local_models_checks },
         { "concurrent_file_readers", test_concurrent_file_readers },
         { "fake_backend", test_fake_backend },
         { "clean_edit", test_clean_edit },

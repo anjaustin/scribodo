@@ -73,9 +73,10 @@ LLM_SRCS  := src/core/json.c src/llm/llm_text.c src/llm/http.c src/llm/server.c 
 LLM_SRCS += src/llm/context_planner.c src/llm/memory_tokens.c
 LLM_SRCS += src/llm/memory_budget.c src/llm/generative_gate.c src/llm/memory_brief.c
 LLM_SRCS += src/llm/canon_reference.c
+LLM_SRCS += src/app/local_models.c
 LLM_SRCS += src/llm/rerank.c src/llm/answer_pipeline.c src/llm/answer_receipt.c
 LLM_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(LLM_SRCS)) $(BUILD)/third_party/cJSON/cJSON.o
-APP_SRCS  := src/main.c src/app/script.c src/app/chat_controller.c src/app/reviewed_edit_controller.c src/ui/font.c src/ui/clay_render.c src/ui/editor.c src/ui/input.c src/ui/recall_view.c \
+APP_SRCS  := src/main.c src/app/script.c src/app/draft_controller.c src/app/chat_controller.c src/app/reviewed_edit_controller.c src/ui/font.c src/ui/clay_render.c src/ui/editor.c src/ui/input.c src/ui/recall_view.c \
              src/ui/chat_view.c src/ui/review_view.c src/ui/record_view.c src/ui/findings_view.c src/ui/prompt_view.c src/ui/menu_view.c src/ui/vendor_impl.c
 CORE_OBJS := $(patsubst %.c,$(BUILD)/%.o,$(CORE_SRCS))
 APP_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(APP_SRCS))
@@ -94,6 +95,7 @@ TESTS += $(BUILD)/test_answer_pipeline $(BUILD)/test_memory_index_text
 TESTS += $(BUILD)/test_memory_document_cache $(BUILD)/test_memory_budget $(BUILD)/test_generative_gate
 TESTS += $(BUILD)/test_http_deadlines $(BUILD)/test_db_deadlines $(BUILD)/test_memory_brief_model
 TESTS += $(BUILD)/test_http_poll_errno
+TESTS += $(BUILD)/test_draft_controller
 
 .PHONY: all run test analyze analyzetest uitest uitest-real sanitize tsan cstest dbtest crashtest envs tools uitest-db backuptest servicestest remotetest offlinetest dependency-report qdrant clean distclean llama model llmtest
 
@@ -124,6 +126,9 @@ $(BUILD)/test_core: $(CORE_OBJS) $(BUILD)/tests/test_core.o
 	$(CC) $(CFLAGS) $^ -o $@
 
 $(BUILD)/test_doc_io: $(CORE_OBJS) $(BUILD)/tests/test_doc_io.o
+	$(CC) $(CFLAGS) $^ -o $@
+
+$(BUILD)/test_draft_controller: $(CORE_OBJS) $(BUILD)/src/app/draft_controller.o $(BUILD)/tests/test_draft_controller.o
 	$(CC) $(CFLAGS) $^ -o $@
 
 $(BUILD)/test_llm: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_state_fixture.o $(BUILD)/tests/test_llm.o

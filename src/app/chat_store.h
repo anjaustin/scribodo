@@ -41,6 +41,16 @@ bool chat_store_append(StoreManager *manager, const char *project_dir, const cha
 bool chat_store_append_sequenced(StoreManager *manager, const char *project_dir, const char *id, const char *title,
                                 const ChatMessage *m, int64_t *sequence);
 
+/* Messages whose append the store refused are saved when it answers again (red-team 2026-11-14: the status told
+ * the author to keep them and nothing re-appended them, so sending stayed refused). Exactly the messages marked
+ * save_failed are appended, in order; a reply whose done callback has not run yet carries no mark, and neither does
+ * a chat loaded from files before its project moved into the store (second pass: inferring "unsaved" from a missing
+ * sequence re-appended both). Each append that returns a sequence clears its mark (chat_mark_saved). Nothing is done
+ * while `chat` is busy. Returns how many marked messages there were (0 when none, busy, or out of memory); `*ok` is
+ * false when an append failed, and the rest are then left marked. */
+size_t chat_store_resave_failed(StoreManager *manager, ChatSession *chat, const char *project_dir, const char *id,
+                                const char *title, bool *ok);
+
 /* Rename a stored conversation (a title line is appended). */
 bool chat_store_rename(StoreManager *manager, const char *project_dir, const char *id, const char *title);
 /* Whether the observer reads this chat (the author's choice; a line is

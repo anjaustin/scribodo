@@ -54,6 +54,8 @@
 #include "app/project_session.h"
 #include "app/explorer_snapshot.h"
 #include "app/chat_controller.h"
+#include "app/draft_controller.h"
+#include "app/local_models.h"
 #include "app/reviewed_edit_controller.h"
 #include "app/frame_view_model.h"
 #include "app/profile.h"
@@ -186,11 +188,8 @@ typedef struct {
         };
     };
 
-    /* Drafts of unsaved text (draft_tick) */
-    char draft_path[PATH_MAX];   /* the unsaved document's draft beside it, empty when none */
-    char draft_doc[PATH_MAX];    /* the document the draft belongs to */
-    double draft_at;             /* when the draft was last considered */
-    uint64_t draft_hash;         /* the text the draft holds */
+    /* Drafts of unsaved text (app/draft_controller.h) */
+    DraftController draft;
 
     /* Reviewed AI edits */
     union {
@@ -1654,50 +1653,18 @@ static void save(App *app)
     app->lists_dirty = true;
 }
 
-/* ---- drafts: the unsaved text survives a dead battery ------------------------------------- */
+/* ---- drafts: the unsaved text survives a dead battery (app/draft_controller.h) ------------------- */
 
-#define DRAFT_INTERVAL_S 10.0
-
-static uint64_t fnv1a(const char *s)
+static char *draft_editor_text(void *ctx)
 {
-    uint64_t h = 1469598103934665603ULL;
-    for (const unsigned char *p = (const unsigned char *)s; *p; p++) h = (h ^ *p) * 1099511628211ULL;
-    return h;
+    return editor_text_utf8((const Editor *)ctx);
 }
 
-static void draft_discard(App *app)
-{
-    if (app->draft_path[0]) unlink(app->draft_path);
-    app->draft_path[0] = app->draft_doc[0] = '\0';
-    app->draft_hash = 0;
-}
-
-/* While the open document has unsaved edits, its whole text is written beside it every DRAFT_INTERVAL_S seconds
- * when it changed, under the save temp's own name, so a process that dies before the author saves leaves the text
- * where doc_recover_strays offers it on the next load (red-team 2026-11-14: a dead battery lost everything since
- * the last save). One draft at a time; a clean buffer removes it. */
 static void draft_tick(App *app)
 {
     const char *path = editor_path(app->editor);
-    if (!path || !editor_is_dirty(app->editor) || (app->draft_doc[0] && strcmp(app->draft_doc, path) != 0)) {
-        if (app->draft_path[0]) draft_discard(app);
-        return;
-    }
-    double now = GetTime();
-    if (now - app->draft_at < DRAFT_INTERVAL_S) return;
-    app->draft_at = now;
-    char *text = editor_text_utf8(app->editor);
-    if (!text) return;
-    uint64_t h = fnv1a(text);
-    if (h != app->draft_hash) {
-        char out[PATH_MAX];
-        if (doc_write_draft(path, text, strlen(text), app->draft_path, out, sizeof(out))) {
-            snprintf(app->draft_path, sizeof(app->draft_path), "%s", out);
-            snprintf(app->draft_doc, sizeof(app->draft_doc), "%s", path);
-            app->draft_hash = h;
-        }
-    }
-    free(text);
+    bool dirty = path && editor_is_dirty(app->editor);
+    (void)draft_controller_tick(&app->draft, path, dirty, GetTime(), draft_editor_text, app->editor);
 }
 
 /* ---- chat ---------------------------------------------------------------------- */
@@ -1858,33 +1825,12 @@ static void adopt_chat(App *app)
  * moved into the store (second pass: inferring "unsaved" from a missing sequence re-appended both). */
 static void resave_unsaved_chat(App *app)
 {
-    if (!app->chat_project[0] || !app->chat_id[0] || chat_busy(app->chat)) return;
-    chat_lock(app->chat);
-    size_t n = chat_count(app->chat), k = 0;
-    ChatMessage *copy = calloc(n ? n : 1, sizeof(ChatMessage));
-    size_t *at = calloc(n ? n : 1, sizeof(size_t));
-    for (size_t i = 0; copy && at && i < n; i++) {
-        const ChatMessage *m = chat_message(app->chat, i);
-        if (!m->save_failed) continue;
-        copy[k] = *m;
-        copy[k].content = strdup(m->content ? m->content : "");
-        at[k++] = i;
-    }
-    chat_unlock(app->chat);
-    bool ok = copy && at;
-    if (ok && k) {
-        for (size_t j = 0; ok && j < k; j++) {
-            int64_t sequence = -1;
-            ok = copy[j].content && chat_store_append_sequenced(app->store, app->chat_project, app->chat_id, app->chat_title, &copy[j], &sequence);
-            if (ok && sequence >= 0) chat_mark_saved(app->chat, at[j], sequence);
-        }
-        if (chat_trim_saved(app->chat)) chat_view_history_changed(app->chat_view);
-        set_status(app, ok ? "Saved the messages kept while the store was offline" : store_says(app, "Could not save the chat to .scribodo/chats"));
-        app->lists_dirty = true;
-    }
-    for (size_t j = 0; copy && j < k; j++) free(copy[j].content);
-    free(copy);
-    free(at);
+    if (!app->chat_project[0] || !app->chat_id[0]) return;
+    bool ok = false;
+    if (!chat_store_resave_failed(app->store, app->chat, app->chat_project, app->chat_id, app->chat_title, &ok)) return;
+    if (chat_trim_saved(app->chat)) chat_view_history_changed(app->chat_view);
+    set_status(app, ok ? "Saved the messages kept while the store was offline" : store_says(app, "Could not save the chat to .scribodo/chats"));
+    app->lists_dirty = true;
 }
 
 /* ---- attachments ---------------------------------------------------------------- */
@@ -3861,22 +3807,13 @@ int main(int argc, char **argv)
         llm_server_default_config(&cfg, GetApplicationDirectory());
         llm_server_embed_config(&ecfg, GetApplicationDirectory());
         llm_server_rerank_config(&rcfg, GetApplicationDirectory());
-        if (app.answer_pipeline && access(rcfg.model_path, R_OK) != 0) {
-            /* No reranker on this Mac: the plain composer answers, and the toolbar's memory line says why. */
-            app.answer_pipeline = false;
-            fprintf(stderr, "scribodo: no reranker model at %s; answers are not verified (see docs/MODEL-002-qwen3-reranker.md)\n", rcfg.model_path);
-        }
+        if (app.answer_pipeline && !local_models_reranker_present(&rcfg)) app.answer_pipeline = false;
         /* The author's context per conversation, as far as memory allows
          * (the other servers are about to start). */
         const ModelSettingInfo *ci = model_setting_info(7);
         long long others = llm_server_mem_need(&ecfg, ecfg.ctx_total) +
                            (app.answer_pipeline ? llm_server_mem_need(&rcfg, rcfg.ctx_total) : 0);
-        /* Servers an earlier window left behind hold their memory until they
-         * are reaped; reap before the fit reads what is free, or a relaunch
-         * after a crash runs the smallest context (GAP-003 restart). */
-        if (llm_server_reap_orphan(&cfg)) fprintf(stderr, "scribodo: reaped the chat server of an earlier window\n");
-        if (llm_server_reap_orphan(&ecfg)) fprintf(stderr, "scribodo: reaped the embedding server of an earlier window\n");
-        if (app.answer_pipeline && llm_server_reap_orphan(&rcfg)) fprintf(stderr, "scribodo: reaped the reranker of an earlier window\n");
+        (void)local_models_reap_orphans(&cfg, &ecfg, app.answer_pipeline ? &rcfg : NULL);
         MemFit fit = memfit_context(sysmem_available(), others, &cfg, app.model.context, (int)ci->min, (int)ci->step);
         memfit_message(&fit, app.model.context, app.mem_msg, sizeof(app.mem_msg));
         if (app.mem_msg[0]) fprintf(stderr, "scribodo: %s\n", app.mem_msg);
