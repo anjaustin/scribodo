@@ -21,6 +21,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <math.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -345,6 +346,58 @@ typedef struct {
     void *clay_buf;
     Script *script;
 } App;
+
+/* The four anonymous unions above alias extracted controllers back to flat names, field by field. Their layout is
+ * checked here (AUDIT-004 F3): a controller field added, removed, moved, retyped or resized fails the build until
+ * its mirror is updated. Each mirror must sit at its field's offset with the same type and size, and the last
+ * mirror must end where the controller ends (a field slotted into existing interior padding is the one change these
+ * cannot see; it would not shift a mirror). */
+#define APP_MIRRORS(member, Controller, field, mirror)                                                              \
+    _Static_assert(offsetof(App, mirror) == offsetof(App, member) + offsetof(Controller, field),                    \
+                   "App." #mirror " must sit at " #Controller "." #field);                                          \
+    _Static_assert(sizeof(((App *)0)->mirror) == sizeof(((Controller *)0)->field),                                  \
+                   "App." #mirror " must be the size of " #Controller "." #field);                                  \
+    _Static_assert(__builtin_types_compatible_p(__typeof__(((App *)0)->mirror), __typeof__(((Controller *)0)->field)), \
+                   "App." #mirror " must have the type of " #Controller "." #field)
+#define APP_MIRROR_ENDS(member, Controller, last)                                                                   \
+    _Static_assert(sizeof(((App *)0)->member) == sizeof(Controller), "App." #member " must be a " #Controller);    \
+    _Static_assert((offsetof(App, last) + sizeof(((App *)0)->last) - offsetof(App, member) + _Alignof(Controller) - 1) \
+                           / _Alignof(Controller) * _Alignof(Controller) == sizeof(Controller),                     \
+                   #Controller " has a field after " #last " that App does not mirror")
+
+APP_MIRRORS(chat_controller, ChatController, chat, chat);
+APP_MIRRORS(chat_controller, ChatController, chat_view, chat_view);
+APP_MIRRORS(chat_controller, ChatController, attached, attached);
+APP_MIRRORS(chat_controller, ChatController, nattached, nattached);
+APP_MIRRORS(chat_controller, ChatController, attach_touched, attach_touched);
+APP_MIRRORS(chat_controller, ChatController, attachment_revision, attachment_revision);
+APP_MIRROR_ENDS(chat_controller, ChatController, attachment_revision);
+
+APP_MIRRORS(session, ProjectSession, project_dir, project_dir);
+APP_MIRRORS(session, ProjectSession, chat_project, chat_project);
+APP_MIRRORS(session, ProjectSession, clear_chat_when_idle, clear_chat_when_idle);
+APP_MIRRORS(session, ProjectSession, chat_id, chat_id);
+APP_MIRRORS(session, ProjectSession, chat_title, chat_title);
+APP_MIRRORS(session, ProjectSession, generation, session_generation);
+APP_MIRROR_ENDS(session, ProjectSession, session_generation);
+
+APP_MIRRORS(reviewed_edit, ReviewedEditController, review, review);
+APP_MIRRORS(reviewed_edit, ReviewedEditController, editor, review_editor);
+APP_MIRRORS(reviewed_edit, ReviewedEditController, edit_mode, edit_mode);
+APP_MIRRORS(reviewed_edit, ReviewedEditController, edit_text, edit_text);
+APP_MIRRORS(reviewed_edit, ReviewedEditController, edit_banner, edit_banner);
+APP_MIRRORS(reviewed_edit, ReviewedEditController, pending, pending);
+APP_MIRRORS(reviewed_edit, ReviewedEditController, proposal, proposal);
+APP_MIRROR_ENDS(reviewed_edit, ReviewedEditController, proposal);
+
+APP_MIRRORS(explorer, ExplorerSnapshot, docs, docs);
+APP_MIRRORS(explorer, ExplorerSnapshot, ndocs, ndocs);
+APP_MIRRORS(explorer, ExplorerSnapshot, chats, chats);
+APP_MIRRORS(explorer, ExplorerSnapshot, chat_labels, chat_labels);
+APP_MIRRORS(explorer, ExplorerSnapshot, nchats, nchats);
+APP_MIRRORS(explorer, ExplorerSnapshot, generation, explorer_generation);
+APP_MIRRORS(explorer, ExplorerSnapshot, project_generation, explorer_project_generation);
+APP_MIRROR_ENDS(explorer, ExplorerSnapshot, explorer_project_generation);
 
 static bool store_adopt_project(App *app);
 static void import_poll(App *app);
@@ -3946,14 +3999,47 @@ int main(int argc, char **argv)
         app.nrecents = recent_store_load(app.recent_store, app.recents, RECENT_MAX);
     }
     dialogs_script_mode(script_path != NULL);
-    ScriptHost host = { app.editor, &app.explorer_w, &app.observer_w, &app.editor_rect,
-                        host_status, host_open, host_drop, &app, app.chat, host_element, host_model_ready,
-                        host_record_text, host_observer_enable, host_observer_idle, host_findings_text,
-                        host_attached_text, host_explorer_text, host_observer_status, host_history_cache_bytes, host_store_offline,
-                        host_history_busy, host_history_hold, host_history_worker_busy, host_store_restart,
-                        host_memory_settled, host_memory_enabled, host_memory_sources, host_memory_documents_settled,
-                        host_memory_briefs_ready, host_recall_text, host_recall_busy, host_model_status };
+    ScriptHost host = {
+        .editor = app.editor,
+        .explorer_w = &app.explorer_w,
+        .observer_w = &app.observer_w,
+        .editor_rect = &app.editor_rect,
+        .status = host_status,
+        .open = host_open,
+        .drop = host_drop,
+        .ctx = &app,
+        .chat = app.chat,
+        .element = host_element,
+        .model_ready = host_model_ready,
+        .record_text = host_record_text,
+        .observer_enable = host_observer_enable,
+        .observer_idle = host_observer_idle,
+        .findings_text = host_findings_text,
+        .attached_text = host_attached_text,
+        .explorer_text = host_explorer_text,
+        .observer_status = host_observer_status,
+        .history_cache_bytes = host_history_cache_bytes,
+        .store_offline = host_store_offline,
+        .history_busy = host_history_busy,
+        .history_hold = host_history_hold,
+        .history_worker_busy = host_history_worker_busy,
+        .store_restart = host_store_restart,
+        .memory_settled = host_memory_settled,
+        .memory_enabled = host_memory_enabled,
+        .memory_sources = host_memory_sources,
+        .memory_documents_settled = host_memory_documents_settled,
+        .memory_briefs_ready = host_memory_briefs_ready,
+        .recall_text = host_recall_text,
+        .recall_busy = host_recall_busy,
+        .model_status = host_model_status,
+    };
     if (script_path) {
+        const char *missing = script_host_missing(&host);
+        if (missing) {
+            fprintf(stderr, "scribodo: the script host has no %s\n", missing);
+            app_destroy(&app);
+            return 2;
+        }
         char err[256];
         app.script = script_load(script_path, getenv("SCRIBODO_SCRIPT_DIR"), getenv("SCRIBODO_SHOT_DIR"), err, sizeof(err));
         if (!app.script) {

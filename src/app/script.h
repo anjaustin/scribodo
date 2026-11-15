@@ -123,6 +123,13 @@ typedef struct {
     char *(*model_status)(void *ctx);
 } ScriptHost;
 
+/* Every ScriptHost member is one pointer, and every one is required. The count is checked against the struct's size
+ * at build time (app/script_host.c), so a new member fails the build until it is counted and named there; main()
+ * refuses to run a script with a member left NULL (AUDIT-004 F3: the initialiser was positional). */
+#define SCRIPT_HOST_MEMBERS 32
+/* The name of the first member left NULL, or NULL when the host is complete. */
+const char *script_host_missing(const ScriptHost *h);
+
 typedef struct Script Script;
 
 Script *script_load(const char *path, const char *dir, const char *shot_dir, char *err, size_t errlen);
