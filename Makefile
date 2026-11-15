@@ -349,6 +349,14 @@ test: $(TESTS) $(CORE_OBJS) $(LLM_OBJS) $(APP_OBJS)
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_window_replay python3 tests/test_answer_window_replay.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_receipt_contract python3 tests/test_answer_receipt_contract.py
 
+# Every build/ path a document cites is archived, declared not evidence, or recorded as lost (AUDIT-004 F1;
+# tools/evidence_check.py, docs/EVIDENCE.md). Skipped, and says so, where the archive folder is absent (hosted CI).
+.PHONY: evidencecheck
+evidencecheck:
+	$(WATCHDOG) $(TEST_TIMEOUT) test_evidence_check python3 tests/test_evidence_check.py
+	$(WATCHDOG) $(TEST_TIMEOUT) evidence_check python3 tools/evidence_check.py
+test: evidencecheck
+
 # Verify pinned dependency inventory, upstream refs, container digests and OSV
 # advisories. The scheduled workflow publishes the same report as an artifact.
 dependency-report:

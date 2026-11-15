@@ -1,0 +1,26 @@
+# Cited build/ paths that existed nowhere, neither in build/ nor in an archive, when AUDIT-004 ran (2026-11-15).
+# PATH<TAB>CITED BY<TAB>NOTE. tools/evidence_check.py accepts these and fails if one reappears under build/
+# unarchived. The list only shrinks: a new citation of a missing path is a violation, not an entry here.
+#
+# evidence lost (AUDIT-004 F1)
+build/ui/fit-on	journal/answer-cycle4_default_path.md	the three-server launch footprint; written into build/ui, which make uitest deleted
+build/ui/fit-native2	journal/store-cycle2_native_services.md	the 32K-context fit; written into build/ui, which make uitest deleted
+build/gap003/gates	docs/AUDIT-004-repository-audit.md	GAP-003 gate logs (directory form); the gates-*.log files are archived in 2026-11-15-audit004b
+build/gap003/frames/gates	docs/AUDIT-004-repository-audit.md	GAP-003 frames gate directory
+build/gap003/orphan/gates	docs/AUDIT-004-repository-audit.md	GAP-003 orphan gate directory; the gates-*.log files are archived
+build/gap003/reap/gates	docs/AUDIT-004-repository-audit.md	GAP-003 reap gate directory; the gates-*.log files are archived
+build/gap003/soak-smoke	docs/AUDIT-004-repository-audit.md	GAP-003 soak smoke directory; the soak-smoke*.log files are archived
+build/gap003/*/gates	docs/TECHNICAL-DEBT.md	the same directories, by pattern
+build/recover/gates2	docs/AUDIT-004-repository-audit.md	GAP-004 recovery gate directory; the gates2-*.log files are archived
+#
+# pre-archive history (before the first archive, 2026-11-07, or never copied into one)
+build/cr1/score.json	docs/REDTEAM-020-selection-tooling.md	the first score; re-scored from the archived responses (journal/answer-cycle2_clean_review.md)
+build/mb-n8yenzjl/events.jsonl	journal/memory_continuity_turbo.md	bedrock probe events, never archived
+build/mb-nb0y9sk0/events.jsonl	journal/memory_continuity_turbo.md	bedrock probe events, never archived
+build/memory-causal-parity.log	journal/memory_causal_turbo.md	never archived
+build/memory-causal-parity-v2.log	journal/memory_causal_turbo.md	never archived
+build/memory-continuity-*	journal/memory_continuity_safety_audit.md, journal/memory_continuity_turbo.md	the memory-continuity audit's logs and case files, never archived
+build/memory-safety-*	journal/memory_continuity_safety_audit.md	never archived
+build/redteam2-*.log	docs/REDTEAM-013-failure-paths.md	never archived (build/redteam2-fresh is, in 2026-11-07)
+build/remediation-*.log	docs/REDTEAM-013-failure-paths.md	never archived (build/remediation-mutations is, in 2026-11-07)
+build/relation/rel4-before	journal/answer-cycle4_relation.md	not in build/relation when 2026-11-12-p0 and -loose-ends were made

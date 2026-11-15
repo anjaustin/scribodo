@@ -816,6 +816,18 @@ Dated reports cite `build/` run directories and logs. Those are archived, not
 deleted, when the build folder is cleaned; [`EVIDENCE.md`](EVIDENCE.md) maps the
 cited paths to the dated tarballs.
 
+`make test` enforces it (`make evidencecheck`, AUDIT-004 F1): `tools/evidence_check.py` reads every `build/`
+path cited in `docs/*.md`, `journal/*.md` and the README (braces and `1..3` ranges expanded, globs and
+`<placeholders>` matched against archive members) and fails, listing each one, unless the path is in an
+archive (the tarball's own listing; a manifest only where its tarball is missing), named in
+`tests/fixtures/evidence_not_archived.txt` with the reason it is not evidence (binaries, environments, make's
+directories named in prose), or recorded in `tests/fixtures/evidence_lost.txt` (cited paths that existed
+nowhere at AUDIT-004, with the citing document; the list only shrinks). A dated report whose evidence is not
+yet archived therefore fails `make test` until the archive pass. Where the archive folder is absent (hosted
+CI) the check says it skipped and passes. `tools/evidence_check.py --unarchived` prints every existing file
+under a cited path that no archive holds (binaries, objects, debug symbols and sockets left out): the file
+list of the next archive pass.
+
 ## Test-harness environment variables
 
 The experiment flags the product itself reads (`SCRIBODO_ANSWER_PARTS`,

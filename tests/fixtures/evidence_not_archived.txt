@@ -1,0 +1,36 @@
+# Cited build/ paths that are not evidence (tools/evidence_check.py, AUDIT-004 F1). One per line:
+# PATH<TAB>REASON. PATH may be a directory (covers what is under it) or a glob. Evidence never goes here: a cited
+# run, log or result that exists is archived (docs/EVIDENCE.md); one that exists nowhere goes in evidence_lost.txt.
+# A path under a directory a gate deletes is excused only by an entry naming exactly that path.
+#
+# make's own outputs and directories named in prose
+build/scribodo	the app binary make builds
+build/answer_gate_replay	a tool binary (make tools)
+build/observer_replay	a tool binary (make tools)
+build/observer_judge_pairs	a tool binary (make tools)
+build/observer_overlap	a tool binary (make tools)
+build/test_memory_vectors_faults	a test binary (make test)
+build/llama/bin/llama-server	the pinned server binary (make llama)
+build/venv-coref	a locked experiment environment (make envs recreates it)
+build/venv-causal	a locked experiment environment (make envs recreates it)
+build/sanitize	a BUILD= sanitizer build tree named in a command line
+build/build	a mistaken BUILD= directory named in prose; the run failed before starting (journal/memory_causal_turbo.md)
+build/audit002-clean	the clean-rebuild build tree; its log is archived (scribodo-evidence-2026-11-09-audit002)
+build/redteam017-mariadb-clean	a clean Connector/C build tree; its log and result are archived (2026-11-09-audit)
+build/redteam017-shallow	the clean shallow checkout itself; its logs are archived (2026-11-09-audit)
+build/wt-ca908bd	a git worktree of commit ca908bd used to build a baseline
+build/unit	prose for make's unit suites ("build/unit/database matrices"), not a directory
+build/headless	prose for the headless suites ("build/headless/sanitizer jobs"), not a directory
+build/test/DB	prose for make all/test/dbtest ("build/test/DB"), not a directory
+build/hangs/NAME-<time>.txt	the watchdog's file-name format (docs/TESTING.md)
+build/hangs/app-deadlock-093626.txt	an example of the watchdog's message (docs/TESTING.md)
+build/audit002-hosted-278259c-attempt1.log/.json	prose for attempt1.log and attempt1.json, both in scribodo-evidence-2026-11-09-audit002
+#
+# gate output directories (make uitest, uitest-real, uitest-db, clean); named, never evidence
+build/ui	the UI gates' output root (docs/TESTING.md, "Where cited evidence lives")
+build/ui/<script>	make uitest's per-script output directory, recreated every run
+build/ui/<script>/work	make uitest's per-script fixture copy, recreated every run
+build/ui/<script>/saved.png	a screenshot a test script names, recreated every run
+#
+# frozen app copies inside archived run directories (binaries are excluded from every archive)
+build/answer-live-*/scribodo	a frozen app binary; the run directory around it is archived
