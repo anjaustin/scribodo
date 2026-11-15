@@ -1,0 +1,67 @@
+"""The observer's three text rules from the Python side (AUDIT-004 F2).
+
+tests/fixtures/observer_rules/cases.json is read here and by tests/test_observer_text.c (test_shared_rule_fixture),
+which runs the same cases through the C in src/llm/observer_text.c: obs_next_sentence (obs_sentence_end), the attribute
+co-signer obs_attributes_differ and the subject co-signer obs_same_subject. This side runs the Python each was ported
+from and that scores the recorded judge replies: observer_sentence_pairs.sentences (BOUNDARY with
+observer_plant.ends_sentence), observer_judge_score.a_any and observer_judge_score.same_subject (subjects). A case
+either side gets wrong fails its own test, so the measured claims that rest on the two agreeing (journal/
+observer-cycle2_quality.md steps 8 and 9) are re-checked on every make test. No models."""
+import importlib.util
+import json
+from pathlib import Path
+import sys
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
+
+
+def load(name):
+    spec = importlib.util.spec_from_file_location(name, ROOT / "tools" / f"{name}.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+osp = load("observer_sentence_pairs")
+ojs = load("observer_judge_score")
+CASES = json.loads((ROOT / "tests/fixtures/observer_rules/cases.json").read_text(encoding="utf-8"))
+
+
+class SharedFixtureTests(unittest.TestCase):
+    def test_the_fixture_has_every_kind_and_its_version(self):
+        self.assertEqual(CASES["version"], 1)
+        self.assertGreaterEqual(len(CASES["sentences"]), 16)
+        self.assertGreaterEqual(len(CASES["attributes"]), 24)
+        self.assertGreaterEqual(len(CASES["subject"]), 19)
+
+    def test_sentences(self):
+        for case in CASES["sentences"]:
+            with self.subTest(why=case["why"]):
+                got = osp.sentences(case["text"])
+                self.assertEqual([s for _, s in got], case["want"])
+                for off, s in got:                                   # offsets are into the text, in characters
+                    self.assertEqual(case["text"][off:off + len(s)], s)
+
+    def test_attributes(self):
+        for case in CASES["attributes"]:
+            with self.subTest(why=case["why"]):
+                self.assertEqual(ojs.a_any({"canon": case["canon"], "statement": case["text"]}), case["differ"])
+
+    def test_subject(self):
+        for case in CASES["subject"]:
+            with self.subTest(why=case["why"]):
+                self.assertEqual(ojs.same_subject({"canon": case["canon"], "statement": case["text"]}), case["same"])
+
+    def test_the_c_caps_are_exercised(self):
+        """The C kept 64 words of under 64 bytes per set until 2026-11-15; the fixture must keep cases past both."""
+        longest = max(len(w) for c in CASES["attributes"] + CASES["subject"] for t in (c["canon"], c["text"])
+                      for w in ojs.words(t))
+        most = max(len(ojs.numbers(c["canon"])) for c in CASES["attributes"])
+        self.assertGreater(longest, 64)
+        self.assertGreater(most, 64)
+
+
+if __name__ == "__main__":
+    unittest.main()

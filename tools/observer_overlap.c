@@ -5,7 +5,7 @@
  *        observer_overlap --attributes    "CANON<TAB>TEXT" lines -> 1 or 0, obs_attributes_differ(CANON, TEXT)
  *        observer_overlap --subject       "CANON<TAB>TEXT" lines -> 1 or 0, obs_same_subject(CANON, TEXT)
  *        observer_overlap --sentences     text lines -> the byte length of each sentence, space-separated
- *                                         (obs_sentence_end, whitespace between sentences skipped) */
+ *                                         (obs_next_sentence, the observer's own loop) */
 #include <stdio.h>
 #include <string.h>
 
@@ -19,17 +19,11 @@ int main(int argc, char **argv)
     while (fgets(line, sizeof(line), stdin)) {
         line[strcspn(line, "\n")] = '\0';
         if (sentences) {
-            size_t n = strlen(line), pos = 0;
+            size_t n = strlen(line), pos = 0, start, len;
             const char *sep = "";
-            while (pos < n) {
-                while (pos < n && (line[pos] == ' ' || line[pos] == '\t')) pos++;
-                if (pos >= n) break;
-                size_t e = obs_sentence_end(line + pos, n - pos);
-                size_t len = e;
-                while (len > 0 && (line[pos + len - 1] == ' ' || line[pos + len - 1] == '\t')) len--;
+            while (obs_next_sentence(line, n, &pos, &start, &len)) {
                 printf("%s%zu", sep, len);
                 sep = " ";
-                pos += e ? e : 1;
             }
             putchar('\n');
             continue;

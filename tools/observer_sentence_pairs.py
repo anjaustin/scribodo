@@ -11,8 +11,9 @@ pairs it makes and the planted faults it *reaches* (the fault's own sentence pai
 pairs drawn with SEED from the sentences on no fault under --min/--top (label "plain"; the novels' own sentences, so
 a conflict on one is false).
 
-Sentences: each line is split after . ! ? and any closing quotes when a capital (or an opening quote) follows, except
-after a title or an initial (Mr., K.), the planter's own rule (observer_plant.ends_sentence)."""
+Sentences: each line is split after . ! ? and any closing quotes when a space or tab and a capital (or an opening quote
+and a capital) follow, except after a title or an initial (Mr., K.; observer_plant.ends_sentence): the observer's own
+obs_next_sentence, held to it by tests/fixtures/observer_rules/cases.json."""
 import json
 import os
 import random
@@ -24,22 +25,27 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 from observer_plant import ends_sentence  # noqa: E402
 
-BOUNDARY = re.compile("[.!?][\"'”’)]*\\s+(?=[\"“‘'(]?[A-Z])")
+BOUNDARY = re.compile("[.!?][\"'”’)]*[ \t]+(?=[\"“‘'(]?[A-Z])")
+SPACE = " \t\r"  # what obs_next_sentence skips before a sentence and drops after one (with the line break)
 
 
 def sentences(text):
-    """(character offset, sentence) for every sentence of text."""
+    """(character offset, sentence) for every sentence of text, as the observer's obs_next_sentence cuts them: a line
+    break ends a sentence; only a space or a tab separates two (a no-break space does not); leading spaces belong to
+    no sentence. tests/fixtures/observer_rules/cases.json holds this and the C to the same sentences (AUDIT-004 F2;
+    until 2026-11-15 this split at any Unicode space and kept a line's leading spaces)."""
     out = []
     for para in re.finditer(r"[^\n]+", text):
-        p, base, s = para.group(), para.start(), 0
-        for m in BOUNDARY.finditer(p):
-            cut = len(p[:m.end()].rstrip())
+        p, base = para.group(), para.start()
+        s = len(p) - len(p.lstrip(SPACE))
+        for m in BOUNDARY.finditer(p, s):
+            cut = len(p[:m.end()].rstrip(SPACE))
             if not ends_sentence(p[s:cut], p[cut:cut + 1]):
                 continue
             out.append((base + s, p[s:cut]))
             s = m.end()
-        if p[s:].strip():
-            out.append((base + s, p[s:].rstrip()))
+        if p[s:].strip(SPACE):
+            out.append((base + s, p[s:].rstrip(SPACE)))
     return out
 
 

@@ -1,0 +1,408 @@
+{
+ "about": "Shared cases for the observer's three text rules, read by tests/test_observer_text.c (the C in src/llm/observer_text.c) and tests/test_observer_rules.py (the Python in tools/observer_sentence_pairs.py, tools/observer_plant.py and tools/observer_judge_score.py). Each side must give every expected value. Divergences found 2026-11-15 and how each was resolved: journal/audit004-observer.md, item 2.",
+ "version": 1,
+ "sentences": [
+  {
+   "text": "He met Mr. Darcy. Then J. K. Rowling wrote. It was 1866. So.",
+   "want": [
+    "He met Mr. Darcy.",
+    "Then J. K. Rowling wrote.",
+    "It was 1866.",
+    "So."
+   ],
+   "why": "a title and initials end nothing; a digit before the period does"
+  },
+  {
+   "text": "St. Ives is far. Dr. Watson came. Capt. Powell rode.",
+   "want": [
+    "St. Ives is far.",
+    "Dr. Watson came.",
+    "Capt. Powell rode."
+   ],
+   "why": "titles"
+  },
+  {
+   "text": "I saw Mr. X. Then I left.",
+   "want": [
+    "I saw Mr. X. Then I left."
+   ],
+   "why": "a single capital is an initial even when it ends a sentence (known limit)"
+  },
+  {
+   "text": "“Mr. Bingley!” She cried.",
+   "want": [
+    "“Mr. Bingley!”",
+    "She cried."
+   ],
+   "why": "closing curly quote, then a capital"
+  },
+  {
+   "text": "“Mr. Bingley!” she cried. Next",
+   "want": [
+    "“Mr. Bingley!” she cried.",
+    "Next"
+   ],
+   "why": "a lower-case word after the quote: no boundary"
+  },
+  {
+   "text": "The end.' He laughed. \"Go.\" Then (Aside.) More.",
+   "want": [
+    "The end.'",
+    "He laughed.",
+    "\"Go.\"",
+    "Then (Aside.)",
+    "More."
+   ],
+   "why": "straight quotes and a bracket close; an opening quote or bracket may precede the capital"
+  },
+  {
+   "text": "my machine and Kantos Kan’s. Making his way",
+   "want": [
+    "my machine and Kantos Kan’s.",
+    "Making his way"
+   ],
+   "why": "a possessive with a curly apostrophe ends a sentence"
+  },
+  {
+   "text": "drily--“Mr. Darcy is kind.” Yes.",
+   "want": [
+    "drily--“Mr. Darcy is kind.”",
+    "Yes."
+   ],
+   "why": "a title after a dash and an opening quote"
+  },
+  {
+   "text": "He paused—then went on. Dash ends.—Then more.",
+   "want": [
+    "He paused—then went on.",
+    "Dash ends.—Then more."
+   ],
+   "why": "an em dash is no space: no boundary straight after a period"
+  },
+  {
+   "text": "Zoë left. Émile stayed. Then Zoë came.",
+   "want": [
+    "Zoë left. Émile stayed.",
+    "Then Zoë came."
+   ],
+   "why": "an accented capital starts no sentence (ASCII capitals only, known limit)"
+  },
+  {
+   "text": "ends with i. next. Is it? Yes! No.",
+   "want": [
+    "ends with i. next.",
+    "Is it?",
+    "Yes!",
+    "No."
+   ],
+   "why": "lower case after a period; ? and !"
+  },
+  {
+   "text": "Wait... What now? It cost 5. Then 6 more.",
+   "want": [
+    "Wait...",
+    "What now?",
+    "It cost 5.",
+    "Then 6 more."
+   ],
+   "why": "an ellipsis; a digit is no initial"
+  },
+  {
+   "text": "  Indented line. Second one.",
+   "want": [
+    "Indented line.",
+    "Second one."
+   ],
+   "why": "leading spaces belong to no sentence (the Python kept them until 2026-11-15)"
+  },
+  {
+   "text": "Ends here. Next starts. Then\tTab.\tAfter tab.",
+   "want": [
+    "Ends here. Next starts.",
+    "Then\tTab.",
+    "After tab."
+   ],
+   "why": "only a space or a tab separates sentences; a no-break space does not (the Python split there until 2026-11-15)"
+  },
+  {
+   "text": "one line\ntwo lines. Three.\n\n  \nLast.   ",
+   "want": [
+    "one line",
+    "two lines.",
+    "Three.",
+    "Last."
+   ],
+   "why": "a line break ends a sentence; blank lines and trailing spaces are dropped"
+  },
+  {
+   "text": "E. coli is small. It grows.",
+   "want": [
+    "E. coli is small.",
+    "It grows."
+   ],
+   "why": "an initial before a lower-case word"
+  }
+ ],
+ "attributes": [
+  {
+   "canon": "Kantos Kan is a padwar in the navy of Helium.",
+   "text": "a padwar in the navy of Zodanga",
+   "differ": true,
+   "why": "place"
+  },
+  {
+   "canon": "Dejah Thoris is the Princess of Helium.",
+   "text": "She smiled at the Princess.",
+   "differ": false,
+   "why": "a place on one side only"
+  },
+  {
+   "canon": "Sola is the daughter of Tars Tarkas.",
+   "text": "Sola was the sister of Lorquas.",
+   "differ": true,
+   "why": "kinship"
+  },
+  {
+   "canon": "thirty days after",
+   "text": "only three days after",
+   "differ": true,
+   "why": "number words"
+  },
+  {
+   "canon": "Her hair is coal black.",
+   "text": "Her golden hair fell.",
+   "differ": true,
+   "why": "colour"
+  },
+  {
+   "canon": "Her hair is black.",
+   "text": "Her black hair fell.",
+   "differ": false,
+   "why": "the same value"
+  },
+  {
+   "canon": "The Princess of Helium.",
+   "text": "She went to Mr Darcy.",
+   "differ": false,
+   "why": "a title is no place"
+  },
+  {
+   "canon": "the daughter of Mr Bennet",
+   "text": "the daughter of Mr Collins",
+   "differ": false,
+   "why": "a place whose first word is a title is dropped"
+  },
+  {
+   "canon": "married three-and-twenty years",
+   "text": "married above forty years",
+   "differ": true,
+   "why": "hyphenated number words"
+  },
+  {
+   "canon": "",
+   "text": "anything at all 12",
+   "differ": false,
+   "why": "an empty side"
+  },
+  {
+   "canon": "Powell left on March 3, 1866.",
+   "text": "Powell left on May 3, 1866.",
+   "differ": true,
+   "why": "months"
+  },
+  {
+   "canon": "He was 28.",
+   "text": "He was twenty-eight.",
+   "differ": true,
+   "why": "digits and number words are different values"
+  },
+  {
+   "canon": "Zoë's eyes are green.",
+   "text": "Zoë’s eyes are brown.",
+   "differ": true,
+   "why": "an accented name and a curly apostrophe do not hide a colour"
+  },
+  {
+   "canon": "Of Helium she spoke.",
+   "text": "Of Zodanga she spoke.",
+   "differ": false,
+   "why": "prepositions are lower case only"
+  },
+  {
+   "canon": "the son of Tars Tarkas",
+   "text": "the son of Tars Tarkas",
+   "differ": false,
+   "why": "a two-word place, the same"
+  },
+  {
+   "canon": "the son of Tars Tarkas",
+   "text": "the son of Tars",
+   "differ": true,
+   "why": "a two-word place against one word"
+  },
+  {
+   "canon": "the navy of Helium",
+   "text": "the navy of Zodanga",
+   "differ": true,
+   "why": "a no-break space after the preposition (C read only ASCII space until 2026-11-15)"
+  },
+  {
+   "canon": "a padwar—of Helium",
+   "text": "a padwar of Zodanga",
+   "differ": true,
+   "why": "an em dash before the preposition is a word boundary (C read any non-ASCII byte as a letter until 2026-11-15)"
+  },
+  {
+   "canon": "“of Helium,” he said",
+   "text": "of Zodanga",
+   "differ": true,
+   "why": "an opening curly quote before the preposition"
+  },
+  {
+   "canon": "Sola has ١٢ eggs.",
+   "text": "Sola has 13 eggs.",
+   "differ": false,
+   "why": "numbers are ASCII digits on both sides (the Python's \\d read Arabic-Indic digits until 2026-11-15)"
+  },
+  {
+   "canon": "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70",
+   "text": "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65",
+   "differ": true,
+   "why": "more than 64 numbers (C kept the first 64 until 2026-11-15)"
+  },
+  {
+   "canon": "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70",
+   "text": "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 71",
+   "differ": true,
+   "why": "sets that differ only past the 64th word"
+  },
+  {
+   "canon": "the 1111111111111111111111111111111111111111111111111111111111111111111111 men",
+   "text": "the 2 men",
+   "differ": true,
+   "why": "a 70-digit number (C dropped words of 64 bytes or more until 2026-11-15)"
+  },
+  {
+   "canon": "born in Abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "text": "born in Boston",
+   "differ": true,
+   "why": "a 70-letter place name"
+  }
+ ],
+ "subject": [
+  {
+   "canon": "Kantos Kan is a padwar in the navy of Helium.",
+   "text": "Kantos Kan was a padwar of Zodanga.",
+   "same": true,
+   "why": "the leading names"
+  },
+  {
+   "canon": "Sola's father is Tars Tarkas.",
+   "text": "It was then that Sola's mother spoke.",
+   "same": true,
+   "why": "a possessive"
+  },
+  {
+   "canon": "Kantos Kan — a padwar of Helium.",
+   "text": "Kantos Kan rose.",
+   "same": true,
+   "why": "the part before a spaced em dash"
+  },
+  {
+   "canon": "Tars Tarkas—a padwar",
+   "text": "Tarkas rose.",
+   "same": true,
+   "why": "an unspaced em dash ends the run like any other non-letter"
+  },
+  {
+   "canon": "Powell left for the valley on March 3, 1866.",
+   "text": "It had been the third of May when Powell rode.",
+   "same": false,
+   "why": "a sentence opening on It (known limit: M4)"
+  },
+  {
+   "canon": "Mr. Darcy is tall.",
+   "text": "Mr. Bingley is tall.",
+   "same": false,
+   "why": "a title alone"
+  },
+  {
+   "canon": "Mr. Darcy is tall.",
+   "text": "He said Darcy was tall.",
+   "same": false,
+   "why": "a name not leading"
+  },
+  {
+   "canon": "Mr. Darcy is tall.",
+   "text": "“Darcy is short,” she said.",
+   "same": true,
+   "why": "an opening quote is skipped"
+  },
+  {
+   "canon": "Sola is here.",
+   "text": "“Sola's eyes,” he said.",
+   "same": true,
+   "why": "a possessive inside quotes"
+  },
+  {
+   "canon": "Zoë's eyes are green.",
+   "text": "Zoë's eyes are brown.",
+   "same": false,
+   "why": "an accented name never co-signs (known limit)"
+  },
+  {
+   "canon": "It was Sola’s egg.",
+   "text": "It was Sola’s egg.",
+   "same": false,
+   "why": "a curly apostrophe is no possessive (known limit)"
+  },
+  {
+   "canon": "—Sola's eyes",
+   "text": "It is Sola's hair.",
+   "same": true,
+   "why": "an em dash before a possessive name is a boundary"
+  },
+  {
+   "canon": "J. K. Powell rode.",
+   "text": "Powell rode.",
+   "same": true,
+   "why": "initials are part of the run, never a subject"
+  },
+  {
+   "canon": "Captain Powell rode.",
+   "text": "Powell rode.",
+   "same": true,
+   "why": "a title in the run is dropped"
+  },
+  {
+   "canon": "Ab rode.",
+   "text": "Ab rode.",
+   "same": false,
+   "why": "two-letter words are dropped"
+  },
+  {
+   "canon": "1Sola's eyes",
+   "text": "Sola's eyes",
+   "same": true,
+   "why": "a digit before a name"
+  },
+  {
+   "canon": "",
+   "text": "Sola is here.",
+   "same": false,
+   "why": "an empty side"
+  },
+  {
+   "canon": "Abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb is tall.",
+   "text": "Abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb was short.",
+   "same": true,
+   "why": "a 70-letter leading name (C dropped names of 64 bytes or more until 2026-11-15)"
+  },
+  {
+   "canon": "It was Abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb's horse.",
+   "text": "So Abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb's horse ran.",
+   "same": true,
+   "why": "a 70-letter possessive name"
+  }
+ ]
+}

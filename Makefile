@@ -182,7 +182,7 @@ $(BUILD)/test_components: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_state_fix
 $(BUILD)/test_db_rows: $(BUILD)/src/app/db.o $(BUILD)/tests/test_db_rows.o
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS)
 
-$(BUILD)/test_observer_text: $(BUILD)/src/llm/observer_text.o $(BUILD)/src/core/experiments.o $(BUILD)/src/core/utf8.o $(BUILD)/tests/test_observer_text.o
+$(BUILD)/test_observer_text: $(BUILD)/src/llm/observer_text.o $(BUILD)/src/core/experiments.o $(BUILD)/src/core/utf8.o $(BUILD)/third_party/cJSON/cJSON.o $(BUILD)/tests/test_observer_text.o
 	$(CC) $(CFLAGS) $^ -o $@
 
 $(BUILD)/test_chat_history: $(BUILD)/src/llm/chat_history.o $(BUILD)/tests/test_chat_history.o
@@ -314,6 +314,7 @@ test: $(TESTS) $(CORE_OBJS) $(LLM_OBJS) $(APP_OBJS)
 	$(WATCHDOG) $(TEST_TIMEOUT) test_observer_faults python3 tests/test_observer_faults.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_observer_judge_score python3 tests/test_observer_judge_score.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_observer_sentence_pairs python3 tests/test_observer_sentence_pairs.py
+	$(WATCHDOG) $(TEST_TIMEOUT) test_observer_rules python3 tests/test_observer_rules.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_probes python3 tests/test_answer_probes.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_live_capture python3 tests/test_answer_live_capture.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_live_audit python3 tests/test_answer_live_audit.py

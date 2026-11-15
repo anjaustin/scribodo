@@ -395,6 +395,23 @@ size_t obs_sentence_end(const char *s, size_t n)
     return n;
 }
 
+bool obs_next_sentence(const char *s, size_t n, size_t *pos, size_t *start, size_t *len)
+{
+    while (*pos < n) {
+        while (*pos < n && (s[*pos] == ' ' || s[*pos] == '\t' || s[*pos] == '\n' || s[*pos] == '\r')) (*pos)++;
+        if (*pos >= n) break;
+        size_t e = obs_sentence_end(s + *pos, n - *pos), l = e;
+        while (l > 0 && (s[*pos + l - 1] == ' ' || s[*pos + l - 1] == '\t' || s[*pos + l - 1] == '\r')) l--;
+        size_t at = *pos;
+        *pos += e ? e : 1;
+        if (l == 0) continue;
+        *start = at;
+        *len = l;
+        return true;
+    }
+    return false;
+}
+
 /* The attribute vocabularies of tools/observer_judge_score.py (frozen 2026-11-14 in step 6), word for word. */
 static const char *const k_number_words[] = { "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
     "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty", "thirty",
@@ -411,34 +428,56 @@ static const char *const k_time_words[] = { "january", "february", "march", "apr
 static const char *const k_place_titles[] = { "mr", "mrs", "ms", "miss", "lady", "lord", "sir", "dr", "captain", "colonel",
     "prince", "princess", "king", "queen", "the", "a", "an", "he", "she", "it", "they", "his", "her", "canon", "new", NULL };
 
-#define ATTR_MAX 64
-#define ATTR_LEN 64
+/* A set of words, as Python's set of str: unbounded. A fixed table of 64 words of under 64 bytes each kept the first
+ * 64 and dropped any longer word, where the Python keeps every one (AUDIT-004 F2; tests/fixtures/observer_rules).
+ * failed marks an allocation failure: the caller cannot check and lets the other evidence stand. */
 typedef struct {
-    char w[ATTR_MAX][ATTR_LEN];
-    size_t n;
+    char **w;
+    size_t n, cap;
+    bool failed;
 } WordSet;
 
 static void set_add(WordSet *s, const char *w, size_t n)
 {
-    if (n >= ATTR_LEN || s->n == ATTR_MAX) return;
+    if (s->failed) return;
     for (size_t i = 0; i < s->n; i++)
         if (strlen(s->w[i]) == n && !memcmp(s->w[i], w, n)) return;
-    memcpy(s->w[s->n], w, n);
-    s->w[s->n++][n] = '\0';
+    if (s->n == s->cap) {
+        size_t cap = s->cap ? s->cap * 2 : 16;
+        char **grown = realloc(s->w, cap * sizeof(char *));
+        if (!grown) { s->failed = true; return; }
+        s->w = grown;
+        s->cap = cap;
+    }
+    char *copy = malloc(n + 1);
+    if (!copy) { s->failed = true; return; }
+    memcpy(copy, w, n);
+    copy[n] = '\0';
+    s->w[s->n++] = copy;
 }
 
-static bool in_list(const char *const *list, const char *w, size_t n)
+static void set_free(WordSet *s)
+{
+    for (size_t i = 0; i < s->n; i++) free(s->w[i]);
+    free(s->w);
+}
+
+/* The entry of list equal to w[0, n) ignoring case, or NULL. */
+static const char *list_entry(const char *const *list, const char *w, size_t n)
 {
     for (size_t i = 0; list[i]; i++)
-        if (strlen(list[i]) == n && !strncasecmp(list[i], w, n)) return true;
-    return false;
+        if (strlen(list[i]) == n && !strncasecmp(list[i], w, n)) return list[i];
+    return NULL;
 }
+
+static bool in_list(const char *const *list, const char *w, size_t n) { return list_entry(list, w, n) != NULL; }
 
 static bool ascii_alpha(unsigned char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
 static bool ascii_digit(unsigned char c) { return c >= '0' && c <= '9'; }
 
-/* Python's re.findall(r"[A-Za-z]+|\d+") filtered into a set, lower-cased: the words of one vocabulary, and with
- * numbers=true also every run of digits and every number word. */
+/* Python's re.findall(r"[A-Za-z]+|[0-9]+") filtered into a set, lower-cased: the words of one vocabulary, and with
+ * numbers=true also every run of ASCII digits (of any length) and every number word. A vocabulary word is added as
+ * the list's own lower-case entry, so no word is copied into a buffer of fixed size. */
 static void vocab_set(const char *text, const char *const *list, bool numbers, WordSet *out)
 {
     const unsigned char *u = (const unsigned char *)text;
@@ -453,18 +492,45 @@ static void vocab_set(const char *text, const char *const *list, bool numbers, W
             continue;
         }
         size_t n = i - a;
-        char low[ATTR_LEN];
-        if (n >= ATTR_LEN) continue;
-        for (size_t k = 0; k < n; k++) low[k] = (char)((u[a + k] >= 'A' && u[a + k] <= 'Z') ? u[a + k] + 32 : u[a + k]);
-        bool digit = ascii_digit(u[a]);
-        if ((list && !digit && in_list(list, low, n)) || (numbers && (digit || in_list(k_number_words, low, n))))
-            set_add(out, low, n);
+        if (ascii_digit(u[a])) {
+            if (numbers) set_add(out, text + a, n);
+            continue;
+        }
+        const char *entry = list ? list_entry(list, text + a, n) : NULL;
+        if (!entry && numbers) entry = list_entry(k_number_words, text + a, n);
+        if (entry) set_add(out, entry, n);
     }
 }
 
-/* Python's \w for the boundary before "of": a letter, digit or underscore, any byte of a multi-byte character. */
-static bool py_word_byte(unsigned char c) { return ascii_alpha(c) || ascii_digit(c) || c == '_' || c >= 0x80; }
-static bool py_space(unsigned char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v'; }
+/* Python's \w at a byte: ASCII letters, digits and underscore; a multi-byte character counts as a word character
+ * unless it is punctuation or a space (U+0080 to U+00BF, U+2000 to U+206F, U+3000 to U+303F), the quotes and dashes
+ * fiction puts beside a name. */
+static bool py_word_at(const unsigned char *u, size_t i)
+{
+    if (u[i] < 0x80) return ascii_alpha(u[i]) || ascii_digit(u[i]) || u[i] == '_';
+    while (i > 0 && (u[i] & 0xC0) == 0x80) i--; /* back to the character's first byte */
+    unsigned cp;
+    if ((u[i] & 0xE0) == 0xC0 && (u[i + 1] & 0xC0) == 0x80) cp = (u[i] & 0x1Fu) << 6 | (u[i + 1] & 0x3Fu);
+    else if ((u[i] & 0xF0) == 0xE0 && (u[i + 1] & 0xC0) == 0x80 && (u[i + 2] & 0xC0) == 0x80)
+        cp = (u[i] & 0x0Fu) << 12 | (u[i + 1] & 0x3Fu) << 6 | (u[i + 2] & 0x3Fu);
+    else return true;
+    return !((cp >= 0x80 && cp <= 0xBF) || (cp >= 0x2000 && cp <= 0x206F) || (cp >= 0x3000 && cp <= 0x303F));
+}
+
+/* Python's \s at u (str patterns: Unicode whitespace, U+0009 to U+000D, U+001C to U+001F, U+0020, U+0085, U+00A0,
+ * U+1680, U+2000 to U+200A, U+2028, U+2029, U+202F, U+205F, U+3000): its length in bytes, or 0. The ASCII-only test
+ * before 2026-11-15 read "of\u00A0Helium" as no place (AUDIT-004 F2). */
+static size_t py_space_len(const unsigned char *u)
+{
+    if ((u[0] >= 0x09 && u[0] <= 0x0D) || (u[0] >= 0x1C && u[0] <= 0x20)) return 1;
+    if (u[0] == 0xC2 && (u[1] == 0x85 || u[1] == 0xA0)) return 2;
+    if (u[0] == 0xE1 && u[1] == 0x9A && u[2] == 0x80) return 3;                                   /* U+1680 */
+    if (u[0] == 0xE2 && u[1] == 0x80 && ((u[2] >= 0x80 && u[2] <= 0x8A) || u[2] == 0xA8 || u[2] == 0xA9 || u[2] == 0xAF))
+        return 3;                                                                                  /* U+2000-200A, 2028, 2029, 202F */
+    if (u[0] == 0xE2 && u[1] == 0x81 && u[2] == 0x9F) return 3;                                   /* U+205F */
+    if (u[0] == 0xE3 && u[1] == 0x80 && u[2] == 0x80) return 3;                                   /* U+3000 */
+    return 0;
+}
 
 /* A capitalised word [A-Z][a-z]+ at u: its length, or 0. */
 static size_t cap_word(const unsigned char *u)
@@ -476,36 +542,34 @@ static size_t cap_word(const unsigned char *u)
 }
 
 /* re.finditer(r"\b(of|in|from|at|to)\s+((?:[A-Z][a-z]+)(?:\s+[A-Z][a-z]+)*)"), the name kept unless its first word is
- * on the title list: the places and households a sentence puts someone in. */
+ * on the title list: the places and households a sentence puts someone in. The \b before the preposition is read with
+ * py_word_at, so an em dash or a curly quote before it is a boundary, as in Python (a non-ASCII byte counted as a
+ * letter until 2026-11-15). */
 static void place_set(const char *text, WordSet *out)
 {
     static const char *const preps[] = { "of", "in", "from", "at", "to" };
     const unsigned char *u = (const unsigned char *)text;
     for (size_t i = 0; u[i];) {
         size_t matched = 0;
-        if (i == 0 || !py_word_byte(u[i - 1]))
+        if (i == 0 || !py_word_at(u, i - 1))
             for (size_t p = 0; p < 5 && !matched; p++) {
-                size_t pl = strlen(preps[p]);
+                size_t pl = strlen(preps[p]), sp;
                 if (strncmp((const char *)u + i, preps[p], pl)) continue;
                 size_t k = i + pl;
-                if (!py_space(u[k])) continue;
-                while (py_space(u[k])) k++;
+                if (!py_space_len(u + k)) continue;
+                while ((sp = py_space_len(u + k))) k += sp;
                 size_t w = cap_word(u + k);
                 if (!w) continue;
-                size_t name = k, end = k + w, first = w;
+                size_t name = k, end = k + w;
                 for (;;) {
-                    size_t s = end;
-                    while (py_space(u[s])) s++;
-                    if (s == end) break;
-                    size_t w2 = cap_word(u + s);
+                    size_t at = end;
+                    while ((sp = py_space_len(u + at))) at += sp;
+                    if (at == end) break;
+                    size_t w2 = cap_word(u + at);
                     if (!w2) break;
-                    end = s + w2;
+                    end = at + w2;
                 }
-                char low[ATTR_LEN];
-                if (first < ATTR_LEN) {
-                    for (size_t q = 0; q < first; q++) low[q] = (char)(u[name + q] >= 'A' && u[name + q] <= 'Z' ? u[name + q] + 32 : u[name + q]);
-                    if (!in_list(k_place_titles, low, first)) set_add(out, text + name, end - name);
-                }
+                if (!in_list(k_place_titles, text + name, w)) set_add(out, text + name, end - name);
                 matched = end - i;
             }
         i += matched ? matched : 1;
@@ -524,40 +588,29 @@ static bool sets_differ(const WordSet *a, const WordSet *b)
     return false;
 }
 
+/* The two sets compared, then freed; an allocation failure answers "differ" (cannot check: the judge's verdict stands
+ * alone, as before). */
+static bool sets_differ_free(WordSet *a, WordSet *b)
+{
+    bool d = a->failed || b->failed || sets_differ(a, b);
+    set_free(a);
+    set_free(b);
+    return d;
+}
+
 bool obs_attributes_differ(const char *canon, const char *text)
 {
     static const char *const *const lists[] = { NULL, k_kin_words, k_color_words, k_time_words };
     for (int k = 0; k < 4; k++) {
-        WordSet *a = calloc(2, sizeof(WordSet));
-        if (!a) return true; /* cannot check: the judge's verdict stands alone */
-        vocab_set(canon, lists[k], k == 0 || k == 3, &a[0]);
-        vocab_set(text, lists[k], k == 0 || k == 3, &a[1]);
-        bool d = sets_differ(&a[0], &a[1]);
-        free(a);
-        if (d) return true;
+        WordSet a = { 0 }, b = { 0 };
+        vocab_set(canon, lists[k], k == 0 || k == 3, &a);
+        vocab_set(text, lists[k], k == 0 || k == 3, &b);
+        if (sets_differ_free(&a, &b)) return true;
     }
-    WordSet *a = calloc(2, sizeof(WordSet));
-    if (!a) return true;
-    place_set(canon, &a[0]);
-    place_set(text, &a[1]);
-    bool d = sets_differ(&a[0], &a[1]);
-    free(a);
-    return d;
-}
-
-/* Python's \w at a byte: ASCII letters, digits and underscore; a multi-byte character counts as a word character
- * unless it is punctuation or a space (U+0080 to U+00BF, U+2000 to U+206F, U+3000 to U+303F), the quotes and dashes
- * fiction puts beside a name. */
-static bool py_word_at(const unsigned char *u, size_t i)
-{
-    if (u[i] < 0x80) return ascii_alpha(u[i]) || ascii_digit(u[i]) || u[i] == '_';
-    while (i > 0 && (u[i] & 0xC0) == 0x80) i--; /* back to the character's first byte */
-    unsigned cp;
-    if ((u[i] & 0xE0) == 0xC0 && (u[i + 1] & 0xC0) == 0x80) cp = (u[i] & 0x1Fu) << 6 | (u[i + 1] & 0x3Fu);
-    else if ((u[i] & 0xF0) == 0xE0 && (u[i + 1] & 0xC0) == 0x80 && (u[i + 2] & 0xC0) == 0x80)
-        cp = (u[i] & 0x0Fu) << 12 | (u[i + 1] & 0x3Fu) << 6 | (u[i + 2] & 0x3Fu);
-    else return true;
-    return !((cp >= 0x80 && cp <= 0xBF) || (cp >= 0x2000 && cp <= 0x206F) || (cp >= 0x3000 && cp <= 0x303F));
+    WordSet a = { 0 }, b = { 0 };
+    place_set(canon, &a);
+    place_set(text, &b);
+    return sets_differ_free(&a, &b);
 }
 
 /* tools/observer_judge_score.py subjects(), frozen in step 6: who a sentence is about. The leading run of
@@ -572,11 +625,7 @@ static void subject_set(const char *text, WordSet *out)
         size_t w = cap_word(u + i);
         if (w && i + w > head) w = head - i; /* the regex sees only the head */
         if (w >= 2) {
-            char low[ATTR_LEN];
-            if (w > 2 && w < ATTR_LEN) {
-                for (size_t q = 0; q < w; q++) low[q] = (char)(u[i + q] >= 'A' && u[i + q] <= 'Z' ? u[i + q] + 32 : u[i + q]);
-                if (!in_list(k_place_titles, low, w)) set_add(out, text + i, w);
-            }
+            if (w > 2 && !in_list(k_place_titles, text + i, w)) set_add(out, text + i, w);
             i += w;
         } else if (u[i] >= 'A' && u[i] <= 'Z' && i + 1 < head && u[i + 1] == '.') {
             i += 2; /* an initial: part of the run, never a subject */
@@ -590,19 +639,19 @@ static void subject_set(const char *text, WordSet *out)
         if (i > 0 && py_word_at(u, i - 1)) continue;
         size_t w = cap_word(u + i);
         if (!w || u[i + w] != '\'' || u[i + w + 1] != 's' || (u[i + w + 2] && py_word_at(u, i + w + 2))) continue;
-        if (w < ATTR_LEN) set_add(out, text + i, w);
+        set_add(out, text + i, w);
     }
 }
 
 bool obs_same_subject(const char *canon, const char *text)
 {
-    WordSet *a = calloc(2, sizeof(WordSet));
-    if (!a) return true; /* cannot check: the other co-signers stand */
-    subject_set(canon, &a[0]);
-    subject_set(text, &a[1]);
-    bool shared = false;
-    for (size_t i = 0; i < a[0].n && !shared; i++)
-        for (size_t j = 0; j < a[1].n && !shared; j++) shared = !strcmp(a[0].w[i], a[1].w[j]);
-    free(a);
+    WordSet a = { 0 }, b = { 0 };
+    subject_set(canon, &a);
+    subject_set(text, &b);
+    bool shared = a.failed || b.failed; /* cannot check: the other co-signers stand */
+    for (size_t i = 0; i < a.n && !shared; i++)
+        for (size_t j = 0; j < b.n && !shared; j++) shared = !strcmp(a.w[i], b.w[j]);
+    set_free(&a);
+    set_free(&b);
     return shared;
 }

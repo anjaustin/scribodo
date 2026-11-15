@@ -25,7 +25,10 @@ def ends_sentence(anchor, after):
     """True when the anchor ends with sentence punctuation (closing quotes allowed), what follows in the text is a
     space, a line end or the end of the file, and a final period does not close a title or an initial: the letters
     right before it are not on ABBREVIATIONS and not one capital ("drily--\u201cMr." is a title, "Kan\u2019s." ends a
-    sentence). obs_sentence_end in src/llm/observer_text.c is the same rule, held to this one by a differential run."""
+    sentence). This checks an anchor's end only. obs_sentence_end in src/llm/observer_text.c, which cuts running text,
+    agrees on titles, initials and closing quotes but also requires a capital (an opening quote allowed) after the space,
+    which is observer_sentence_pairs.BOUNDARY's rule: "ends with i. next" ends a sentence here and none there.
+    tests/fixtures/observer_rules/cases.json holds the C splitter and BOUNDARY with this check to the same sentences."""
     m = re.search(r"([A-Za-z]*)([.!?])[\"'\u201d\u2019)]*$", anchor)
     if not m or (after and not after[0].isspace()):
         return False

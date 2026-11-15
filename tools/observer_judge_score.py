@@ -36,7 +36,9 @@ TITLES = {"mr", "mrs", "ms", "miss", "lady", "lord", "sir", "dr", "captain", "co
 
 
 def words(text):
-    return re.findall(r"[A-Za-z]+|\d+", text or "")
+    """ASCII letters and ASCII digits, as obs_attributes_differ reads them (\\d read Arabic-Indic and other Unicode
+    digits until 2026-11-15; tests/fixtures/observer_rules/cases.json, AUDIT-004 F2)."""
+    return re.findall(r"[A-Za-z]+|[0-9]+", text or "")
 
 
 def lower_set(text, vocab):

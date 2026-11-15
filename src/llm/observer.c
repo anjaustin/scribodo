@@ -807,15 +807,8 @@ static void job_judge_sentences(JobRun *r)
     for (size_t q = 0; q < j->nsegs && !r->cancelled; q++) {
         const ObserverSegment *sg = &j->segs[q];
         const char *seg = j->chunk + sg->chunk_off;
-        size_t pos = 0;
-        while (pos < sg->len && !r->cancelled) {
-            while (pos < sg->len && (seg[pos] == ' ' || seg[pos] == '\t' || seg[pos] == '\n' || seg[pos] == '\r')) pos++;
-            if (pos >= sg->len) break;
-            size_t e = obs_sentence_end(seg + pos, sg->len - pos), len = e;
-            while (len > 0 && (seg[pos + len - 1] == ' ' || seg[pos + len - 1] == '\t' || seg[pos + len - 1] == '\r')) len--;
-            size_t at = pos;
-            pos += e ? e : 1;
-            if (len == 0) continue;
+        size_t pos = 0, at, len;
+        while (!r->cancelled && obs_next_sentence(seg, sg->len, &pos, &at, &len)) {
             char stmt[OBS_STATEMENT_BYTES];
             char *raw = dupn(seg + at, len);
             if (!raw) continue;

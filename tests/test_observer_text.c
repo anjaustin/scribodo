@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include "llm/observer.h"
 #include "test_util.h"
+#include "cJSON.h"
 
 static bool locate_is(const char *text, const char *evidence, const char *want)
 {
@@ -186,6 +187,84 @@ static void test_same_subject(void)
     CHECK(!obs_same_subject("", "Sola is here."));
 }
 
+/* tests/fixtures/observer_rules/cases.json, the cases tests/test_observer_rules.py also runs through the Python each
+ * C rule was ported from (AUDIT-004 F2): the observer's sentence loop, the attribute co-signer and the subject
+ * co-signer must each give every expected value. Run from the repository root. */
+static char *read_fixture(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) { fprintf(stderr, "missing %s (run from the repository root)\n", path); return NULL; }
+    char *buf = NULL;
+    size_t cap = 0, n = 0, got;
+    do {
+        if (n + 4096 + 1 > cap) {
+            cap = cap ? cap * 2 : 16384;
+            char *grown = realloc(buf, cap);
+            if (!grown) { free(buf); fclose(f); return NULL; }
+            buf = grown;
+        }
+        got = fread(buf + n, 1, 4096, f);
+        n += got;
+    } while (got > 0);
+    fclose(f);
+    buf[n] = '\0';
+    return buf;
+}
+
+static const char *case_str(const cJSON *c, const char *key)
+{
+    const cJSON *v = cJSON_GetObjectItem(c, key);
+    return cJSON_IsString(v) ? v->valuestring : NULL;
+}
+
+static void test_shared_rule_fixture(void)
+{
+    char *text = read_fixture("tests/fixtures/observer_rules/cases.json");
+    cJSON *root = text ? cJSON_Parse(text) : NULL;
+    CHECK(root != NULL);
+    free(text);
+    if (!root) return;
+    CHECK(cJSON_GetNumberValue(cJSON_GetObjectItem(root, "version")) == 1);
+    size_t n_sent = 0, n_attr = 0, n_subj = 0;
+    const cJSON *c;
+    cJSON_ArrayForEach(c, cJSON_GetObjectItem(root, "sentences")) {
+        const char *t = case_str(c, "text");
+        const cJSON *want = cJSON_GetObjectItem(c, "want");
+        CHECK(t && cJSON_IsArray(want));
+        if (!t || !cJSON_IsArray(want)) continue;
+        size_t pos = 0, start, len, k = 0, nwant = (size_t)cJSON_GetArraySize(want);
+        bool same = true;
+        while (obs_next_sentence(t, strlen(t), &pos, &start, &len)) {
+            const char *w = k < nwant ? cJSON_GetArrayItem(want, (int)k)->valuestring : NULL;
+            if (!w || strlen(w) != len || strncmp(w, t + start, len)) same = false;
+            if (!same) fprintf(stderr, "    sentence %zu of [%s]: got [%.*s] want [%s]\n", k, t, (int)len, t + start, w ? w : "(none)");
+            k++;
+        }
+        CHECK(same && k == nwant);
+        n_sent++;
+    }
+    cJSON_ArrayForEach(c, cJSON_GetObjectItem(root, "attributes")) {
+        const char *canon = case_str(c, "canon"), *t = case_str(c, "text");
+        CHECK(canon && t && cJSON_IsBool(cJSON_GetObjectItem(c, "differ")));
+        if (!canon || !t) continue;
+        bool want = cJSON_IsTrue(cJSON_GetObjectItem(c, "differ")), got = obs_attributes_differ(canon, t);
+        if (got != want) fprintf(stderr, "    attributes [%.60s] [%.60s]: got %d (%s)\n", canon, t, got, case_str(c, "why"));
+        CHECK(got == want);
+        n_attr++;
+    }
+    cJSON_ArrayForEach(c, cJSON_GetObjectItem(root, "subject")) {
+        const char *canon = case_str(c, "canon"), *t = case_str(c, "text");
+        CHECK(canon && t && cJSON_IsBool(cJSON_GetObjectItem(c, "same")));
+        if (!canon || !t) continue;
+        bool want = cJSON_IsTrue(cJSON_GetObjectItem(c, "same")), got = obs_same_subject(canon, t);
+        if (got != want) fprintf(stderr, "    subject [%.60s] [%.60s]: got %d (%s)\n", canon, t, got, case_str(c, "why"));
+        CHECK(got == want);
+        n_subj++;
+    }
+    CHECK(n_sent >= 16 && n_attr >= 24 && n_subj >= 19);
+    cJSON_Delete(root);
+}
+
 int main(void)
 {
     const TestCase tests[] = {
@@ -197,6 +276,7 @@ int main(void)
         { "sentence_end", test_sentence_end },
         { "attributes_differ", test_attributes_differ },
         { "same_subject", test_same_subject },
+        { "shared_rule_fixture", test_shared_rule_fixture },
     };
     return run_tests(tests, sizeof(tests) / sizeof(tests[0]));
 }

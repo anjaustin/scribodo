@@ -118,6 +118,12 @@ void obs_first_sentence(char *s);
  * quote) follow, never after a title or an initial (tools/observer_plant.py's rule); n when none ends sooner. */
 size_t obs_sentence_end(const char *s, size_t n);
 
+/* The sentences of s[0, n) one by one, as the observer pairs them: from *pos, skip spaces, tabs and line breaks, end the
+ * sentence with obs_sentence_end, drop its trailing spaces, tabs and carriage returns. True with the sentence's byte
+ * range in *start and *len and *pos past it; false at the end. tests/fixtures/observer_rules/cases.json holds this and
+ * tools/observer_sentence_pairs.sentences to the same sentences. */
+bool obs_next_sentence(const char *s, size_t n, size_t *pos, size_t *start, size_t *len);
+
 /* A canon entry and a sentence state different values of one kind: numbers, kinship words, colours, time words or
  * place names after of/in/from/at/to, each kind compared as two non-empty sets (tools/observer_judge_score.py a_any,
  * frozen in step 6). The software co-signer of a sentence conflict. */
