@@ -160,7 +160,7 @@ def main():
     parser.add_argument("--templates-only", action="store_true")
     parser.add_argument("--self-test", action="store_true", help="Validate diagnostic construction without starting a model")
     parser.add_argument("--case", action="append", dest="selected")
-    parser.add_argument("--batch", type=int, choices=(64, 128, 256, 512), default=256)
+    parser.add_argument("--batch", type=int, choices=(64, 128, 256, 512), default=128)  # the app's chat batch since 2026-11-14
     parser.add_argument("--repeat-penalty", type=float)
     parser.add_argument("--raw-completion", action="store_true", help="Pair selected chat requests with identical rendered token input")
     parser.add_argument("--briefs-only", action="store_true")

@@ -167,6 +167,70 @@ uitest` 409, 0; `make uitest-db` 281, 0; `make analyze` 0 warnings across 87
 files; `make sanitize` 95,766, 0; `make tsan` 48,339, 0; every exit status 0;
 the fake-path yardstick byte-identical with `realflag` on three novels. Hosted: 43630415936 CI success; 43630415947 Trusted acceptance success on `e1482c5`.
 
+## The micro-batch (2026-11-14, late evening; corrected by REDTEAM-023)
+
+The author asked whether the chat model needs 22 KiB a token. It does not:
+llama-server's own breakdown at the app's arguments (two slots at 32K, 65,536
+cells, flash attention off, BF16 KV) puts the KV cache at 779 MiB, 12.2 KiB a
+token, because LFM3 has six attention layers and the rest are short
+convolutions; the rest is the attention-score scratch, which grows with
+micro-batch times context. As allocated (the second breakdown in each log; the
+first is llama.cpp's projection, which counts the CPU buffer twice), measured by
+`tools/model_batch_compare.py` (`build/observer/redteam023/batch/`):
+
+| micro-batch | model | KV | Metal compute | CPU compute | device total |
+|---|---|---|---|---|---|
+| 512 (first measurement) | 3,298 MiB | 784 MiB | 1,115 MiB | | 5,197 MiB |
+| 256 (the setting until now) | 3,298 MiB | 779 MiB | 557 MiB | 42 MiB | 4,634 MiB |
+| 128 | 3,298 MiB | 779 MiB | 278 MiB | 21 MiB | 4,356 MiB |
+
+At 128 that is 1,078 MiB over 65,536 cells, 16.8 KiB a token (17.2 by the
+projection). The fit's per-token figure is 18 KiB, which covers both; it was
+first written as 17, which covers the allocation but not the projection.
+
+**What it changes in the replies.** The micro-batch keeps the BF16 contract
+(weights and K and V stay BF16, flash attention off) but changes the order in
+which the arithmetic is accumulated, and that flips near-ties. Twenty captured
+composer requests replayed with their own sampling settings and seed, cut at 400
+tokens: two runs at 256 agreed on 20 of 20 (the control), 128 against 256 on 17
+of 20. The three that changed diverged late, after 277, 777 and 1,357
+characters, on hard questions where both versions already wander; neither is
+better. So records made at 256 stay valid as records of that configuration but
+no longer replay byte for byte, and the thirteen tools that launch the chat
+server "as the app does" now use 128. (The first version of this section said
+the micro-batch changes nothing the model computes; it was asserted, not
+measured.)
+
+**What it costs.** Prefill medians of three, cache off, prompts cut from the
+first novel; the runs went 256, 128, 256, and the machine warmed between them:
+
+| prompt tokens | 256 (first) | 128 | 256 (control) |
+|---|---|---|---|
+| 1,968 | 2.20 s | 2.28 s | 2.65 s |
+| 4,992 | 5.75 s | 5.94 s | 6.87 s |
+| 12,971 | 17.14 s | 18.58 s | 20.50 s |
+| 25,975 | 42.09 s | 47.49 s | 49.51 s |
+| generation, 128 tokens | 25.5 tok/s | 25.8 | 25.7 |
+
+The cost of 128 is within the drift between the two 256 runs: at most 4 to 13
+percent against the cooler first run, none against the warmer second.
+Generation is unchanged (medians of three). MODEL-001 measured the other side
+of the trade on 2026-11-04: a smaller batch interleaves the chat's tokens with
+an observer prefill more finely (worst chat stall 195 ms at 128 against about
+300 to 400 at 256).
+
+**What it buys.** Replayed at the real budget of the 24K launch (its fit read
+5.2 GB free for the chat model, which with the other servers' reservations and
+the headroom is `SCRIBODO_MEM_AVAILABLE_MB` 9,755 to 9,851 across the rounding;
+the variable is MiB, and the first replay passed a decimal-MB figure 500 MB too
+generous), the chat server started with a 32K slot each time: 5.08 GB needed
+against 5.15 to 5.25 GB free, a margin of 70 to 170 MB
+(`build/observer/redteam023/fit-replay.txt`). That margin is smaller than the
+swings between launches on the live machine, where two launches the same hour
+read 2.0 and 3.2 GB free for the model and fell to 8K, so the honest summary is
+that at the one launch budget measured the chat server reaches 32K with that small a margin, and a launch on a busier machine still falls back to 24K or 8K. (The first version also gave a
+cause for those two launches; it was not measured and is withdrawn.)
+
 ## Gates
 
 On the tree with this change and the REDTEAM-022 remediations

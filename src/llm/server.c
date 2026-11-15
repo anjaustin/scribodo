@@ -172,19 +172,23 @@ void llm_server_default_config(LlmServerConfig *c, const char *app_dir)
         snprintf(c->log_path, sizeof(c->log_path), "%s/Library/Logs/Scribodo/llama-server.log", home);
         snprintf(c->cache_path, sizeof(c->cache_path), "%s/Library/Application Support/Scribodo/model-verified.txt", home);
     }
-    /* 32K context per slot, 2 slots (chat + observer), batch 256: see
-     * MODEL-001 "Memory" and "Chat and observer together". */
+    /* 32K context per slot, 2 slots (chat + observer): see MODEL-001 "Memory" and "Chat and observer together".
+     * -b and -ub 128 since 2026-11-14 (256 before; the measurement is in the comment below). */
     c->ctx_total = 65536;
     c->slots = 2;
-    c->batch = 256;
-    /* llama-server's memory breakdown at -c 4096/16384/32768/65536
-     * (2026-11-04): KV 12 KiB per token (6 attention layers, BF16), Metal
-     * compute 8.5 KiB and CPU compute 1 KiB per token (flash attention
-     * off: micro-batch x context); fixed about 45 MiB (the short KV of the
-     * convolution layers, compute intercepts) plus the process and Metal's
-     * own. Rounded up. */
+    c->batch = 128;
+    /* llama-server's memory at -c 65536 (two slots at 32K), measured 2026-11-14 by tools/model_batch_compare.py: KV
+     * 779 MiB, 12.2 KiB per token (6 attention layers, BF16); the attention-score scratch with flash attention off
+     * grows with micro-batch x context: Metal compute 557 MiB and CPU compute 42 at -ub 256, 278 and 21 at 128. At
+     * 128 that is 16.8 KiB per token as allocated, 17.2 by llama.cpp's own projection (which counts the CPU buffer
+     * twice), so 18. The 279 MiB of Metal scratch is what usually turns a 24K fit into 32K on the 16 GB Mac with the
+     * three servers resident (a margin of 70 to 170 MB at the measured launch budget). It keeps the BF16 contract but
+     * changes the accumulation order: 3 of 20 captured replies diverged late against 256 (two 256 runs: 20 of 20).
+     * Prefill cost within the machine's drift; generation unchanged (journal/answer-cycle4_default_path.md, "The
+     * micro-batch"; REDTEAM-023). Fixed: about 45 MiB (the convolution layers' short KV, compute intercepts) plus the
+     * process and Metal's own, rounded up. */
     c->mem_fixed = 384LL * 1024 * 1024;
-    c->mem_per_token = 22 * 1024;
+    c->mem_per_token = 18 * 1024;
 }
 
 LlmServer *llm_server_create(const LlmServerConfig *cfg)

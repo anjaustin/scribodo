@@ -101,7 +101,7 @@ def llama(args):
     binary = ROOT / 'build/llama/bin/llama-server'
     command = [str(binary), '-m', str(GGUF), '--host', str(sock), '--api-key-file', str(keyfile),
                '-ngl', '99', '-fa', 'off', '-ctk', 'bf16', '-ctv', 'bf16', '--jinja',
-               '--reasoning-format', 'deepseek', '-np', '2', '-c', str(2*SLOT_TOKENS), '-b', '256', '-ub', '256',
+               '--reasoning-format', 'deepseek', '-np', '2', '-c', str(2*SLOT_TOKENS), '-b', '128', '-ub', '128',
                '--cache-ram', '0', '--no-webui', '--no-slots']
     write(args.run / 'llama-runtime.json', {'command': command, 'binary_sha256': sha(binary), 'gguf_sha256': GGUF_SHA})
     with (args.run / 'llama-server.log').open('x') as log:

@@ -119,7 +119,7 @@ def llama(run):
     keyfile.chmod(0o600)
     command = [str(binary), "-m", str(GGUF), "--host", str(sock), "--api-key-file", str(keyfile),
                "-ngl", "99", "-fa", "off", "-ctk", "bf16", "-ctv", "bf16", "--jinja",
-               "--reasoning-format", "deepseek", "-np", "2", "-c", "16384", "-b", "256", "-ub", "256",
+               "--reasoning-format", "deepseek", "-np", "2", "-c", "16384", "-b", "128", "-ub", "128",
                "--cache-ram", "0", "--no-webui", "--no-slots"]
     write(run / "llama-runtime.json", {"command": command, "binary_sha256": sha(binary), "gguf_sha256": GGUF_SHA})
     with (run / "llama-server.log").open("xb") as log:

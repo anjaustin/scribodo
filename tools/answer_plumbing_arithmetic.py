@@ -84,7 +84,7 @@ def runtime(args):
     binary = ROOT / 'build/llama/bin/llama-server'
     command = [str(binary), '-m', str(GGUF), '--host', str(sock), '--api-key-file', str(keyfile),
                *backend_flags(args.stage), '-fa', 'off', '--jinja', '--reasoning-format', 'deepseek', '-v',
-               '-np', '2', '-c', '16384', '-b', '256', '-ub', '256', '--cache-ram', '0', '--no-webui', '--no-slots']
+               '-np', '2', '-c', '16384', '-b', '128', '-ub', '128', '--cache-ram', '0', '--no-webui', '--no-slots']
     write(out / 'runtime.json', {'command': command, 'binary_sha256': sha(binary), 'kv_type': kv, 'ngl': ngl})
     rows = []
     with (out / 'server.log').open('x') as log:

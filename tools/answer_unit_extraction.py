@@ -424,7 +424,7 @@ def main():
     with private_socket() as sock, private_socket() as embed_sock:
         binary = ROOT / 'build/llama/bin/llama-server'
         command = [str(binary), '-m', str(GGUF), *backend_flags('metal_bf16'), '-fa', 'off', '--jinja',
-                   '--reasoning-format', 'deepseek', '-np', '1', '-c', str(args.slot_tokens), '-b', '256', '-ub', '256',
+                   '--reasoning-format', 'deepseek', '-np', '1', '-c', str(args.slot_tokens), '-b', '128', '-ub', '128',
                    '--cache-ram', '0', '--host', str(sock), '--no-webui', '--no-slots']
         # The production embedding server flags (src/llm/server.c embed_argv and its config).
         embed_command = [str(binary), '-m', str(EMBED_GGUF), '-ngl', '99', '-fa', 'off', '--embedding', '--pooling', 'last',

@@ -235,7 +235,7 @@ def main():
     with private_socket() as sock:
         command = [str(ROOT / 'build/llama/bin/llama-server'), '-m', str(model), '-ngl', '99', '-fa', 'off',
                    '-ctk', 'bf16', '-ctv', 'bf16', '--jinja', '--reasoning-format', 'deepseek',
-                   '-np', '2', '-c', '32768', '-b', '256', '-ub', '256', '--cache-ram', '0',
+                   '-np', '2', '-c', '32768', '-b', '128', '-ub', '128', '--cache-ram', '0',
                    '--host', str(sock), '--no-webui', '--no-slots']
         manifest = {'model_sha256': SHA, 'command': command, 'case_index': args.index,
                     'server_sha256': hashlib.sha256(Path(command[0]).read_bytes()).hexdigest(),

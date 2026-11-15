@@ -132,7 +132,7 @@ def main():
     with private_socket() as sock:
         binary = ROOT / 'build/llama/bin/llama-server'
         command = [str(binary), '-m', str(GGUF), '-ngl', '99', '-fa', 'off', '-ctk', 'bf16', '-ctv', 'bf16',
-                   '--jinja', '--reasoning-format', 'deepseek', '-np', '2', '-c', '16384', '-b', '256', '-ub', '256',
+                   '--jinja', '--reasoning-format', 'deepseek', '-np', '2', '-c', '16384', '-b', '128', '-ub', '128',
                    '--cache-ram', '0', '--host', str(sock), '--no-webui', '--no-slots']
         manifest = {'command': command, 'model_sha256': GGUF_SHA, 'binary_sha256': sha(binary),
                     'inputs_sha256': {p.name: sha(p) for p in inputs.iterdir()}, 'prompt_tokens': counts,

@@ -12,7 +12,7 @@ Run **llama.cpp `llama-server`** as a supervised child process, reached through 
 
 ```
 -m LFM3-1.7B-BF16.gguf -ngl 99 -fa off -ctk bf16 -ctv bf16 --jinja
--np 2 -c <2 × per-slot context> -b 256 -ub 256 --cache-ram 0
+-np 2 -c <2 × per-slot context> -b 128 -ub 128 --cache-ram 0
 --host <0700 dir>/llama.sock --api-key-file <0600 file>
 ```
 
@@ -166,9 +166,9 @@ Recommended flags (`-fa off`, `-np 2`, `--cache-ram 0`), with both slots holding
 | 32768 | 395 MiB | 285 MiB | 53 MiB |
 | 65536 (default, 32K × 2) | 779 MiB | 557 MiB | 85 MiB |
 
-That works out to about 21.5 KiB per token of `-c`: 12 KiB of KV (6 attention layers), 8.5 KiB of Metal compute and 1 KiB of CPU compute. Weights are 3.3 GB Metal-mapped plus 0.5 GB CPU-mapped from a 3.47 GB file. The embedding server (Qwen3-Embedding-0.6B, fixed at 2,304 tokens) needs about 2.2 GB in all.
+That works out to about 21.5 KiB per token of `-c`: 12 KiB of KV (6 attention layers), 8.5 KiB of Metal compute and 1 KiB of CPU compute. (The CPU column is llama.cpp's projection, which counts the CPU buffer twice; allocated, it is half.) **Since 2026-11-14 the chat server runs `-b/-ub 128`**: Metal compute 278 MiB and CPU 21 at 65,536 cells, 16.8 KiB per token in all, so the fit uses 18 KiB; it keeps the BF16 contract but changes the accumulation order (3 of 20 captured replies diverged late against 256, two 256 runs agreeing on 20 of 20), and its prefill cost is within the machine's drift (journal/answer-cycle4_default_path.md, "The micro-batch"; REDTEAM-023). Weights are 3.3 GB Metal-mapped plus 0.5 GB CPU-mapped from a 3.47 GB file. The embedding server (Qwen3-Embedding-0.6B, fixed at 2,304 tokens) needs about 2.2 GB in all.
 
-**Memory check before starting (`src/llm/memfit.c`).** The estimate is the model file, plus a fixed cost, plus 22 KiB per token (`llm_server_mem_need`). This is compared with what macOS can hand out, keeping 512 MiB of headroom for the app itself, since macOS's own memory is already counted as used. That's the total minus wired, compressed and apps' own anonymous memory, as Activity Monitor counts it; cached files count as available. Free + inactive alone read 7.1 GB on a machine with 8.9 GB to give. If the author's context doesn't fit, the model starts with the largest context, in 8K steps, that does, and the status bar says so. The saved setting is kept, and Apply in Model settings checks again. If not even 8K fits, the model starts anyway with a warning. The same check runs before a restart for a new context size, counting the running model's memory as returned. The Model settings panel shows the estimate for the context being chosen against what's free.
+**Memory check before starting (`src/llm/memfit.c`).** The estimate is the model file, plus a fixed cost, plus 18 KiB per token since 2026-11-14 (22 before the micro-batch went to 128; `llm_server_mem_need`). This is compared with what macOS can hand out, keeping 512 MiB of headroom for the app itself, since macOS's own memory is already counted as used. That's the total minus wired, compressed and apps' own anonymous memory, as Activity Monitor counts it; cached files count as available. Free + inactive alone read 7.1 GB on a machine with 8.9 GB to give. If the author's context doesn't fit, the model starts with the largest context, in 8K steps, that does, and the status bar says so. The saved setting is kept, and Apply in Model settings checks again. If not even 8K fits, the model starts anyway with a warning. The same check runs before a restart for a new context size, counting the running model's memory as returned. The Model settings panel shows the estimate for the context being chosen against what's free.
 
 The server's own defaults are **4 slots and an 8 GB host prompt cache**, so `-np` and `--cache-ram` must always be set explicitly.
 
