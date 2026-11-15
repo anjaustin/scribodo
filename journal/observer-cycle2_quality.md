@@ -710,6 +710,7 @@ Step 7 (the planter's sentence check, the corrected fixture, three diagnostic to
 `build/observer/sentence-gates/`): `make test` 95,773 C checks and 200 Python tests, 0 failures; `make analyze` 0
 warnings across 87 source files; `make sanitize` 95,773, 0; every exit status 0; `make tools` builds without warnings.
 Step 6's commit `a36988d`: CI and Trusted acceptance passed (runs 43699034685 and 43699034755).
+Step 7's commit `4c6ea3f`: CI and Trusted acceptance passed (runs 43727199055 and 43727199069).
 
 Step 6 (the judge log and its scorer; no product behaviour changed, `build/observer/judge-gates/`): `make test` 95,773
 C checks and 197 Python tests, 0 failures; `make analyze` 0 warnings across 87 source files; `make sanitize` 95,773,
