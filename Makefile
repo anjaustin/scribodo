@@ -129,7 +129,7 @@ $(BUILD)/test_doc_io: $(CORE_OBJS) $(BUILD)/tests/test_doc_io.o
 	$(CC) $(CFLAGS) $^ -o $@
 
 $(BUILD)/test_draft_controller: $(CORE_OBJS) $(BUILD)/src/app/draft_controller.o $(BUILD)/tests/test_draft_controller.o
-	$(CC) $(CFLAGS) $^ -o $@
+	$(CC) $(CFLAGS) $^ -o $@ -lpthread
 
 $(BUILD)/test_llm: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_state_fixture.o $(BUILD)/tests/test_llm.o
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
@@ -146,6 +146,10 @@ $(BUILD)/test_memory_index_text: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_st
 # Diagnostic: the anchor gate over recorded claims (tools/answer_gate_replay.py).
 $(BUILD)/answer_gate_replay: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tools/answer_gate_replay.o
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
+
+# Diagnostic: one draft write on the frame thread at manuscript scale (AUDIT-004 F12; journal/audit004-main.md).
+$(BUILD)/draft_tick_probe: $(CORE_OBJS) $(BUILD)/src/app/draft_controller.o $(BUILD)/src/ui/editor.o $(BUILD)/src/ui/input.o $(BUILD)/tests/raylib_stubs.o $(BUILD)/tools/draft_tick_probe.o
+	$(CC) $(CFLAGS) $^ -o $@ -lm -lpthread
 
 # Diagnostic: the observer, headless, with the fake backend over a project folder; findings sorted for byte comparison.
 $(BUILD)/observer_replay: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tools/observer_replay.o
@@ -427,7 +431,7 @@ $(BUILD)/venv-%/.locked: tools/envs/venv-%.lock
 	cp $< $@
 
 # Every diagnostic tool binary (the Python tools need no build).
-tools: $(BUILD)/answer_gate_replay $(BUILD)/observer_replay $(BUILD)/observer_judge_pairs $(BUILD)/observer_overlap $(BUILD)/test_crash_points
+tools: $(BUILD)/draft_tick_probe $(BUILD)/answer_gate_replay $(BUILD)/observer_replay $(BUILD)/observer_judge_pairs $(BUILD)/observer_overlap $(BUILD)/test_crash_points
 # Process death at every kill point, against the local MariaDB (tools/services.sh up); one fresh database per death.
 crashtest: $(BUILD)/test_crash_points
 	$(WATCHDOG) 900 crash-points ./$(BUILD)/test_crash_points
@@ -583,6 +587,7 @@ tsan: $(MARIADB_LIB) $(BUILD)/tests/fault_alloc.o
 	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) tests/test_chat_history_job.c -o build/tsan/test_chat_history_job -lpthread
 	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) src/app/store.c src/core/file_text.c tests/test_store_connections.c -o build/tsan/test_store_connections -lpthread
 	$(CC) -std=c11 -O1 -g -fsanitize=thread -Isrc src/app/frame_metrics.c tests/test_frame_metrics.c -o build/tsan/test_frame_metrics
+	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) $(CORE_SRCS) src/app/draft_controller.c tests/test_draft_controller.c -o build/tsan/test_draft_controller -lpthread
 	$(CC) -std=c11 -O1 -g -fsanitize=thread -Isrc -Ithird_party/cJSON $(CONTEXT_PLANNER_TEST_SRCS) -o build/tsan/test_context_planner
 	$(CC) -std=c11 -O1 -g -fsanitize=thread -Isrc -Isrc/llm tests/test_memory_job.c -o build/tsan/test_memory_job -lpthread
 	$(CC) -std=c11 -O1 -g -fsanitize=thread -Isrc -Ithird_party/cJSON $(MEMORY_TOKENS_TEST_SRCS) -o build/tsan/test_memory_tokens -lpthread
@@ -605,7 +610,7 @@ tsan: $(MARIADB_LIB) $(BUILD)/tests/fault_alloc.o
 	  -o build/tsan/test_chat_view $(MARIADB_LIBS) -lpthread -lm
 	$(CC) -std=c11 -O1 -g -fsanitize=thread $(INCLUDES) -include tests/fault_alloc.h $(SEMANTIC_FAULT_SRCS) \
 	  $(BUILD)/tests/fault_alloc.o -o build/tsan/test_semantic_faults $(MARIADB_LIBS) -lpthread
-	@set -e; for t in test_chat_history_job test_store_connections test_frame_metrics test_context_planner test_memory_job test_memory_tokens test_memory_document_cache test_memory_budget test_generative_gate test_http_deadlines test_db_deadlines test_memory_brief_model test_llm test_components test_remote test_answer_pipeline test_chat_view test_semantic_faults; do \
+	@set -e; for t in test_chat_history_job test_store_connections test_frame_metrics test_draft_controller test_context_planner test_memory_job test_memory_tokens test_memory_document_cache test_memory_budget test_generative_gate test_http_deadlines test_db_deadlines test_memory_brief_model test_llm test_components test_remote test_answer_pipeline test_chat_view test_semantic_faults; do \
 	  TSAN_OPTIONS=halt_on_error=1 $(WATCHDOG) 300 tsan-$$t ./build/tsan/$$t; echo; \
 	done
 

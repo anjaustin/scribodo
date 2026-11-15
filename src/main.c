@@ -3642,6 +3642,7 @@ static bool load_fonts(App *app, float dpi)
 static void app_destroy(App *app)
 {
     if (!app) return;
+    draft_controller_destroy(&app->draft); /* a draft write in flight finishes; the draft stays on disk */
     frame_view_model_destroy(&app->frame);
     recent_store_destroy(app->recent_store);
     app->recent_store = NULL;
@@ -3711,6 +3712,7 @@ int main(int argc, char **argv)
     explorer_snapshot_init(&app.explorer);
     chat_controller_init(&app.chat_controller);
     reviewed_edit_controller_init(&app.reviewed_edit);
+    draft_controller_init(&app.draft);
     if (!entity_backfill_job_init(&app.graph_job, app.store)) {
         app_destroy(&app);
         return 1;
