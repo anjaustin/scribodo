@@ -25,6 +25,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #include "app/records.h"
 #include "llm/server.h"
@@ -61,6 +62,9 @@ void observer_set_chat_active(Observer *o, bool active);
  * running job, reset when a job completes) and how many jobs chat has cancelled. */
 double observer_idle_required(Observer *o);
 unsigned observer_chat_cancels(Observer *o);
+/* Measurement (tools/observer_replay --judge-log): one JSON line per judge call to f, borrowed and written from the
+ * worker thread; NULL turns it off. Set before the first job. */
+void observer_set_judge_log(Observer *o, FILE *f);
 /* Pause/resume (e.g. a setting); paused observers finish nothing new. */
 void observer_set_enabled(Observer *o, bool enabled);
 

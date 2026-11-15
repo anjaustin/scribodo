@@ -10,6 +10,8 @@
 typedef struct {
     LlmServer *server;       /* borrowed */
     atomic_bool *cancel;     /* borrowed from the worker owner */
+    bool keep_replies;       /* observer_model_judge keeps each pass's raw reply in replies[] (the caller frees) */
+    char *replies[2];
 } ObserverModel;
 
 char *observer_model_extract(ObserverModel *model, const char *chunk, bool is_chat);

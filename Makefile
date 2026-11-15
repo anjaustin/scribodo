@@ -275,6 +275,7 @@ test: $(TESTS)
 	$(WATCHDOG) $(TEST_TIMEOUT) test_power_source python3 tests/test_power_source.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_sysmem_sample python3 tests/test_sysmem_sample.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_observer_faults python3 tests/test_observer_faults.py
+	$(WATCHDOG) $(TEST_TIMEOUT) test_observer_judge_score python3 tests/test_observer_judge_score.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_probes python3 tests/test_answer_probes.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_live_capture python3 tests/test_answer_live_capture.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_live_audit python3 tests/test_answer_live_audit.py

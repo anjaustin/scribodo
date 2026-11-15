@@ -98,6 +98,7 @@ struct Observer {
     uint64_t version;
     unsigned jobs_done;
     unsigned attempts;      /* jobs started, including failed ones (tests) */
+    FILE *judge_log;        /* borrowed: one JSON line per judge call (observer_set_judge_log), worker thread only */
 };
 
 static double now_s(void)
@@ -161,7 +162,7 @@ static char *backend_extract(Observer *o, const char *chunk, bool is_chat)
 {
     GenerativeTicket ticket = { 0 };
     if (!backend_admit(o, &ticket)) return NULL;
-    ObserverModel model = { o->server, &o->cancel };
+    ObserverModel model = { o->server, &o->cancel, false, { NULL, NULL } };
     char *out = observer_model_extract(&model, chunk, is_chat);
     if (!backend_release(o, &ticket)) {
         free(out);
@@ -170,12 +171,15 @@ static char *backend_extract(Observer *o, const char *chunk, bool is_chat)
     return out;
 }
 
-static bool backend_judge(Observer *o, const char *canon, const char *statement, char *check, size_t checklen)
+/* replies (may be NULL): each pass's raw reply, malloc'd, for the judge log. */
+static bool backend_judge(Observer *o, const char *canon, const char *statement, char *check, size_t checklen, char *replies[2])
 {
     GenerativeTicket ticket = { 0 };
     if (!backend_admit(o, &ticket)) return false;
-    ObserverModel model = { o->server, &o->cancel };
+    ObserverModel model = { o->server, &o->cancel, replies != NULL, { NULL, NULL } };
     bool conflict = observer_model_judge(&model, canon, statement, check, checklen);
+    if (replies) { replies[0] = model.replies[0]; replies[1] = model.replies[1]; }
+    else { free(model.replies[0]); free(model.replies[1]); }
     return backend_release(o, &ticket) && conflict;
 }
 
@@ -673,13 +677,44 @@ static int job_canon_candidates(JobRun *r, const char *stmt, size_t cand[4])
 
 /* One statement against one canon entry: the backend's verdict, once per canon entry and passage, and not when the
  * same conflict is already recorded. Returns false when the job was cancelled meanwhile. */
+/* One JSON line per judge call to the judge log, so rules over the judge's replies can be scored offline against
+ * planted faults (tools/observer_judge_score.py; record-model-replies-before-tuning): where the statement came from
+ * (document and character span, or chat and message), the canon entry, the statement as the judge saw it, both raw
+ * replies (the second absent when the first was not a conflict), and the two-vote verdict before any dedupe. */
+static void judge_log_line(JobRun *r, size_t i, size_t c, const char *stmt, char *replies[2], bool conflict)
+{
+    FILE *f = r->o->judge_log;
+    if (!f) return;
+    const SourceRef *src = &r->cands[i].src;
+    cJSON *j = cJSON_CreateObject();
+    if (!j) return;
+    cJSON_AddStringToObject(j, "kind", src->kind == SRC_DOC ? "doc" : "chat");
+    cJSON_AddStringToObject(j, "doc", src->kind == SRC_DOC ? src->doc : src->chat);
+    cJSON_AddNumberToObject(j, "message", (double)src->message);
+    cJSON_AddNumberToObject(j, "start", (double)src->start);
+    cJSON_AddNumberToObject(j, "len", (double)src->len);
+    cJSON_AddStringToObject(j, "type", r->cands[i].type);
+    cJSON_AddStringToObject(j, "canon_id", r->canon[c].id);
+    cJSON_AddStringToObject(j, "canon", record_current(&r->canon[c])->content);
+    cJSON_AddStringToObject(j, "statement", stmt);
+    cJSON *rs = cJSON_AddArrayToObject(j, "replies");
+    for (int p = 0; p < 2 && rs; p++) cJSON_AddItemToArray(rs, replies[p] ? cJSON_CreateString(replies[p]) : cJSON_CreateNull());
+    cJSON_AddBoolToObject(j, "conflict", conflict);
+    char *line = cJSON_PrintUnformatted(j);
+    if (line) { fprintf(f, "%s\n", line); fflush(f); free(line); }
+    cJSON_Delete(j);
+}
+
 static bool job_judge_pair(JobRun *r, size_t i, size_t c, const char *stmt)
 {
     r->pairs++;
     const RecordVersion *v = record_current(&r->canon[c]);
     char check[300];
-    bool conflict = backend_judge(r->o, v->content, stmt, check, sizeof(check));
-    if (atomic_load(&r->o->cancel)) return false;
+    char *replies[2] = { NULL, NULL };
+    bool conflict = backend_judge(r->o, v->content, stmt, check, sizeof(check), r->o->judge_log ? replies : NULL);
+    if (atomic_load(&r->o->cancel)) { free(replies[0]); free(replies[1]); return false; }
+    judge_log_line(r, i, c, stmt, replies, conflict);
+    free(replies[0]); free(replies[1]);
     for (size_t q = 0; conflict && q < r->nconf; q++) /* same canon, same passage: once */
         if (!strcmp(r->conflicts[q].canon_id, r->canon[c].id) && r->cands[r->conflicts[q].cand].src.start == r->cands[i].src.start &&
             !strcmp(r->cands[r->conflicts[q].cand].src.quote, r->cands[i].src.quote)) /* chat pieces share offsets across messages */
@@ -1191,6 +1226,13 @@ void observer_set_chat_active(Observer *o, bool active)
         pthread_cond_signal(&o->cv);
         pthread_mutex_unlock(&o->mu);
     }
+}
+
+void observer_set_judge_log(Observer *o, FILE *f)
+{
+    pthread_mutex_lock(&o->mu);
+    o->judge_log = f;
+    pthread_mutex_unlock(&o->mu);
 }
 
 void observer_set_enabled(Observer *o, bool enabled)

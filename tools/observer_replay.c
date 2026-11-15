@@ -3,13 +3,15 @@
  * the timestamped ids, so two builds can be compared byte for byte on the same manuscript. The folder is written to
  * (.scribodo/ records and observer state), so run it on a copy.
  *
- * usage: observer_replay <project-dir> [seconds] [--canon TEXT]... [--note TEXT]... [--chat TEXT]... [--real]
+ * usage: observer_replay <project-dir> [seconds] [--canon TEXT]... [--note TEXT]... [--chat TEXT]... [--real] [--judge-log FILE]
  *        --canon and --note seed committed canon and active notes before the run (the conflict and overlap paths);
  *        --chat appends an author message to one chat, "20261112-120000-ab12" (the chat job path);
  *        --real starts the pinned local model (the app's default configuration, 16K context over two slots, its run
  *        folder, log and hash cache under <project-dir>/.scribodo/replay-run) and the observer reads with it instead
  *        of the fake backend, so the real model's findings over a manuscript can be measured headlessly (GAP-001).
  *        The lines are then not byte-comparable between runs; the counts and the per-type sets are the measurement.
+ *        --judge-log FILE writes one JSON line per judge call (the statement's source span, the canon entry, both raw
+ *        replies, the verdict) for tools/observer_judge_score.py, which scores rules offline against planted faults.
  * stdout: one line per finding: type|subject|relation|object|status|content|source kind|doc or chat|start|len|quote|related text
  *         (a newline, carriage return, tab, pipe or backslash inside a text field is written as \n, \r, \t, \| or \\,
  *         so a finding is always one line of twelve fields; the real model writes subjects and contents across lines)
@@ -127,6 +129,13 @@ int main(int argc, char **argv)
         fprintf(stderr, "# model ready: slot context %d, %s\n", llm_server_slot_ctx(server), cfg.sha256);
     }
     Observer *o = observer_create(store, server, NULL);
+    FILE *judge_log = NULL;
+    for (int a = 2; o && a + 1 < argc; a++)
+        if (!strcmp(argv[a], "--judge-log")) {
+            judge_log = fopen(argv[a + 1], "w");
+            if (!judge_log) { fprintf(stderr, "cannot write %s\n", argv[a + 1]); observer_destroy(o); if (server) llm_server_destroy(server); store_manager_destroy(store); return 1; }
+            observer_set_judge_log(o, judge_log);
+        }
     if (!o) { fprintf(stderr, "no observer\n"); if (server) llm_server_destroy(server); store_manager_destroy(store); return 1; }
     observer_set_project(o, project);
     observer_poke(o);
@@ -141,6 +150,7 @@ int main(int argc, char **argv)
     }
     unsigned jobs = observer_jobs_done(o);
     observer_destroy(o);
+    if (judge_log) fclose(judge_log); /* after the worker has joined */
     if (server) llm_server_destroy(server);
     Record *list = NULL;
     size_t n = 0, nlines = 0;

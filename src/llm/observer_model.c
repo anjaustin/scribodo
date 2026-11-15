@@ -170,6 +170,7 @@ bool observer_model_judge(ObserverModel *model, const char *canon, const char *s
             out = complete(model, gate ? k_judge_system_values : k_judge_system, user, judge_schema(gate), gate ? 320 : 260);
             free(user);
         }
+        if (model->keep_replies && out) model->replies[pass] = strdup(out); /* the judge log (observer_set_judge_log) */
         cJSON *j = out ? json_parse(out) : NULL;
         cJSON *v = j ? cJSON_GetObjectItem(j, "verdict") : NULL, *c = j ? cJSON_GetObjectItem(j, "check") : NULL;
         cJSON *cv = j ? cJSON_GetObjectItem(j, "canon_value") : NULL, *nv = j ? cJSON_GetObjectItem(j, "new_value") : NULL;

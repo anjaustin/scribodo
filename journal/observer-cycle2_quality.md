@@ -580,7 +580,66 @@ Run conditions, for the record: the Mac was on AC power at 38% when the Mars
 run began (04:56Z) and on battery, 13%, when the P&P run ended (10:57Z); the
 hosted acceptance runner was idle throughout (the chain waited for it).
 
+## Step 6, done: the judge's replies recorded, rules scored offline, none holds
+
+What step 5 asked for first was built: `observer_replay --judge-log FILE`
+writes one JSON line per judge call (document, span in characters, canon
+entry, statement, both passes' raw replies, the verdict;
+`observer_set_judge_log`, `test_observer_judge_log`), and
+`tools/observer_judge_score.py` labels each call *on target* only when its
+statement's span overlaps a planted sentence in the same document **and** its
+canon entry is that fault's own canon (stricter than `observer_score.py`,
+which credits any conflict over the span: Mars M2 was "found" by a conflict
+against the Kantos Kan entry on the Tardos Mors line). The fake-path
+yardstick stayed byte-identical with `realflag` (`judgelog`, pp / mars /
+heights). Then one real run per planted novel, default code (gate off), the
+rules written on *Mars* and frozen in the scorer (with their unit tests)
+before *Pride and Prejudice* ran as the held-out check.
+
+| run | wall | judge calls | conflicts | on target | faults reachable | recall (observer_score) |
+|---|---|---|---|---|---|---|
+| Mars planted | 6,446 s (complete) | 649 | 50 | 4 | 7 of 10 | 5 / 10 |
+| P&P planted | 13,750 s (complete) | 1,889 | 46 | 2 | 3 of 10 | 2 / 10 |
+
+*Reachable* means some judge call paired the fault's sentence with its own
+canon entry; a fault not reachable cannot be found by any judge rule.
+
+| rule (kept, true, precision) | Mars (fitted) | P&P (held out) |
+|---|---|---|
+| base: the judge's two votes | 50, 4, 0.08 | 46, 2, 0.04 |
+| judge and any differing attribute (number, kinship, colour, time, place) | 37, 4, 0.11 | 22, 2, 0.09 |
+| judge and the same subject (leading name or a possessive) | 9, 4, 0.44 | 15, 2, 0.13 |
+| judge, the same subject, any differing attribute | 8, 4, 0.50 | 7, 2, 0.29 |
+| judge, the same subject, the same slot word | 8, 4, 0.50 | 14, 2, 0.14 |
+| pre-judge: the same subject, slot and attribute (no model) | 47, 5, 0.11 | 286, 2, 0.01 |
+
+(`build/observer/judge-cycle/real-mars-rules.txt`, `real-pp-rules.txt`.)
+No rule keeps 0.50 on the held-out novel, so none ships and no product code
+changed. The subject rule fails on *Pride and Prejudice* the way its text
+predicts: names there are shared by family (*Mr. Bennet* against a canon
+entry about *Mrs. Bennet's* brother; *Miss Darcy* and *Mrs. Darcy* against
+*Mr. Darcy's* aunt), and the extracted statements mislabel people
+(*Miss Darcy, Elizabeth's sister*), so "about the same person" cannot be
+read from surface names. Tuning the rule now on P&P's false records would
+spend the held-out novel; a third planted novel would be needed to check it.
+
+**The finding that matters more is reach.** Only 10 of 20 planted faults
+ever met their own canon entry at the judge (Mars 7, P&P 3); the rest were
+lost at extraction, where the statement either omits the planted claim
+(Mars M2: *Tardos Mors, the grandfather of Dejah Thoris*, true to the book,
+from the line that planted *Dejah Thoris was the daughter of Tardos Mors*)
+or never names it. Of the 10 reachable, the judge said "conflict" on 6.
+Recall cannot pass 0.50 by any judge rule while reach is 0.50, so the next
+step is on the extraction side, in software: compare each canon entry with
+the source sentences of a document directly (the sentence, not the model's
+paraphrase of it) when choosing what the judge sees, and measure reach
+offline with this log before any model run.
+
 ## Gates
+
+Step 6 (the judge log and its scorer; no product behaviour changed, `build/observer/judge-gates/`): `make test` 95,773
+C checks and 197 Python tests, 0 failures; `make analyze` 0 warnings across 87 source files; `make sanitize` 95,773,
+0; every exit status 0. Yardstick `judgelog` byte-identical with `realflag` on pp, mars and heights.
 
 Step 5 (the gate flagged off, `c38117d`): the five gates ran on the tree with the three steps of 2026-11-14 (wait mode,
 this step, the note turn; `build/observer/cycle3b-gates/`): `make test` 95,748 C checks and 192 Python tests, 0

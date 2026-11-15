@@ -1459,6 +1459,55 @@ static size_t count_findings(const char *proj, const char *type, const char *sta
     return k;
 }
 
+/* The judge log (observer_set_judge_log, for tools/observer_judge_score.py): one JSON line per judge call with the
+ * statement's source span, the canon entry, the raw replies and the verdict (2026-11-14). */
+static void test_observer_judge_log(void)
+{
+    char proj[700], doc[800], logpath[800];
+    snprintf(proj, sizeof(proj), "%s/obs-judgelog", g_dir);
+    mkdir(proj, 0755);
+    snprintf(doc, sizeof(doc), "%s/ch1.md", proj);
+    FILE *f = fopen(doc, "wb");
+    fputs("The fog came in off the fjord.\n\nZo\xC3\xAB's eyes are brown. Dvo\xC5\x99\xC3\xA1k waited.\n", f);
+    fclose(f);
+    char cid[40];
+    records_new_id(REC_CANON, cid, sizeof(cid));
+    CHECK(records_append(g_store, proj, REC_CANON, cid, "committed", "Zo\xC3\xAB's eyes are green.", NULL, 0, NULL));
+    snprintf(logpath, sizeof(logpath), "%s/judge.jsonl", g_dir);
+    FILE *log = fopen(logpath, "w");
+    CHECK(log != NULL);
+    Observer *o = observer_create(g_store, NULL, NULL);
+    CHECK(o != NULL);
+    if (!o || !log) { if (log) fclose(log); if (o) observer_destroy(o); return; }
+    observer_set_judge_log(o, log);
+    observer_set_project(o, proj);
+    CHECK(wait_jobs(o, 1, 10));
+    observer_destroy(o);
+    fclose(log);
+    char *text = NULL;
+    size_t n = 0;
+    FILE *in = fopen(logpath, "rb");
+    if (in) { text = calloc(1, 65536); if (text) n = fread(text, 1, 65535, in); fclose(in); }
+    CHECK(text && n > 0);
+    bool found = false;
+    for (char *line = text ? strtok(text, "\n") : NULL; line && !found; line = strtok(NULL, "\n")) {
+        cJSON *j = cJSON_Parse(line);
+        cJSON *c = j ? cJSON_GetObjectItem(j, "conflict") : NULL, *r = j ? cJSON_GetObjectItem(j, "replies") : NULL;
+        if (c && cJSON_IsTrue(c)) {
+            found = !strcmp(cJSON_GetObjectItem(j, "kind")->valuestring, "doc") &&
+                    !strcmp(cJSON_GetObjectItem(j, "doc")->valuestring, "ch1.md") &&
+                    cJSON_GetObjectItem(j, "len")->valuedouble > 0 &&
+                    !strcmp(cJSON_GetObjectItem(j, "canon")->valuestring, "Zo\xC3\xAB's eyes are green.") &&
+                    strstr(cJSON_GetObjectItem(j, "statement")->valuestring, "brown") != NULL &&
+                    cJSON_GetArraySize(r) == 2 && cJSON_IsString(cJSON_GetArrayItem(r, 0)) &&
+                    cJSON_IsString(cJSON_GetArrayItem(r, 1)); /* both votes ran */
+        }
+        cJSON_Delete(j);
+    }
+    CHECK(found);
+    free(text);
+}
+
 static void test_observer_run(void)
 {
     char proj[700], doc[800];
@@ -2661,6 +2710,7 @@ int main(int argc, char **argv)
         { "snapshot_name_exhaustion", test_snapshot_name_exhaustion },
         { "snapshot_reuse_integrity", test_snapshot_reuse_integrity },
         { "observer_run", test_observer_run },
+        { "observer_judge_log", test_observer_judge_log },
         { "observer_wait_mode", test_observer_wait_mode },
         { "observer_redteam", test_observer_redteam },
         { "recent_and_renames", test_recent_and_renames },

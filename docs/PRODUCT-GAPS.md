@@ -131,8 +131,15 @@ measurement that closes it. Items run one at a time unless marked otherwise.
    values must occur in the texts, rerun on both planted copies, raised the
    off-fault conflicts (Mars 44 to 61, P&P 41 to 83) and lost two Mars
    faults; kept in the tree behind `SCRIBODO_OBSERVER_CONFLICT_GATE=1`,
-   default off (MEMORY-015 §5). Next: the replay records the judge's replies
-   so rules on the values are scored offline before the next model run.
+   default off (MEMORY-015 §5). *Judge rules scored offline 2026-11-15*
+   (journal step 6): the replay records every judge call with its replies
+   (`--judge-log`, `tools/observer_judge_score.py`); rules fitted on *Mars*
+   (the same subject: 4 true in 9; with a differing attribute 4 in 8) fell to
+   0.13 and 0.29 on held-out *Pride and Prejudice*, so none ships. Only 10
+   of 20 planted faults ever reach the judge with their own canon entry, so
+   recall is capped by extraction. Next: choose what the judge sees from
+   the source sentences rather than the model's paraphrase, reach measured
+   offline first.
 7. **GAP-002 distribution.** Signed app, guided model and service setup,
    upgrade and uninstall, proven on a clean Mac.
 8. **GAP-005 real input and accessibility.** The IME, dead-key, layout,
