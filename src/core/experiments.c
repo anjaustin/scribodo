@@ -21,6 +21,14 @@ static bool flag_on(const char *name)
     return !(v && (!strcmp(v, "off") || !strcmp(v, "0")));
 }
 
+/* SCRIBODO_OBSERVER_SENTENCES's levels (experiments.h): "attributes", "subject", and "1" for the latest measured arm. */
+static ObserverSentencesArm observer_sentences_arm(void)
+{
+    if (flag_is("SCRIBODO_OBSERVER_SENTENCES", "attributes")) return OBSERVER_SENTENCES_ATTRIBUTES;
+    if (flag_is("SCRIBODO_OBSERVER_SENTENCES", "subject") || flag_is("SCRIBODO_OBSERVER_SENTENCES", "1")) return OBSERVER_SENTENCES_SUBJECT;
+    return OBSERVER_SENTENCES_OFF;
+}
+
 static void read_environment(void)
 {
     Experiments e = {
@@ -37,7 +45,7 @@ static void read_environment(void)
         .memory_presentation_compact = flag_is("SCRIBODO_MEMORY_PRESENTATION", "compact"),
         .memory_presentation_episode = flag_is("SCRIBODO_MEMORY_PRESENTATION", "episode"),
         .observer_conflict_gate = flag_is("SCRIBODO_OBSERVER_CONFLICT_GATE", "1"),
-        .observer_sentences = flag_is("SCRIBODO_OBSERVER_SENTENCES", "1"),
+        .observer_sentences = observer_sentences_arm(),
     };
     g_experiments = e;
 }

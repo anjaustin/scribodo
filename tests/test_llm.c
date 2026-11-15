@@ -1640,6 +1640,107 @@ static void test_observer_sentence_pairs(void)
     CHECK(!experiments()->observer_sentences);
 }
 
+/* A JSON string member, or "" when it is missing or not a string (the judge log is read defensively). */
+static const char *json_str(const cJSON *j, const char *key)
+{
+    const cJSON *v = j ? cJSON_GetObjectItem(j, key) : NULL;
+    return cJSON_IsString(v) && v->valuestring ? v->valuestring : "";
+}
+
+/* What one observer run over the arm fixture did: the conflicts recorded (and which), the judge calls by path, the
+ * calls against the canon entry that shares only a title with the text, and whether the note sharing only a title
+ * and a word was linked. */
+typedef struct {
+    size_t conflicts, sentence_calls, statement_calls, title_only_calls;
+    bool zoe, sola, note_linked, ran;
+} ArmRun;
+
+/* The observer over one document with the fake backend under the given SCRIBODO_OBSERVER_SENTENCES and
+ * SCRIBODO_OBSERVER_CONFLICT_GATE values (NULL unsets). The text is built so every arm is told apart: Zoë's colour
+ * differs from canon, but her accented name never co-signs a subject (step 9's known limit), so the attributes arm
+ * records her conflict and the subject arm does not; Sola's conflict is recorded by every arm; "Captain Wickham"
+ * shares only the title and "horse" with the canon entry about Captain Darcy (paired by default, never under the
+ * gate) and with the note about Captain Bingley. */
+static ArmRun run_observer_arm(const char *name, const char *sentences, const char *gate)
+{
+    ArmRun out = { 0 };
+    if (sentences) setenv("SCRIBODO_OBSERVER_SENTENCES", sentences, 1); else unsetenv("SCRIBODO_OBSERVER_SENTENCES");
+    if (gate) setenv("SCRIBODO_OBSERVER_CONFLICT_GATE", gate, 1); else unsetenv("SCRIBODO_OBSERVER_CONFLICT_GATE");
+    experiments_reload();
+    char proj[700], doc[800], logpath[800];
+    snprintf(proj, sizeof(proj), "%s/obs-arm-%s", g_dir, name);
+    mkdir(proj, 0755);
+    snprintf(doc, sizeof(doc), "%s/ch1.md", proj);
+    FILE *f = fopen(doc, "wb");
+    if (f) {
+        fputs("Zo\xC3\xAB's eyes are brown. Sola's eyes are brown. Captain Wickham's horse is black.\n", f);
+        fclose(f);
+    }
+    char zoe[40], sola[40], darcy[40], note[40];
+    records_new_id(REC_CANON, zoe, sizeof(zoe));
+    CHECK(records_append(g_store, proj, REC_CANON, zoe, "committed", "Zo\xC3\xAB's eyes are green.", NULL, 0, NULL));
+    records_new_id(REC_CANON, sola, sizeof(sola));
+    CHECK(records_append(g_store, proj, REC_CANON, sola, "committed", "Sola's eyes are green.", NULL, 0, NULL));
+    records_new_id(REC_CANON, darcy, sizeof(darcy));
+    CHECK(records_append(g_store, proj, REC_CANON, darcy, "committed", "Captain Darcy's horse is grey.", NULL, 0, NULL));
+    records_new_id(REC_NOTE, note, sizeof(note));
+    CHECK(records_append(g_store, proj, REC_NOTE, note, "active", "Captain Bingley's horse is lame.", NULL, 0, NULL));
+    snprintf(logpath, sizeof(logpath), "%s/arm-%s.jsonl", g_dir, name);
+    FILE *log = fopen(logpath, "w");
+    Observer *o = observer_create(g_store, NULL, NULL);
+    CHECK(o != NULL && log != NULL);
+    if (o && log) {
+        observer_set_judge_log(o, log);
+        observer_set_project(o, proj);
+        out.ran = wait_jobs(o, 1, 10);
+    }
+    if (o) observer_destroy(o);
+    if (log) fclose(log);
+    Record *list = NULL;
+    size_t n = records_list(g_store, proj, REC_FINDING, &list);
+    for (size_t i = 0; i < n; i++) {
+        const RecordVersion *v = record_current(&list[i]);
+        if (!strcmp(v->finding.type, "conflict")) {
+            out.conflicts++;
+            out.zoe = out.zoe || !strcmp(v->finding.related, zoe);
+            out.sola = out.sola || !strcmp(v->finding.related, sola);
+        } else if (!strcmp(v->finding.related, note)) {
+            out.note_linked = true;
+        }
+    }
+    records_free(list, n);
+    char *logtext = calloc(1, 65536);
+    FILE *in = fopen(logpath, "rb");
+    size_t got = in && logtext ? fread(logtext, 1, 65535, in) : 0;
+    if (in) fclose(in);
+    for (char *line = got ? strtok(logtext, "\n") : NULL; line; line = strtok(NULL, "\n")) {
+        cJSON *j = cJSON_Parse(line);
+        CHECK(j != NULL);
+        if (!strcmp(json_str(j, "path"), "sentence")) out.sentence_calls++;
+        else if (!strcmp(json_str(j, "path"), "statement")) out.statement_calls++;
+        if (!strcmp(json_str(j, "canon_id"), darcy)) out.title_only_calls++;
+        cJSON_Delete(j);
+    }
+    free(logtext);
+    unsetenv("SCRIBODO_OBSERVER_SENTENCES");
+    unsetenv("SCRIBODO_OBSERVER_CONFLICT_GATE");
+    experiments_reload();
+    return out;
+}
+
+/* Step 8's arm stays selectable beside step 9's (AUDIT-004 F2): =attributes records a sentence conflict on a
+ * differing attribute alone, =subject (and "1", the latest measured arm) also needs the same subject. */
+static void test_observer_sentence_arms(void)
+{
+    ArmRun a = run_observer_arm("attributes", "attributes", NULL);
+    CHECK(a.ran && a.conflicts == 2 && a.zoe && a.sola && a.sentence_calls >= 2 && a.statement_calls == 0);
+    ArmRun s = run_observer_arm("subject", "subject", NULL);
+    CHECK(s.ran && s.conflicts == 1 && !s.zoe && s.sola && s.sentence_calls == a.sentence_calls && s.statement_calls == 0);
+    ArmRun one = run_observer_arm("one", "1", NULL);
+    CHECK(one.ran && one.conflicts == 1 && !one.zoe && one.sola && one.sentence_calls == s.sentence_calls);
+    CHECK(!experiments()->observer_sentences);
+}
+
 static void test_observer_run(void)
 {
     char proj[700], doc[800];
@@ -2846,6 +2947,7 @@ int main(int argc, char **argv)
         { "observer_run", test_observer_run },
         { "observer_judge_log", test_observer_judge_log },
         { "observer_sentence_pairs", test_observer_sentence_pairs },
+        { "observer_sentence_arms", test_observer_sentence_arms },
         { "observer_wait_mode", test_observer_wait_mode },
         { "observer_redteam", test_observer_redteam },
         { "recent_and_renames", test_recent_and_renames },

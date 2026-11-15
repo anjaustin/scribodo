@@ -730,14 +730,16 @@ static bool job_judge_pair(JobRun *r, bool sentence, size_t i, size_t c, const c
     char *replies[2] = { NULL, NULL };
     bool conflict = backend_judge(r->o, v->content, stmt, check, sizeof(check), r->o->judge_log ? replies : NULL);
     if (atomic_load(&r->o->cancel)) { free(replies[0]); free(replies[1]); return false; }
-    /* A sentence conflict is co-signed by software that never sees the model: the two texts must be about the same
-     * someone and state different values of one kind (step 8, scored on the recorded replies of both planted
-     * novels: 4 true of 5 kept and 5 of 7, against 6 of 42 and 5 of 18 with the attribute check alone). */
+    /* A sentence conflict is co-signed by software that never sees the model: the two texts must state different
+     * values of one kind (SCRIBODO_OBSERVER_SENTENCES=attributes, step 8: 6 true of 42 shown and 5 of 18, end to end)
+     * and, at the level =subject (or =1), also be about the same someone (step 9, scored on step 8's recorded replies:
+     * 4 of 5 and 5 of 7). Both co-signers are always computed and logged, so either arm can be scored from one run. */
     const bool attributes = sentence && obs_attributes_differ(v->content, stmt);
     const bool subject = sentence && obs_same_subject(v->content, stmt);
     judge_log_line(r, cd, sentence, c, stmt, replies, conflict, attributes, subject);
     free(replies[0]); free(replies[1]);
-    if (sentence) conflict = conflict && attributes && subject;
+    if (sentence)
+        conflict = conflict && attributes && (experiments()->observer_sentences != OBSERVER_SENTENCES_SUBJECT || subject);
     for (size_t q = 0; conflict && q < r->nconf; q++) { /* same canon, same passage: once */
         const Cand *other = conflict_cand(r, &r->conflicts[q]);
         if (!strcmp(r->conflicts[q].canon_id, r->canon[c].id) && other->src.start == cd->src.start &&
@@ -860,7 +862,7 @@ static void job_judge_sentences(JobRun *r)
  * notes only, and its sentences with canon. */
 static void job_judge(JobRun *r)
 {
-    const bool sentences = experiments()->observer_sentences && r->j->is_doc;
+    const bool sentences = experiments()->observer_sentences != OBSERVER_SENTENCES_OFF && r->j->is_doc;
     for (size_t i = 0; i < r->nc && !r->cancelled; i++) {
         if (!strcmp(r->cands[i].type, "question")) continue;
         /* The quote is clipped by characters, never by bytes: a cut inside a multi-byte character made the judge

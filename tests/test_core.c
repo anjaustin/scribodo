@@ -163,6 +163,27 @@ static void test_experiments_read_once_and_reload(void)
     experiments_reload();
 }
 
+/* SCRIBODO_OBSERVER_SENTENCES has one level per measured arm (AUDIT-004 F2): attributes is step 8, subject is step 9,
+ * and "1" names the latest measured arm (subject), what it meant when step 9 landed; anything else is off. */
+static void test_observer_sentence_levels(void)
+{
+    const struct { const char *value; ObserverSentencesArm arm; } cases[] = {
+        { NULL, OBSERVER_SENTENCES_OFF },          { "attributes", OBSERVER_SENTENCES_ATTRIBUTES },
+        { "subject", OBSERVER_SENTENCES_SUBJECT }, { "1", OBSERVER_SENTENCES_SUBJECT },
+        { "0", OBSERVER_SENTENCES_OFF },           { "on", OBSERVER_SENTENCES_OFF },
+        { "Attributes", OBSERVER_SENTENCES_OFF },  { "", OBSERVER_SENTENCES_OFF },
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        if (cases[i].value) setenv("SCRIBODO_OBSERVER_SENTENCES", cases[i].value, 1);
+        else unsetenv("SCRIBODO_OBSERVER_SENTENCES");
+        experiments_reload();
+        CHECK(experiments()->observer_sentences == cases[i].arm);
+    }
+    unsetenv("SCRIBODO_OBSERVER_SENTENCES");
+    experiments_reload();
+    CHECK(!experiments()->observer_sentences);
+}
+
 static void test_gap_buffer_random(void)
 {
     TextBuffer tb;
@@ -575,6 +596,7 @@ int main(void)
         { "text_cut", test_text_cut },
         { "utf8_clip", test_utf8_clip },
 { "experiments_read_once_and_reload", test_experiments_read_once_and_reload },
+{ "observer_sentence_levels", test_observer_sentence_levels },
         { "utf8_basic", test_utf8_basic },
         { "utf8_invalid", test_utf8_invalid },
         { "utf8_simd_matches_scalar", test_utf8_simd_matches_scalar },

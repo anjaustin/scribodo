@@ -14,6 +14,13 @@
 
 #include <stdbool.h>
 
+/* The levels of SCRIBODO_OBSERVER_SENTENCES (Experiments.observer_sentences); OFF is 0, so the field reads as "on". */
+typedef enum {
+    OBSERVER_SENTENCES_OFF = 0,
+    OBSERVER_SENTENCES_ATTRIBUTES, /* step 8 */
+    OBSERVER_SENTENCES_SUBJECT,    /* step 9 */
+} ObserverSentencesArm;
+
 typedef struct {
     bool answer_parts;            /* SCRIBODO_ANSWER_PARTS=1: one candidate pool per question part (cycle 3 arm 4, pass 7: rejected) */
     bool answer_block_in_message; /* SCRIBODO_ANSWER_BLOCK=message: verified block in the newest message (pass 3a; 3b in the system message is the default) */
@@ -33,9 +40,18 @@ typedef struct {
     bool observer_conflict_gate;  /* SCRIBODO_OBSERVER_CONFLICT_GATE=1: the canon candidate step ignores shared titles and the judge must name
                                      the two disagreeing values (journal/observer-cycle2_quality.md step 5: measured 2026-11-14, off-fault
                                      conflicts rose on both novels; kept gated, default off) */
-    bool observer_sentences;      /* SCRIBODO_OBSERVER_SENTENCES=1: a document's source sentences, not the model's statements, are paired with
-                                     canon (obs_overlap at least 3, the two best entries) and a sentence conflict needs the judge's two votes
-                                     and obs_attributes_differ (journal/observer-cycle2_quality.md steps 7 and 8; default off until measured) */
+    /* SCRIBODO_OBSERVER_SENTENCES: a document's source sentences, not the model's statements, are paired with canon
+     * (obs_overlap at least 3, the two best entries) and a sentence conflict needs the judge's two votes and software
+     * co-signers. One level per measured arm (MEMORY-015 §5); default off (the default path stays at step 4's 7 in 92):
+     *   =attributes  co-signer obs_attributes_differ (journal/observer-cycle2_quality.md step 8, measured end to end on
+     *                the corrected planted copies: Mars 6 true of 42 shown, P&P 5 of 18; recall 11 of 20)
+     *   =subject     and also obs_same_subject (step 9, scored offline on step 8's recorded judge replies, the C equal to
+     *                the Python on every call: Mars 4 of 5, P&P 5 of 7; recall 9 of 20; not yet run end to end)
+     *   =1           the latest measured arm, =subject: what "1" selected when step 9 landed (12ed760), so the runs and
+     *                scripts recorded since keep their meaning. Levels of one variable rather than a second flag because
+     *                step 9 adds a co-signer to step 8's mechanism; the subject check without sentence pairing is not an
+     *                arm anyone measured, and one variable cannot name it. */
+    ObserverSentencesArm observer_sentences;
 } Experiments;
 
 const Experiments *experiments(void);
