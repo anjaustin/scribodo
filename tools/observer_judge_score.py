@@ -153,11 +153,29 @@ def score(calls, faults):
     return {"calls": len(calls), "faults": len(faults), "reachable": reachable, "rows": rows}
 
 
+JUDGE_LOG_VERSIONS = (0, 1)  # src/llm/observer_formats.h: 0 is a log from before 2026-11-15, without "version"
+
+
+def load(path):
+    """The judge calls of a log written by observer_replay --judge-log (format: src/llm/observer_formats.h). A line
+    whose version this reader does not know is refused, never guessed at."""
+    calls = []
+    for n, line in enumerate(open(path, encoding="utf-8"), 1):
+        if not line.strip():
+            continue
+        call = json.loads(line)
+        version = call.get("version", 0)
+        if version not in JUDGE_LOG_VERSIONS:
+            raise ValueError(f"{path}:{n}: judge log version {version}; this reader knows {JUDGE_LOG_VERSIONS}")
+        calls.append(call)
+    return calls
+
+
 def main():
     if len(sys.argv) < 3:
         print(__doc__, file=sys.stderr)
         return 1
-    calls = [json.loads(l) for l in open(sys.argv[1], encoding="utf-8") if l.strip()]
+    calls = load(sys.argv[1])
     faults = json.load(open(sys.argv[2], encoding="utf-8"))["faults"]
     res = score(calls, faults)
     print(f"JUDGE calls={res['calls']} faults={res['faults']} reachable={len(res['reachable'])} ({' '.join(res['reachable'])})")

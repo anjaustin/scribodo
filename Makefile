@@ -71,7 +71,7 @@ STORE_SRCS += src/app/memory_documents.c src/app/memory_document_store.c
 STORE_SRCS += src/app/memory_gc.c src/app/memory_brief_store.c
 STORE_SRCS += src/app/recall.c src/app/recall_job.c
 STORE_SRCS += src/app/import_job.c
-LLM_SRCS  := src/core/json.c src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/llm/chat_history.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/app/recent.c src/app/renames.c src/llm/observer.c src/llm/observer_text.c src/llm/observer_fake.c src/llm/observer_model.c src/llm/observer_job.c src/llm/semantic.c src/llm/remote.c src/llm/names.c src/llm/memfit.c $(STORE_SRCS)
+LLM_SRCS  := src/core/json.c src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/llm/chat_history.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/app/recent.c src/app/renames.c src/llm/observer.c src/llm/observer_text.c src/llm/observer_formats.c src/llm/observer_fake.c src/llm/observer_model.c src/llm/observer_job.c src/llm/semantic.c src/llm/remote.c src/llm/names.c src/llm/memfit.c $(STORE_SRCS)
 LLM_SRCS += src/llm/context_planner.c src/llm/memory_tokens.c
 LLM_SRCS += src/llm/memory_budget.c src/llm/generative_gate.c src/llm/memory_brief.c
 LLM_SRCS += src/llm/canon_reference.c
@@ -85,7 +85,7 @@ APP_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(APP_SRCS))
 # Native dialogs (Objective-C on macOS).
 APP_OBJS  += $(BUILD)/src/platform/dialogs_mac.o
 APP   := $(BUILD)/scribodo
-TESTS := $(BUILD)/test_core $(BUILD)/test_doc_io $(BUILD)/test_editor $(BUILD)/test_editor_faults $(BUILD)/test_db_rows $(BUILD)/test_observer_text $(BUILD)/test_observer_fake $(BUILD)/test_chat_history $(BUILD)/test_chat_view $(BUILD)/test_chat_view_faults $(BUILD)/test_components $(BUILD)/test_remote $(BUILD)/test_llm $(BUILD)/test_persistence_faults $(BUILD)/test_semantic_faults
+TESTS := $(BUILD)/test_core $(BUILD)/test_doc_io $(BUILD)/test_editor $(BUILD)/test_editor_faults $(BUILD)/test_db_rows $(BUILD)/test_observer_text $(BUILD)/test_observer_formats $(BUILD)/test_observer_fake $(BUILD)/test_chat_history $(BUILD)/test_chat_view $(BUILD)/test_chat_view_faults $(BUILD)/test_components $(BUILD)/test_remote $(BUILD)/test_llm $(BUILD)/test_persistence_faults $(BUILD)/test_semantic_faults
 TESTS += $(BUILD)/test_chat_history_job
 TESTS += $(BUILD)/test_store_connections
 TESTS += $(BUILD)/test_frame_metrics $(BUILD)/test_context_planner
@@ -183,6 +183,10 @@ $(BUILD)/test_db_rows: $(BUILD)/src/app/db.o $(BUILD)/tests/test_db_rows.o
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS)
 
 $(BUILD)/test_observer_text: $(BUILD)/src/llm/observer_text.o $(BUILD)/src/core/experiments.o $(BUILD)/src/core/utf8.o $(BUILD)/third_party/cJSON/cJSON.o $(BUILD)/tests/test_observer_text.o
+	$(CC) $(CFLAGS) $^ -o $@
+
+# The observer's C-to-Python formats (llm/observer_formats.h): writes or checks tests/fixtures/observer_formats/.
+$(BUILD)/test_observer_formats: $(BUILD)/src/llm/observer_formats.o $(BUILD)/src/llm/observer_text.o $(BUILD)/src/core/experiments.o $(BUILD)/src/core/utf8.o $(BUILD)/third_party/cJSON/cJSON.o $(BUILD)/tests/test_observer_formats.o
 	$(CC) $(CFLAGS) $^ -o $@
 
 $(BUILD)/test_chat_history: $(BUILD)/src/llm/chat_history.o $(BUILD)/tests/test_chat_history.o
@@ -315,6 +319,7 @@ test: $(TESTS) $(CORE_OBJS) $(LLM_OBJS) $(APP_OBJS)
 	$(WATCHDOG) $(TEST_TIMEOUT) test_observer_judge_score python3 tests/test_observer_judge_score.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_observer_sentence_pairs python3 tests/test_observer_sentence_pairs.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_observer_rules python3 tests/test_observer_rules.py
+	$(WATCHDOG) $(TEST_TIMEOUT) test_observer_formats_py python3 tests/test_observer_formats.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_probes python3 tests/test_answer_probes.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_live_capture python3 tests/test_answer_live_capture.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_live_audit python3 tests/test_answer_live_audit.py

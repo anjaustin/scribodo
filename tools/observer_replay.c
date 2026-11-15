@@ -14,8 +14,9 @@
  *        replies, the verdict) for tools/observer_judge_score.py, which scores rules offline against planted faults.
  * stdout: one line per finding: type|subject|relation|object|status|content|source kind|doc or chat|start|len|quote|related text
  *         (a newline, carriage return, tab, pipe or backslash inside a text field is written as \n, \r, \t, \| or \\,
- *         so a finding is always one line of twelve fields; the real model writes subjects and contents across lines)
- *         then "# N findings, J jobs, status: S, T s" on stderr. [seconds] is wall time; exit 0 when the observer
+ *         so a finding is always one line of twelve fields; the real model writes subjects and contents across lines;
+ *         the format is llm/observer_formats.h's, version OBSERVER_FINDING_LINES_FORMAT)
+ *         stderr: the format marker OBSERVER_FINDING_LINES_MARKER first, then "# N findings, J jobs, status: S, T s". [seconds] is wall time; exit 0 when the observer
  *         finished, 2 when it did not within the limit. */
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,48 +28,17 @@
 #include "app/records.h"
 #include "app/store.h"
 #include "llm/observer.h"
+#include "llm/observer_formats.h"
 #include "llm/server.h"
 #include <sys/stat.h>
 #include <limits.h>
 
 static int cmp_lines(const void *a, const void *b) { return strcmp(*(char *const *)a, *(char *const *)b); }
 
-/* A text field escaped so the line stays one line of twelve fields: \n \r \t \| and \\ (see the header). */
-static char *escaped(const char *s)
-{
-    if (!s) s = "";
-    char *out = malloc(strlen(s) * 2 + 1), *p = out;
-    if (!out) return NULL;
-    for (; *s; s++) {
-        char c = *s == '\n' ? 'n' : *s == '\r' ? 'r' : *s == '\t' ? 't' : *s == '|' ? '|' : *s == '\\' ? '\\' : 0;
-        if (c) { *p++ = '\\'; *p++ = c; } else *p++ = *s;
-    }
-    *p = 0;
-    return out;
-}
-
-static char *line_for(const RecordVersion *v)
-{
-    const SourceRef *s = v->nsources ? &v->sources[0] : NULL;
-    const char *src_kind = !s ? "" : s->kind == SRC_DOC ? "doc" : "chat";
-    const char *src_name = !s ? "" : s->kind == SRC_DOC ? s->doc : s->chat;
-    char *f[9] = { escaped(v->finding.type), escaped(v->finding.subject), escaped(v->finding.relation),
-                   escaped(v->finding.object), escaped(v->status), escaped(v->content), escaped(src_name),
-                   escaped(s ? s->quote : ""), escaped(v->finding.related_text) };
-    size_t cap = 64;
-    bool ok = true;
-    for (int i = 0; i < 9; i++) { ok = ok && f[i]; cap += f[i] ? strlen(f[i]) : 0; }
-    char *line = ok ? malloc(cap) : NULL;
-    if (line)
-        snprintf(line, cap, "%s|%s|%s|%s|%s|%s|%s|%s|%zu|%zu|%s|%s", f[0], f[1], f[2], f[3], f[4], f[5], src_kind, f[6],
-                 s ? s->start : 0, s ? s->len : 0, f[7], f[8]);
-    for (int i = 0; i < 9; i++) free(f[i]);
-    return line;
-}
-
 int main(int argc, char **argv)
 {
     if (argc < 2) { fprintf(stderr, "usage: observer_replay <project-dir> [seconds]\n"); return 1; }
+    fprintf(stderr, "%s\n", OBSERVER_FINDING_LINES_MARKER); /* on stderr: stdout stays byte-comparable (observer_formats.h) */
     const char *project = argv[1];
     double limit = argc > 2 && argv[2][0] != '-' ? atof(argv[2]) : 600.0;
     StoreManager *store = store_manager_create();
@@ -157,7 +127,7 @@ int main(int argc, char **argv)
     records_list_checked(store, project, REC_FINDING, &list, &n);
     char **lines = calloc(n ? n : 1, sizeof(char *));
     for (size_t i = 0; lines && i < n; i++) {
-        char *l = line_for(record_current(&list[i]));
+        char *l = observer_finding_line(record_current(&list[i]));
         if (l) lines[nlines++] = l;
     }
     if (lines) qsort(lines, nlines, sizeof(char *), cmp_lines);

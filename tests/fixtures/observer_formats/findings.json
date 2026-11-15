@@ -1,0 +1,40 @@
+[{
+		"type":	"conflict",
+		"subject":	"Zoë",
+		"relation":	"",
+		"object":	"",
+		"status":	"new",
+		"content":	"Canon says green;\r\nthe text says brown \\ grey.",
+		"kind":	"doc",
+		"doc":	"part|07.md",
+		"start":	120,
+		"len":	31,
+		"quote":	"Her eyes, he said,\nwere \"green\" | not brown.",
+		"related":	"Zoë's eyes are green."
+	}, {
+		"type":	"entity",
+		"subject":	"Dvořák",
+		"relation":	"",
+		"object":	"",
+		"status":	"saved",
+		"content":	"Dvořák is mentioned.",
+		"kind":	"chat",
+		"doc":	"20261112-120000-ab12",
+		"start":	0,
+		"len":	14,
+		"quote":	"Ingrid\tmet Dvořák",
+		"related":	""
+	}, {
+		"type":	"relationship",
+		"subject":	"Sola",
+		"relation":	"daughter of",
+		"object":	"Tars Tarkas",
+		"status":	"dismissed",
+		"content":	"No source at all.",
+		"kind":	"",
+		"doc":	"",
+		"start":	0,
+		"len":	0,
+		"quote":	"",
+		"related":	""
+	}]

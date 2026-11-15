@@ -3,6 +3,7 @@
 #include "observer_text_internal.h"
 #include "observer_model_internal.h"
 #include "observer_job_internal.h"
+#include "observer_formats.h"
 
 #include "core/experiments.h"
 #include "core/utf8.h"
@@ -692,33 +693,22 @@ static int job_canon_candidates(JobRun *r, const char *stmt, size_t cand[4])
 /* One JSON line per judge call to the judge log, so rules over the judge's replies can be scored offline against
  * planted faults (tools/observer_judge_score.py; record-model-replies-before-tuning): where the statement came from
  * (document and character span, or chat and message), the canon entry, the statement as the judge saw it, both raw
- * replies (the second absent when the first was not a conflict), and the two-vote verdict before any dedupe. */
+ * replies (the second absent when the first was not a conflict), and the two-vote verdict before any dedupe. The
+ * format, versioned, is llm/observer_formats.h's. */
 static void judge_log_line(JobRun *r, const Cand *cd, bool sentence, size_t c, const char *stmt, char *replies[2], bool conflict,
                            bool attributes, bool subject)
 {
     FILE *f = r->o->judge_log;
     if (!f) return;
     const SourceRef *src = &cd->src;
-    cJSON *j = cJSON_CreateObject();
-    if (!j) return;
-    cJSON_AddStringToObject(j, "kind", src->kind == SRC_DOC ? "doc" : "chat");
-    cJSON_AddStringToObject(j, "doc", src->kind == SRC_DOC ? src->doc : src->chat);
-    cJSON_AddNumberToObject(j, "message", (double)src->message);
-    cJSON_AddNumberToObject(j, "start", (double)src->start);
-    cJSON_AddNumberToObject(j, "len", (double)src->len);
-    cJSON_AddStringToObject(j, "type", cd->type);
-    cJSON_AddStringToObject(j, "path", sentence ? "sentence" : "statement");
-    if (sentence) cJSON_AddBoolToObject(j, "attributes", attributes);
-    if (sentence) cJSON_AddBoolToObject(j, "subject", subject);
-    cJSON_AddStringToObject(j, "canon_id", r->canon[c].id);
-    cJSON_AddStringToObject(j, "canon", record_current(&r->canon[c])->content);
-    cJSON_AddStringToObject(j, "statement", stmt);
-    cJSON *rs = cJSON_AddArrayToObject(j, "replies");
-    for (int p = 0; p < 2 && rs; p++) cJSON_AddItemToArray(rs, replies[p] ? cJSON_CreateString(replies[p]) : cJSON_CreateNull());
-    cJSON_AddBoolToObject(j, "conflict", conflict); /* the judge's two votes, before the co-signer and any dedupe */
-    char *line = cJSON_PrintUnformatted(j);
+    ObserverJudgeLogEntry e = {
+        .is_doc = src->kind == SRC_DOC, .name = src->kind == SRC_DOC ? src->doc : src->chat, .message = src->message,
+        .start = src->start, .len = src->len, .type = cd->type, .sentence = sentence, .attributes = attributes,
+        .subject = subject, .canon_id = r->canon[c].id, .canon = record_current(&r->canon[c])->content, .statement = stmt,
+        .replies = { replies[0], replies[1] }, .conflict = conflict, /* the judge's two votes, before co-signers and dedupe */
+    };
+    char *line = observer_judge_log_line(&e);
     if (line) { fprintf(f, "%s\n", line); fflush(f); free(line); }
-    cJSON_Delete(j);
 }
 
 static bool job_judge_pair(JobRun *r, bool sentence, size_t i, size_t c, const char *stmt)

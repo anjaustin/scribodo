@@ -1546,6 +1546,9 @@ static void test_observer_judge_log(void)
     FILE *in = fopen(logpath, "rb");
     if (in) { text = calloc(1, 65536); if (text) n = fread(text, 1, 65535, in); fclose(in); }
     CHECK(text && n > 0);
+    /* Every line carries the format's version (llm/observer_formats.h; AUDIT-004 F7). */
+    for (const char *p = text; p && *p; p = strchr(p, '\n') ? strchr(p, '\n') + 1 : NULL)
+        CHECK(!strncmp(p, "{\"version\":1,", 13));
     bool found = false;
     for (char *line = text ? strtok(text, "\n") : NULL; line && !found; line = strtok(NULL, "\n")) {
         cJSON *j = cJSON_Parse(line);
