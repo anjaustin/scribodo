@@ -1,7 +1,7 @@
 # Product readiness gaps
 
 **Recorded:** 2026-11-06
-**Re-reviewed:** 2026-11-09 against `af57a32`; no gap status changed.
+**Re-reviewed:** 2026-11-09 against `af57a32`; no gap status changed. 2026-11-15 against `ed95681` (AUDIT-004): GAP-004 done (2026-11-12), GAP-003 status and the GAP-004 figures brought up to date; GAP-001 and GAP-003 under way.
 **Re-prioritised:** 2026-11-11 by the author after [LANDSCAPE](LANDSCAPE.md): every remaining gap is P0. The order below is the working order, not a ranking of importance.
 
 **Baseline:** `3e7add8`; the MVP workflows and their local/CI acceptance pass.
@@ -14,8 +14,8 @@ features are absent. Keep the original numbering for future follow-up.
 |---|---|---|---|
 | GAP-001 | Broad AI usefulness and accuracy evaluation | **P0** (2026-11-11) | Started: a second, held-out manuscript (A Princess of Mars) with questions written before any run; see the 2026-11-11 section |
 | GAP-002 | Turnkey installation and release distribution | **P0** (2026-11-11) | Not started |
-| GAP-003 | Whole-manuscript scale and sustained-use evidence | **P0** | Implementation underway; bounded-history foundation first; memory contract in MEMORY-015 |
-| GAP-004 | Deterministic crash/recovery interruption coverage | **P0** (2026-11-11) | Done 2026-11-12 for the six transitions named: `GAP-004-interruption-matrix.md`, 129 rows (125 process deaths), 0 failures; three defects found and repaired, one finding decided and built (stray save temps are kept and offered on load); limits stated (process death is not power loss) |
+| GAP-003 | Whole-manuscript scale and sustained-use evidence | **P0** | Under way: bounded history done; budgets agreed 2026-11-14; the series, soak and restart runs in MEMORY-019 and `journal/gap003-cycle1_series.md`; open: the observer's scheduling under continuous chat and a memory-on time-to-first-token row |
+| GAP-004 | Deterministic crash/recovery interruption coverage | **P0** (2026-11-11) | Done 2026-11-12 for the six transitions named: `GAP-004-interruption-matrix.md`, 133 rows (129 process deaths, 1,478 checks), 0 failures as of 2026-11-14 after migration 018 (129 and 125 on 2026-11-12); three defects found and repaired, one finding decided and built (stray save temps are kept and offered on load); limits stated (process death is not power loss) |
 | GAP-005 | Real macOS input, accessibility and author usability | **P0** (2026-11-11) | Not started |
 
 The user selected **#3 as P0** on 2026-11-06 and made the remaining four P0 on
@@ -256,7 +256,7 @@ latency/scope limits are tracked in
 every filesystem/journal/database authority transition, nor actual power-loss
 testing. See `TECHNICAL-DEBT.md` for the existing residual-risk contract.
 
-**Next work:** Add deterministic kill points around journal writes, commits,
+**Next work (as recorded 2026-11-06, done 2026-11-12 below):** Add deterministic kill points around journal writes, commits,
 marker replacement and archival cleanup; include disk-full/read-only cases and
 restart verification of authority, non-duplication and recoverability.
 

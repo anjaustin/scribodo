@@ -67,7 +67,7 @@ The saved-file pass runs inside the import, and the import runs once per
 project folder. Every project already in the store keeps `saved_revision_id`
 NULL for every document until the author opens and saves each one in the
 app. Measured on this Mac's production database (read-only): one project
-(`/Users/ztflynn/Documents/AEON/scribodo`), one document, one revision, and
+(`~/Documents/AEON/scribodo`), one document, one revision, and
 the `documents` table does not yet have the `saved_revision_id` column at
 all, so the first launch after the schema migration will put every existing
 document in exactly this state.
