@@ -4,8 +4,8 @@ This is the durable cross-session register for architectural and maintenance
 work. It records debt rather than individual defects. Update the status,
 evidence and session log when a remediation lands.
 
-**Last reviewed:** 2026-11-11
-**Baseline:** `bd23f8b` (`Quotation integrity check; treatment rerun shows zero wrong statements shown`); see [AUDIT-003](AUDIT-003-repository-audit.md), and [AUDIT-002](AUDIT-002-repository-audit.md) before it
+**Last reviewed:** 2026-11-15
+**Baseline:** `3731db8` (`Observer steps 8 and 9: hosted verdicts`); see [AUDIT-004](AUDIT-004-repository-audit.md), with [AUDIT-003](AUDIT-003-repository-audit.md) and [AUDIT-002](AUDIT-002-repository-audit.md) before it
 **Status:** pre-alpha; macOS on Apple Silicon is the MVP target
 
 ## Current product priority
@@ -73,6 +73,17 @@ five such axes for at least 24 reachable combinations; live runs exercise two.
   gated off by the rule above. No column. The same day `SCRIBODO_MEMORY_EXPERIMENT`
   and `SCRIBODO_ANSWER_PIPELINE` became default-on fields (`off` or `0` turns
   each off) at the author's direction, journal/answer-cycle4_default_path.md.
+- **2026-11-15 (AUDIT-004 F2, F4):** `SCRIBODO_OBSERVER_SENTENCES` joined the
+  table (14 fields reading 12 variables). The code rule holds; the record does
+  not. Step 9 put a second measured mechanism (the same-subject co-signer)
+  under step 8's flag, so step 8's arm can no longer be selected and the field
+  comment is stale. The default-on flip of `SCRIBODO_ANSWER_PIPELINE` changed
+  what `tools/manuscript_baseline.sh` and `manuscript_restart.sh` measure,
+  since neither pins the arm. The two observer flags interact through
+  `obs_overlap`, and one of their four combinations is fully tested. The README
+  table lacks `SCRIBODO_OBSERVER_SENTENCES` and `SCRIBODO_SEM_DEBUG`.
+  **Rule added:** one flag (or one level of a flag) per measured arm; every
+  measurement script pins every arm it depends on and records it in the run.
 
 ## Open — answer receipts and trace lines are an unversioned contract (P2)
 
@@ -157,7 +168,7 @@ archive). No author project on this Mac has been scanned.
 
 ## Open — unarchived evidence and undeclared experiment environments (P2)
 
-**Recorded:** 2026-11-11 (AUDIT-003 F6). **Status:** Done 2026-11-12, entry kept for the record.
+**Recorded:** 2026-11-11 (AUDIT-003 F6). **Status:** Environments done 2026-11-12. Evidence **recurred** 2026-11-15 (AUDIT-004 F1); archived the same day; enforcement open.
 
 Journals since 2026-11-09 cite about 60 `build/` entries that no archive in
 [EVIDENCE](EVIDENCE.md) held; the pass-6 design and the coreference decision
@@ -180,6 +191,14 @@ the 2026-11-11 and -12 steps is in `scribodo-evidence-2026-11-12-p0.tar.gz`
 (EVIDENCE). Both parts of this entry are done; the standing rule is the
 archive at every dated report.
 
+2026-11-15 (AUDIT-004 F1): the rule lapsed for three days. Of 433 `build/` paths
+that docs and journals cite, 106 existed in no archive, and 35 exist nowhere.
+Among the 35, `build/ui/fit-on` and `build/ui/fit-native2` were written where
+`make uitest` deletes (`Makefile:330`), and five `build/gap003/*/gates`
+directories are gone. The 106 are in `scribodo-evidence-2026-11-15-audit004`.
+**Remaining:** a check that every cited path is archived or marked as not
+evidence, run by `make test`; and no evidence under a directory a gate deletes.
+
 ## Open — duplication that raises the cost of the next change (P2 and P3)
 
 **Recorded:** 2026-11-11 (AUDIT-003 F8). **Status:** Open; remediate when touched.
@@ -193,7 +212,59 @@ archive at every dated report.
 | Layout and shell | All 31 `CLAY(` sites in `main.c`; `App` has 143 fields with four anonymous unions aliasing extracted controllers back to flat names; Escape handled at seven sites; the arm-then-confirm idiom copied three times; 76 colour literals in ten files, no theme header | Next new view: give it its own layout function and a theme header first |
 | Tools | 35 `tools/answer_*.py` (5,290 lines): `ROOT = Path(__file__).resolve().parents[1]` 43 times, 13 `sys.path.insert` sibling imports, four AST-identical helpers; 11 without tests, 7 referenced by one journal or doc only | A `tools/lib` module; retire scripts whose journal is closed |
 | Makefile | 44 per-binary link rules, 18 hand-written TSan compile lines, a 25-line Python test list; zero drift today | Pattern rules when the next test is added |
+| Text rules (AUDIT-004 F10) | Five sentence splitters (`answer_pipeline.c:896,1253`, `observer_text.c:293,375`, `observer_fake.c:88`), eight title lists in `src/llm` plus Python's, two kinship lists, three number-word lists, two identical word-character functions in `answer_pipeline.c` (`:845,1227`); the relation check's splitter cuts "Ms. Bennet" and "James K. Powell" (defect) | One `core/text_rules` module; the relation splitter fixed first |
 | Dead exports | `chat_set_canon_reference` has no caller (so `canon_reference.c` and `chat.c:1322-1335` are unreachable in the product); `revisions_list_files`, `import_job_running_for`, `renames_resolve` have none; `import_job.c` has no test | Remove or test |
+
+## Open — measured rules and tool output mirrored across languages without a shared fixture (P1)
+
+**Recorded:** 2026-11-15 (AUDIT-004 F2, F7). **Status:** Open.
+
+Three observer rules were measured in Python and shipped as C ports, under a
+flag: `obs_sentence_end`, `obs_attributes_differ` and `obs_same_subject`
+(`observer_text.c:375,527,597`), mirroring `tools/observer_plant.py`,
+`observer_sentence_pairs.py` and `observer_judge_score.py`. Their agreement
+was measured once each by an untracked probe. The C sets cap at 64 words, and
+the Python sets are unbounded. Two C-to-Python output formats are tested on
+one side only: the judge log (`observer.c:696-723`) and the replay's finding
+lines (`tools/observer_lines.py`). **Remediation:** one fixture per contract,
+read by a C test and a Python test (the shape of
+`tests/fixtures/answer_relation/replies.json`); `observer_overlap` modes
+become that C test's driver; a format version on both outputs.
+
+## Open — the services layer: reasons, defaults and the Docker path (P2)
+
+**Recorded:** 2026-11-15 (AUDIT-004 F6, F13). **Status:** Open.
+
+- **Reasons discarded:** `service_supervisor.c:31-33,52` throws away the
+  script's output and exit code, so every refusal reaches the author as "store
+  offline".
+- **Defaults duplicated:** the ports, the secrets directory and the MariaDB
+  flags are each written in two to four places (C, shell, Compose).
+- **Docker path uncovered:** no lane runs it, and its functions are written
+  twice.
+- **Script location:** the app finds `services.sh` relative to its binary
+  (`main.c:799`), which a bundle will not support.
+- **Undocumented variables:** six.
+- **Unchecked native version:** native MariaDB is checked only for the 11.4
+  series, while Docker pins a digest whose tag has since moved.
+
+**Remediation:**
+- carry the script's exit code and last line into the status;
+- one defaults file read by the C and the shell;
+- a Docker lane, or Docker paths retired to the harness;
+- README rows for the variables.
+
+## Open — tools no gate compiles and a yardstick kept in prose (P2)
+
+**Recorded:** 2026-11-15 (AUDIT-004 F9). **Status:** Open.
+
+`make tools` is in no workflow. Six C tools build only through heredoc
+Makefile overlays. The observer yardstick reads untracked
+`build/manuscripts/*`, and its expected counts (717 / 348 / 948) are in journal
+prose only. **Remediation:**
+- `make tools` in CI;
+- the overlays as real rules;
+- the yardstick's expected counts in a tracked file it compares against.
 
 ## Open — loopback connection volume in the vector fault sweep
 
@@ -245,6 +316,12 @@ model. Two other spawn sites still inherit the whole descriptor table:
 short-lived tools and neither holds a lock, so nothing is known to break;
 the class is the same. Remediation when touched: the same spawn attribute,
 with a test that lists the child's descriptors.
+
+2026-11-15 (AUDIT-004): the supervisor now sets `POSIX_SPAWN_CLOEXEC_DEFAULT`
+(`service_supervisor.c:39`), and `services.sh detach` closes descriptors 3 and
+up. `backup.c:107` still does not. `server.c:330`'s `popen("ps …")` is a third
+spawn site that this entry did not list (harmless today: the lock descriptor is
+close-on-exec). There is still no descriptor-listing test.
 
 ## Accepted residual risks — persistence review and direct-push workflow
 
@@ -505,6 +582,12 @@ application service credentials nor shares the development stack. Repository
 Actions policy permits only GitHub-owned actions and requires immutable SHA pins.
 Runner metadata, credentials and work directories are owner-only on disk.
 
+2026-11-15 (AUDIT-004): acceptance now runs native services
+(`SCRIBODO_SERVICES: native`, `acceptance.yml:31`), with `make qdrant
+servicestest` and `crashtest`. The Docker paragraph above is history. Neither
+workflow runs `make tools`; no lane runs the Docker-mode service functions
+(`rootsql`, `dump_db`, `load_dump`) or the eight `tools/test_*_mutations.py`.
+
 ### Migration plan
 
 - [x] Make `make tsan` self-contained on a clean checkout.
@@ -538,7 +621,7 @@ enforced: direct pushes are permitted, and CI reports after the fact. See
 | Documentation drift | Done | Living guides no longer encode volatile source locations or assertion totals; dated red-team reports retain their point-in-time evidence. | Keep contracts current and reserve numeric evidence for dated reports. |
 | Weakly typed DB rows | Regressed (2026-11-11) | Repository decoders validate shape, nullability, type and domain, and checked record/revision list failures propagate through `ProjectStore`. One violator: `src/app/memory_gc.c:254-256` reads `db_cell(&r, 0, 4/5/6)` raw into `snprintf` with no column check (added 2026-11-07; harmless today because the columns are `NOT NULL`). The chat family keeps a count-returning `chat_list` in the ops table (`project_store.c:41`) and `project_store_chat_list_checked` bypasses the table with a backend ternary. No Makefile or CI check forbids `db_cell(` outside `db.c`. | Convert the three reads to `db_cell_text`; add a grep gate to `make analyze` allowing `db_cell(` only in `db.[ch]`; finish the chat checked-list routing when next touched. |
 | Manual dependency maintenance | Done | `make dependency-report` and a weekly workflow inventory submodules and images, verify immutable pins, and query OSV by vendored commit. | Review informational upstream updates and remediate any report failure. |
-| `main.c` composition-root size | Open (accepted for pre-alpha) | 2026-11-11 re-measure (AUDIT-003): `src/main.c` is 4,555 lines, 11.5% of `src/` (39,781 C/header lines); +22 since AUDIT-002 and +763 (20%) since the P1 entry closed on 2026-11-05. The P1 coordination split moved worker ownership out; what remains is the single-window composition root, layout builder (all 31 `CLAY(` sites), scripted-host adapters, and the workflow bodies `finish_prompt` (178 lines), `send_chat` (121), `open_source` (77), `host_element` (76), `draw_empty` (74), `attached_text` (74), `finding_action` (70) and `import_documents` (63). Adding the recall view cost the file 150 lines (`7407807`). | Split by pane/controller only when a feature next touches more than three ownership areas, or if the file exceeds 5,000 lines. Re-measure and update this row at each review; do not describe the P1 entry above as a size split. |
+| `main.c` composition-root size | Open (accepted for pre-alpha) | 2026-11-15 re-measure (AUDIT-004 F3): 4,703 lines, 11.2% of 41,904, 297 short of the trigger at about 37 lines a day. Two new workflow bodies were added (`draft_tick`/`draft_discard`, `resave_unsaved_chat`). `main()` itself is 947 lines (`:3757-4703`) and `build_layout` 247; neither was listed before. 2026-11-11 re-measure (AUDIT-003): `src/main.c` is 4,555 lines, 11.5% of `src/` (39,781 C/header lines); +22 since AUDIT-002 and +763 (20%) since the P1 entry closed on 2026-11-05. The P1 coordination split moved worker ownership out; what remains is the single-window composition root, layout builder (all 31 `CLAY(` sites), scripted-host adapters, and the workflow bodies `finish_prompt` (178 lines), `send_chat` (121), `open_source` (77), `host_element` (76), `draw_empty` (74), `attached_text` (74), `finding_action` (70) and `import_documents` (63). Adding the recall view cost the file 150 lines (`7407807`). | Split by pane/controller only when a feature next touches more than three ownership areas, or if the file exceeds 5,000 lines. Re-measure and update this row at each review; do not describe the P1 entry above as a size split. |
 
 ## Intentional pre-alpha tradeoffs
 
@@ -1000,3 +1083,26 @@ UI/store paths and full-history compatibility consumers remain debt.
   patch-equivalent to the merged `938e51b` and can be deleted.
 - Archived the cycle's cited evidence and the audit logs; see
   [EVIDENCE](EVIDENCE.md).
+
+### 2026-11-15 — AUDIT-004 technical-debt audit
+
+- Ran the 19-target matrix on the unchanged tree at `3731db8`. Eighteen
+  targets passed. `make dependency-report` failed because the
+  `mariadb:11.4.13` tag moved upstream. The digest pin still holds; this is
+  recorded, not fixed (F13).
+- Re-checked every standing claim against the tree:
+  - The experiment entry, the evidence entry, the descriptor entry, the CI
+    text and the `main.c` size row are amended in place.
+  - The index-text global is gone. The `records.c` id generator and the flag
+    table are new process-globals and are not listed.
+- Added three entries (cross-language mirrors and contracts, the services
+  layer, ungated tools) and a duplication row for text rules.
+- Archived the 106 cited directories that existed in no archive, and the
+  audit logs; see [EVIDENCE](EVIDENCE.md).
+- Defects found but not fixed by the audit:
+  - the chat-title archive is lost on the file round trip (F11);
+  - the relation splitter cuts names at titles and initials (F10);
+  - `records_new_id_unused` returns a used id once exhausted;
+  - two test-side null dereferences.
+- Growth since AUDIT-003: 22,559 lines added, 15% product code; 1,311
+  removed.

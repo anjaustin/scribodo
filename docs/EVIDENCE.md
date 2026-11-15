@@ -151,3 +151,22 @@ instrumented live-capture builds' generated sources, manifests and logs
 Binaries, objects, dependency files and the frozen app copies are excluded.
 Archive SHA-256:
 `4016a1ff5e67639a24f3db62665d356653295b71f96899ed388870365a4f0465`.
+
+Everything cited from 2026-11-12 to 2026-11-15 that no earlier archive held is in
+`scribodo-evidence-2026-11-15-audit004.tar.gz` in the same folder, with
+`manifest-scribodo-evidence-2026-11-15-audit004.txt` and an entry in
+`SHA256SUMS`. It contains 3,804 files (21 MB compressed):
+- the 106 `build/` paths that docs, journals and the README cite and that
+  existed in no archive (AUDIT-004 F1);
+- the observer cycle's real-model runs, judge logs and gate logs
+  (`build/observer/*`);
+- the GAP-003 series;
+- the native-services move;
+- REDTEAM-023's durability runs;
+- the AUDIT-004 matrix logs and `results.tsv` (`build/audit004`).
+
+Excluded: binaries, objects, the two locked Python environments (`make envs`
+recreates them) and the sanitizer build. Thirty-five cited paths existed
+nowhere when the audit ran; AUDIT-004 F1 lists the ones that were evidence.
+Archive SHA-256:
+`2fa9b638d6422fcbc833b38f7dc70edf3bd9700640cef054235f611d5808277b`.
