@@ -28,12 +28,15 @@ static bool run_services(ServiceSupervisor *supervisor, const char *tool)
     posix_spawn_file_actions_t actions;
     posix_spawnattr_t attr;
     if (posix_spawn_file_actions_init(&actions) != 0) return false;
-    bool actions_ok = posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0) == 0 &&
+    bool actions_ok = posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0) == 0 &&
+                      posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0) == 0 &&
                       posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0) == 0;
     bool attr_inited = posix_spawnattr_init(&attr) == 0;
     bool attr_ok = attr_inited;
     if (attr_inited) {
-        attr_ok = posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP) == 0 &&
+        /* Only the three descriptors above reach the script: the app's model and store sockets must not outlive it in
+         * the daemons it starts (REDTEAM-023; the script also starts them with nothing inherited). */
+        attr_ok = posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT) == 0 &&
                   posix_spawnattr_setpgroup(&attr, 0) == 0;
     }
     pid_t pid = 0;

@@ -9,7 +9,7 @@ Today the structured data is in files under `<project>/.scribodo/`: chats, notes
 
 ## Services
 
-- **Services:** MariaDB 11.4 LTS and Qdrant run natively on this Mac (Homebrew `mariadb@11.4`, the pinned Qdrant 1.20.0 release binary, `tools/services.sh` in native mode; the recommended default since 2026-11-14, journal/store-cycle2_native_services.md) or in Docker (`docker/compose.yml`, pinned by digest), both listening on `127.0.0.1` only. Credentials are generated once into `~/Library/Application Support/Scribodo/services/` (folder mode 0700) by `tools/services.sh`. Verified: wrong passwords and missing API keys are refused, and the LAN address can't reach either service.
+- **Services:** MariaDB 11.4 LTS and Qdrant run natively on this Mac (Homebrew `mariadb@11.4`, the pinned Qdrant 1.20.0 release binary, `tools/services.sh` in native mode; the recommended default since 2026-11-14, journal/store-cycle2_native_services.md) or in Docker (`docker/compose.yml`, pinned by digest), both listening on `127.0.0.1` only. Credentials are generated once into `~/Library/Application Support/Scribodo/services/` (folder mode 0700) by `tools/services.sh`. Verified: wrong passwords and missing API keys are refused, and the LAN address can't reach either service; for the native mode `make servicestest` checks the same on every run, and that the install's anonymous accounts, host-named root and test database are gone (REDTEAM-023).
 - **Client:** MariaDB Connector/C 3.4.11 is a pinned submodule, built static against Homebrew's static OpenSSL. It depends only on system libraries.
 - **App lifecycle:**
   - At launch the app checks the database. If it's down, it runs `tools/services.sh up` (native, or `compose up -d` in docker mode) and shows "Starting local services…".

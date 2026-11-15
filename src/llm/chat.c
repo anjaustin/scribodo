@@ -1225,6 +1225,7 @@ typedef struct {
     const char *query;
     bool note;             /* the author declared the turn a note: no gate, however it is worded */
     bool pipeline_done;
+    const char *pipeline_note; /* a static prefix for the recall stage's notice when the pipeline handed the turn back */
     double recall_started, recall_finished;
     size_t recalled;
     bool packet_prepared;
@@ -1302,24 +1303,35 @@ static void memory_pipeline(ChatSession *s, ChatBuild *b, MemoryStage *m)
      * session's cancel, not the 500 ms preparation budget (REDTEAM-021 R1). */
     SemanticClient *pipeline_vectors = semantic_client_bounded(s->memory_vectors, &s->cancel, pipeline_deadline);
     if (!pipeline_vectors) return; /* no search ran; the plain request stands */
-    answer_pipeline_run(m->db, pipeline_vectors, s->rerank, s->server, &pscope, &m->documents, m->query, m->before,
-                        &s->cancel, pipeline_deadline, &pipeline);
+    bool ran = answer_pipeline_run(m->db, pipeline_vectors, s->rerank, s->server, &pscope, &m->documents, m->query, m->before,
+                                   &s->cancel, pipeline_deadline, &pipeline);
     semantic_client_destroy(pipeline_vectors);
-    if (!strcmp(pipeline.status, "no_candidates")) {
-        /* Nothing to verify: no document unit reached the reranker (a conversation with memory on and no documents
-         * attached is the common case). The recall plan answers from the chat's own history as it always has, and
-         * the request never claims the manuscript was searched (measured 2026-11-14: a 40-minute soak of such a
-         * conversation had every reply abstain, journal/answer-cycle4_default_path.md). */
-        snprintf(b->memory_notice, sizeof(b->memory_notice), "Verified pipeline: no document passages to score; recalled from the chat instead.");
+    if (!ran && pipeline.candidates == 0) {
+        /* The pipeline stopped before it searched anything (no chat server, no question part, an allocation failure):
+         * nothing was verified and nothing was found missing, so the recall plan answers and the request never claims a
+         * search (REDTEAM-023: this returned status "none" and the turn was rebuilt around "No verified passage"). */
+        m->pipeline_note = "Verified pipeline could not run; ";
         if (experiments()->memory_trace) answer_trace_pipeline(stderr, &pipeline, b->req ? strlen(b->req) : 0, b->first_history);
         answer_pipeline_result_free(&pipeline);
         return;
     }
-    if (pipeline.scored && pipeline.score_failures == pipeline.scored) {
-        /* Every score failed (the reranker refused or was unavailable): a capacity failure, not a search result.
-         * The request keeps its plain shape and the notice says what happened. */
-        snprintf(b->memory_notice, sizeof(b->memory_notice), "Verified pipeline: %zu candidates, %zu scored, none accepted by the reranker; the plain request was sent.",
-                 pipeline.candidates, pipeline.scored);
+    if (!strcmp(pipeline.status, "no_candidates") && m->documents.count == 0) {
+        /* Nothing to verify: no documents are attached to this conversation, so no document unit can reach the
+         * reranker. The recall plan answers from the chat's own history as it always has, and the request never
+         * claims the manuscript was searched (measured 2026-11-14: a 40-minute soak of such a conversation had every
+         * reply abstain, journal/answer-cycle4_default_path.md). With documents attached, no candidates is a search
+         * result (chat units crowded them out, or hydration failed) and keeps the verified shape (REDTEAM-023). */
+        m->pipeline_note = "Verified pipeline: no documents attached, nothing to verify; ";
+        if (experiments()->memory_trace) answer_trace_pipeline(stderr, &pipeline, b->req ? strlen(b->req) : 0, b->first_history);
+        answer_pipeline_result_free(&pipeline);
+        return;
+    }
+    if (!strcmp(pipeline.status, "rerank_unavailable")) {
+        /* The reranker scored nothing (every pair refused, or the server not ready): a capacity failure, not a search
+         * result. The request keeps its plain shape and the notice says so. (The first version tested scored ==
+         * failures, which is 0 == n when every score fails and never matched; REDTEAM-023.) */
+        snprintf(b->memory_notice, sizeof(b->memory_notice), "Verified pipeline: %zu candidates, the reranker scored none (%zu refused; zero means it was not ready); the plain request was sent.",
+                 pipeline.candidates, pipeline.score_failures);
         if (experiments()->memory_trace) answer_trace_pipeline(stderr, &pipeline, b->req ? strlen(b->req) : 0, b->first_history);
         answer_pipeline_result_free(&pipeline);
         m->pipeline_done = true;
@@ -1418,6 +1430,11 @@ static void memory_recall(ChatSession *s, ChatBuild *b, MemoryStage *m)
     } else if (!m->pipeline_done) snprintf(b->memory_notice, sizeof(b->memory_notice), "%s",
         m->available && m->plan.readiness == MEMORY_DISABLED ? "Local memory disabled for this conversation; recent context only"
         : "Local memory warming, partial or unavailable: no older excerpts admitted; recent context only");
+    if (m->pipeline_note && b->memory_notice[0]) { /* the pipeline's reason, kept in front of the recall stage's notice */
+        char joined[sizeof(b->memory_notice)];
+        snprintf(joined, sizeof(joined), "%s%s", m->pipeline_note, b->memory_notice);
+        snprintf(b->memory_notice, sizeof(b->memory_notice), "%s", joined);
+    }
 }
 
 /* Stage 3d: canon-aware chat (experiment): the author's matching committed canon as its own reference class, placed

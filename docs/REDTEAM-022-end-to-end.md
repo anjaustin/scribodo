@@ -90,7 +90,7 @@ author's profile name.
 Scripts keep their own in the fixture folder, like the profile; a provider's
 name and host can no longer reach a failed run's uploaded artefacts.
 
-**R9 — MariaDB's durability runs through Docker Desktop's virtual disk (P2, recorded; closed for the native default the same evening).**
+**R9 — MariaDB's durability runs through Docker Desktop's virtual disk (P2, recorded; narrowed, still open).** The native default removes the virtual disk but not the limit: measured on 2026-11-14, native MariaDB's commits take 0.24 ms, the cost of a plain `fsync` (0.05 ms) rather than a full flush (`F_FULLFSYNC`, 4.0 ms; `build/observer/redteam023/durability/`) on this disk, so the drive's own cache is not flushed on commit (REDTEAM-023 corrected the earlier claim that the native default closed this).
 An `fsync` inside the Linux guest reaches the Mac's disk only if the hypervisor
 flushes; GAP-004 names the limit and the README's saving section now says it
 beside the backup instructions. The mitigation the product has is the backup;

@@ -46,11 +46,15 @@ jobs:
           echo "$HOME/.docker/bin" >> "$GITHUB_PATH"
           echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
           echo "SCRIBODO_SECRETS=$RUNNER_TEMP/scribodo-services" >> "$GITHUB_ENV"
+          echo "SCRIBODO_LOGS=$RUNNER_TEMP/scribodo-logs" >> "$GITHUB_ENV"
           brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
           echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
 
       - name: Fetch the pinned Qdrant binary
         run: make qdrant
+      - name: Rehearse the native services on throwaway stores
+        run: make servicestest
+
       - name: Start pinned local services
         run: tools/services.sh up
 
@@ -69,7 +73,14 @@ jobs:
 
       - name: Remove disposable services and volumes
         if: always()
-        run: tools/services.sh purge
+        # Only the job's own store: if the step that sets SCRIBODO_SECRETS never ran, there is nothing of the job's
+        # to remove, and the default folder is the author's (REDTEAM-023).
+        run: |
+          if [ -n "${SCRIBODO_SECRETS:-}" ] && [ "${SCRIBODO_SECRETS#"$RUNNER_TEMP"}" != "$SCRIBODO_SECRETS" ]; then
+            tools/services.sh purge
+          else
+            echo "no job store to remove"
+          fi
 
       - name: Upload failure diagnostics
         if: failure()
@@ -79,4 +90,5 @@ jobs:
           path: |
             build/ui
             build/hangs
+            ${{ runner.temp }}/scribodo-logs
           if-no-files-found: ignore

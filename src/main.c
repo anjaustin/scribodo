@@ -281,6 +281,7 @@ typedef struct {
     double store_next_probe;      /* while offline: when to probe again */
     bool store_just_moved;        /* the project was just moved into the store (for the status) */
     bool services_started;
+    double services_started_at;   /* when the services were last started (a dead daemon is restarted, rate-limited) */
     bool record_close_armed;     /* a discard of uncommitted canon text was asked for... */
     double record_close_armed_at; /* ...at this time (a second press within 5 s confirms) */
 
@@ -710,7 +711,9 @@ static void store_try_later(App *app)
     if (service_supervisor_busy(&app->services)) return;
     char tools[PATH_MAX];
     snprintf(tools, sizeof(tools), "%s../tools", GetApplicationDirectory());
-    bool start = !app->services_started && !getenv("SCRIBODO_SCRIPT");
+    /* Native services have no container runtime to restart them: a store that drops after a successful start (a
+     * daemon that died) is started again, at most once a minute (REDTEAM-023; `up` keeps running daemons as they are). */
+    bool start = !getenv("SCRIBODO_SCRIPT") && (!app->services_started || GetTime() - app->services_started_at >= 60.0);
     (void)service_supervisor_start(&app->services, tools, start);
 }
 
@@ -4077,7 +4080,10 @@ int main(int argc, char **argv)
         }
         ServiceSupervisorResult service_result;
         if (service_supervisor_poll(&app.services, &service_result)) {
-            if (service_result.command_attempted && service_result.command_succeeded) app.services_started = true;
+            if (service_result.command_attempted && service_result.command_succeeded) {
+                app.services_started = true;
+                app.services_started_at = GetTime();
+            }
             if (service_result.reachable) {
                 cancel_history(&app);
                 app.store_why[0] = '\0';

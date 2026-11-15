@@ -30,10 +30,13 @@ comparison, the same services run natively:
 | MariaDB 11.4.13 (Homebrew), 128 MB buffer pool, 32 connections | 104 MiB | 168 MiB |
 | Qdrant 1.20.0 (release binary) | 52 MiB | 69 MiB |
 
-The chat model needs 5.2 GB at a 32K context and the launch fit had 4.0 GB to
-give it with the reranker resident; 1.9 GB more brings 32K back with room to
-spare, and no model precision is touched (the alternatives, 8-bit KV or
-weights, would have broken the validated BF16 contract).
+At the time the chat model needed 5.35 GB at a 32K context by the fit's figure
+(22 KiB a token) and the launch fit had 4.0 GB to give it with the reranker
+resident. Removing the VM raised that to 5.2 GB and the launch reached 24K, not
+32K (corrected by REDTEAM-023: the first version of this paragraph said the 1.9
+GB "brings 32K back with room to spare", which its own result below contradicts;
+the 1.9 GB also carries about ±0.4 GB of noise between the two readings with
+Docker running). No model precision is touched.
 
 ## What was built
 
@@ -64,9 +67,16 @@ weights, would have broken the validated BF16 contract).
 
 The native mode first ran on a scratch secrets folder and alternate ports
 (`build/observer/native-services/`): `make dbtest` 18,006 checks, 0 failures;
-`make crashtest` 133 rows, 0 failures, in 543 s against the containers' 64 s,
-because every commit's fsync now reaches the disk (the durability the
-containers could not promise, REDTEAM-022 R9); `tools/backuptest.sh` clean.
+`make crashtest` 133 rows, 0 failures, in 543 s against 78 s in the containers
+the same day (`cycle3d-gates/gates-crashtest.log`); the cause of the slowdown is
+not measured. It is not a full flush on commit: native commits take 0.24 ms, a
+plain `fsync` (`build/observer/redteam023/durability/`), and REDTEAM-023 withdrew this paragraph's first claim that the
+native store closes REDTEAM-022 R9; `tools/backuptest.sh` clean. The later rerun
+of the matrix against the default services produced a log byte-identical to
+this one, timing included. The test prints nothing run-specific but the time, so
+identical output is possible; that some matrix ran against the author's server is
+shown by the grants its throwaway databases left there, though not that this log
+is that run's output (REDTEAM-023 records the doubt rather than resolving it).
 One defect of the new script found there: Qdrant's pid file held the script's
 own pid (a subshell's `$!`), so `down` reported Qdrant stopped and left it
 running; fixed, Qdrant is started in the script's shell.

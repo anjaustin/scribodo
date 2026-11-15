@@ -95,7 +95,7 @@ TESTS += $(BUILD)/test_memory_document_cache $(BUILD)/test_memory_budget $(BUILD
 TESTS += $(BUILD)/test_http_deadlines $(BUILD)/test_db_deadlines $(BUILD)/test_memory_brief_model
 TESTS += $(BUILD)/test_http_poll_errno
 
-.PHONY: all run test analyze analyzetest uitest uitest-real sanitize tsan cstest dbtest crashtest envs tools uitest-db backuptest remotetest offlinetest dependency-report clean distclean llama model llmtest
+.PHONY: all run test analyze analyzetest uitest uitest-real sanitize tsan cstest dbtest crashtest envs tools uitest-db backuptest servicestest remotetest offlinetest dependency-report qdrant clean distclean llama model llmtest
 
 all: $(APP)
 
@@ -438,6 +438,13 @@ uitest-db: $(APP)
 	  SCRIBODO_STORE=db SCRIBODO_DB_NAME=$$db SCRIBODO_MEMORY_EXPERIMENT=1 SCRIBODO_SCRIPT=tests/ui/store/12_memory_recall.scribo \
 	    SCRIBODO_SCRIPT_DIR=$$work SCRIBODO_SHOT_DIR=$$PWD/build/ui/store \
 	    $(WATCHDOG) 240 ui-store-memory ./$(APP) 2>>build/ui/store/stderr.log || fail=1; \
+	  echo "(12 again with the verified pipeline: the fake backend has no chat server, so the pipeline cannot run and the chat is recalled; REDTEAM-023)"; \
+	  mkdir -p $$work/pipeline; python3 tests/seed_memory_chat.py $$work/pipeline/memorybook || fail=1; \
+	  tools/services.sh testdb create $${db}_p >/dev/null || fail=1; \
+	  SCRIBODO_STORE=db SCRIBODO_DB_NAME=$${db}_p SCRIBODO_MEMORY_EXPERIMENT=1 SCRIBODO_ANSWER_PIPELINE=verified \
+	    SCRIBODO_SCRIPT=tests/ui/store/12_memory_recall.scribo SCRIBODO_SCRIPT_DIR=$$work/pipeline SCRIBODO_SHOT_DIR=$$PWD/build/ui/store/pipeline \
+	    $(WATCHDOG) 240 ui-store-memory-pipeline ./$(APP) 2>>build/ui/store/stderr.log || fail=1; \
+	  tools/services.sh testdb drop $${db}_p >/dev/null; \
 	  python3 tests/seed_memory_document.py $$work/memorydocbook || fail=1; \
 	  SCRIBODO_STORE=db SCRIBODO_DB_NAME=$$db SCRIBODO_MEMORY_EXPERIMENT=1 SCRIBODO_SCRIPT=tests/ui/store/13_memory_documents.scribo \
 	    SCRIBODO_SCRIPT_DIR=$$work SCRIBODO_SHOT_DIR=$$PWD/build/ui/store \
@@ -474,6 +481,11 @@ remotetest: $(APP)
 backuptest: $(APP)
 	tools/backuptest.sh
 
+# The native services mode rehearsed on throwaway stores (never the author's): REDTEAM-023's findings pinned.
+# SCRIBODO_SERVICESTEST_DOCKER=1 requires Docker for the migration steps; without it they are skipped and said so.
+servicestest: $(QDRANT_BIN)
+	tools/servicestest.sh
+
 # Rename safety on a case-sensitive volume (builds a temporary disk image).
 cstest: $(APP)
 	tools/cstest.sh
@@ -494,6 +506,17 @@ $(LLAMA_BIN):
 
 # The pinned BF16 GGUF (docs/MODEL-001). The app also finds an existing copy
 # in the Hugging Face cache, so this only downloads when neither exists.
+MODEL_DIR    := $(HOME)/Library/Application Support/Scribodo/models
+MODEL_FILE   := $(MODEL_DIR)/LFM3-1.7B-BF16.gguf
+MODEL_URL    := https://huggingface.co/LiquidAI/LFM3-1.7B-GGUF/resolve/cd0c74c575b5c416f3011b5b4c298077f26ca8c2/LFM3-1.7B-BF16.gguf
+MODEL_SHA256 := 39158a79f56edb85e0c4252ce6447b8d7883ef82ffedd02f0cda7c84da5e9f68
+HF_MODEL     := $(HOME)/.cache/huggingface/hub/models--LiquidAI--LFM3-1.7B-GGUF/snapshots/cd0c74c575b5c416f3011b5b4c298077f26ca8c2/LFM3-1.7B-BF16.gguf
+model:
+	@if [ -f "$(HF_MODEL)" ]; then echo "Using the Hugging Face cache copy: $(HF_MODEL)"; \
+	elif [ -f "$(MODEL_FILE)" ]; then echo "Model present: $(MODEL_FILE)"; \
+	else mkdir -p "$(MODEL_DIR)" && curl -fL --progress-bar -o "$(MODEL_FILE).part" "$(MODEL_URL)" && \
+	  echo "$(MODEL_SHA256)  $(MODEL_FILE).part" | shasum -a 256 -c - && mv "$(MODEL_FILE).part" "$(MODEL_FILE)"; fi
+
 # Qdrant for the native services (tools/services.sh): the pinned release binary for Apple Silicon, hash-checked like
 # the model. The container pins the same version by image digest (docker/compose.yml).
 QDRANT_VERSION := 1.20.0
@@ -505,18 +528,7 @@ $(QDRANT_BIN):
 	@mkdir -p $(BUILD)/qdrant && curl -fL --progress-bar -o $(BUILD)/qdrant/qdrant.tar.gz.part "$(QDRANT_URL)" && \
 	  echo "$(QDRANT_SHA256)  $(BUILD)/qdrant/qdrant.tar.gz.part" | shasum -a 256 -c - && \
 	  tar xzf $(BUILD)/qdrant/qdrant.tar.gz.part -C $(BUILD)/qdrant qdrant && rm $(BUILD)/qdrant/qdrant.tar.gz.part && chmod 755 $(QDRANT_BIN) && \
-	  $(QDRANT_BIN) --version 2>/dev/null | grep -q "qdrant $(QDRANT_VERSION)"
-
-MODEL_DIR    := $(HOME)/Library/Application Support/Scribodo/models
-MODEL_FILE   := $(MODEL_DIR)/LFM3-1.7B-BF16.gguf
-MODEL_URL    := https://huggingface.co/LiquidAI/LFM3-1.7B-GGUF/resolve/cd0c74c575b5c416f3011b5b4c298077f26ca8c2/LFM3-1.7B-BF16.gguf
-MODEL_SHA256 := 39158a79f56edb85e0c4252ce6447b8d7883ef82ffedd02f0cda7c84da5e9f68
-HF_MODEL     := $(HOME)/.cache/huggingface/hub/models--LiquidAI--LFM3-1.7B-GGUF/snapshots/cd0c74c575b5c416f3011b5b4c298077f26ca8c2/LFM3-1.7B-BF16.gguf
-model:
-	@if [ -f "$(HF_MODEL)" ]; then echo "Using the Hugging Face cache copy: $(HF_MODEL)"; \
-	elif [ -f "$(MODEL_FILE)" ]; then echo "Model present: $(MODEL_FILE)"; \
-	else mkdir -p "$(MODEL_DIR)" && curl -fL --progress-bar -o "$(MODEL_FILE).part" "$(MODEL_URL)" && \
-	  echo "$(MODEL_SHA256)  $(MODEL_FILE).part" | shasum -a 256 -c - && mv "$(MODEL_FILE).part" "$(MODEL_FILE)"; fi
+	  { $(QDRANT_BIN) --version 2>/dev/null | grep -q "qdrant $(QDRANT_VERSION)" || { rm -f $(QDRANT_BIN); echo "the Qdrant binary is not $(QDRANT_VERSION)" >&2; exit 1; }; }
 
 llmtest: $(BUILD)/test_llm $(LLAMA_BIN)
 	SCRIBODO_LLAMA_SERVER=$(abspath $(LLAMA_BIN)) $(WATCHDOG) 600 llmtest ./$(BUILD)/test_llm --live

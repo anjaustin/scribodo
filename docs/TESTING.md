@@ -455,7 +455,7 @@ modify a database while any Scribodo process is running.
   Homebrew and the pinned Qdrant binary from `make qdrant`) or Docker
   (`SCRIBODO_SERVICES=docker`). A second instance for a measurement or a CI job
   takes its own `SCRIBODO_SECRETS` folder and `SCRIBODO_DB_PORT` /
-  `SCRIBODO_QDRANT_PORT`; `purge` refuses the author's own store unless asked
+  `SCRIBODO_QDRANT_PORT`; `purge` refuses the author's own store (the default folder however its path is spelled, or the default compose project) unless `SCRIBODO_PURGE_CONFIRM=1`, and refuses before stopping anything. `make servicestest` rehearses the native mode on throwaway stores with their own ports: setup, account hardening, the API key and loopback-only checks, concurrent starts, an interrupted first start, stale pid files, descriptor isolation, the purge guard, an existing Docker user, and with Docker running (`SCRIBODO_SERVICESTEST_DOCKER=1` requires it) the migration and its refusals (REDTEAM-023)
   (journal/store-cycle2_native_services.md).
 - `tests/test_backup.py` runs in `make test` without Docker or a display. It checks
   successful verification, symlink/special-file refusal, destination safety,
