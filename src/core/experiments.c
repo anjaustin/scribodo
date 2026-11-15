@@ -37,6 +37,7 @@ static void read_environment(void)
         .memory_presentation_compact = flag_is("SCRIBODO_MEMORY_PRESENTATION", "compact"),
         .memory_presentation_episode = flag_is("SCRIBODO_MEMORY_PRESENTATION", "episode"),
         .observer_conflict_gate = flag_is("SCRIBODO_OBSERVER_CONFLICT_GATE", "1"),
+        .observer_sentences = flag_is("SCRIBODO_OBSERVER_SENTENCES", "1"),
     };
     g_experiments = e;
 }

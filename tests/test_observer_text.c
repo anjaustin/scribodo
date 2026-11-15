@@ -137,6 +137,39 @@ static void test_first_sentence(void)
     CHECK(first_sentence_is("It names **Mr. Darcy** of Pemberley. Then more.", "It names **Mr. Darcy** of Pemberley."));
 }
 
+static void test_sentence_end(void)
+{
+    const char *s = "He met Mr. Darcy. Then J. K. Rowling wrote. It was 1866. So.";
+    size_t e = obs_sentence_end(s, strlen(s));
+    CHECK(e == strlen("He met Mr. Darcy."));
+    const char *t = s + e + 1;
+    CHECK(obs_sentence_end(t, strlen(t)) == strlen("Then J. K. Rowling wrote."));
+    const char *q = "\xE2\x80\x9CMr. Bingley!\xE2\x80\x9D she cried. Next";              /* "she": no boundary */
+    CHECK(obs_sentence_end(q, strlen(q)) == strlen("\xE2\x80\x9CMr. Bingley!\xE2\x80\x9D she cried."));
+    const char *r2 = "\xE2\x80\x9CMr. Bingley!\xE2\x80\x9D She cried.";
+    CHECK(obs_sentence_end(r2, strlen(r2)) == strlen("\xE2\x80\x9CMr. Bingley!\xE2\x80\x9D"));
+    const char *k = "my machine and Kantos Kan\xE2\x80\x99s. Making his way";
+    CHECK(obs_sentence_end(k, strlen(k)) == strlen("my machine and Kantos Kan\xE2\x80\x99s."));
+    const char *d = "drily--\xE2\x80\x9CMr. Darcy is kind.\xE2\x80\x9D Yes.";
+    CHECK(obs_sentence_end(d, strlen(d)) == strlen("drily--\xE2\x80\x9CMr. Darcy is kind.\xE2\x80\x9D"));
+    CHECK(obs_sentence_end("one line\ntwo", 12) == 8);         /* a line break ends one */
+    CHECK(obs_sentence_end("ends with i. next", 17) == 17);    /* a lower-case word after: not a boundary */
+    CHECK(obs_sentence_end("no end", 6) == 6);
+}
+
+static void test_attributes_differ(void)
+{
+    CHECK(obs_attributes_differ("Kantos Kan is a padwar in the navy of Helium.", "a padwar in the navy of Zodanga"));
+    CHECK(!obs_attributes_differ("Dejah Thoris is the Princess of Helium.", "She smiled at the Princess."));      /* one side only */
+    CHECK(obs_attributes_differ("Sola is the daughter of Tars Tarkas.", "Sola was the sister of Lorquas."));
+    CHECK(obs_attributes_differ("thirty days after", "only three days after"));
+    CHECK(obs_attributes_differ("Her hair is coal black.", "Her golden hair fell."));
+    CHECK(!obs_attributes_differ("Her hair is black.", "Her black hair fell."));                                 /* same value */
+    CHECK(!obs_attributes_differ("The Princess of Helium.", "She went to Mr Darcy."));                              /* a title is no place */
+    CHECK(obs_attributes_differ("married three-and-twenty years", "married above forty years"));
+    CHECK(!obs_attributes_differ("", "anything at all 12"));
+}
+
 int main(void)
 {
     const TestCase tests[] = {
@@ -145,6 +178,8 @@ int main(void)
         { "first_sentence", test_first_sentence },
         { "values_in_texts", test_values_in_texts },
         { "statement_clips_by_characters", test_statement_clips_by_characters },
+        { "sentence_end", test_sentence_end },
+        { "attributes_differ", test_attributes_differ },
     };
     return run_tests(tests, sizeof(tests) / sizeof(tests[0]));
 }

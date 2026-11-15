@@ -25,6 +25,7 @@
 #include "../src/app/project_session.h"
 #include "../src/app/explorer_snapshot.h"
 #include "../src/app/chat_store.h"
+#include "core/experiments.h"
 #include "llm/memory_tokens.h"
 #include "llm/context_planner.h"
 #include "llm/generative_gate.h"
@@ -1508,6 +1509,81 @@ static void test_observer_judge_log(void)
     free(text);
 }
 
+/* Sentence pairing (SCRIBODO_OBSERVER_SENTENCES=1): the document's own sentence is judged against canon and, with the
+ * judge's votes and a differing attribute, recorded as the conflict, sourced at that sentence; a sentence the judge
+ * might call a conflict but that states the same colour is co-signed by no attribute and dropped; the flag off restores
+ * the statement path. */
+static void test_observer_sentence_pairs(void)
+{
+    setenv("SCRIBODO_OBSERVER_SENTENCES", "1", 1);
+    experiments_reload();
+    char proj[700], doc[800], logpath[800];
+    snprintf(proj, sizeof(proj), "%s/obs-sentences", g_dir);
+    mkdir(proj, 0755);
+    snprintf(doc, sizeof(doc), "%s/ch1.md", proj);
+    const char *text = "The fog came in off the fjord. Mr. Dvo\xC5\x99\xC3\xA1k waited. Zo\xC3\xAB's eyes are brown.\n\n"
+                       "\xE2\x80\x9CZo\xC3\xAB's eyes are green,\xE2\x80\x9D her mother said. Zo\xC3\xAB's eyes are green.\n";
+    FILE *f = fopen(doc, "wb");
+    fputs(text, f);
+    fclose(f);
+    char cid[40];
+    records_new_id(REC_CANON, cid, sizeof(cid));
+    CHECK(records_append(g_store, proj, REC_CANON, cid, "committed", "Zo\xC3\xAB's eyes are green.", NULL, 0, NULL));
+    snprintf(logpath, sizeof(logpath), "%s/sentences.jsonl", g_dir);
+    FILE *log = fopen(logpath, "w");
+    Observer *o = observer_create(g_store, NULL, NULL);
+    CHECK(o != NULL && log != NULL);
+    if (o && log) {
+        observer_set_judge_log(o, log);
+        observer_set_project(o, proj);
+        CHECK(wait_jobs(o, 1, 10));
+    }
+    if (o) observer_destroy(o);
+    if (log) fclose(log);
+    Record *list = NULL;
+    size_t n = records_list(g_store, proj, REC_FINDING, &list), conflicts = 0;
+    bool sourced = false;
+    const char *want = "Zo\xC3\xAB's eyes are brown.";
+    size_t want_start = 0; /* characters before it: "The fog came in off the fjord. Mr. Dvořák waited. " */
+    for (const char *p = text; p < strstr(text, want); p++) want_start += ((unsigned char)*p & 0xC0) != 0x80;
+    for (size_t i = 0; i < n; i++) {
+        const RecordVersion *v = record_current(&list[i]);
+        if (strcmp(v->finding.type, "conflict")) continue;
+        conflicts++;
+        sourced = !strcmp(v->finding.related, cid) && v->nsources == 1 && v->sources[0].quote &&
+                  !strcmp(v->sources[0].quote, want) && v->sources[0].start == want_start && v->sources[0].len == 21 &&
+                  v->sources[0].revision[0] != '\0';
+    }
+    CHECK(conflicts == 1 && sourced);
+    records_free(list, n);
+    /* The log: every sentence call is marked as one, with the co-signer's answer. */
+    char *logtext = calloc(1, 65536);
+    FILE *in = fopen(logpath, "rb");
+    size_t got = in && logtext ? fread(logtext, 1, 65535, in) : 0;
+    if (in) fclose(in);
+    size_t sentence_calls = 0, statement_calls = 0;
+    bool brown_cosigned = false, green_unsigned = true;
+    for (char *line = got ? strtok(logtext, "\n") : NULL; line; line = strtok(NULL, "\n")) {
+        cJSON *j = cJSON_Parse(line);
+        const char *path = j ? cJSON_GetObjectItem(j, "path")->valuestring : "";
+        const char *stmt = j ? cJSON_GetObjectItem(j, "statement")->valuestring : "";
+        if (!strcmp(path, "sentence")) {
+            sentence_calls++;
+            bool attrs = cJSON_IsTrue(cJSON_GetObjectItem(j, "attributes"));
+            if (!strcmp(stmt, want)) brown_cosigned = attrs && cJSON_IsTrue(cJSON_GetObjectItem(j, "conflict"));
+            if (strstr(stmt, "green")) green_unsigned = green_unsigned && !attrs;
+        } else if (!strcmp(path, "statement")) {
+            statement_calls++;
+        }
+        cJSON_Delete(j);
+    }
+    CHECK(sentence_calls >= 2 && statement_calls == 0 && brown_cosigned && green_unsigned);
+    free(logtext);
+    unsetenv("SCRIBODO_OBSERVER_SENTENCES");
+    experiments_reload();
+    CHECK(!experiments()->observer_sentences);
+}
+
 static void test_observer_run(void)
 {
     char proj[700], doc[800];
@@ -2711,6 +2787,7 @@ int main(int argc, char **argv)
         { "snapshot_reuse_integrity", test_snapshot_reuse_integrity },
         { "observer_run", test_observer_run },
         { "observer_judge_log", test_observer_judge_log },
+        { "observer_sentence_pairs", test_observer_sentence_pairs },
         { "observer_wait_mode", test_observer_wait_mode },
         { "observer_redteam", test_observer_redteam },
         { "recent_and_renames", test_recent_and_renames },

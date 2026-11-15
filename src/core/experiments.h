@@ -33,6 +33,9 @@ typedef struct {
     bool observer_conflict_gate;  /* SCRIBODO_OBSERVER_CONFLICT_GATE=1: the canon candidate step ignores shared titles and the judge must name
                                      the two disagreeing values (journal/observer-cycle2_quality.md step 5: measured 2026-11-14, off-fault
                                      conflicts rose on both novels; kept gated, default off) */
+    bool observer_sentences;      /* SCRIBODO_OBSERVER_SENTENCES=1: a document's source sentences, not the model's statements, are paired with
+                                     canon (obs_overlap at least 3, the two best entries) and a sentence conflict needs the judge's two votes
+                                     and obs_attributes_differ (journal/observer-cycle2_quality.md steps 7 and 8; default off until measured) */
 } Experiments;
 
 const Experiments *experiments(void);

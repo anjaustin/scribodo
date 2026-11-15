@@ -704,7 +704,56 @@ into the observer behind an experiment flag, beside the statement pairing, and m
 corrected planted copies; precision is then the open problem, and the judge's wrong-entry conflicts its first
 target.
 
+## Step 8, done: sentence pairing in the observer, flag-gated, measured end to end
+
+**Built behind `SCRIBODO_OBSERVER_SENTENCES=1`, off by default** (MEMORY-015 §5). With the flag on, a document's
+source sentences (`obs_sentence_end`, the planter's rule in C) are paired with canon by `obs_overlap`, score at
+least 3, the two best entries, at most 96 pairs a job; the model's statements are no longer paired with canon for
+documents (notes keep their overlap). A sentence conflict needs the judge's two votes and a software co-signer,
+`obs_attributes_differ`: the canon entry and the sentence state different values of one kind (numbers, kinship,
+colour, time, place after of/in/from/at/to), step 6's frozen `a_any` ported word for word. Differential runs
+against the Python: 0 of 83,149 attribute verdicts and 0 of 5,226 sentence splits disagree. The planter's own
+sentence check was rewritten in the same pass (`drily--"Mr.` had counted as a sentence end); both novels plant
+identically after it. Flag off, the fake yardstick is byte-identical (717 / 348 / 948). Flag on, the seeded *Pride
+and Prejudice* Wickham conflict drops: a state contradiction (dead against alive) names no attribute the
+co-signer knows, a known limit.
+
+**The real model, both corrected planted copies** (`build/observer/sentence-cycle/chain.log`, judge logs
+`on-{mars,pp}-judge.jsonl`; *Mars* 6,241 s, 670 judge calls; *P&P* 12,097 s, 1,574 calls; on AC, idle). The
+control is step 6, whose runs predate the five corrected anchors; the flag-off arms were dropped to save five hours.
+
+| | recall | conflicts shown | on a fault | precision |
+|---|---|---|---|---|
+| step 6, statements (control) | 6 / 20 strict | 96 | 6 | 0.06 |
+| step 8, *Mars* | 6 / 10 (M2 M4 M5 M6 M8 M10) | 42 | 6 | 0.14 |
+| step 8, *P&P* | 5 / 10 (P1 P2 P3 P8 P9) | 18 | 5 | 0.28 |
+
+The step 7 projection held (recall 11 of 20; it guessed 60 and 16 false conflicts before the co-signer, 36 and 13
+after). Recall passes 0.50; precision does not. Of the faults the pairing reached (6 on *Mars*, 9 on *P&P*), the
+judge missed P5, P6, P7 and P10, the same four reasons as step 7.
+
+**Rules scored offline on these logs** (`tools/observer_judge_score.py`; the rules were written in step 6 on the
+statement path and are unchanged, so this is held-out data for every one of them):
+
+| rule | *Mars* kept / true | *P&P* kept / true | precision |
+|---|---|---|---|
+| two votes | 64 / 6 | 36 / 5 | 0.09 / 0.14 |
+| two votes, any differing attribute (shipped under the flag) | 42 / 6 | 18 / 5 | 0.14 / 0.28 |
+| two votes, the same subject | 9 / 4 | 12 / 5 | 0.44 / 0.42 |
+| two votes, the same subject, any differing attribute | 5 / 4 | 7 / 5 | 0.80 / 0.71 |
+
+"The same subject" (the leading run of capitalised words, or a possessive name, shared by both texts) failed held
+out on the statement path (step 6: 0.50 on *Mars*, 0.29 on *P&P*) because a model's statement rewords its
+subject; a source sentence keeps the author's. With it, both novels clear 0.50 for the first time, at a cost of two
+*Mars* faults whose sentences open on "It", not a name (M4 *It had been the third of May when Powell...*, M5 *It was only two years after...* in the narrator's "I"): recall 9 of 20. The next step ports `subjects`
+to C as a second co-signer, under the same flag.
+
 ## Gates
+
+Step 8 (sentence pairing behind `SCRIBODO_OBSERVER_SENTENCES`, the co-signer, the planter's rewritten sentence
+check; `build/observer/step8-gates/`): `make test` 95,797 C checks and 200 Python tests, 0 failures; `make analyze`
+0 warnings across 87 source files; `make sanitize` 95,797, 0; every exit status 0 (`exit.txt`). Fake yardstick
+flag off (`sentoff`) byte-identical with `judgelog` on pp, mars and heights (717 / 348 / 948).
 
 Step 7 (the planter's sentence check, the corrected fixture, three diagnostic tools; no product code changed,
 `build/observer/sentence-gates/`): `make test` 95,773 C checks and 200 Python tests, 0 failures; `make analyze` 0

@@ -4,6 +4,7 @@
 #include "observer_model_internal.h"
 #include "observer_job_internal.h"
 
+#include "core/experiments.h"
 #include "core/utf8.h"
 
 #include <ctype.h>
@@ -41,6 +42,12 @@
 #define IDLE_MAX 120.0        /* the idleness required after repeated cancellations by chat (wait mode) */
 #define RETRY_DELAY 5.0       /* after a failed request */
 #define MAX_JUDGE_PAIRS 24    /* canon checks per job: 8 findings x 3 entries, so none are skipped */
+/* Sentence pairing (experiments()->observer_sentences): a sentence is judged against its two best canon entries by
+ * obs_overlap when they score at least 3 (journal/observer-cycle2_quality.md step 7: 16 of 20 planted faults reached
+ * at today's judge cost), at most MAX_SENTENCE_PAIRS a job; pairs past it are counted, never silently dropped. */
+#define SENTENCE_MIN_OVERLAP 3
+#define SENTENCE_TOP 2
+#define MAX_SENTENCE_PAIRS 96
 #define MAX_DOC_BYTES (16u << 20) /* the editor's own limit is lower */
 
 /* Finding read/modify/write sequences are serialized per project and across
@@ -538,7 +545,8 @@ static void plain_check(const char *check, char *out, size_t outlen)
  * headless replay (tools/observer_replay.c) is byte-identical on three novels (journal/observer-cycle1_split.md). */
 
 typedef struct {
-    size_t cand;
+    size_t cand;   /* index into cands, or into scands when sentence */
+    bool sentence;
     char canon_id[40];
     char *canon_text;
     char check[300];
@@ -556,10 +564,14 @@ typedef struct {
     size_t ne, ncanon, nnotes;
     char sem_pid[64];
     bool use_sem;
-    Conflict conflicts[MAX_JUDGE_PAIRS];
+    Cand *scands; /* sentence pairing: one per source sentence judged (never findings themselves) */
+    size_t nsc, capsc, sentence_pairs_over;
+    Conflict conflicts[MAX_SENTENCE_PAIRS];
     size_t nconf, pairs;
     bool cancelled, io_failed, ok;
 } JobRun;
+
+static Cand *conflict_cand(JobRun *r, const Conflict *cf) { return cf->sentence ? &r->scands[cf->cand] : &r->cands[cf->cand]; }
 
 /* A conflict finding already recorded for this canon entry with this text, from this passage (a revised entry is
  * checked afresh). The judge stage and the commit stage ask the same question of two lists. */
@@ -681,11 +693,12 @@ static int job_canon_candidates(JobRun *r, const char *stmt, size_t cand[4])
  * planted faults (tools/observer_judge_score.py; record-model-replies-before-tuning): where the statement came from
  * (document and character span, or chat and message), the canon entry, the statement as the judge saw it, both raw
  * replies (the second absent when the first was not a conflict), and the two-vote verdict before any dedupe. */
-static void judge_log_line(JobRun *r, size_t i, size_t c, const char *stmt, char *replies[2], bool conflict)
+static void judge_log_line(JobRun *r, const Cand *cd, bool sentence, size_t c, const char *stmt, char *replies[2], bool conflict,
+                           bool attributes)
 {
     FILE *f = r->o->judge_log;
     if (!f) return;
-    const SourceRef *src = &r->cands[i].src;
+    const SourceRef *src = &cd->src;
     cJSON *j = cJSON_CreateObject();
     if (!j) return;
     cJSON_AddStringToObject(j, "kind", src->kind == SRC_DOC ? "doc" : "chat");
@@ -693,36 +706,46 @@ static void judge_log_line(JobRun *r, size_t i, size_t c, const char *stmt, char
     cJSON_AddNumberToObject(j, "message", (double)src->message);
     cJSON_AddNumberToObject(j, "start", (double)src->start);
     cJSON_AddNumberToObject(j, "len", (double)src->len);
-    cJSON_AddStringToObject(j, "type", r->cands[i].type);
+    cJSON_AddStringToObject(j, "type", cd->type);
+    cJSON_AddStringToObject(j, "path", sentence ? "sentence" : "statement");
+    if (sentence) cJSON_AddBoolToObject(j, "attributes", attributes);
     cJSON_AddStringToObject(j, "canon_id", r->canon[c].id);
     cJSON_AddStringToObject(j, "canon", record_current(&r->canon[c])->content);
     cJSON_AddStringToObject(j, "statement", stmt);
     cJSON *rs = cJSON_AddArrayToObject(j, "replies");
     for (int p = 0; p < 2 && rs; p++) cJSON_AddItemToArray(rs, replies[p] ? cJSON_CreateString(replies[p]) : cJSON_CreateNull());
-    cJSON_AddBoolToObject(j, "conflict", conflict);
+    cJSON_AddBoolToObject(j, "conflict", conflict); /* the judge's two votes, before the co-signer and any dedupe */
     char *line = cJSON_PrintUnformatted(j);
     if (line) { fprintf(f, "%s\n", line); fflush(f); free(line); }
     cJSON_Delete(j);
 }
 
-static bool job_judge_pair(JobRun *r, size_t i, size_t c, const char *stmt)
+static bool job_judge_pair(JobRun *r, bool sentence, size_t i, size_t c, const char *stmt)
 {
     r->pairs++;
     const RecordVersion *v = record_current(&r->canon[c]);
+    const Cand *cd = sentence ? &r->scands[i] : &r->cands[i];
     char check[300];
     char *replies[2] = { NULL, NULL };
     bool conflict = backend_judge(r->o, v->content, stmt, check, sizeof(check), r->o->judge_log ? replies : NULL);
     if (atomic_load(&r->o->cancel)) { free(replies[0]); free(replies[1]); return false; }
-    judge_log_line(r, i, c, stmt, replies, conflict);
+    /* A sentence conflict is co-signed by software that never sees the model: the two texts must state different
+     * values of one kind (measured on 220 judged pairs: false alarms 10 to 6 in 200, no fault lost; step 7). */
+    const bool attributes = sentence && obs_attributes_differ(v->content, stmt);
+    judge_log_line(r, cd, sentence, c, stmt, replies, conflict, attributes);
     free(replies[0]); free(replies[1]);
-    for (size_t q = 0; conflict && q < r->nconf; q++) /* same canon, same passage: once */
-        if (!strcmp(r->conflicts[q].canon_id, r->canon[c].id) && r->cands[r->conflicts[q].cand].src.start == r->cands[i].src.start &&
-            !strcmp(r->cands[r->conflicts[q].cand].src.quote, r->cands[i].src.quote)) /* chat pieces share offsets across messages */
+    if (sentence) conflict = conflict && attributes;
+    for (size_t q = 0; conflict && q < r->nconf; q++) { /* same canon, same passage: once */
+        const Cand *other = conflict_cand(r, &r->conflicts[q]);
+        if (!strcmp(r->conflicts[q].canon_id, r->canon[c].id) && other->src.start == cd->src.start &&
+            !strcmp(other->src.quote, cd->src.quote)) /* chat pieces share offsets across messages */
             conflict = false;
-    if (conflict && conflict_recorded(r->existing, r->ne, r->canon[c].id, v->content, r->cands[i].src.quote)) conflict = false;
-    if (conflict && r->nconf < MAX_JUDGE_PAIRS) {
+    }
+    if (conflict && conflict_recorded(r->existing, r->ne, r->canon[c].id, v->content, cd->src.quote)) conflict = false;
+    if (conflict && r->nconf < MAX_SENTENCE_PAIRS) {
         Conflict *cf = &r->conflicts[r->nconf++];
         cf->cand = i;
+        cf->sentence = sentence;
         snprintf(cf->canon_id, sizeof(cf->canon_id), "%s", r->canon[c].id);
         cf->canon_text = strdup(v->content);
         plain_check(check, cf->check, sizeof(cf->check));
@@ -747,8 +770,94 @@ static void job_note_overlap(JobRun *r, size_t i, const char *stmt)
 /* Stage 5: compare every statement with committed canon (possible conflicts) and notes (overlaps). Every statement
  * is checked, including ones that duplicate an existing finding ("Zoë" is known, but "Zoë's brown eyes" may still
  * contradict canon). A question asserts nothing. */
+/* The two best committed canon entries for a sentence by obs_overlap, each scoring at least SENTENCE_MIN_OVERLAP
+ * (ties to the earlier entry). Returns how many. */
+static int sentence_canon(JobRun *r, const char *sentence, size_t best[SENTENCE_TOP])
+{
+    int score[SENTENCE_TOP], n = 0;
+    for (size_t c = 0; c < r->ncanon; c++) {
+        const RecordVersion *v = record_current(&r->canon[c]);
+        if (strcmp(v->status, "committed")) continue;
+        int sc = obs_overlap(v->content, sentence);
+        if (sc < SENTENCE_MIN_OVERLAP) continue;
+        int at = n;
+        while (at > 0 && sc > score[at - 1]) at--;
+        if (at >= SENTENCE_TOP) continue;
+        for (int k = (n < SENTENCE_TOP ? n : SENTENCE_TOP - 1); k > at; k--) {
+            best[k] = best[k - 1];
+            score[k] = score[k - 1];
+        }
+        best[at] = c;
+        score[at] = sc;
+        if (n < SENTENCE_TOP) n++;
+    }
+    return n;
+}
+
+/* Sentence pairing for a document job: every sentence of every paragraph read, paired with its best canon entries
+ * and judged as written (the judge reads the author's sentence, not the model's description of it; step 7). */
+static void job_judge_sentences(JobRun *r)
+{
+    const ObserverJob *j = r->j;
+    for (size_t q = 0; q < j->nsegs && !r->cancelled; q++) {
+        const ObserverSegment *sg = &j->segs[q];
+        const char *seg = j->chunk + sg->chunk_off;
+        size_t pos = 0;
+        while (pos < sg->len && !r->cancelled) {
+            while (pos < sg->len && (seg[pos] == ' ' || seg[pos] == '\t' || seg[pos] == '\n' || seg[pos] == '\r')) pos++;
+            if (pos >= sg->len) break;
+            size_t e = obs_sentence_end(seg + pos, sg->len - pos), len = e;
+            while (len > 0 && (seg[pos + len - 1] == ' ' || seg[pos + len - 1] == '\t' || seg[pos + len - 1] == '\r')) len--;
+            size_t at = pos;
+            pos += e ? e : 1;
+            if (len == 0) continue;
+            char stmt[OBS_STATEMENT_BYTES];
+            char *raw = dupn(seg + at, len);
+            if (!raw) continue;
+            utf8_clip(stmt, sizeof(stmt), raw, SIZE_MAX);
+            free(raw);
+            size_t best[SENTENCE_TOP];
+            int nb = sentence_canon(r, stmt, best);
+            if (nb == 0) continue;
+            if (r->nsc == r->capsc) {
+                size_t cap = r->capsc ? r->capsc * 2 : 32;
+                Cand *grown = realloc(r->scands, cap * sizeof(Cand));
+                if (!grown) { r->io_failed = true; return; }
+                r->scands = grown;
+                r->capsc = cap;
+            }
+            Cand *cd = &r->scands[r->nsc];
+            memset(cd, 0, sizeof(*cd));
+            snprintf(cd->type, sizeof(cd->type), "sentence");
+            size_t byte_start = sg->src_off + at;
+            cd->src.kind = SRC_DOC;
+            snprintf(cd->src.doc, sizeof(cd->src.doc), "%s", j->name);
+            cd->src.start = cp_count(j->src, byte_start);
+            cd->src.len = cp_count(j->src + byte_start, len);
+            cd->src.quote = dupn(j->src + byte_start, len);
+            if (!cd->src.quote) continue;
+            size_t idx = r->nsc++;
+            for (int b = 0; b < nb; b++) {
+                if (r->pairs >= MAX_SENTENCE_PAIRS) { r->sentence_pairs_over++; continue; }
+                if (!job_judge_pair(r, true, idx, best[b], stmt)) {
+                    r->cancelled = true;
+                    break;
+                }
+            }
+        }
+    }
+    if (r->sentence_pairs_over)
+        fprintf(stderr, "observer: %s: %zu sentence pairs past the job's %d not judged\n", j->name, r->sentence_pairs_over,
+                MAX_SENTENCE_PAIRS);
+}
+
+/* Stage 5: compare every statement with committed canon (possible conflicts) and notes (overlaps). Every statement
+ * is checked, including ones that duplicate an existing finding ("Zoë" is known, but "Zoë's brown eyes" may still
+ * contradict canon). A question asserts nothing. Under sentence pairing a document's statements are compared with
+ * notes only, and its sentences with canon. */
 static void job_judge(JobRun *r)
 {
+    const bool sentences = experiments()->observer_sentences && r->j->is_doc;
     for (size_t i = 0; i < r->nc && !r->cancelled; i++) {
         if (!strcmp(r->cands[i].type, "question")) continue;
         /* The quote is clipped by characters, never by bytes: a cut inside a multi-byte character made the judge
@@ -756,17 +865,20 @@ static void job_judge(JobRun *r)
          * seen in the recorded Mars runs: a 305-byte quote ending in an em dash). */
         char stmt[OBS_STATEMENT_BYTES];
         obs_statement(r->cands[i].desc, r->cands[i].src.quote, stmt, sizeof(stmt));
-        size_t cand[4];
-        int ncand = job_canon_candidates(r, stmt, cand);
-        for (int b = 0; b < ncand && r->pairs < MAX_JUDGE_PAIRS; b++) {
-            if (cand[b] == SIZE_MAX) continue;
-            if (!job_judge_pair(r, i, cand[b], stmt)) {
-                r->cancelled = true;
-                break;
+        if (!sentences) {
+            size_t cand[4];
+            int ncand = job_canon_candidates(r, stmt, cand);
+            for (int b = 0; b < ncand && r->pairs < MAX_JUDGE_PAIRS; b++) {
+                if (cand[b] == SIZE_MAX) continue;
+                if (!job_judge_pair(r, false, i, cand[b], stmt)) {
+                    r->cancelled = true;
+                    break;
+                }
             }
         }
         job_note_overlap(r, i, stmt);
     }
+    if (sentences && !r->cancelled) job_judge_sentences(r);
 }
 
 /* Stage 6: document sources point at an immutable snapshot of the text that was read (usually the save's own
@@ -780,6 +892,7 @@ static void job_snapshot(JobRun *r)
         char revision[160] = "";
         r->ok = revisions_snapshot(r->o->store, r->project, r->j->path, r->j->src, revision, sizeof(revision));
         for (size_t i = 0; i < r->nc; i++) snprintf(r->cands[i].src.revision, sizeof(r->cands[i].src.revision), "%s", revision);
+        for (size_t i = 0; i < r->nsc; i++) snprintf(r->scands[i].src.revision, sizeof(r->scands[i].src.revision), "%s", revision);
     }
     pthread_mutex_lock(&r->o->mu);
     r->ok = r->ok && r->gen == r->o->gen && generation_current(r->o, r->fence); /* project unchanged */
@@ -796,7 +909,8 @@ static void job_revalidate(JobRun *r)
     for (size_t i = 0; i < r->nc; i++)
         if (!r->io_failed && r->cands[i].keep && candidate_already_exists(&r->cands[i], r->existing, r->ne)) r->cands[i].keep = false;
     for (size_t c = 0; !r->io_failed && c < r->nconf; c++) {
-        const Cand *candidate = &r->cands[r->conflicts[c].cand];
+        if (r->conflicts[c].cand == SIZE_MAX) continue;
+        const Cand *candidate = conflict_cand(r, &r->conflicts[c]);
         if (conflict_recorded(r->existing, r->ne, r->conflicts[c].canon_id, r->conflicts[c].canon_text, candidate->src.quote))
             r->conflicts[c].cand = SIZE_MAX;
     }
@@ -819,7 +933,7 @@ static void job_create(JobRun *r, int findings_fd)
     for (size_t c = 0; !r->io_failed && findings_fd >= 0 && c < r->nconf; c++) {
         if (!generation_current(r->o, r->fence)) { r->ok = false; break; }
         if (r->conflicts[c].cand == SIZE_MAX) continue;
-        Cand *cd = &r->cands[r->conflicts[c].cand];
+        Cand *cd = conflict_cand(r, &r->conflicts[c]);
         FindingInfo fi = { 0 };
         snprintf(fi.type, sizeof(fi.type), "conflict");
         snprintf(fi.subject, sizeof(fi.subject), "%s", cd->info.subject);
@@ -909,6 +1023,8 @@ static void job_end(JobRun *r)
         free(r->cands[i].src.quote);
         free(r->cands[i].info.related_text);
     }
+    for (size_t i = 0; i < r->nsc; i++) free(r->scands[i].src.quote);
+    free(r->scands);
     for (size_t c = 0; c < r->nconf; c++) free(r->conflicts[c].canon_text);
     records_free(r->existing, r->ne);
     records_free(r->canon, r->ncanon);

@@ -113,6 +113,16 @@ bool obs_values_in_texts(const char *canon, const char *statement, const char *c
  * period after an initial or a title does not end one. */
 void obs_first_sentence(char *s);
 
+/* Sentence pairing (SCRIBODO_OBSERVER_SENTENCES): the length in bytes of the first sentence of s[0, n), closing
+ * quotes included, ending at a line break or after . ! ? and closing quotes when a space and a capital (or an opening
+ * quote) follow, never after a title or an initial (tools/observer_plant.py's rule); n when none ends sooner. */
+size_t obs_sentence_end(const char *s, size_t n);
+
+/* A canon entry and a sentence state different values of one kind: numbers, kinship words, colours, time words or
+ * place names after of/in/from/at/to, each kind compared as two non-empty sets (tools/observer_judge_score.py a_any,
+ * frozen in step 6). The software co-signer of a sentence conflict. */
+bool obs_attributes_differ(const char *canon, const char *text);
+
 /* The fake backend's answers (deterministic; same JSON as the model). */
 char *obs_fake_extract(const char *chunk);
 char *obs_fake_judge(const char *canon, const char *statement);

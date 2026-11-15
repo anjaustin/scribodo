@@ -22,13 +22,15 @@ ABBREVIATIONS = {"mr", "mrs", "ms", "dr", "st", "capt", "col", "lt", "gen", "pro
 
 
 def ends_sentence(anchor, after):
-    """True when the anchor ends with sentence punctuation (closing quotes allowed), its last word is not a title or
-    an initial, and what follows in the text is a space, a line end or the end of the file."""
-    m = re.search(r"(\S+?)[.!?][\"'\u201d\u2019)]*$", anchor)
+    """True when the anchor ends with sentence punctuation (closing quotes allowed), what follows in the text is a
+    space, a line end or the end of the file, and a final period does not close a title or an initial: the letters
+    right before it are not on ABBREVIATIONS and not one capital ("drily--\u201cMr." is a title, "Kan\u2019s." ends a
+    sentence). obs_sentence_end in src/llm/observer_text.c is the same rule, held to this one by a differential run."""
+    m = re.search(r"([A-Za-z]*)([.!?])[\"'\u201d\u2019)]*$", anchor)
     if not m or (after and not after[0].isspace()):
         return False
-    word = m.group(1).lstrip("\"'\u201c\u2018(")
-    return not (word.lower() in ABBREVIATIONS or (len(word) == 1 and word.isupper()))
+    word = m.group(1)
+    return not (m.group(2) == "." and (word.lower() in ABBREVIATIONS or (len(word) == 1 and word.isupper())))
 
 
 def plan(faults, src):

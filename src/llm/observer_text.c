@@ -343,3 +343,204 @@ bool obs_values_in_texts(const char *canon, const char *statement, const char *c
     return obs_locate(canon, strlen(canon), canon_value, &start, &len) &&
            obs_locate(statement, strlen(statement), new_value, &start, &len);
 }
+
+/* ---- sentence pairing (SCRIBODO_OBSERVER_SENTENCES; journal/observer-cycle2_quality.md, steps 7 and 8) ---------- */
+
+static bool is_closing_quote(const unsigned char *u, size_t n, size_t *w)
+{
+    if (n >= 1 && (u[0] == '"' || u[0] == '\'' || u[0] == ')')) { *w = 1; return true; }
+    if (n >= 3 && u[0] == 0xE2 && u[1] == 0x80 && (u[2] == 0x9D || u[2] == 0x99)) { *w = 3; return true; } /* ” ’ */
+    return false;
+}
+
+static bool is_opening_quote(const unsigned char *u, size_t n, size_t *w)
+{
+    if (n >= 1 && (u[0] == '"' || u[0] == '\'' || u[0] == '(')) { *w = 1; return true; }
+    if (n >= 3 && u[0] == 0xE2 && u[1] == 0x80 && (u[2] == 0x9C || u[2] == 0x98)) { *w = 3; return true; } /* “ ‘ */
+    return false;
+}
+
+/* tools/observer_plant.py ABBREVIATIONS: a period after one of these, or after a single capital (an initial), ends no
+ * sentence. */
+static bool abbreviation(const char *w, size_t n)
+{
+    static const char *const ab[] = { "mr", "mrs", "ms", "dr", "st", "capt", "col", "lt", "gen", "prof", "sgt", "jr", "sr",
+                                      "rev", "hon" };
+    if (n == 1) return w[0] >= 'A' && w[0] <= 'Z';
+    for (size_t i = 0; i < sizeof(ab) / sizeof(ab[0]); i++)
+        if (strlen(ab[i]) == n && !strncasecmp(ab[i], w, n)) return true;
+    return false;
+}
+
+size_t obs_sentence_end(const char *s, size_t n)
+{
+    const unsigned char *u = (const unsigned char *)s;
+    for (size_t i = 0; i < n; i++) {
+        if (u[i] == '\n') return i;
+        if (u[i] != '.' && u[i] != '!' && u[i] != '?') continue;
+        size_t j = i + 1, w;
+        while (j < n && is_closing_quote(u + j, n - j, &w)) j += w;
+        if (j >= n || !(u[j] == ' ' || u[j] == '\t')) continue;
+        size_t k = j;
+        while (k < n && (u[k] == ' ' || u[k] == '\t')) k++;
+        if (k < n && is_opening_quote(u + k, n - k, &w)) k += w;
+        if (k >= n || u[k] < 'A' || u[k] > 'Z') continue;
+        if (u[i] == '.') {
+            size_t a = i;
+            while (a > 0 && ((u[a - 1] >= 'A' && u[a - 1] <= 'Z') || (u[a - 1] >= 'a' && u[a - 1] <= 'z'))) a--;
+            if (a < i && abbreviation(s + a, i - a)) continue;
+        }
+        return j;
+    }
+    return n;
+}
+
+/* The attribute vocabularies of tools/observer_judge_score.py (frozen 2026-11-14 in step 6), word for word. */
+static const char *const k_number_words[] = { "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+    "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty", "thirty",
+    "forty", "fifty", "sixty", "seventy", "eighty", "ninety", "hundred", "thousand", "first", "second", "third", "fourth",
+    "fifth", "eldest", "youngest", "twice", "once", NULL };
+static const char *const k_kin_words[] = { "father", "mother", "son", "daughter", "brother", "sister", "aunt", "uncle", "niece",
+    "nephew", "cousin", "grandfather", "grandmother", "granddaughter", "grandson", "wife", "husband", "widow", "widower",
+    "parent", "parents", "child", "children", "sons", "daughters", "brothers", "sisters", "grandparent", NULL };
+static const char *const k_color_words[] = { "black", "white", "red", "blue", "green", "brown", "golden", "gold", "grey",
+    "gray", "yellow", "crimson", "scarlet", "silver", "dark", "fair", "pale", "auburn", "copper", "purple", "violet", NULL };
+static const char *const k_time_words[] = { "january", "february", "march", "april", "may", "june", "july", "august",
+    "september", "october", "november", "december", "before", "after", "earlier", "later", "years", "year", "days", "day",
+    "months", "month", "weeks", "week", "age", "aged", "old", NULL };
+static const char *const k_place_titles[] = { "mr", "mrs", "ms", "miss", "lady", "lord", "sir", "dr", "captain", "colonel",
+    "prince", "princess", "king", "queen", "the", "a", "an", "he", "she", "it", "they", "his", "her", "canon", "new", NULL };
+
+#define ATTR_MAX 64
+#define ATTR_LEN 64
+typedef struct {
+    char w[ATTR_MAX][ATTR_LEN];
+    size_t n;
+} WordSet;
+
+static void set_add(WordSet *s, const char *w, size_t n)
+{
+    if (n >= ATTR_LEN || s->n == ATTR_MAX) return;
+    for (size_t i = 0; i < s->n; i++)
+        if (strlen(s->w[i]) == n && !memcmp(s->w[i], w, n)) return;
+    memcpy(s->w[s->n], w, n);
+    s->w[s->n++][n] = '\0';
+}
+
+static bool in_list(const char *const *list, const char *w, size_t n)
+{
+    for (size_t i = 0; list[i]; i++)
+        if (strlen(list[i]) == n && !strncasecmp(list[i], w, n)) return true;
+    return false;
+}
+
+static bool ascii_alpha(unsigned char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
+static bool ascii_digit(unsigned char c) { return c >= '0' && c <= '9'; }
+
+/* Python's re.findall(r"[A-Za-z]+|\d+") filtered into a set, lower-cased: the words of one vocabulary, and with
+ * numbers=true also every run of digits and every number word. */
+static void vocab_set(const char *text, const char *const *list, bool numbers, WordSet *out)
+{
+    const unsigned char *u = (const unsigned char *)text;
+    for (size_t i = 0; u[i];) {
+        size_t a = i;
+        if (ascii_alpha(u[i])) {
+            while (ascii_alpha(u[i])) i++;
+        } else if (ascii_digit(u[i])) {
+            while (ascii_digit(u[i])) i++;
+        } else {
+            i++;
+            continue;
+        }
+        size_t n = i - a;
+        char low[ATTR_LEN];
+        if (n >= ATTR_LEN) continue;
+        for (size_t k = 0; k < n; k++) low[k] = (char)((u[a + k] >= 'A' && u[a + k] <= 'Z') ? u[a + k] + 32 : u[a + k]);
+        bool digit = ascii_digit(u[a]);
+        if ((list && !digit && in_list(list, low, n)) || (numbers && (digit || in_list(k_number_words, low, n))))
+            set_add(out, low, n);
+    }
+}
+
+/* Python's \w for the boundary before "of": a letter, digit or underscore, any byte of a multi-byte character. */
+static bool py_word_byte(unsigned char c) { return ascii_alpha(c) || ascii_digit(c) || c == '_' || c >= 0x80; }
+static bool py_space(unsigned char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v'; }
+
+/* A capitalised word [A-Z][a-z]+ at u: its length, or 0. */
+static size_t cap_word(const unsigned char *u)
+{
+    if (!(u[0] >= 'A' && u[0] <= 'Z') || !(u[1] >= 'a' && u[1] <= 'z')) return 0;
+    size_t n = 2;
+    while (u[n] >= 'a' && u[n] <= 'z') n++;
+    return n;
+}
+
+/* re.finditer(r"\b(of|in|from|at|to)\s+((?:[A-Z][a-z]+)(?:\s+[A-Z][a-z]+)*)"), the name kept unless its first word is
+ * on the title list: the places and households a sentence puts someone in. */
+static void place_set(const char *text, WordSet *out)
+{
+    static const char *const preps[] = { "of", "in", "from", "at", "to" };
+    const unsigned char *u = (const unsigned char *)text;
+    for (size_t i = 0; u[i];) {
+        size_t matched = 0;
+        if (i == 0 || !py_word_byte(u[i - 1]))
+            for (size_t p = 0; p < 5 && !matched; p++) {
+                size_t pl = strlen(preps[p]);
+                if (strncmp((const char *)u + i, preps[p], pl)) continue;
+                size_t k = i + pl;
+                if (!py_space(u[k])) continue;
+                while (py_space(u[k])) k++;
+                size_t w = cap_word(u + k);
+                if (!w) continue;
+                size_t name = k, end = k + w, first = w;
+                for (;;) {
+                    size_t s = end;
+                    while (py_space(u[s])) s++;
+                    if (s == end) break;
+                    size_t w2 = cap_word(u + s);
+                    if (!w2) break;
+                    end = s + w2;
+                }
+                char low[ATTR_LEN];
+                if (first < ATTR_LEN) {
+                    for (size_t q = 0; q < first; q++) low[q] = (char)(u[name + q] >= 'A' && u[name + q] <= 'Z' ? u[name + q] + 32 : u[name + q]);
+                    if (!in_list(k_place_titles, low, first)) set_add(out, text + name, end - name);
+                }
+                matched = end - i;
+            }
+        i += matched ? matched : 1;
+    }
+}
+
+static bool sets_differ(const WordSet *a, const WordSet *b)
+{
+    if (!a->n || !b->n) return false;
+    if (a->n != b->n) return true;
+    for (size_t i = 0; i < a->n; i++) {
+        bool found = false;
+        for (size_t j = 0; j < b->n && !found; j++) found = !strcmp(a->w[i], b->w[j]);
+        if (!found) return true;
+    }
+    return false;
+}
+
+bool obs_attributes_differ(const char *canon, const char *text)
+{
+    static const char *const *const lists[] = { NULL, k_kin_words, k_color_words, k_time_words };
+    for (int k = 0; k < 4; k++) {
+        WordSet *a = calloc(2, sizeof(WordSet));
+        if (!a) return true; /* cannot check: the judge's verdict stands alone */
+        vocab_set(canon, lists[k], k == 0 || k == 3, &a[0]);
+        vocab_set(text, lists[k], k == 0 || k == 3, &a[1]);
+        bool d = sets_differ(&a[0], &a[1]);
+        free(a);
+        if (d) return true;
+    }
+    WordSet *a = calloc(2, sizeof(WordSet));
+    if (!a) return true;
+    place_set(canon, &a[0]);
+    place_set(text, &a[1]);
+    bool d = sets_differ(&a[0], &a[1]);
+    free(a);
+    return d;
+}
