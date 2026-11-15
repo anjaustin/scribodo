@@ -23,6 +23,7 @@
 #include <sys/file.h>
 #include <sys/stat.h>
 #include "../src/app/renames.h"
+#include "../src/app/chat_store_internal.h"
 #include "test_util.h"
 #include "test_db_internal.h"
 #include "core/deadline_clock.h"
@@ -1862,6 +1863,117 @@ static void test_import_revision_identity(void)
     system(cmd);
 }
 
+/* AUDIT-004 F11: every title a chat carried survives file -> store -> file and store -> file -> store, in order, with
+ * when each was replaced. The titles' times are out of order and tied on purpose: only the archive's own order (seq,
+ * migration 019) holds them. */
+static bool titles_rows(Db *db, const char *pid, char ***titles, double **at, size_t *n)
+{
+    DbRows r;
+    *titles = NULL;
+    *at = NULL;
+    *n = 0;
+    if (!db_query(db, "SELECT t.title, t.replaced_at FROM conversation_titles t JOIN conversations c ON c.id = t.conversation_id"
+                      " WHERE c.project_id = ? ORDER BY t.seq", (DbArg[1]){ DB_S(pid) }, 1, &r))
+        return false;
+    *titles = calloc(r.nrows + 1, sizeof(char *));
+    *at = calloc(r.nrows + 1, sizeof(double));
+    bool ok = *titles && *at && db_rows_has_columns(&r, 2);
+    for (size_t k = 0; ok && k < r.nrows; k++) {
+        const char *t;
+        ok = db_cell_text(&r, k, 0, &t) && db_cell_double(&r, k, 1, &(*at)[k]) && ((*titles)[k] = strdup(t)) != NULL;
+        if (ok) (*n)++;
+    }
+    db_rows_free(&r);
+    return ok;
+}
+
+static void titles_rows_free(char **titles, double *at, size_t n)
+{
+    for (size_t k = 0; titles && k < n; k++) free(titles[k]);
+    free(titles);
+    free(at);
+}
+
+static void test_chat_title_archive(void)
+{
+    char why[256] = "", root[PATH_MAX], proj[PATH_MAX + 16], out1[PATH_MAX + 16], out2[PATH_MAX + 16];
+    CHECK(store_start(g_store, g_name, why, sizeof(why)));
+    snprintf(root, sizeof(root), "%sscribodo-title-archive-XXXXXX", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp/");
+    CHECK(mkdtemp(root) != NULL);
+    snprintf(proj, sizeof(proj), "%s/p", root);
+    snprintf(out1, sizeof(out1), "%s/e1", root);
+    snprintf(out2, sizeof(out2), "%s/e2", root);
+    CHECK(mkdir(proj, 0755) == 0);
+    const char *id = "20261115-100000-abcd";
+    ChatMessage u = { .role = CHAT_USER, .content = "Who is Ms. Bennet?" };
+    ChatMessage a = { .role = CHAT_ASSISTANT, .content = "The mother." };
+    CHECK(chat_store_append(g_store, proj, id, "First", &u) && chat_store_append(g_store, proj, id, "x", &a));
+    CHECK(chat_store_rename(g_store, proj, id, "Second")); /* the product's path: stamped now */
+    CHECK(chat_store_title_line_files(proj, id, "Third", 1700000000)); /* a clock set back */
+    CHECK(chat_store_title_line_files(proj, id, "Fourth", 1700000000)); /* and a tie */
+    ChatTitle *t0 = NULL;
+    size_t n0 = 0;
+    CHECK(chat_store_titles_files(proj, id, &t0, &n0) && n0 == 4);
+    if (n0 != 4) { chat_store_titles_free(t0, n0); return; }
+    CHECK(!strcmp(t0[0].title, "First") && !t0[0].has_ts && !strcmp(t0[3].title, "Fourth") && t0[1].has_ts && t0[3].has_ts);
+
+    /* file -> store: three archived titles, replaced when the next was set; the current one on the row */
+    CHECK(store_import(g_store, proj, why, sizeof(why)));
+    char pid[40] = "";
+    CHECK(store_mode(g_store, proj, pid, sizeof(pid), NULL) == STORE_DB);
+    Db *db = store_db(g_store);
+    char **tt = NULL;
+    double *at = NULL;
+    size_t nt = 0;
+    CHECK(titles_rows(db, pid, &tt, &at, &nt) && nt == 3);
+    for (size_t k = 0; k < nt && k < 3; k++) CHECK(!strcmp(tt[k], t0[k].title) && at[k] == t0[k + 1].ts);
+    titles_rows_free(tt, at, nt);
+    ChatSummary *cs = NULL;
+    size_t nc = sdb_chat_list(db, pid, &cs);
+    CHECK(nc == 1 && !strcmp(cs[0].title, "Fourth"));
+    free(cs);
+
+    /* store -> file: the same four title lines, in order, with the same times */
+    CHECK(store_export_project(g_store, pid, out1, why, sizeof(why)));
+    ChatTitle *t1 = NULL;
+    size_t n1 = 0;
+    CHECK(chat_store_titles_files(out1, id, &t1, &n1) && n1 == n0);
+    for (size_t k = 0; k < n1 && k < n0; k++)
+        CHECK(!strcmp(t1[k].title, t0[k].title) && t1[k].has_ts == t0[k].has_ts && t1[k].ts == t0[k].ts);
+    chat_store_titles_free(t1, n1);
+    ChatMessage *msgs = NULL;
+    size_t nm = 0;
+    CHECK(chat_store_load_files(out1, id, &msgs, &nm) && nm == 2);
+    chat_store_free_messages(msgs, nm);
+    ChatSummary *fl = NULL;
+    size_t nf = chat_store_list_files(out1, &fl);
+    CHECK(nf == 1 && !strcmp(fl[0].title, "Fourth"));
+    free(fl);
+
+    /* store -> file -> store: a rename in the store (sub-second time), exported and imported as another project */
+    CHECK(chat_store_rename(g_store, proj, id, "Fifth"));
+    char **ta = NULL, **tb = NULL;
+    double *aa = NULL, *ab = NULL;
+    size_t na = 0, nb = 0;
+    CHECK(titles_rows(db, pid, &ta, &aa, &na) && na == 4 && !strcmp(ta[3], "Fourth"));
+    CHECK(store_export_project(g_store, pid, out2, why, sizeof(why)));
+    CHECK(store_import(g_store, out2, why, sizeof(why)));
+    char pid2[40] = "";
+    CHECK(store_mode(g_store, out2, pid2, sizeof(pid2), NULL) == STORE_DB && strcmp(pid, pid2));
+    CHECK(titles_rows(db, pid2, &tb, &ab, &nb) && nb == na);
+    for (size_t k = 0; k < na && k < nb; k++) CHECK(!strcmp(ta[k], tb[k]) && aa[k] == ab[k]);
+    titles_rows_free(ta, aa, na);
+    titles_rows_free(tb, ab, nb);
+    cs = NULL;
+    nc = sdb_chat_list(db, pid2, &cs);
+    CHECK(nc == 1 && !strcmp(cs[0].title, "Fifth"));
+    free(cs);
+    chat_store_titles_free(t0, n0);
+    char cmd[PATH_MAX + 20];
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root);
+    system(cmd);
+}
+
 int main(void)
 {
     g_store = store_manager_create();
@@ -1883,6 +1995,7 @@ int main(void)
                           { "legacy_import_read_failures", test_legacy_import_read_failures },
                           { "fork_retry_snapshot", test_fork_retry_snapshot },
                           { "import_revision_identity", test_import_revision_identity },
+                          { "chat_title_archive", test_chat_title_archive },
                          { "entities_redteam", test_entities_redteam }, { "semantic", test_semantic } };
     int rc = run_db_core_tests();
     if (run_tests(tests, sizeof(tests) / sizeof(tests[0])) != 0) rc = 1;

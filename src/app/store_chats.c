@@ -6,6 +6,7 @@
 #include "memory_store.h"
 
 #include <limits.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -319,4 +320,41 @@ bool sdb_chat_rename(Db *db, const char *project_id, const char *id, const char 
               changed == 1;
     if (!ok) { db_rollback(db); return false; }
     return db_commit(db);
+}
+
+void sdb_chat_archived_titles_free(ChatArchivedTitle *titles, size_t count)
+{
+    for (size_t i = 0; titles && i < count; i++) free(titles[i].title);
+    free(titles);
+}
+
+bool sdb_chat_archived_titles(Db *db, const char *project_id, const char *id, ChatArchivedTitle **out, size_t *count)
+{
+    *out = NULL;
+    *count = 0;
+    DbRows r;
+    DbArg a[2] = { DB_S(id), DB_S(project_id) };
+    if (!db_query(db, "SELECT t.title, t.replaced_at FROM conversation_titles t JOIN conversations c ON c.id = t.conversation_id"
+                      " WHERE t.conversation_id = ? AND c.project_id = ? ORDER BY t.seq",
+                  a, 2, &r))
+        return false;
+    bool ok = db_rows_has_columns(&r, 2);
+    ChatArchivedTitle *list = r.nrows ? calloc(r.nrows, sizeof(ChatArchivedTitle)) : NULL;
+    if (r.nrows && !list) ok = false;
+    size_t n = 0;
+    for (size_t k = 0; ok && k < r.nrows; k++) {
+        const char *title;
+        double at;
+        ok = db_cell_text(&r, k, 0, &title) && db_cell_double(&r, k, 1, &at) && isfinite(at) && at >= 0 && at < 0x1p63;
+        if (ok) ok = (list[n].title = strdup(title)) != NULL;
+        if (ok) list[n++].replaced_at = at;
+    }
+    db_rows_free(&r);
+    if (!ok) {
+        sdb_chat_archived_titles_free(list, n);
+        return false;
+    }
+    *out = list;
+    *count = n;
+    return true;
 }

@@ -329,6 +329,32 @@ static bool import_saved_files(Db *db, const char *project_dir, const char *pid)
     return ok;
 }
 
+/* Every title the file carried before its current one goes into conversation_titles (AUDIT-004 F11): titles[k] was
+ * replaced when titles[k + 1] was set. A title line without a time (never written by the product) takes the chat's
+ * last change. Rows already there (the same chat imported into this project before) are kept, not doubled. */
+static bool import_chat_titles(Db *db, const char *project_dir, const char *file_id, const char *cid, double updated)
+{
+    ChatTitle *titles = NULL;
+    size_t n = 0;
+    if (!chat_store_titles_files(project_dir, file_id, &titles, &n)) return false;
+    bool ok = true;
+    if (n > 1) {
+        DbRows r;
+        ok = db_query(db, "SELECT COUNT(*) FROM conversation_titles WHERE conversation_id = ?", (DbArg[1]){ DB_S(cid) }, 1, &r);
+        int64_t have = -1;
+        if (ok) {
+            ok = r.nrows == 1 && db_rows_has_columns(&r, 1) && db_cell_i64(&r, 0, 0, &have);
+            db_rows_free(&r);
+        }
+        for (size_t k = 0; ok && have == 0 && k + 1 < n; k++) {
+            DbArg a[3] = { DB_S(cid), DB_S(titles[k].title), DB_D(titles[k + 1].has_ts ? titles[k + 1].ts : updated) };
+            ok = db_run(db, "INSERT INTO conversation_titles (conversation_id, title, replaced_at) VALUES (?,?,?)", a, 3, NULL);
+        }
+    }
+    chat_store_titles_free(titles, n);
+    return ok;
+}
+
 static bool import_chats(Db *db, const char *project_dir, const char *pid, IdMaps *chats_map)
 {
     ChatSummary *list = NULL;
@@ -356,6 +382,7 @@ static bool import_chats(Db *db, const char *project_dir, const char *pid, IdMap
                         c2, 5, NULL);
         }
         if (ok && strcmp(cid, list[i].id)) ok = map_add(chats_map, list[i].id, cid);
+        if (ok) ok = import_chat_titles(db, project_dir, list[i].id, cid, (double)list[i].updated);
         if (ok && list[i].observer_ignore) ok = sdb_chat_set_observer(db, pid, cid, false);
         for (size_t k = 0; ok && k < n; k++) {
             uint64_t added = 0;
@@ -1033,10 +1060,24 @@ static bool export_files_unlocked(StoreManager *manager, Db *db, const char *pid
             ok = false;
             break;
         }
+        /* The titles renames replaced go too (AUDIT-004 F11): the meta line carries the first title, and after the
+         * messages one title line per rename, oldest first, each stamped when the title before it was replaced; the
+         * last is the current title, as chat_store_rename_files leaves a file. */
+        ChatArchivedTitle *old = NULL;
+        size_t nold = 0;
+        if (!sdb_chat_archived_titles(db, pid, cs[i].id, &old, &nold)) {
+            chat_store_free_messages(m, n);
+            ok = false;
+            break;
+        }
         for (size_t k = 0; ok && k < n; k++) {
             store_set_write_time(manager, m[k].ts);
-            ok = chat_store_append_files(manager, project_dir, cs[i].id, cs[i].title, &m[k]);
+            ok = chat_store_append_files(manager, project_dir, cs[i].id, nold ? old[0].title : cs[i].title, &m[k]);
         }
+        for (size_t k = 0; ok && n && k < nold; k++)
+            ok = chat_store_title_line_files(project_dir, cs[i].id, k + 1 < nold ? old[k + 1].title : cs[i].title,
+                                             old[k].replaced_at);
+        sdb_chat_archived_titles_free(old, nold);
         if (ok && n && cs[i].observer_ignore) ok = chat_store_set_observer_files(project_dir, cs[i].id, false);
         chat_store_free_messages(m, n);
     }

@@ -131,6 +131,11 @@ bool chat_store_append_files(StoreManager *manager, const char *project_dir, con
 
 bool chat_store_rename_files(const char *project_dir, const char *id, const char *title)
 {
+    return chat_store_title_line_files(project_dir, id, title, (double)time(NULL));
+}
+
+bool chat_store_title_line_files(const char *project_dir, const char *id, const char *title, double ts)
+{
     char path[1200];
     if (!path_for(project_dir, id, path, sizeof(path)) || !title || !title[0]) return false;
     struct stat st;
@@ -140,7 +145,7 @@ bool chat_store_rename_files(const char *project_dir, const char *id, const char
     bool ok = ensure_trailing_newline(fd);
     cJSON *j = cJSON_CreateObject();
     ok = ok && j && cJSON_AddStringToObject(j, "type", "title") && cJSON_AddStringToObject(j, "title", title) &&
-         cJSON_AddNumberToObject(j, "ts", (double)time(NULL));
+         cJSON_AddNumberToObject(j, "ts", ts);
     ok = ok && write_line(fd, j);
     cJSON_Delete(j);
     ok = ok && fsync(fd) == 0;
@@ -278,6 +283,67 @@ bool chat_store_list_files_checked(const char *project_dir, ChatSummary **out, s
     }
     qsort(list, n, sizeof(ChatSummary), by_updated_desc);
     *out = list;
+    *count = n;
+    return true;
+}
+
+void chat_store_titles_free(ChatTitle *titles, size_t count)
+{
+    for (size_t i = 0; titles && i < count; i++) free(titles[i].title);
+    free(titles);
+}
+
+/* The same lines chat_store_list_files_checked reads a title from: the first line's "title", then every title line;
+ * a line that does not parse carries no title there either. */
+bool chat_store_titles_files(const char *project_dir, const char *id, ChatTitle **titles, size_t *count)
+{
+    *titles = NULL;
+    *count = 0;
+    char path[1200];
+    if (!path_for(project_dir, id, path, sizeof(path))) return false;
+    struct stat st;
+    FILE *f = open_regular(path, &st);
+    if (!f) return false;
+    ChatTitle *list = NULL;
+    size_t n = 0, cap = 0;
+    char *line = NULL;
+    size_t cap_l = 0;
+    bool first = true, ok = true;
+    while (ok && getline(&line, &cap_l, f) > 0) {
+        if (first || strstr(line, "\"type\":\"title\"")) {
+            bool allocation_error;
+            cJSON *j = json_parse_checked(line, &allocation_error);
+            if (allocation_error) ok = false;
+            cJSON *t = j ? cJSON_GetObjectItem(j, "title") : NULL, *ts = j ? cJSON_GetObjectItem(j, "ts") : NULL;
+            if (ok && t && cJSON_IsString(t)) {
+                if (n == cap) {
+                    size_t next = cap ? cap * 2 : 4;
+                    ChatTitle *m = next > SIZE_MAX / sizeof(ChatTitle) ? NULL : realloc(list, next * sizeof(ChatTitle));
+                    if (!m) ok = false;
+                    else {
+                        list = m;
+                        cap = next;
+                    }
+                }
+                char *copy = ok ? strdup(t->valuestring) : NULL;
+                if (!copy) ok = false;
+                else {
+                    bool timed = !first && cJSON_IsNumber(ts) && isfinite(ts->valuedouble);
+                    list[n++] = (ChatTitle){ .title = copy, .ts = timed ? ts->valuedouble : 0, .has_ts = timed };
+                }
+            }
+            cJSON_Delete(j);
+        }
+        first = false;
+    }
+    ok = ok && feof(f) && !ferror(f);
+    free(line);
+    if (fclose(f) != 0) ok = false;
+    if (!ok) {
+        chat_store_titles_free(list, n);
+        return false;
+    }
+    *titles = list;
     *count = n;
     return true;
 }

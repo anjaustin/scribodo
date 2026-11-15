@@ -68,6 +68,14 @@ bool sdb_chat_load(Db *db, const char *project_id, const char *id, ChatMessage *
 bool sdb_chat_source_page(Db *db, const char *project_id, const char *id,
                           const ChatSourceCursor *cursor, ChatSourcePage *out);
 bool sdb_chat_rename(Db *db, const char *project_id, const char *id, const char *title);
+/* The titles a rename replaced (conversation_titles), in the order they were replaced (seq, migration 019), with when
+ * each was replaced; for the export. */
+typedef struct {
+    char *title;
+    double replaced_at;
+} ChatArchivedTitle;
+bool sdb_chat_archived_titles(Db *db, const char *project_id, const char *id, ChatArchivedTitle **out, size_t *count);
+void sdb_chat_archived_titles_free(ChatArchivedTitle *titles, size_t count);
 bool sdb_chat_set_observer(Db *db, const char *project_id, const char *id, bool read);
 
 /* Move a project's .scribodo/ files into the store (see store_import.c).

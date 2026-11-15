@@ -902,11 +902,20 @@ static const char *const k_migration_018[] = {
     NULL,
 };
 
+/* AUDIT-004 F11: the archive's own order. A chat's titles are kept in the order they were replaced, and replaced_at
+ * cannot hold it: the file store stamps a rename in whole seconds (two renames in one second tie) and a clock set back
+ * reorders it. The rows already kept are numbered in the order InnoDB stored them, which is insertion order. One
+ * re-runnable statement. */
+static const char *const k_migration_019[] = {
+    "ALTER TABLE conversation_titles ADD COLUMN IF NOT EXISTS seq BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY",
+    NULL,
+};
+
 static const char *const *const k_migrations[] = { k_migration_001, k_migration_002, k_migration_003, k_migration_004,
                                                    k_migration_005, k_migration_006, k_migration_007, k_migration_008,
                                                    k_migration_009, k_migration_010, k_migration_011, k_migration_012,
                                                    k_migration_013, k_migration_014, k_migration_015, k_migration_016,
-                                                   k_migration_017, k_migration_018 };
+                                                   k_migration_017, k_migration_018, k_migration_019 };
 
 int db_schema_version(Db *db)
 {

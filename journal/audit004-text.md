@@ -1,0 +1,52 @@
+# AUDIT-004 remediation: data and text stream
+
+**Date:** 2026-11-15. **Base:** `ed95681` (branch `remed/text`). **Scope:** AUDIT-004 F11 (the chat-title archive in
+the file store), F10 (the relation check's splitter defect, then one home for the text rules), F12 (records ids).
+Evidence: `build/audit004-text/` (gate logs with their exit status, measurement outputs).
+
+## Item 1: F11, the chat-title archive survives the file store
+
+**Defect.** `sdb_chat_rename` keeps the replaced title in `conversation_titles` (migration 018), but the export wrote
+only the current title into the file store's meta line and the importer read only the last title line, although the
+file store keeps every rename as a `{"type":"title"}` line. A file-to-store-to-file round trip dropped what the
+migration was added to keep.
+
+**Change.**
+
+- File store: `chat_store_title_line_files(dir, id, title, ts)` writes one title line stamped `ts`
+  (`chat_store_rename_files` now calls it with the clock, unchanged on disk); `chat_store_titles_files` reads every
+  title the file has carried, oldest first (the meta line's, then each title line's, the same lines
+  `chat_store_list_files_checked` reads the current title from), each with its line's `ts`.
+- Export (`export_files_unlocked`): the meta line carries the oldest archived title, and after the messages one title
+  line per rename, in archive order, each stamped with the archived row's `replaced_at`; the last is the current
+  title. This is exactly the form `chat_store_rename_files` leaves.
+- Import (`import_chats` -> `import_chat_titles`): every title before the current one goes into
+  `conversation_titles`, `replaced_at` = the `ts` of the line that replaced it (a line without a time, never written
+  by the product, takes the chat's last change). Rows already there for that conversation are kept, not doubled.
+- **Migration 019** (`ALTER TABLE conversation_titles ADD COLUMN IF NOT EXISTS seq BIGINT NOT NULL AUTO_INCREMENT
+  PRIMARY KEY`, one re-runnable statement). The archive's order could not be held by `replaced_at`: the file store
+  stamps renames in whole seconds, so two renames in one second tie and a clock set back reorders, and the table had
+  no other column to break the tie. `seq` is insertion order (existing rows are numbered in InnoDB's stored order,
+  which is insertion order); the export reads `ORDER BY seq`. Without it the round trip was lossless only when no two
+  renames shared a second.
+
+**Column checklist.** New SELECT: `sdb_chat_archived_titles` pins `db_rows_has_columns(&r, 2)`. Importer INSERT: new
+(`conversation_id, title, replaced_at`; `seq` is assigned). File-store key: the existing title line with `ts`. Schema
+pins: `LATEST_SCHEMA` 19, `MIGRATION_STATEMENTS` 85 and the "19" receipt strings in `tests/test_crash_points.c`;
+`db_schema_version(db) == 19` (six places) in `tests/test_db_core.c`; GAP-004's header and migration row counts.
+**Not edited (outside this stream):** `docs/LANDSCAPE.md` row 8 ("18 embedded migrations") and row 9 ("at schema 18",
+133 rows) now read 19 migrations and 135 rows; the coordinator should update them.
+
+**Test.** `test_db.c` `chat_title_archive`: a file chat titled "First", renamed through the product's path
+("Second", stamped now), then two title lines stamped 1700000000 ("Third", a clock set back; "Fourth", a tie).
+File -> store: three archived rows in order with `replaced_at` equal to the next line's `ts`, the row titled
+"Fourth". Store -> file: the export's four titles equal the original's, in order, with identical `ts`; messages and the
+listed title intact. Store -> file -> store: a rename in the store ("Fifth", sub-second time), export, import as a
+second project: the four archived rows equal title for title and `replaced_at` for `replaced_at` (doubles compared
+exactly; cJSON writes 17 significant digits when 15 do not round-trip). With the export and import changes reverted
+the test fails five checks (checked by reverting `store_import.c` only).
+
+**Gates (item 1 tree).** `make dbtest` exit 0 (`test_db` 11,317 checks, 0 failures; every binary 0 failures;
+`build/audit004-text/item1-dbtest.log`). `make crashtest` exit 0: 135 matrix rows, 131 process deaths, 1,496 checks,
+0 failures, 778 s; `migration.statement` 85 points and `migration.receipt` 19 points, every one recovered to schema
+19 (`item1-crashtest.log`, `item1-crash-matrix.tsv`). `make test`, `make analyze`, `make sanitize`: below.
