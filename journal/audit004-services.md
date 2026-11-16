@@ -290,3 +290,18 @@ Not exercised: the warning at the end of a whole successful native `up` with a n
 server; the pieces it joins (the check, the final `echo`, the accessor) are each tested.
 
 **Gates (RT2):** `make test` exit 0; `make analyze` exit 0; `make sanitize` exit 0.
+
+## RT3 — the trap remapped only 3–6 (low)
+
+A command failing under `set -e` with its own 7 (curl) or 75 passed straight through, which the app would read as
+"lock held". Now the EXIT trap turns every code above 2 into 1 unless `leave` set it. A real 75 can only come from
+`lockf`, the outer process, which the trap is not part of. The lock wait is overridable
+(`SCRIBODO_SERVICES_LOCK_WAIT`, default 300 s, listed in the header) so the test can make lockf give up quickly.
+
+**Test** (`tests/test_services_docker.sh`, on the real script):
+- `status` in docker mode, with the Compose shim failing 4, 7 and 75: the script exits 1 each time;
+- a store whose lock another `lockf` holds: `down` with a one-second wait exits 75 (the holder is stopped by PID).
+
+With the old 3–6 trap restored, the 7 and 75 cases fail. The 4 case passed either way, being inside the old range.
+
+**Gates (RT3):** `make test` exit 0; `make sanitize` exit 0; `make analyze` skipped (another stream's `clang --analyze` was running). RT3 changes no C source, which is all analyze covers.

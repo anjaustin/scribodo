@@ -35,6 +35,7 @@
 #                              it or a newer patch of its series
 # Set by the scripts themselves, not by hand:
 #   SCRIBODO_SERVICES_LOCKED   marks the re-run under the store's lock (lockf), so it does not lock again
+#   SCRIBODO_SERVICES_LOCK_WAIT  seconds to wait for the store's lock (300); tests shorten it
 #   SCRIBODO_MARIADB_SERVER_FLAGS  the MariaDB server's settings from tools/services.defaults, exported for Compose
 #
 # Exit codes: the contract the app reads (src/app/service_supervisor.h, SERVICES_EXIT_*; tests/test_services.c pins
@@ -58,15 +59,16 @@ case "${1:-status}" in
     up|down|purge|migrate-from-docker|rotate-root)
         if [ -z "${SCRIBODO_SERVICES_LOCKED:-}" ]; then
             mkdir -p "$SCRIBODO_SECRETS" && chmod 700 "$SCRIBODO_SECRETS"
-            SCRIBODO_SERVICES_LOCKED=1 exec /usr/bin/lockf -k -t 300 "$SCRIBODO_SECRETS/.services.lock" "$0" "$@"
+            SCRIBODO_SERVICES_LOCKED=1 exec /usr/bin/lockf -k -t "${SCRIBODO_SERVICES_LOCK_WAIT:-300}" "$SCRIBODO_SECRETS/.services.lock" "$0" "$@"
         fi ;;
 esac
 
-# Codes 3 to 6 mean what the header says and nothing else: a command that fails under `set -e` with one of them (curl,
-# docker compose) leaves as 1. `leave` is how the script says one of them on purpose.
+# Every code above 2 means what the header says and nothing else: a command that fails under `set -e` with its own code
+# (curl's 7, docker compose's 4, anything's 75) leaves as 1. `leave` is how the script says 3 to 6 on purpose; 75
+# only ever comes from lockf, the outer process, never from this script.
 contract_exit=""
 leave() { contract_exit=1; exit "$1"; }
-trap 'rc=$?; if [ -z "$contract_exit" ] && [ "$rc" -ge 3 ] && [ "$rc" -le 6 ]; then exit 1; fi' EXIT
+trap 'rc=$?; if [ -z "$contract_exit" ] && [ "$rc" -gt 2 ]; then exit 1; fi' EXIT
 
 had_credentials=0
 [ -s "$SCRIBODO_SECRETS/db_root_password" ] && had_credentials=1

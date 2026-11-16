@@ -62,7 +62,7 @@ docker() {
             local script="${6//\/run\/secrets/$SHIM_RUN}"
             shift 6
             PATH="$SHIM_CLIENTS:$PATH" sh -c "$script" "$@" ;;
-        *) return 0 ;;
+        *) return "${SHIM_COMPOSE_RC:-0}" ;;
     esac
 }
 curl() { # records the URL and the header the script sent (from its -H @file)
@@ -196,6 +196,22 @@ check "an older patch, another series or an unreadable version is refused (3), s
 [ "$(version_case "$pin" "$series.$((patch + 2))" | cut -d'|' -f1)" = 3 ] && [ "$(version_case "$series.$((patch + 2))" "$series.$((patch + 2))")" = "0||" ]
 check "SCRIBODO_MARIADB_VERSION overrides the pin" $?
 printf 'V=%s\n' "$pin" > "$T/version"
+
+# ---- exit codes above 2 come only from the script's contract, or from lockf -----------------------------------------
+export SCRIBODO_SERVICES=docker
+for stray in 4 7 75; do
+    reset; r=0; SHIM_COMPOSE_RC=$stray tools/services.sh status >/dev/null 2>&1 || r=$?
+    [ "$r" = 1 ] || { check "a command failing with its own $stray leaves as 1 (got $r)" 1; continue; }
+    check "a command failing with its own $stray leaves as 1" 0
+done
+mkdir -p "$T/secrets"
+/usr/bin/lockf -k "$T/secrets/.services.lock" /bin/sleep 20 & holder=$!
+for _ in $(seq 1 50); do [ -e "$T/secrets/.services.lock" ] && break; sleep 0.1; done
+sleep 0.3
+r=0; SCRIBODO_SERVICES_LOCK_WAIT=1 tools/services.sh down >/dev/null 2>&1 || r=$?
+kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
+[ "$r" = 75 ]
+check "a store locked by another run: lockf's own 75 (EX_TEMPFAIL), from the outer process" $?
 
 # ---- Compose is called only through the library ------------------------------------------------------------------
 # docker/compose.yml requires variables only services_lib.sh exports: a direct `docker compose` elsewhere fails at parse
