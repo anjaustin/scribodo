@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include "core/utf8.h"
+#include "observer_unicode_word.h"
 
 #include <stdbool.h>
 #include <stdlib.h>
@@ -517,9 +518,24 @@ static void vocab_set(const char *text, const char *const *list, bool numbers, W
     }
 }
 
-/* Python's \w at a byte: ASCII letters, digits and underscore; a multi-byte character counts as a word character
- * unless it is punctuation or a space (U+0080 to U+00BF, U+2000 to U+206F, U+3000 to U+303F), the quotes and dashes
- * fiction puts beside a name. */
+/* Python's \w at a byte: ASCII letters, digits and underscore, and for a multi-byte character the code points
+ * Python's re matches with \w (str.isalnum() or "_"), from the generated table observer_unicode_word.h
+ * (tools/gen_unicode_word.py). Before 2026-11-15 every multi-byte character outside three punctuation ranges counted as
+ * a word character, so x, emoji and fullwidth punctuation hid a boundary the Python sees (red-team: 8 attribute and
+ * 39 subject disagreements in 60,000 random pairs). Bytes that are not UTF-8 count as a word character (no boundary);
+ * the Python never sees them, since it reads text as UTF-8. */
+static bool unicode_word(unsigned cp)
+{
+    size_t lo = 0, hi = sizeof(k_unicode_word) / sizeof(k_unicode_word[0]);
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        if (cp < k_unicode_word[mid][0]) hi = mid;
+        else if (cp > k_unicode_word[mid][1]) lo = mid + 1;
+        else return true;
+    }
+    return false;
+}
+
 static bool py_word_at(const unsigned char *u, size_t i)
 {
     if (u[i] < 0x80) return ascii_alpha(u[i]) || ascii_digit(u[i]) || u[i] == '_';
@@ -528,8 +544,10 @@ static bool py_word_at(const unsigned char *u, size_t i)
     if ((u[i] & 0xE0) == 0xC0 && (u[i + 1] & 0xC0) == 0x80) cp = (u[i] & 0x1Fu) << 6 | (u[i + 1] & 0x3Fu);
     else if ((u[i] & 0xF0) == 0xE0 && (u[i + 1] & 0xC0) == 0x80 && (u[i + 2] & 0xC0) == 0x80)
         cp = (u[i] & 0x0Fu) << 12 | (u[i + 1] & 0x3Fu) << 6 | (u[i + 2] & 0x3Fu);
+    else if ((u[i] & 0xF8) == 0xF0 && (u[i + 1] & 0xC0) == 0x80 && (u[i + 2] & 0xC0) == 0x80 && (u[i + 3] & 0xC0) == 0x80)
+        cp = (u[i] & 0x07u) << 18 | (u[i + 1] & 0x3Fu) << 12 | (u[i + 2] & 0x3Fu) << 6 | (u[i + 3] & 0x3Fu);
     else return true;
-    return !((cp >= 0x80 && cp <= 0xBF) || (cp >= 0x2000 && cp <= 0x206F) || (cp >= 0x3000 && cp <= 0x303F));
+    return unicode_word(cp);
 }
 
 /* Python's \s at u (str patterns: Unicode whitespace, U+0009 to U+000D, U+001C to U+001F, U+0020, U+0085, U+00A0,

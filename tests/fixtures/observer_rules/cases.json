@@ -287,6 +287,48 @@
    "text": "born in Boston",
    "differ": true,
    "why": "a 70-letter place name"
+  },
+  {
+   "canon": "a padwar ×of Helium",
+   "text": "a padwar of Zodanga",
+   "differ": true,
+   "why": "a multiplication sign is a symbol: a boundary before the preposition (C called it a letter until 2026-11-15)"
+  },
+  {
+   "canon": "the navy 😀of Helium",
+   "text": "the navy of Zodanga",
+   "differ": true,
+   "why": "a 4-byte emoji is a boundary"
+  },
+  {
+   "canon": "the navy ，of Helium",
+   "text": "the navy of Zodanga",
+   "differ": true,
+   "why": "fullwidth punctuation is a boundary"
+  },
+  {
+   "canon": "the navy λof Helium",
+   "text": "the navy of Zodanga",
+   "differ": false,
+   "why": "a Greek letter is a word character: no boundary, no place"
+  },
+  {
+   "canon": "the navy жof Helium",
+   "text": "the navy of Zodanga",
+   "differ": false,
+   "why": "a Cyrillic letter is a word character"
+  },
+  {
+   "canon": "the navy ٣of Helium",
+   "text": "the navy of Zodanga",
+   "differ": false,
+   "why": "an Arabic-Indic digit is a word character"
+  },
+  {
+   "canon": "the navy ²of Helium",
+   "text": "the navy of Zodanga",
+   "differ": false,
+   "why": "a superscript two is a word character (str.isalnum)"
   }
  ],
  "subject": [
@@ -403,6 +445,36 @@
    "text": "So Abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb's horse ran.",
    "same": true,
    "why": "a 70-letter possessive name"
+  },
+  {
+   "canon": "It was ×Sola's egg.",
+   "text": "It was Sola's hat.",
+   "same": true,
+   "why": "a multiplication sign before a possessive name is a boundary"
+  },
+  {
+   "canon": "It was λSola's egg.",
+   "text": "It was Sola's hat.",
+   "same": false,
+   "why": "a Greek letter before the name: no boundary, no possessive"
+  },
+  {
+   "canon": "It was Sola's😀 egg.",
+   "text": "It was Sola's hat.",
+   "same": true,
+   "why": "an emoji after 's is a boundary"
+  },
+  {
+   "canon": "It was Sola'sж egg.",
+   "text": "It was Sola's hat.",
+   "same": false,
+   "why": "a Cyrillic letter after 's: no boundary"
+  },
+  {
+   "canon": "It was ÷Sola's egg.",
+   "text": "It was Sola's hat.",
+   "same": true,
+   "why": "a division sign is a boundary"
   }
  ]
 }
