@@ -16,6 +16,7 @@ errors are measured; fix-software-not-prompts). They are written on one novel an
 ships (record-model-replies-before-tuning)."""
 import collections
 import json
+import os
 import re
 import sys
 
@@ -35,6 +36,24 @@ TITLES = {"mr", "mrs", "ms", "miss", "lady", "lord", "sir", "dr", "captain", "co
           "queen", "the", "a", "an", "he", "she", "it", "they", "his", "her", "canon", "new"}
 
 
+def _word_class():
+    """The characters of Python's \\w as the C reads them: ASCII letters, digits and "_", plus the ranges of
+    src/llm/observer_unicode_word.h (generated from Python 3.9.6, Unicode 13.0). The rules below use this class, never
+    the running interpreter's \\w, so their answers, and the C/Python contract tests/fixtures/observer_rules pins, are
+    the same on any Python: a newer one (Homebrew's 3.12, Unicode 15) reads U+0870 as a letter, 3.9 does not
+    (2026-11-15). Unicode whitespace (\\s) has not changed between those versions."""
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src/llm/observer_unicode_word.h")
+    with open(path, encoding="utf-8") as f:
+        ranges = re.findall(r"\{ 0x([0-9A-F]+), 0x([0-9A-F]+) \}", f.read())
+    return "A-Za-z0-9_" + "".join("\\U%08x-\\U%08x" % (int(a, 16), int(b, 16)) for a, b in ranges)
+
+
+WORD = _word_class()
+NO_WORD_BEFORE, NO_WORD_AFTER = "(?<![%s])" % WORD, "(?![%s])" % WORD  # \b beside a word character, table-defined
+PLACE = re.compile(NO_WORD_BEFORE + r"(of|in|from|at|to)\s+((?:[A-Z][a-z]+)(?:\s+[A-Z][a-z]+)*)")
+POSSESSIVE = re.compile(NO_WORD_BEFORE + r"([A-Z][a-z]+)'s" + NO_WORD_AFTER)
+
+
 def words(text):
     """ASCII letters and ASCII digits, as obs_attributes_differ reads them (\\d read Arabic-Indic and other Unicode
     digits until 2026-11-15; tests/fixtures/observer_rules/cases.json, AUDIT-004 F2)."""
@@ -51,7 +70,7 @@ def numbers(text):
 
 def place_names(text):
     """Capitalised names after of/in/from/at/to: the places and households a sentence puts someone in."""
-    return {m.group(2) for m in re.finditer(r"\b(of|in|from|at|to)\s+((?:[A-Z][a-z]+)(?:\s+[A-Z][a-z]+)*)", text or "")
+    return {m.group(2) for m in PLACE.finditer(text or "")
             if m.group(2).split()[0].lower() not in TITLES}
 
 
@@ -75,7 +94,7 @@ def subjects(text):
             break
         run.append(w)
     found = {w for w in run if len(w) > 2 and w.lower() not in TITLES}
-    return found | {m.group(1) for m in re.finditer(r"\b([A-Z][a-z]+)'s\b", text)}
+    return found | {m.group(1) for m in POSSESSIVE.finditer(text)}
 
 
 def slot_words(text):

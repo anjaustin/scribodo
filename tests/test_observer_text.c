@@ -277,11 +277,12 @@ static void test_shared_rule_fixture(void)
 
 /* The co-signers' word sets are built in O(n log n): 100,000 distinct numbers and 100,000 possessive names a side take
  * milliseconds; the quadratic sets took 3.7 s for 40,000 numbers and would take tens of seconds here (red-team
- * 2026-11-15). The bound is generous for the sanitizer build and a loaded machine. */
+ * 2026-11-15). The bound, in CPU seconds, is generous for the sanitizer build. */
+/* Process CPU time, not wall time: another stream's build on the same machine must not fail the bound. */
 static double secs(void)
 {
     struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts);
     return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
 }
 

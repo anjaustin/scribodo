@@ -423,6 +423,12 @@
    "text": "the navy of Zodanga",
    "differ": false,
    "why": "a superscript two is a word character (str.isalnum)"
+  },
+  {
+   "canon": "the navy ࡰof Helium",
+   "text": "the navy of Zodanga",
+   "differ": true,
+   "why": "U+0870 (an Arabic letter added in Unicode 14) is no word character in the table both sides read, whatever the Python's own Unicode version"
   }
  ],
  "subject": [
@@ -569,6 +575,12 @@
    "text": "It was Sola's hat.",
    "same": true,
    "why": "a division sign is a boundary"
+  },
+  {
+   "canon": "It was ࡰSola's egg.",
+   "text": "It was Sola's hat.",
+   "same": true,
+   "why": "U+0870 before a possessive name: a boundary by the shared table"
   }
  ]
 }
