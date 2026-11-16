@@ -195,8 +195,48 @@ void test_migration(void)
     snprintf(g_name, sizeof(g_name), "%s", saved);
 }
 
+/* Migration 019 on a populated archive (AUDIT-004 F11 red team): rows kept by migration 018 with replaced_at tied and
+ * reversed, two chats interleaved, are numbered in the order they were inserted, which is the order the renames were
+ * made; replaced_at could not hold it. */
+static void test_migration_019_order(void)
+{
+    char saved[64], err[512] = "";
+    snprintf(saved, sizeof(saved), "%s", g_name);
+    snprintf(g_name, sizeof(g_name), "%s_m19", saved);
+    CHECK(admin("CREATE DATABASE %s CHARACTER SET utf8mb4") && admin("GRANT ALL ON %s.* TO 'scribodo'@'%%'"));
+    DbConfig c;
+    CHECK(db_config_default(&c, err, sizeof(err)));
+    snprintf(c.database, sizeof(c.database), "%s", g_name);
+    Db *db = db_open(&c, err, sizeof(err));
+    CHECK(db != NULL);
+    if (db) {
+        CHECK(db_migrate_upto(db, 18, err, sizeof(err)) && db_schema_version(db) == 18);
+        static const char *const rows[][3] = { { "c-1", "A", "5" }, { "c-2", "x", "9" }, { "c-1", "B", "5" },
+                                               { "c-1", "C", "3" }, { "c-2", "y", "1" }, { "c-1", "D", "1" } };
+        for (size_t k = 0; k < 6; k++)
+            CHECK(db_run(db, "INSERT INTO conversation_titles (conversation_id, title, replaced_at) VALUES (?,?,?)",
+                         (DbArg[3]){ DB_S(rows[k][0]), DB_S(rows[k][1]), DB_D(atof(rows[k][2])) }, 3, NULL));
+        CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 19);
+        DbRows r;
+        CHECK(db_query(db, "SELECT GROUP_CONCAT(title ORDER BY seq SEPARATOR '') FROM conversation_titles", NULL, 0, &r) &&
+              r.nrows == 1 && db_cell(&r, 0, 0) && !strcmp(db_cell(&r, 0, 0), "AxBCyD"));
+        db_rows_free(&r);
+        CHECK(db_query(db, "SELECT GROUP_CONCAT(title ORDER BY seq SEPARATOR '') FROM conversation_titles WHERE conversation_id = 'c-1'",
+                       NULL, 0, &r) && r.nrows == 1 && db_cell(&r, 0, 0) && !strcmp(db_cell(&r, 0, 0), "ABCD"));
+        db_rows_free(&r);
+        /* A row added after the migration is numbered after every kept one. */
+        CHECK(db_run(db, "INSERT INTO conversation_titles (conversation_id, title, replaced_at) VALUES ('c-1','E',0)", NULL, 0, NULL));
+        CHECK(db_query(db, "SELECT title FROM conversation_titles ORDER BY seq DESC LIMIT 1", NULL, 0, &r) && r.nrows == 1 &&
+              !strcmp(db_cell(&r, 0, 0), "E"));
+        db_rows_free(&r);
+        db_close(db);
+    }
+    admin("DROP DATABASE %s");
+    snprintf(g_name, sizeof(g_name), "%s", saved);
+}
+
 int run_db_core_tests(void)
 {
-    const TestCase tests[] = { { "db", test_db }, { "migration", test_migration } };
+    const TestCase tests[] = { { "db", test_db }, { "migration", test_migration }, { "migration_019_order", test_migration_019_order } };
     return run_tests(tests, sizeof(tests) / sizeof(tests[0]));
 }

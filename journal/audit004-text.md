@@ -277,3 +277,45 @@ from legacy-*, `store.json` removed, `import-pending` naming the project), and `
 project (checked) and imports the chat again. The archive still holds two rows. With the guard's `have == 0`
 removed from `import_chat_titles` the test fails at that count (checked by mutating `store_import.c` and rebuilding
 `test_db`, then restoring it).
+
+### R4 (low): migration 019 was untested on a populated table
+
+**Test.** `test_db_core` `migration_019_order`: a database migrated to schema 18 gets six `conversation_titles` rows,
+two chats interleaved, `replaced_at` tied (5, 5) and reversed (5, 3, 1); after `db_migrate` (schema 19) the titles
+ordered by `seq` read "AxBCyD" overall and "ABCD" for the first chat, insertion order, which `replaced_at` could not
+give; a row inserted afterwards is numbered last.
+
+### Chats imported before this branch: backfill?
+
+Their earlier titles were not imported (the importer read only the last title line) but are not lost: the chat files
+were set aside, every title line intact, under `<project>/.scribodo/legacy-*/chats/<id>.jsonl`. The store's archive
+for those chats is incomplete, and an export or fork from the store drops them, because legacy-* folders stay with the
+original folder. A backfill is warranted, low priority (nothing is destroyed meanwhile), and is not small, so it is
+proposed, not built:
+
+1. Per project in the store, per `legacy-*/chats/*.jsonl` (oldest legacy folder first), read the titles with
+   `chat_store_titles_files`. Skip files with one title.
+2. Find the conversation: the file id itself in this project, else `rebased_id(pid, id, salt)` for salt 0..7 (the
+   importer's deterministic rebasing), confirmed by its first message's content and time equal to the file's. No
+   match, no write.
+3. Skip if the conversation already holds the file's archived titles (same titles in order at the head of its
+   archive); this makes the job idempotent and also covers chats imported by this branch.
+4. Insert the file's earlier titles with the R2 time rule. If the conversation has no archive rows, insert in order.
+   If it has rows (renames made in the store after the import), the legacy titles come before them; `seq` must then
+   put them first. That means renumbering that conversation's rows inside one transaction (new rows, then the old
+   ones re-inserted after them, keeping title and `replaced_at`) or a second ordering column. This is the part that
+   makes it not small: it rewrites keys of rows that "delete nothing" protects, and needs its own crash-matrix row.
+5. Run once per project behind a receipt (e.g. in `schema_migrations`-like `backfills`), log counts per project.
+
+### Red-team gates
+
+Per commit, with the later items set aside: R1 (`f128b92`) `make test` 0, `make sanitize` 0; R2 (`416b920`) and R3
+(`f38e8aa`) `make test`, `make sanitize`, `make dbtest` 0 each. Final tree (R4): `make test` 0, `make sanitize` 0,
+`make dbtest` 0, `make crashtest` 0 (135 rows, 1,496 checks, 0 failures, 474 s). `make analyze` not run on the
+red-team commits: every attempt found another stream's `clang --analyze` running (`pgrep -fl`), and the coordinator's
+rule is not to overlap. Logs: `build/audit004-text/redteam/{r1,r2,r3,final}-*`.
+
+**Stash use.** The gates above set later work aside with `git stash push -u -m <tag>` and restored it with a bare
+`git stash pop`, which takes the top of a stash stack shared by every worktree. Checked afterwards: the stash list is
+empty (every entry pushed here was popped here), each pop restored exactly this stream's files, and every commit on
+the branch contains only this stream's files. No other stream's stash was taken. Later work uses WIP commits instead.
