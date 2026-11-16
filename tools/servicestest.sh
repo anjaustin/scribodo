@@ -15,7 +15,8 @@
 #   9. migrate-from-docker refuses while the app runs, on the author's store
 #  10. with Docker running (SCRIBODO_SERVICESTEST_DOCKER=1 requires it): migrate-from-docker moves a store and keeps the
 #      dump; a second migration over the native store is refused and changes nothing; a migration whose load fails puts
-#      both stores back as they were, and a replacing one leaves the native store exactly as it was
+#      both stores back as they were, and a replacing one leaves the native store exactly as it was; a migration over a
+#      volume made under other credentials is refused by name and leaves the running native store running
 # Logs of every store are kept in build/servicestest-logs (uploaded by CI on failure).
 set -u
 cd "$(dirname "$0")/.."
@@ -46,7 +47,7 @@ cleanup() {
     done < <(find "$root" -type d -path '*/mariadb/data' 2>/dev/null)
     [ -n "${sleeper:-}" ] && kill "$sleeper" 2>/dev/null
     if docker info >/dev/null 2>&1; then   # an interrupted step 10 leaves its containers and volumes
-        for p in e g h; do
+        for p in e g h i; do
             [ -d "$root/$p" ] || continue
             SCRIBODO_SECRETS="$root/$p" SCRIBODO_COMPOSE_PROJECT="scribodo-st-$p" lib_compose down -v >/dev/null 2>&1 ||
                 echo "cleanup: the containers of scribodo-st-$p could not be removed" >&2
@@ -247,6 +248,35 @@ SQL
         [ "$(SCRIBODO_SERVICES=native svc status | grep -c running)" = 2 ] &&
         containers_down scribodo-st-h; ok $?
     [ "$r" = 1 ] && [ "$got" = "native original" ] || echo "$out" | tail -6 | sed 's/^/      /'
+    SCRIBODO_SERVICES=native svc down >/dev/null 2>&1
+    SCRIBODO_SERVICES=docker SCRIBODO_PURGE_CONFIRM=1 svc purge >/dev/null 2>&1
+
+    store i 33079 6349
+    unset SCRIBODO_SERVICES
+    step "    a migration over a volume made under other credentials puts the running native store back"
+    # The containers' volume is initialised under one root password, then the secrets folder gets another (credentials
+    # rotated after the volume was made): the containers come up, but root cannot dump them. The native store is
+    # running and holds data, so the restore must stop the containers before the native services come back on the
+    # same ports (verification of AUDIT-004, 2026-11-16).
+    setup=0
+    SCRIBODO_SERVICES=docker svc up >/dev/null 2>&1 || SCRIBODO_SERVICES=docker svc up >/dev/null 2>&1 || setup=1
+    SCRIBODO_SERVICES=docker svc down >/dev/null 2>&1 || setup=1
+    openssl rand -hex 24 > "$SCRIBODO_SECRETS/db_root_password.new" && mv "$SCRIBODO_SECRETS/db_root_password.new" "$SCRIBODO_SECRETS/db_root_password" || setup=1
+    SCRIBODO_SERVICES=native SCRIBODO_NATIVE_FRESH=1 svc up >/dev/null 2>&1 || setup=1
+    printf "CREATE TABLE probe (t TEXT); INSERT INTO probe VALUES ('native original');\n" |
+        SCRIBODO_SERVICES=native svc rootsql scribodo >/dev/null 2>&1 || setup=1
+    [ "$setup" = 0 ] || echo "      (setup failed: the case below is not what it claims)"
+    mode_before="$(cat "$SCRIBODO_SECRETS/mode" 2>/dev/null || echo none)"
+    r=0; out="$(SCRIBODO_MIGRATE_REPLACE=1 svc migrate-from-docker 2>&1)" || r=$?
+    got="$(SCRIBODO_SERVICES=native svc rootsql -N scribodo -e "SELECT t FROM probe" 2>/dev/null)"
+    running="$(SCRIBODO_SERVICES=native svc status 2>/dev/null | grep -c running)"
+    mode_after="$(cat "$SCRIBODO_SECRETS/mode" 2>/dev/null || echo none)"
+    [ "$setup" = 0 ] && [ "$r" = 1 ] && echo "$out" | grep -q "root password does not match the secrets folder" &&
+        echo "$out" | grep -q "both stores are as they were" && [ "$running" = 2 ] && [ "$got" = "native original" ] &&
+        containers_down scribodo-st-i && [ "$mode_after" != docker ] &&
+        { [ "$mode_before" = none ] || [ "$mode_after" = "$mode_before" ]; }; ok $?
+    [ "$r" = 1 ] && [ "$running" = 2 ] && [ "$got" = "native original" ] ||
+        { echo "      exit $r, running $running, read back [$got], mode $mode_before -> $mode_after"; echo "$out" | tail -6 | sed 's/^/      /'; }
     SCRIBODO_SERVICES=native svc down >/dev/null 2>&1
     SCRIBODO_SERVICES=docker SCRIBODO_PURGE_CONFIRM=1 svc purge >/dev/null 2>&1
 else

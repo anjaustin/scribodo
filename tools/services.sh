@@ -348,6 +348,16 @@ migrate_from_docker() {
     if [ "$native_was_up" = 1 ]; then native_down || { echo "the native services did not stop; nothing was changed" >&2; leave 1; }; fi
     secrets docker
     compose up -d --wait --wait-timeout 180 >/dev/null || migration_rollback
+    # The containers' MariaDB keeps the root password its volume was initialised with; the secrets folder may hold a
+    # newer one (credentials rotated or regenerated after the volume was made). Said by name before anything moves,
+    # rather than as the dump's "Access denied".
+    if ! err="$(rootsql -N -e 'SELECT 1' 2>&1 >/dev/null)"; then
+        case "$err" in
+            *"Access denied"*) echo "the containers' root password does not match the secrets folder (their volume was initialised under other credentials); nothing moved" >&2 ;;
+            *) printf 'the containers'"'"' MariaDB does not answer: %s\n' "$err" >&2 ;;
+        esac
+        migration_rollback
+    fi
     stamp="$(date +%Y%m%d-%H%M%S)"
     keep="$SCRIBODO_SECRETS/migration-$stamp.sql.gz"
     umask 077
@@ -381,7 +391,10 @@ migrate_from_docker() {
     native_status
 }
 
-# migration_restore: true when both stores are back as they were. Every step is guarded: it runs under `set -e`.
+# migration_restore: true when both stores are back as they were. Every step is guarded: it runs under `set -e`. The two
+# stores share their ports, so the order matters: the native store is reloaded and stopped, then the containers this
+# migration started are stopped, and only then do the native services that were running come back (verification of
+# AUDIT-004, 2026-11-16: restarting them first found the containers' port taken and left the author's store down).
 migration_restore() {
     local clean=0
     export SCRIBODO_SERVICES=native
@@ -397,13 +410,17 @@ migration_restore() {
     else
         echo "the native services did not stop; their directories were left in place" >&2; clean=1
     fi
+    export SCRIBODO_SERVICES=docker
+    if [ "$containers_were_up" = 0 ]; then
+        compose down >/dev/null 2>&1 ||
+            { echo "the containers this migration started could not be stopped: SCRIBODO_SERVICES=docker tools/services.sh down" >&2; clean=1; }
+    fi
+    export SCRIBODO_SERVICES=native
     if [ "$native_was_up" = 1 ]; then SCRIBODO_NATIVE_FRESH=1 native_up >/dev/null || { echo "the native services did not come back: tools/services.sh up" >&2; clean=1; }; fi
     export SCRIBODO_SERVICES=docker
     if [ "$containers_were_up" = 1 ]; then
         { secrets docker && compose up -d --wait --wait-timeout 180 >/dev/null; } ||
             { echo "the containers did not come back: SCRIBODO_SERVICES=docker tools/services.sh up" >&2; clean=1; }
-    else
-        compose down >/dev/null 2>&1 || true
     fi
     return $clean
 }

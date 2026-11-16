@@ -474,3 +474,54 @@ empty, apart from main's own new file). The spawn-hygiene and environment checks
 `test_spawn_hygiene`, and the services tests); `make analyze` exit 0 (0 warnings, 99 files; no real clang analyzer
 was running); `make sanitize` exit 0; `make dbtest` exit 0 (12 suites, 0 failures); `make servicestest` exit 0, run
 once (17 checks ok across steps 1-9, step 10 skipped without Docker).
+
+# With Docker running: the migration's restore order (2026-11-16)
+
+Branch `remed/services-docker`, from main `a2e02aa`. The logs are in `build/audit004-services-docker/`.
+
+The coordinator ran `SCRIBODO_SERVICESTEST_DOCKER=1 make servicestest` on main for the first time with Docker up.
+"A replacing migration whose load fails leaves the native store exactly as it was" failed with
+`mariadb-dump: … 1045 Access denied for user 'root'@'localhost'`, then "port 33078 is taken … the native services did
+not come back". Both parts of the coordinator's diagnosis are confirmed:
+
+1. **Harness.** `scribodo-st-h_mariadb` was created 2026-11-15T02:30:44Z by an interrupted run (with
+   `scribodo-st-h_qdrant`; no `scribodo-st-h` container remained). The rehearsal's cleanup removed volumes only for
+   stores whose secrets folder existed in the current run, so every later step h reused that volume, whose root
+   password belonged to a deleted secrets folder.
+2. **Product.** `migration_restore` brought the native services back (when they had been running) *before* stopping
+   the containers the migration had started; the two share their ports. Any failure after `compose up` in a migration
+   with native running (the dump denied, an incomplete dump, a failed load) left the author's native store down.
+
+## A — the restore order, and the mismatch said by name
+
+`migration_restore` now:
+1. reloads and stops the native store;
+2. stops the containers this migration started, and reports it if that fails (it used to ignore the failure);
+3. only then brings back the native services that were running;
+4. then the containers, if they had been running.
+
+`migration_rollback` and the `leave 2` refusal both go through it. Every rollback path was checked against the new
+order: `compose up` fails, the credentials check, the dump, the incomplete dump, `compose down`, native `up`, the
+table count, the native dump, the load and the schema check.
+
+Before dumping, the migration now checks root against the running containers. On "Access denied" it says "the
+containers' root password does not match the secrets folder (their volume was initialised under other credentials);
+nothing moved" and rolls back. That is the realistic author case: credentials regenerated or rotated after the volume
+was made.
+
+**Rehearsal case, step 10 (store i, ports 33079/6349):**
+- Setup: initialise a volume under one root password; give the secrets folder another; start the native store and
+  write a probe row; then run `SCRIBODO_MIGRATE_REPLACE=1 migrate-from-docker`. Every setup step is checked; a failed
+  setup fails the case and says so.
+- Assertions: exit 1; the mismatch named; "both stores are as they were"; both native services running; the probe
+  reads "native original"; the containers removed (`ps -aq` empty); the remembered mode not docker.
+- Main's `services.sh` with this case (`A-before-fix-servicestest.log`): FAIL, "exit 1, running 0, read back []",
+  with the same "port 33079 is taken … did not come back" as the coordinator's run.
+- The fixed script (`A-after-fix-servicestest.log`): all of step 10 ok, exit 0, and only the author's two volumes left
+  afterwards.
+
+## C — the stale volumes
+
+Removed by exact name only: `docker volume rm scribodo-st-h_mariadb scribodo-st-h_qdrant` (exit 0;
+`C-stale-volumes.log`). The author's pre-move volumes `scribodo_mariadb` and `scribodo_qdrant` (created
+2026-11-04T20:32:49Z) are untouched, before and after.
