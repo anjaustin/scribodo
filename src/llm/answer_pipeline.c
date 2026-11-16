@@ -884,9 +884,9 @@ static char *rel_prose(const char *reply_text)
 }
 
 /* The next sentence of `text` from `*pos`: [start, end) or false when none is left. A sentence ends at a run of
- * newlines, or at [.!?] followed by whitespace unless the period closes a title or an initial, each at a word
- * boundary (text_abbreviation_before): the observer's titles and rule, so "Ms. Bennet" and "James K. Powell" are not
- * cut in two (AUDIT-004 F10; measured on 670 recorded replies, no sentence changed: journal/audit004-text.md). */
+ * newlines, or at [.!?] followed by whitespace unless the period closes a title or a name's initial
+ * (text_abbreviation_before), so "Ms. Bennet" and "James K. Powell" are not cut in two while "Chapter V. Lydia ..."
+ * still is (AUDIT-004 F10 and its red team; measured on 670 recorded replies: journal/audit004-text.md). */
 static bool rel_next_sentence(const char *text, size_t *pos, size_t *start, size_t *end)
 {
     size_t n = strlen(text), i = *pos;
@@ -895,7 +895,7 @@ static bool rel_next_sentence(const char *text, size_t *pos, size_t *start, size
         size_t s = i;
         while (i < n && text[i] != '\n') {
             if ((text[i] == '.' || text[i] == '!' || text[i] == '?') && i + 1 < n && isspace((unsigned char)text[i + 1])) {
-                if (!(text[i] == '.' && text_abbreviation_before(text, i))) { i++; break; }
+                if (!(text[i] == '.' && text_abbreviation_before(text, n, i))) { i++; break; }
             }
             i++;
         }

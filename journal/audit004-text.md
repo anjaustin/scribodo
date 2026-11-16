@@ -204,3 +204,51 @@ real-model run.
 - The initial rule joins sentences after the pronoun "I." (Wuthering Heights, item 2); it is the observer's rule too,
   so any change is a measured change of both splitters.
 - main.c's five new-id sites: the recommended `new_record_id` helper (item 4).
+
+## Red team of this branch (2026-11-15), remediated
+
+Evidence: `build/audit004-text/redteam/`.
+
+### R1 (medium, safety): a label's or the pronoun's capital was read as an initial
+
+**Defect.** Item 2 made any single capital before a period an initial. In the relation check that joined the next
+sentence, and the next sentence's negation then hid the first sentence's wrong relation: "Her father is Tardos Mors
+in Chapter V. Lydia is not his daughter." was flagged at `ed95681` and unflagged at `013f879` (C probe, both
+versions linked beside the product objects: `redteam/redteam_cases_out.txt`; the same for "as stated in Part I.
+That is not in dispute.", "according to Source B. That is not contradicted." and "and so said I.").
+
+**Change.** `text_name_initial_before(s, n, dot)` in `src/core/text_rules.c`, used by `text_abbreviation_before`
+(which now takes the length), mirrored character for character in the arm (`abbreviation_at`, and `sentences` now
+filters the break candidates of the old regular expression with it, still breaking at any newline run inside a refused
+break's whitespace as the C loop does). A single capital is an initial only when: it is not "I"; it is at a word
+boundary after spaces or tabs; the word before it is capitalised (leading quotes and brackets ignored, one trailing
+period allowed so "J. K." chains) and is not one of `TEXT_LABEL_WORDS` (Chapter, Ch, Part, Book, Volume, Vol, Act,
+Scene, Section, Sec, Source, Appendix, Figure, Fig, Table, Plate, Page, Item, Note, Step, Letter, Line, Option, Plan,
+Type, Class, Group, Exhibit, Article, Clause); and after the period and whitespace comes a capitalised word that is
+not one of `TEXT_SENTENCE_STARTERS` (The, This, That, It, He, She, I, ... 47 words). Titles are unchanged. A refused
+initial is a sentence end, the pre-branch behaviour, so every miss of this rule errs toward the old split. Known
+misses, accepted: an initial with no capitalised word before it ("J. K. Rowling" splits after "J."), and a label word
+outside the list followed by a name ("Vitamin C. Lydia ..." joins).
+
+**Tests, both languages.** The four red-team replies plus Roman numerals ("Book II.", "Act IV."), a letter label
+("Appendix C.", "Plan B.") and "said I." each flag "Her father is Tardos Mors" (`test_answer_pipeline`,
+`test_answer_relation_arm`); the arm's splitter keeps "James K. Powell" and "Dr. K. Smith" whole and splits
+"John K. The rest"; `test_core` `text_rules` checks the rule at 21 periods (names, labels, starters, quotes, the
+text's end).
+
+**Re-measured (no model).** On the 670 recorded replies (262 distinct): sentences 5,095 under the base rule
+(`ed95681`), item 2's rule (`013f879`) and this one; 0 splits, 0 phrases, 0 verdicts changed against either
+(`redteam/rm_old.txt`, `rm_old013.txt`). C: `answer_relations`, `answer_question_parts`, `answer_gate` and
+`answer_quotations` over the 670 replies identical against both old versions, and over all 5,220 inputs (replies
+plus 4,550 manuscript paragraphs) identical against `013f879`; C and arm agree on all 670 (63 flagged). Novels (the
+arm's splitter over the chapters, `redteam/manuscripts.txt`): against the base rule, Mars 2,004 to 2,003 (one name
+initial joined), Pride and Prejudice 3,161 and Wuthering Heights 3,744 unchanged; against item 2's rule, the eight
+false joins are undone (P&P "P." label 3,160 to 3,161; Wuthering Heights' "said I." and initials before a sentence
+starter 3,737 to 3,744). The item 2 paragraph above on "I." is superseded.
+
+**The observer shares the flaw** (not edited; for routing). `obs_sentence_end` and `obs_first_sentence`
+(`src/llm/observer_text.c`) treat any single capital as an initial: on "Her father is Tardos Mors in Chapter V. Lydia
+is not his daughter." both return the whole text as the first sentence, and the same for "It is as stated in Part I.
+That is not in dispute." and `"Proud," said I. "Proud people breed sad sorrows."` (`redteam/observer-probe.txt`,
+linked against `observer_text.o`). Adopting `text_abbreviation_before` there is a change to the observer's measured
+splitter and should be measured on its replay yardstick.

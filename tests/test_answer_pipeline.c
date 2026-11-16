@@ -367,6 +367,22 @@ static void test_relations(void)
     CHECK(n == 1 && bad == NULL);
     n = answer_relations("The son of James K. Powell is not Hareton.", NULL, 0, NULL, 0, "q", &bad);
     CHECK(n == 1 && bad == NULL);
+    /* A label's or the pronoun's capital is no initial (AUDIT-004 red team): the sentence ends there, so the next
+     * sentence's negation does not hide this one's wrong relation. */
+    static const char *const labelled[] = {
+        "Her father is Tardos Mors in Chapter V. Lydia is not his daughter.",
+        "Her father is Tardos Mors as stated in Part I. That is not in dispute.",
+        "Her father is Tardos Mors according to Source B. That is not contradicted.",
+        "Her father is Tardos Mors in Book II. Lydia is not his daughter.",
+        "Her father is Tardos Mors in Act IV. Lydia is not his daughter.",
+        "Her father is Tardos Mors in Appendix C. Lydia is not his daughter.",
+        "Her father is Tardos Mors and so said I. Lydia is not his daughter.",
+        "Her father is Tardos Mors under Plan B. Lydia is not his daughter." };
+    for (size_t k = 0; k < sizeof(labelled) / sizeof(labelled[0]); k++) {
+        n = answer_relations(labelled[k], NULL, 0, NULL, 0, "q", &bad);
+        CHECK(bad && !strcmp(bad, "Her father is Tardos Mors"));
+        free(bad); bad = NULL;
+    }
     n = answer_relations("The son of Capt. Powell is not Hareton. Her father is Tardos Mors.", NULL, 0, NULL, 0, "q", &bad);
     CHECK(n == 2 && bad && !strcmp(bad, "Her father is Tardos Mors")); /* the next sentence still starts after a real end */
     free(bad); bad = NULL;

@@ -80,16 +80,88 @@ def prose(reply):
     return '\n'.join(out)
 
 
-# The titles of src/core/text_rules.c (TEXT_TITLES, the observer's list) and an initial: their period ends no
-# sentence, so "Ms. Bennet" and "James K. Powell" stay whole (AUDIT-004 F10; journal/audit004-text.md). One fixed-width
-# lookbehind per title, as the C's rel_next_sentence checks each title before the period at a word boundary.
+# The sentence rule of src/core/text_rules.c (text_abbreviation_before), mirrored: a period after one of TITLES at a
+# word boundary, or after a name's initial, ends no sentence, so "Ms. Bennet" and "James K. Powell" stay whole while
+# "... in Chapter V. Lydia is not his daughter." is still two sentences (AUDIT-004 F10 and its red team;
+# journal/audit004-text.md). Character for character the C's: ASCII classes, a capital other than "I".
 TITLES = ('Mr', 'Mrs', 'Ms', 'Dr', 'St', 'Capt', 'Col', 'Lt', 'Gen', 'Prof', 'Sgt', 'Jr', 'Sr', 'Rev', 'Hon')
-SENTENCE_END = re.compile(''.join(rf'(?<!\b{t}\.)' for t in TITLES) + r'(?<!\b[A-Z]\.)(?<=[.!?])\s+|\n+')
+LABEL_WORDS = {'Chapter', 'Ch', 'Part', 'Book', 'Volume', 'Vol', 'Act', 'Scene', 'Section', 'Sec', 'Source', 'Appendix',
+               'Figure', 'Fig', 'Table', 'Plate', 'Page', 'Item', 'Note', 'Step', 'Letter', 'Line', 'Option', 'Plan', 'Type',
+               'Class', 'Group', 'Exhibit', 'Article', 'Clause'}
+SENTENCE_STARTERS = {'The', 'This', 'That', 'These', 'Those', 'It', 'Its', 'He', 'She', 'They', 'We', 'You', 'I', 'His',
+                     'Her', 'Their', 'My', 'Our', 'There', 'Here', 'Then', 'Thus', 'So', 'But', 'And', 'Or', 'If', 'When',
+                     'While', 'As', 'In', 'On', 'At', 'For', 'With', 'From', 'According', 'However', 'Also', 'Yes', 'No',
+                     'Now', 'Who', 'What', 'Which', 'Where', 'A'}
+_ASCII_SPACE = ' \t\n\r\v\f'
+
+
+def _letter(c):
+    return ('a' <= c <= 'z') or ('A' <= c <= 'Z')
+
+
+def _word_char(c):
+    return _letter(c) or ('0' <= c <= '9') or c == '_'
+
+
+def _title_before(s, dot):
+    return any(s[:dot].endswith(t) and (dot == len(t) or not _word_char(s[dot - len(t) - 1])) for t in TITLES)
+
+
+def _name_initial_before(s, dot):
+    n = len(s)
+    if dot < 2 or dot >= n or not ('A' <= s[dot - 1] <= 'Z') or s[dot - 1] == 'I' or _word_char(s[dot - 2]):
+        return False
+    j = dot + 1
+    while j < n and s[j] in _ASCII_SPACE:
+        j += 1
+    if j >= n or not ('A' <= s[j] <= 'Z'):
+        return False
+    je = j
+    while je < n and _letter(s[je]):
+        je += 1
+    if s[j:je] in SENTENCE_STARTERS:
+        return False
+    e = dot - 1
+    if s[e - 1] not in ' \t':
+        return False
+    while e > 0 and s[e - 1] in ' \t':
+        e -= 1
+    b = e
+    while b > 0 and s[b - 1] not in _ASCII_SPACE:
+        b -= 1
+    while b < e and not _letter(s[b]):
+        b += 1
+    if e > b and s[e - 1] == '.':
+        e -= 1
+    if e <= b or not ('A' <= s[b] <= 'Z'):
+        return False
+    if any(not _letter(c) and ord(c) < 0x80 for c in s[b + 1:e]):
+        return False
+    return s[b:e] not in LABEL_WORDS
+
+
+def abbreviation_at(s, dot):
+    """The period at s[dot] closes a title or a name's initial (the C's text_abbreviation_before)."""
+    return _title_before(s, dot) or _name_initial_before(s, dot)
+
+
+SENTENCE_END = re.compile(r'(?<=[.!?])\s+|\n+')
 
 
 def sentences(text):
-    """Sentences of the prose; a title's or an initial's period ("Mr. Bingley", "James K. Powell") does not end one."""
-    return [s for s in SENTENCE_END.split(text) if s.strip()]
+    """Sentences of the prose; a title's or a name's initial's period ("Mr. Bingley", "James K. Powell") does not end
+    one. A break refused at a period still breaks at any newline run inside its whitespace, as the C's loop does."""
+    pieces, start = [], 0
+    for m in SENTENCE_END.finditer(text):
+        if m.group()[0] != '\n' and text[m.start() - 1] == '.' and abbreviation_at(text, m.start() - 1):
+            for nl in re.finditer(r'\n+', m.group()):
+                pieces.append(text[start:m.start() + nl.start()])
+                start = m.start() + nl.end()
+            continue
+        pieces.append(text[start:m.start()])
+        start = m.end()
+    pieces.append(text[start:])
+    return [p for p in pieces if p.strip()]
 
 
 # Capitalized words that are not names: sentence starters and labels the composer writes.

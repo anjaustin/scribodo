@@ -43,13 +43,24 @@ extern const char *const TEXT_TITLES_EXCERPT[8];
  * (tools/answer_relation_arm.py), pinned by tests/fixtures/answer_relation. A name prefix, not a splitting rule. */
 extern const char *const TEXT_NAME_HONORIFICS[6];
 
-/* w[0..n) is an initial: one ASCII capital ("K" in "James K. Powell"). The pronoun "I" is one too; journal/
- * audit004-text.md records what that costs on the manuscripts. */
+/* w[0..n) is one ASCII capital (the shape of an initial; whether it is one depends on its neighbours, below). */
 bool text_is_initial(const char *w, size_t n);
+/* The words before a capital and its period that make the capital a label, not an initial ("Chapter V.", "Part I.",
+ * "Source B."), and the words after one that start a sentence, not a surname ("... Plan B. That is ..."). */
+extern const char *const TEXT_LABEL_WORDS[30];
+extern const char *const TEXT_SENTENCE_STARTERS[47];
+/* The period at s[dot] (s has n bytes) closes a name's initial ("James K. Powell"): s[dot - 1] is one capital other
+ * than the pronoun "I", at a word boundary; after the period and whitespace comes a capitalised word that is not a
+ * TEXT_SENTENCE_STARTERS word; before the capital, after spaces or tabs, is a capitalised word (leading quotes and
+ * brackets ignored, one trailing period allowed, so "J. K." chains) that is not a TEXT_LABEL_WORDS word. Any capital
+ * with a period ended no sentence before the AUDIT-004 red team: "... in Chapter V. Lydia is not his daughter."
+ * joined two sentences and the negation hid the first's wrong relation. */
+bool text_name_initial_before(const char *s, size_t n, size_t dot);
 /* s[0..dot) ends with one of `titles` (case-sensitive) that starts at a word boundary. */
 bool text_title_before(const char *s, size_t dot, const char *const *titles, size_t ntitles);
-/* The sentence rule: the period at s[dot] closes a TEXT_TITLES title or an initial, either at a word boundary. */
-bool text_abbreviation_before(const char *s, size_t dot);
+/* The sentence rule: the period at s[dot] closes a TEXT_TITLES title at a word boundary, or a name's initial
+ * (text_name_initial_before). Mirrored by tools/answer_relation_arm.py (abbreviation_at). */
+bool text_abbreviation_before(const char *s, size_t n, size_t dot);
 /* w[0..n) equals one of the lower-case `words` with ASCII letters folded to lower case. */
 bool text_word_in_folded(const char *w, size_t n, const char *const *words, size_t nwords);
 

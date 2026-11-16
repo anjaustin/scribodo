@@ -617,16 +617,25 @@ static void test_text_cut(void)
     CHECK(text_cut("\xF0\x9F\x90\x8B rest", 2) == 0);
 }
 
-/* The shared text rules (AUDIT-004 F10): a title or an initial before a period, at a word boundary. */
+/* The shared text rules (AUDIT-004 F10 and its red team): a title, or a name's initial, before a period. */
 static void test_text_rules(void)
 {
-    const char *t = "Ms. Bennet met James K. Powell and Capt. Kidd. Then I. xMr. 3K. Mrs. mr. Sir.";
-    size_t dots[16], nd = 0;
-    for (size_t i = 0; t[i] && nd < 16; i++) if (t[i] == '.') dots[nd++] = i;
-    CHECK(nd == 10); /* Ms K Capt Kidd I xMr 3K Mrs mr Sir */
-    bool want[10] = { true, true, true, false, true, false, false, true, false, false };
-    for (size_t k = 0; k < nd && k < 10; k++) CHECK(text_abbreviation_before(t, dots[k]) == want[k]);
-    CHECK(!text_abbreviation_before(".", 0));
+    const char *t = "Ms. Bennet met James K. Powell and Capt. Kidd. Then I. Xavier xMr. 3K. Mrs. mr. Sir. In Chapter V. Lydia "
+                    "left. Source B. Lydia came. Plan B. That was all. Tom K. The end. \"J. K.\" Rowling.";
+    size_t n = strlen(t), dots[32], nd = 0;
+    for (size_t i = 0; t[i] && nd < 32; i++) if (t[i] == '.') dots[nd++] = i;
+    /* Ms K Capt Kidd I xMr 3K Mrs mr Sir V left B came B all K end J K Rowling: a quote between the initials, or a
+     * sentence starter after one, keeps the period a sentence end */
+    static const bool want[] = { true, true, true, false, false, false, false, true, false, false, false, false, false,
+                                 false, false, false, false, false, false, false, false };
+    CHECK(nd == sizeof(want) / sizeof(want[0]));
+    for (size_t k = 0; k < nd && k < sizeof(want) / sizeof(want[0]); k++) {
+        bool got = text_abbreviation_before(t, n, dots[k]);
+        if (got != want[k]) fprintf(stderr, "    period %zu at %zu: %d\n", k, dots[k], got);
+        CHECK(got == want[k]);
+    }
+    CHECK(!text_abbreviation_before(".", 1, 0));
+    CHECK(!text_abbreviation_before("A K.", 4, 3)); /* the end of the text: no next word */
     /* the question splitter keeps its own five titles: "Capt." is a sentence end there */
     CHECK(text_title_before("Ms.", 2, TEXT_TITLES_QUESTION, TEXT_COUNT(TEXT_TITLES_QUESTION)));
     CHECK(!text_title_before("Capt.", 4, TEXT_TITLES_QUESTION, TEXT_COUNT(TEXT_TITLES_QUESTION)));

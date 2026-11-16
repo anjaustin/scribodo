@@ -67,6 +67,18 @@ class RelationArmTests(unittest.TestCase):
         rows = ra.check('The son of Capt. Powell is not Hareton. Her father is Tardos Mors.', [], [], 'q')
         self.assertEqual([r['phrase'] for r in rows if r['flag']], ['Her father is Tardos Mors'])
 
+    def test_a_label_or_pronoun_capital_is_no_initial(self):
+        """AUDIT-004 red team: any capital with a period used to join the next sentence, and its negation hid the
+        first sentence's wrong relation. A chapter, part, source, appendix or plan label, a Roman numeral and the
+        pronoun "I" end the sentence; a name's initial does not."""
+        for reply in ['Her father is Tardos Mors in Chapter V. Lydia is not his daughter.', 'Her father is Tardos Mors as stated in Part I. That is not in dispute.', 'Her father is Tardos Mors according to Source B. That is not contradicted.', 'Her father is Tardos Mors in Book II. Lydia is not his daughter.', 'Her father is Tardos Mors in Act IV. Lydia is not his daughter.', 'Her father is Tardos Mors in Appendix C. Lydia is not his daughter.', 'Her father is Tardos Mors and so said I. Lydia is not his daughter.', 'Her father is Tardos Mors under Plan B. Lydia is not his daughter.']:
+            rows = ra.check(reply, [], [], 'q')
+            self.assertEqual([r['phrase'] for r in rows if r['flag']], ['Her father is Tardos Mors'], reply)
+        self.assertEqual(ra.sentences('Her father is James K. Powell. Lydia is not his daughter. J. K. Rowling wrote it.'),
+                         ['Her father is James K. Powell.', 'Lydia is not his daughter.', 'J.', 'K. Rowling wrote it.'])
+        self.assertEqual(ra.sentences('Mr. Darcy met Dr. K. Smith. It rained.'), ['Mr. Darcy met Dr. K. Smith.', 'It rained.'])
+        self.assertEqual(ra.sentences('He met John K. The rest is lost.'), ['He met John K.', 'The rest is lost.'])
+
     def test_author_turns_and_the_question_support_a_phrase(self):
         rows = ra.check("Lydia's age is seventeen.", [], ['Note for later: Lydia, my youngest, is seventeen.'], 'How old?')
         self.assertEqual(rows, [])  # "age" is not in the closed kin list
