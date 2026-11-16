@@ -1,4 +1,5 @@
 #include "record_view.h"
+#include "ui/theme.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -293,10 +294,10 @@ void record_view_update(RecordView *v, Rectangle r, bool focused)
 
 RecordAction record_view_draw(RecordView *v, Rectangle r, bool focused)
 {
-    static const Color BG = { 0x23, 0x25, 0x29, 0xFF }, BORDER = { 0xB0, 0x8A, 0x3E, 0xFF };
-    static const Color NOTE_BORDER = { 0x5A, 0x7F, 0x5A, 0xFF }, HEAD = { 0xCC, 0xCC, 0xCC, 0xFF };
-    static const Color MUTED = { 0x8A, 0x8A, 0x8A, 0xFF }, LINK = { 0x6C, 0xA8, 0xE0, 0xFF };
-    static const Color FIELD = { 0x1B, 0x1C, 0x1F, 0xFF };
+    const Color BG = THEME_SURFACE, BORDER = THEME_CANON_EDGE;
+    const Color NOTE_BORDER = THEME_NOTE_EDGE, HEAD = THEME_TEXT;
+    const Color MUTED = THEME_TEXT_MUTED, LINK = THEME_LINK;
+    const Color FIELD = THEME_FIELD;
     layout(v, r);
     DrawRectangleRec(r, BG);
     DrawRectangleLinesEx(r, 1.0f, v->kind == REC_CANON ? BORDER : NOTE_BORDER);

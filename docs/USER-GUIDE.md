@@ -17,9 +17,11 @@ the app has its own typeface and size:
 | Chat | Share, 15 | messages and replies |
 | Figures | Share Tech Mono, 13 | the status bar, counts and positions |
 
-- Click a role's face to choose another from every font installed on this Mac (the system's fonts and those in `/Library/Fonts` and `~/Library/Fonts`, collections included). Type to filter the list; **Default** returns to the bundled face.
+- Click a role's face to choose another. The list holds the fonts in macOS's font folders, `/Library/Fonts` and `~/Library/Fonts` (and one folder below each), collections included, that draw Latin letters with outlines; fonts macOS downloads on demand are not listed. Type to filter it, use the arrow keys and Enter, or click; **Default** returns to the bundled face, and Esc or **Back** returns to the roles without choosing.
+- A font from outside macOS's own folders is first opened by a separate, short-lived process. One that would crash Scribodo is refused, the role keeps its face, and the status bar says so. A saved font that has since gone missing is replaced by the default when Scribodo opens, with the same message.
 - **−** and **+** change the size. Each row previews its role in the face and size chosen.
-- Changes show at once. **Done** keeps them; **Cancel** or Esc puts back what was saved; **Defaults** returns every role to its default.
+- Changes show at once. **Done** (or Enter) keeps them; **Cancel** (or Esc) puts back what the panel opened with; **Defaults** returns every role to its default.
+- Interface and Figures sizes stop at 16 for now, while the toolbar, lists and status bar have fixed heights.
 - The Share faces cover Western European letters. A letter a face lacks, such as ř in *Dvořák*, comes from Arial at the same height and on the same baseline. The bundled faces and their licence are listed in `assets/fonts/README.md`.
 
 ## Projects and documents

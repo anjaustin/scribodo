@@ -1,4 +1,5 @@
 #include "findings_view.h"
+#include "ui/theme.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -254,18 +255,18 @@ static void draw_line(void *ctx, const char *p, int n, int idx)
 
 static Color type_color(const char *t)
 {
-    if (!strcmp(t, "conflict")) return (Color){ 0xF2, 0x8B, 0x82, 0xFF };
-    if (!strcmp(t, "question")) return (Color){ 0xE6, 0xB4, 0x50, 0xFF };
-    if (!strcmp(t, "relationship")) return (Color){ 0xB4, 0x9C, 0xE8, 0xFF };
-    if (!strcmp(t, "event")) return (Color){ 0x6C, 0xA8, 0xE0, 0xFF };
-    return (Color){ 0x8C, 0xE0, 0xA4, 0xFF };
+    if (!strcmp(t, "conflict")) return THEME_FINDING_CONFLICT;
+    if (!strcmp(t, "question")) return THEME_FINDING_QUESTION;
+    if (!strcmp(t, "relationship")) return THEME_FINDING_RELATION;
+    if (!strcmp(t, "event")) return THEME_FINDING_EVENT;
+    return THEME_FINDING_ENTITY;
 }
 
 FindingAction findings_view_draw(FindingsView *v, Rectangle r, char *id_out, size_t id_len)
 {
-    static const Color CARD = { 0x22, 0x24, 0x27, 0xFF }, CARD_SEL = { 0x2A, 0x2D, 0x31, 0xFF };
-    static const Color TEXT = { 0xD4, 0xD4, 0xD4, 0xFF }, MUTED = { 0x8A, 0x8A, 0x8A, 0xFF };
-    static const Color QUOTE = { 0xB8, 0xB8, 0xB8, 0xFF }, EDGE = { 0x3D, 0x6F, 0xA8, 0xFF };
+    const Color CARD = THEME_CARD, CARD_SEL = THEME_CARD_HOVER;
+    const Color TEXT = THEME_TEXT_PROSE, MUTED = THEME_TEXT_MUTED;
+    const Color QUOTE = THEME_TEXT_QUOTE, EDGE = THEME_ACCENT_EDGE;
     v->r = r;
     for (int b = 0; b < 5; b++) v->btn[b] = (Rectangle){ 0 };
     FindingAction act = FA_NONE;

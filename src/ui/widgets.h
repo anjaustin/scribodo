@@ -20,6 +20,9 @@ typedef enum {
 /* Draws the button; true on the frame it is clicked (never when disabled). */
 bool widget_button(Rectangle r, const char *label, const SFont *f, WidgetKind kind, bool enabled);
 
+/* The click rule of widget_button without drawing: true on the release of a press that began inside `r`. */
+bool widget_clicked(Rectangle r);
+
 /* One line of text, cut with an ellipsis to fit `max_w` (0: no limit). Returns the width drawn. */
 float widget_text(const SFont *f, const char *s, float x, float y, float max_w, Color c);
 

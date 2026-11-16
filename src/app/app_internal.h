@@ -25,6 +25,7 @@
 #include "core/experiments.h"
 #include "app/appearance.h"
 #include "app/fonts_panel.h"
+#include "ui/theme.h"
 #include "raygui.h"
 #include "raylib.h"
 #include "rlgl.h"
@@ -95,19 +96,18 @@ enum { PT_NEW_DOC = 1, PT_RENAME_DOC, PT_RENAME_CHAT, PT_ATTACH_NAME, PT_NAME_AU
 enum { MT_DOC = 1, MT_CHAT, MT_ATTACH, MT_MODEL, MT_APP };  /* what a context menu is for */
 #define MAX_ATTACH CHAT_CONTROLLER_MAX_ATTACH
 
-#define RGB(r, g, b) ((Clay_Color){ r, g, b, 255 })
-static const Clay_Color COL_BG      = RGB(0x1F, 0x1F, 0x1F);
-static const Clay_Color COL_PANEL   = RGB(0x18, 0x18, 0x18);
-static const Clay_Color COL_BORDER  = RGB(0x2B, 0x2B, 0x2B);
-static const Clay_Color COL_TEXT    = RGB(0xCC, 0xCC, 0xCC);
-static const Clay_Color COL_MUTED   = RGB(0x8B, 0x8B, 0x8B);
-static const Clay_Color COL_DIM     = RGB(0x5E, 0x5E, 0x5E);
-static const Clay_Color COL_ACCENT  = RGB(0x00, 0x78, 0xD4);
-static const Clay_Color COL_ACTIVE  = RGB(0x37, 0x37, 0x3D);
-static const Clay_Color COL_HOVER   = RGB(0x2A, 0x2D, 0x2E);
-static const Clay_Color COL_WARN    = RGB(0xCC, 0xA7, 0x00);
-static const Clay_Color COL_OK      = RGB(0x4E, 0xC9, 0x8B);
-static const Clay_Color COL_ERR     = RGB(0xE5, 0x73, 0x73);
+#define COL_BG THEME_CLAY(THEME_BG)
+#define COL_PANEL THEME_CLAY(THEME_PANEL)
+#define COL_BORDER THEME_CLAY(THEME_BORDER)
+#define COL_TEXT THEME_CLAY(THEME_TEXT)
+#define COL_MUTED THEME_CLAY(THEME_TEXT_MUTED)
+#define COL_DIM THEME_CLAY(THEME_TEXT_DIM)
+#define COL_ACCENT THEME_CLAY(THEME_ACCENT)
+#define COL_ACTIVE THEME_CLAY(THEME_ACTIVE)
+#define COL_HOVER THEME_CLAY(THEME_HOVER)
+#define COL_WARN THEME_CLAY(THEME_WARN)
+#define COL_OK THEME_CLAY(THEME_OK)
+#define COL_ERR THEME_CLAY(THEME_ERR)
 
 #define SPLITTER_W 5
 #define MAX_DOCS EXPLORER_MAX_DOCS
@@ -127,6 +127,7 @@ typedef struct {
     Appearance appearance;         /* the author's fonts, as shown (app/appearance.h); the panel saves them */
     FontsPanel fonts_panel;
     char assets_dir[PATH_MAX];     /* holds fonts/ ("" when not found: the fallbacks alone) */
+    char font_notice[PATH_MAX + 128]; /* a font problem found at launch, shown once the window is up */
     float dpi;
     float explorer_w, observer_w, chat_w;
     bool observer_open;
@@ -455,11 +456,11 @@ int script_host_setup(App *app, MainLoop *loop, const StartupEnv *env, const cha
 
 /* src/app/app_lifecycle.c */
 void app_destroy(App *app);
-/* Reloads the fonts of `roles` (a bit per FONT_ slot) from app->appearance (the Fonts panel); false when a role failed
- * to load at all (it keeps its old font). A chosen face that did not load is replaced by the default and `why` says
- * so. */
+/* Reloads the fonts of `roles` (a bit per FONT_ slot) from app->appearance (the Fonts panel). A chosen face that does
+ * not load (missing, not a font, refused by the probe) is replaced by the default: its bit is set in the result and
+ * `why` says so. A role that loads nothing at all keeps its old font. */
 #define APP_FONTS_ALL ((1u << FONT_COUNT) - 1u)
-bool app_fonts_apply(App *app, unsigned roles, char *why, size_t whylen);
+unsigned app_fonts_apply(App *app, unsigned roles, char *why, size_t whylen);
 void fonts_panel_open(App *app);
 /* Draws the Fonts panel over everything and handles its input (app/fonts_panel.h). */
 void fonts_panel_draw(App *app, Rectangle screen);

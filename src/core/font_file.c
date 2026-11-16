@@ -263,6 +263,9 @@ uint8_t *font_file_extract_face(const uint8_t *data, size_t len, int index, size
     uint16_t nt;
     if (!data || !out_len || !face_dir(data, len, index, &dir, &nt)) return NULL;
     size_t total = 12 + 16 * (size_t)nt;
+    /* A face's tables are distinct ranges of the file, so its copy is never much larger than the file: tables that
+     * claim to overlap would let a 1 MB file demand gigabytes (red team, 2026-11-16). */
+    size_t cap = len + 12 + 19 * (size_t)nt;
     for (uint16_t i = 0; i < nt; i++) {
         uint32_t o, l;
         size_t rec = dir + 12 + 16 * (size_t)i;
@@ -270,6 +273,7 @@ uint8_t *font_file_extract_face(const uint8_t *data, size_t len, int index, size
         size_t padded = ((size_t)l + 3) & ~(size_t)3;
         if (padded > UINT32_MAX - total) return NULL; /* the directory holds 32-bit offsets */
         total += padded;
+        if (total > cap) return NULL;
     }
     uint8_t *out = calloc(1, total);
     if (!out) return NULL;

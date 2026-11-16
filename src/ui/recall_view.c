@@ -1,4 +1,5 @@
 #include "recall_view.h"
+#include "ui/theme.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -234,10 +235,10 @@ void recall_view_update(RecallView *v, Rectangle r, bool focused)
 
 RecallAction recall_view_draw(RecallView *v, Rectangle r, bool focused)
 {
-    static const Color CARD = { 0x22, 0x24, 0x27, 0xFF }, HOVER = { 0x2A, 0x2D, 0x31, 0xFF };
-    static const Color TEXT = { 0xD4, 0xD4, 0xD4, 0xFF }, MUTED = { 0x8A, 0x8A, 0x8A, 0xFF };
-    static const Color CANON = { 0x8C, 0xE0, 0xA4, 0xFF }, CHAT = { 0x6C, 0xA8, 0xE0, 0xFF }, DOC = { 0xE6, 0xB4, 0x50, 0xFF };
-    static const Color ERR = { 0xF2, 0x8B, 0x82, 0xFF };
+    const Color CARD = THEME_CARD, HOVER = THEME_CARD_HOVER;
+    const Color TEXT = THEME_TEXT_PROSE, MUTED = THEME_TEXT_MUTED;
+    const Color CANON = THEME_INSERT, CHAT = THEME_LINK, DOC = THEME_WARN;
+    const Color ERR = THEME_ERR;
     RecallAction act = { RECALL_ACTION_NONE, 0 };
     if (!v) return act;
     layout(v, r);

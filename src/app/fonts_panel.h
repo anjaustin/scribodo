@@ -3,7 +3,8 @@
  * (app/font_catalog.h), filtered as the author types, with the bundled default first.
  *
  * Its elements, for UI scripts: FontsDone, FontsCancel, FontsDefaults, FontsPick<role>, FontsMinus<role>,
- * FontsPlus<role> and, in the list, FontsItem<n> (n counts the rows shown, 0 being the default) and FontsBack. */
+ * FontsPlus<role> and, in the list, FontsItem<n> (the n-th row on screen; before scrolling, row 0 is the default)
+ * and FontsBack. */
 #ifndef SCRIBODO_FONTS_PANEL_H
 #define SCRIBODO_FONTS_PANEL_H
 
@@ -31,6 +32,8 @@ typedef struct {
     Rectangle pick[APPEARANCE_ROLE_COUNT], minus[APPEARANCE_ROLE_COUNT], plus[APPEARANCE_ROLE_COUNT];
     Rectangle item[FONTS_PANEL_ROWS];
     int nitem;
+    int fit;               /* list rows that fit above the footer this frame */
+    bool picked;           /* a row was picked this frame: its Enter or click must not reach the roles view */
 } FontsPanel;
 
 /* fonts_panel_open(App *) and fonts_panel_draw(App *, Rectangle screen) are declared in app_internal.h, which holds

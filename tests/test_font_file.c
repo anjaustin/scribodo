@@ -172,6 +172,19 @@ static void test_corrupted(void)
         for (int k = 0; k < flips; k++) c[rnd() % (round % 2 ? n : head)] = (uint8_t)rnd();
         exercise(c, n);
     }
+    /* Tables that all claim the whole file: refused rather than copied 3 times over (and 512 times for 512 tables). */
+    {
+        uint8_t f[12 + 16 * 3 + 64];
+        memset(f, 0, sizeof(f));
+        f[1] = 1, f[5] = 3; /* version 1.0, three tables */
+        for (int t = 0; t < 3; t++) {
+            uint8_t *rec = f + 12 + 16 * t;
+            rec[0] = (uint8_t)('a' + t), rec[1] = 'b', rec[2] = 'c', rec[3] = 'd';
+            rec[15] = sizeof(f); /* offset 0, length the whole file */
+        }
+        size_t xn = 0;
+        CHECK(font_file_extract_face(f, sizeof(f), 0, &xn) == NULL);
+    }
     /* A collection header that claims more faces than it has offsets for. */
     uint8_t ttc[16] = { 't', 't', 'c', 'f', 0, 1, 0, 0, 0, 0, 0, 200, 0, 0, 0, 16 };
     exercise(ttc, sizeof(ttc));

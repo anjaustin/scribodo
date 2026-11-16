@@ -1,5 +1,6 @@
 #define _DARWIN_C_SOURCE
 #include "chat_view.h"
+#include "ui/theme.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -507,14 +508,14 @@ bool chat_view_take_copied(ChatView *v)
     return c;
 }
 
-static const Color COL_TEXT = { 0xD4, 0xD4, 0xD4, 0xFF };
-static const Color COL_LABEL = { 0x8B, 0x8B, 0x8B, 0xFF };
-static const Color COL_USER_BG = { 0x2A, 0x2D, 0x32, 0xFF };
-static const Color COL_ERROR = { 0xE5, 0x73, 0x73, 0xFF };
-static const Color COL_LINK = { 0x4D, 0xA3, 0xFF, 0xFF };
-static const Color COL_INPUT_BG = { 0x25, 0x25, 0x26, 0xFF };
-static const Color COL_INPUT_BORDER = { 0x3C, 0x3C, 0x3C, 0xFF };
-static const Color COL_FOCUS = { 0x00, 0x78, 0xD4, 0xFF };
+#define COL_TEXT THEME_TEXT_PROSE
+#define COL_LABEL THEME_TEXT_MUTED
+#define COL_USER_BG THEME_CARD_HOVER
+#define COL_ERROR THEME_ERR
+#define COL_LINK THEME_LINK
+#define COL_INPUT_BG THEME_INPUT
+#define COL_INPUT_BORDER THEME_BORDER_STRONG
+#define COL_FOCUS THEME_ACCENT
 
 static void draw_rows(ChatView *v, const MsgCache *c, float x, float y, Color col, Rectangle clip)
 {
@@ -578,12 +579,12 @@ void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_foc
             size_t used = strlen(who);
             snprintf(who + used, sizeof(who) - used, " · excerpt at character %zu", m->excerpt_start + 1);
         }
-        sfont_draw_utf8(v->label, who, (int)strlen(who), list.x + PAD, y, m->via && m->via[0] ? (Color){ 0xE6, 0xB4, 0x50, 0xFF } : COL_LABEL);
+        sfont_draw_utf8(v->label, who, (int)strlen(who), list.x + PAD, y, m->via && m->via[0] ? THEME_WARN : COL_LABEL);
         y += LABEL_H;
         float bh = (c ? c->height : LABEL_H) + 2 * BUBBLE_PAD;
         if ((long)i == v->flash_index && GetTime() - v->flash_t < 2.5)
             DrawRectangleLinesEx((Rectangle){ list.x + PAD - 3, y - 3, list.width - 2 * PAD + 6, bh + 6 }, 2.0f,
-                                 (Color){ 0xE6, 0xB4, 0x50, 0xFF });
+                                 THEME_WARN);
         if (m->role == CHAT_USER)
             DrawRectangleRounded((Rectangle){ list.x + PAD, y, list.width - 2 * PAD, bh }, 0.12f, 6, COL_USER_BG);
         if (c) draw_rows(v, c, list.x + PAD + BUBBLE_PAD, y + BUBBLE_PAD, m->error ? COL_ERROR : COL_TEXT, list);

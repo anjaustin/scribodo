@@ -52,6 +52,9 @@ static void test_decoys_and_duplicates(void)
     put("text.otf", "this is not a font at all", 25);
     put("README.txt", "x", 1);
     put(".hidden.ttf", "x", 1);
+    char fifo[PATH_MAX];
+    snprintf(fifo, sizeof(fifo), "%s/pipe.ttf", g_dir);
+    CHECK(mkfifo(fifo, 0600) == 0); /* no writer: a blocking open would never return (red team, 2026-11-16) */
     copy_font("assets/fonts/Share-Regular.ttf", "Copy-of-Share.ttf");
     char sub[PATH_MAX];
     snprintf(sub, sizeof(sub), "%s/more", g_dir);

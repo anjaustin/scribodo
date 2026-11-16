@@ -1,4 +1,5 @@
 #include "menu_view.h"
+#include "ui/theme.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,16 +31,16 @@ int menu_draw(MenuView *m, const SFont *font, Rectangle screen)
     if (y < screen.y) y = screen.y; /* never off the top (a menu opened upwards) */
     if (x < screen.x) x = screen.x;
     Rectangle box = { x, y, w, h };
-    DrawRectangleRounded(box, 0.08f, 6, (Color){ 0x2A, 0x2C, 0x30, 0xFF });
-    DrawRectangleRoundedLinesEx(box, 0.08f, 6, 1.0f, (Color){ 0x45, 0x48, 0x4E, 0xFF });
+    DrawRectangleRounded(box, 0.08f, 6, THEME_SURFACE);
+    DrawRectangleRoundedLinesEx(box, 0.08f, 6, 1.0f, THEME_BORDER_STRONG);
     Vector2 mouse = GetMousePosition();
     int picked = -1;
     for (int i = 0; i < m->n; i++) {
         m->rects[i] = (Rectangle){ x + 4, y + 4 + ih * (float)i, w - 8, ih };
         bool hot = CheckCollisionPointRec(mouse, m->rects[i]);
-        if (hot) DrawRectangleRounded(m->rects[i], 0.2f, 4, (Color){ 0x0E, 0x63, 0x9C, 0xFF });
+        if (hot) DrawRectangleRounded(m->rects[i], 0.2f, 4, THEME_ACCENT_SOFT);
         sfont_draw_utf8(font, m->items[i], (int)strlen(m->items[i]), m->rects[i].x + 10, m->rects[i].y + 5,
-                        (Color){ 0xE0, 0xE0, 0xE0, 0xFF });
+                        THEME_TEXT_STRONG);
         if (hot && !m->fresh && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) picked = i;
     }
     bool outside_click = !m->fresh && (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) &&

@@ -1,4 +1,5 @@
 #include "prompt_view.h"
+#include "ui/theme.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -106,16 +107,16 @@ PromptResult prompt_draw(PromptView *v, Rectangle screen)
 {
     if (!v->active) return PR_NONE;
     layout(v, screen);
-    DrawRectangleRec(screen, (Color){ 0, 0, 0, 0x80 }); /* dim everything behind */
-    DrawRectangleRounded(v->box, 0.05f, 6, (Color){ 0x25, 0x27, 0x2B, 0xFF });
-    DrawRectangleRoundedLinesEx(v->box, 0.05f, 6, 1.0f, (Color){ 0x3D, 0x6F, 0xA8, 0xFF });
-    sfont_draw_utf8(v->label, v->title, (int)strlen(v->title), v->box.x + 16, v->box.y + 14, (Color){ 0xDD, 0xDD, 0xDD, 0xFF });
-    DrawRectangleRec(v->field_r, (Color){ 0x1B, 0x1C, 0x1F, 0xFF });
-    DrawRectangleLinesEx(v->field_r, 1.0f, (Color){ 0x3D, 0x6F, 0xA8, 0xFF });
+    DrawRectangleRec(screen, THEME_SCRIM); /* dim everything behind */
+    DrawRectangleRounded(v->box, 0.05f, 6, THEME_SURFACE);
+    DrawRectangleRoundedLinesEx(v->box, 0.05f, 6, 1.0f, THEME_ACCENT_EDGE);
+    sfont_draw_utf8(v->label, v->title, (int)strlen(v->title), v->box.x + 16, v->box.y + 14, THEME_TEXT_STRONG);
+    DrawRectangleRec(v->field_r, THEME_FIELD);
+    DrawRectangleLinesEx(v->field_r, 1.0f, THEME_ACCENT_EDGE);
     editor_draw(v->field, v->field_r, true);
     if (v->error[0])
         sfont_draw_utf8(v->label, v->error, (int)strlen(v->error), v->box.x + 16, v->field_r.y + v->field_r.height + 8,
-                        (Color){ 0xF2, 0x8B, 0x82, 0xFF });
+                        THEME_ERR);
     PromptResult r = PR_NONE;
     if (GuiButton(v->cancel_r, "Cancel")) r = PR_CANCEL;
     if (GuiButton(v->ok_r, v->ok)) r = PR_OK;

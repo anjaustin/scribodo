@@ -1,11 +1,17 @@
 #include "font.h"
 
+#include <errno.h>
 #include <limits.h>
 #include <math.h>
+#include <signal.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "core/child_process.h"
 #include "core/font_file.h"
 #include "core/utf8.h"
 
@@ -46,11 +52,93 @@ static float glyph_advance(const Font *font, int gi, float scale)
     return a * scale;
 }
 
+/* --- the probe ------------------------------------------------------------------------------------------------- */
+
+static char g_probe_exe[PATH_MAX];
+
+void sfont_set_probe_executable(const char *path) { snprintf(g_probe_exe, sizeof(g_probe_exe), "%s", path ? path : ""); }
+
+int sfont_probe_main(const char *file, int px)
+{
+    SetTraceLogLevel(LOG_NONE);
+    int len = 0;
+    unsigned char *data = LoadFileData(file, &len);
+    if (!data || len <= 0 || px < 4 || px > 512) return 2;
+    int ncps = 0;
+    int *cps = build_codepoints(&ncps);
+    int count = 0;
+    GlyphInfo *glyphs = cps ? LoadFontData(data, len, px, cps, ncps, FONT_DEFAULT, &count) : NULL;
+    int rc = glyphs && count > 0 ? 0 : 3;
+    if (glyphs) UnloadFontData(glyphs, count);
+    free(cps);
+    UnloadFileData(data);
+    return rc;
+}
+
+/* Verdicts by face content (FNV-1a over the bytes and their length), so a size change does not probe again. */
+#define PROBE_CACHE 64
+static struct { uint64_t key; bool ok; } g_verdicts[PROBE_CACHE];
+static int g_nverdicts;
+
+static uint64_t content_key(const uint8_t *d, size_t n)
+{
+    uint64_t h = 1469598103934665603ull ^ (uint64_t)n;
+    for (size_t i = 0; i < n; i++) h = (h ^ d[i]) * 1099511628211ull;
+    return h;
+}
+
+/* Runs the probe on `face` (written to a private temporary file, so the child reads exactly these bytes). True only
+ * when it exited 0 within five seconds. */
+static bool probe_face(const uint8_t *face, size_t n, int px)
+{
+    uint64_t key = content_key(face, n);
+    for (int i = 0; i < g_nverdicts; i++)
+        if (g_verdicts[i].key == key) return g_verdicts[i].ok;
+    bool ok = false;
+    const char *tmp = getenv("TMPDIR");
+    char path[PATH_MAX];
+    snprintf(path, sizeof(path), "%s/scribodo-font-XXXXXX", tmp && tmp[0] ? tmp : "/tmp");
+    int fd = g_probe_exe[0] ? mkstemp(path) : -1;
+    if (fd >= 0) {
+        bool written = write(fd, face, n) == (ssize_t)n;
+        close(fd);
+        char pxs[16];
+        snprintf(pxs, sizeof(pxs), "%d", px);
+        char *argv[] = { g_probe_exe, "--font-probe", path, pxs, NULL };
+        pid_t pid;
+        if (written && child_spawn(&pid, g_probe_exe, argv, -1, -1, true) == 0) {
+            int status = 0;
+            for (int waited = 0;; waited += 10) {
+                pid_t r = waitpid(pid, &status, WNOHANG);
+                if (r == pid) {
+                    ok = WIFEXITED(status) && WEXITSTATUS(status) == 0;
+                    break;
+                }
+                if (r < 0 && errno != EINTR) break;
+                if (waited >= 5000) {
+                    kill(-pid, SIGKILL);
+                    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+                    break;
+                }
+                usleep(10000);
+            }
+        }
+        unlink(path);
+    }
+    if (g_nverdicts < PROBE_CACHE) {
+        g_verdicts[g_nverdicts].key = key;
+        g_verdicts[g_nverdicts].ok = ok;
+        g_nverdicts++;
+    }
+    return ok;
+}
+
 /* One face from a file or a collection: the bytes are checked and, for a collection, the face is copied out
- * standalone, because raylib's loader reads only a file's first face. */
+ * standalone, because raylib's loader reads only a file's first face. A face not trusted is probed first. */
 static bool load_face(const SFontSource *s, int px, int *cps, int ncps, Font *out, char *name, size_t namelen)
 {
-    if (!s->path || !s->path[0] || !FileExists(s->path)) return false;
+    struct stat st;
+    if (!s->path || !s->path[0] || stat(s->path, &st) != 0 || !S_ISREG(st.st_mode)) return false;
     int len = 0;
     unsigned char *data = LoadFileData(s->path, &len);
     if (!data || len <= 0) {
@@ -62,7 +150,7 @@ static bool load_face(const SFontSource *s, int px, int *cps, int ncps, Font *ou
     size_t xn = 0;
     uint8_t *face = font_file_face_count(data, (size_t)len) > s->index
                         ? font_file_extract_face(data, (size_t)len, s->index, &xn) : NULL;
-    if (face && xn <= INT_MAX) {
+    if (face && xn <= INT_MAX && (s->trusted || probe_face(face, xn, px))) {
         const char *ext = font_file_face_name(face, xn, 0, &fn) ? ".ttf" : NULL;
         Font font = ext ? LoadFontFromMemory(ext, face, (int)xn, px, cps, ncps) : (Font){ 0 };
         if (IsFontValid(font) && font.glyphCount > 0) {

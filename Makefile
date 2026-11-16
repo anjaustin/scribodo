@@ -317,7 +317,7 @@ $(BUILD)/test_memory_vectors_faults: $(MEMORY_VECTORS_FAULT_SRCS) $(wildcard src
 	$(CC) $(CFLAGS) $(INCLUDES) -include tests/fault_alloc.h $(MEMORY_VECTORS_FAULT_SRCS) $(BUILD)/tests/fault_alloc.o -o $@ $(MARIADB_LIBS) -lpthread
 
 # The product's objects are built too: the environment-write guard reads their symbols (tests/test_env_symbols.py).
-test: $(TESTS) $(CORE_OBJS) $(LLM_OBJS) $(APP_OBJS)
+test: $(TESTS) $(CORE_OBJS) $(LLM_OBJS) $(APP_OBJS) $(APP)
 	@set -e; for t in $(TESTS); do echo "== $$t"; $(WATCHDOG) $(TEST_TIMEOUT) $$(basename $$t) ./$$t; echo; done
 	$(WATCHDOG) $(TEST_TIMEOUT) test_env_symbols python3 tests/test_env_symbols.py $(CORE_OBJS) $(LLM_OBJS) $(APP_OBJS)
 	$(WATCHDOG) $(TEST_TIMEOUT) test_backup python3 tests/test_backup.py
@@ -331,6 +331,8 @@ test: $(TESTS) $(CORE_OBJS) $(LLM_OBJS) $(APP_OBJS)
 	$(WATCHDOG) $(TEST_TIMEOUT) test_draft_call_sites python3 tests/test_draft_call_sites.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_config_documented python3 tests/test_config_documented.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_bundled_fonts python3 tests/test_bundled_fonts.py
+	$(WATCHDOG) $(TEST_TIMEOUT) test_theme_literals python3 tests/test_theme_literals.py
+	$(WATCHDOG) $(TEST_TIMEOUT) test_font_probe python3 tests/test_font_probe.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_sysmem_sample python3 tests/test_sysmem_sample.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_observer_faults python3 tests/test_observer_faults.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_observer_judge_score python3 tests/test_observer_judge_score.py

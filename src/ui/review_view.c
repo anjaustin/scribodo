@@ -1,4 +1,5 @@
 #include "review_view.h"
+#include "ui/theme.h"
 
 #include <stdio.h>
 
@@ -176,10 +177,10 @@ void review_update(ReviewView *v, Rectangle r)
 
 void review_draw(ReviewView *v, Rectangle r)
 {
-    static const Color BG = { 0x23, 0x25, 0x29, 0xFF }, BORDER = { 0x3D, 0x6F, 0xA8, 0xFF };
-    static const Color TEXT = { 0xD4, 0xD4, 0xD4, 0xFF }, DEL = { 0xF2, 0x8B, 0x82, 0xFF };
-    static const Color INS = { 0x8C, 0xE0, 0xA4, 0xFF }, INS_BG = { 0x1F, 0x3A, 0x2A, 0xFF };
-    static const Color HEAD = { 0xCC, 0xCC, 0xCC, 0xFF };
+    const Color BG = THEME_SURFACE, BORDER = THEME_ACCENT_EDGE;
+    const Color TEXT = THEME_TEXT_PROSE, DEL = THEME_ERR;
+    const Color INS = THEME_INSERT, INS_BG = THEME_INSERT_BG;
+    const Color HEAD = THEME_TEXT;
     DrawRectangleRec(r, BG);
     DrawRectangleLinesEx(r, 1.0f, BORDER);
     /* Header: clipped to the space left of the buttons, with an ellipsis. */
@@ -200,7 +201,7 @@ void review_draw(ReviewView *v, Rectangle r)
 
     float warn_h = 0;
     if (v->warning[0]) {
-        static const Color WARN = { 0xE6, 0xB4, 0x50, 0xFF };
+        const Color WARN = THEME_WARN;
         sfont_draw_utf8(v->label, v->warning, (int)strlen(v->warning), r.x + PAD, r.y + HEADER_H - 4, WARN);
         warn_h = 22.0f;
     }

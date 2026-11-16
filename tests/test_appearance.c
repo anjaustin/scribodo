@@ -116,10 +116,22 @@ static void test_sources(void)
     CHECK(n == 3);
     CHECK(!strcmp(src[0].path, "/assets/fonts/Share-Regular.ttf") && src[0].index == 0);
     CHECK(strstr(src[1].path, "/Arial.ttf") && strstr(src[2].path, "/Arial Unicode.ttf"));
+    CHECK(src[0].trusted && src[1].trusted && src[2].trusted); /* bundled and macOS's own: no probe */
     snprintf(a.role[APPEARANCE_DOCUMENT].path, PATH_MAX, "/fonts/Charter.ttc");
     a.role[APPEARANCE_DOCUMENT].index = 3;
     n = appearance_sources(&a, APPEARANCE_DOCUMENT, true, "/assets", src, paths);
     CHECK(n == 3 && !strcmp(src[0].path, "/fonts/Charter.ttc") && src[0].index == 3);
+    CHECK(!src[0].trusted); /* outside the system volume and the bundle: probed before loading */
+    const char *trust[][2] = { { "/System/Library/Fonts/Supplemental/Georgia.ttf", "1" }, { "/Library/Fonts/X.ttf", "0" },
+                               { "/assets/fonts/Share-Regular.ttf", "1" }, { "/assets/fontsX/a.ttf", "0" },
+                               { "/System/Library/Fonts/../../../Users/x/evil.ttf", "0" }, { "/assets/fonts/../../x.ttf", "0" },
+                               { "/Users/me/Library/Fonts/Share-Regular.ttf", "0" } };
+    for (size_t i = 0; i < sizeof(trust) / sizeof(trust[0]); i++) {
+        snprintf(a.role[APPEARANCE_CHAT].path, PATH_MAX, "%s", trust[i][0]);
+        appearance_sources(&a, APPEARANCE_CHAT, true, "/assets", src, paths);
+        CHECK(src[0].trusted == (trust[i][1][0] == '1'));
+    }
+    a.role[APPEARANCE_CHAT].path[0] = '\0';
     CHECK(strstr(src[1].path, "/Arial.ttf") != NULL); /* a chosen face's missing letters: Arial, not Share */
     n = appearance_sources(&a, APPEARANCE_DOCUMENT, false, "/assets", src, paths); /* the choice failed to load */
     CHECK(n == 3 && !strcmp(src[0].path, "/assets/fonts/Share-Regular.ttf"));

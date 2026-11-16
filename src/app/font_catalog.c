@@ -5,6 +5,8 @@
 #include <ctype.h>
 #include <dirent.h>
 #include <fcntl.h>
+#include <setjmp.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,9 +39,23 @@ static bool seen(const FontCatalog *c, const char *family, const char *style)
     return false;
 }
 
+/* A mapped file that shrinks while it is read (a font manager rewriting it) raises SIGBUS on the next page past its new
+ * end. The scan runs on the UI thread; the handler, installed only for the scan, abandons that one file. */
+static sigjmp_buf g_bus_jump;
+static volatile sig_atomic_t g_bus_armed;
+
+static void on_bus(int sig)
+{
+    (void)sig;
+    if (g_bus_armed) siglongjmp(g_bus_jump, 1);
+    signal(SIGBUS, SIG_DFL);
+    raise(SIGBUS);
+}
+
 static void add_faces(Scan *s, const char *path, bool bundled)
 {
-    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    /* Non-blocking: a FIFO named *.ttf must not stall the scan; it is refused as not a regular file below. */
+    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
     if (fd < 0) return;
     struct stat st;
     if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size < 12 || (unsigned long long)st.st_size > MAX_FILE_BYTES) {
@@ -50,6 +66,12 @@ static void add_faces(Scan *s, const char *path, bool bundled)
     const uint8_t *d = mmap(NULL, len, PROT_READ, MAP_PRIVATE, fd, 0);
     close(fd);
     if (d == MAP_FAILED) return;
+    if (sigsetjmp(g_bus_jump, 1)) { /* the file shrank under us: skip it */
+        g_bus_armed = 0;
+        munmap((void *)d, len);
+        return;
+    }
+    g_bus_armed = 1;
     int faces = font_file_face_count(d, len);
     for (int i = 0; i < faces && !s->oom; i++) {
         FontFaceName fn;
@@ -76,6 +98,7 @@ static void add_faces(Scan *s, const char *path, bool bundled)
         else snprintf(e->display, sizeof(e->display), "%s %s", fn.family, fn.style);
         e->bundled = bundled;
     }
+    g_bus_armed = 0;
     munmap((void *)d, len);
 }
 
@@ -137,11 +160,16 @@ bool font_catalog_scan(FontCatalog *c, const char *const *dirs, size_t ndirs, co
 {
     memset(c, 0, sizeof(*c));
     Scan s = { c, 0, bundled_dir, false };
+    struct sigaction bus = { 0 }, old;
+    bus.sa_handler = on_bus;
+    sigemptyset(&bus.sa_mask);
+    sigaction(SIGBUS, &bus, &old);
     for (size_t i = 0; i < ndirs && !s.oom; i++) {
         if (!dirs[i] || !dirs[i][0]) continue;
         bool bundled = bundled_dir && !strcmp(dirs[i], bundled_dir);
         scan_dir(&s, dirs[i], 1, bundled);
     }
+    sigaction(SIGBUS, &old, NULL);
     if (s.oom) {
         font_catalog_free(c);
         return false;

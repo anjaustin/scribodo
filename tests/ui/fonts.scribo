@@ -36,6 +36,16 @@ expect font 2 "Share Regular"
 click_element FontsDone
 expect lines "$DIR/appearance.json" "Georgia.ttf" 1
 shot fonts-georgia
+# Enter picks the highlighted font and leaves the panel open (red team: it also pressed Done); Cancel undoes it.
+key COMMA cmd
+click_element FontsPick2
+type "georgia"
+key ENTER
+expect font 2 "Georgia"
+expect element_w FontsDone 50 200
+click_element FontsCancel
+expect font 2 "Share Regular"
+expect lines "$DIR/appearance.json" "\"chat\":{\"size\":15}" 1
 # A face from a collection (.ttc): Menlo for figures.
 key COMMA cmd
 click_element FontsPick3

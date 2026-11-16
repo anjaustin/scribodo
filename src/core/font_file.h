@@ -39,7 +39,8 @@ bool font_file_has_outlines(const uint8_t *data, size_t len, int index);
 
 /* Face `index` as a standalone sfnt in a new malloc'd buffer (*out_len bytes), its tables copied 4-byte aligned and
  * its table directory rewritten for the new offsets; the caller frees it. For a single-face file this is a copy.
- * NULL when the face is malformed or a table lies outside the file. */
+ * NULL when the face is malformed, a table lies outside the file, or the tables together exceed the file's size (they
+ * overlap). */
 uint8_t *font_file_extract_face(const uint8_t *data, size_t len, int index, size_t *out_len);
 
 #endif

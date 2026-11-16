@@ -15,6 +15,12 @@
  * the primary face lacks (the bundled Share has no ř) sits in the line at the
  * same height instead of jumping (assets/fonts/README.md).
  *
+ * A face that is not trusted is rasterised first by a short-lived child process (sfont_probe_main, the app run
+ * as `scribodo --font-probe FILE PX`) on the exact bytes this process will load: stb_truetype, under raylib's
+ * loader, reads outlines, cmaps and CFF data without bounds checks and asserts on formats it does not handle, so a
+ * malformed font installed on the Mac must crash the probe, not the app. A face the probe refuses is skipped like a
+ * missing one. Verdicts are kept per face content for the life of the process.
+ *
  * `version` changes on every load: a view that caches layout by font compares
  * it, so changing a font in the Fonts panel reflows every view.
  */
@@ -31,7 +37,8 @@
 
 typedef struct {
     const char *path;
-    int index; /* the face within a collection; 0 for a single-face file */
+    int index;    /* the face within a collection; 0 for a single-face file */
+    bool trusted; /* the bundled fonts and macOS's own (the signed system volume): loaded without a probe */
 } SFontSource;
 
 typedef struct {
@@ -55,6 +62,12 @@ typedef struct {
  * Returns false if no face loaded; `f` is then zeroed. */
 bool sfont_load(SFont *f, const SFontSource *src, int n, float size,
                 float line_height_mult, float dpi);
+/* Sets the executable the probe runs (the app's own binary). Without it, untrusted faces are refused. */
+void sfont_set_probe_executable(const char *path);
+/* The probe's entry: rasterises the codepoints SFont loads from the face in FILE at PX pixels. Exit status 0 when
+ * every step completed; a malformed face crashes or exits non-zero. */
+int sfont_probe_main(const char *file, int px);
+
 /* The family and style of the face that loaded first, for the Fonts panel
  * ("" when built by hand). */
 const char *sfont_primary_name(const SFont *f);

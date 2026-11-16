@@ -196,9 +196,9 @@ static void draw_memory_sources(App *app)
 {
     float width = fminf(900, GetScreenWidth() - 60.0f), height = fminf(700, GetScreenHeight() - 60.0f);
     Rectangle box = { (GetScreenWidth() - width) / 2, (GetScreenHeight() - height) / 2, width, height };
-    DrawRectangleRec(box, (Color){0x28, 0x28, 0x28, 0xff});
+    DrawRectangleRec(box, THEME_SURFACE);
     const char *title = "As-of retrieval sources - read only; not canon or proof of exhaustive recall";
-    sfont_draw_utf8(&app->fonts[FONT_UI], title, (int)strlen(title), box.x + 14, box.y + 12, (Color){0xcc,0xcc,0xcc,0xff});
+    sfont_draw_utf8(&app->fonts[FONT_UI], title, (int)strlen(title), box.x + 14, box.y + 12, THEME_TEXT);
     app->memory_sources_close = (Rectangle){ box.x + box.width - 90, box.y + box.height - 40, 76, 28 };
     Rectangle content = { box.x + 8, box.y + 38, box.width - 16, box.height - 88 };
     editor_update(app->memory_sources_editor, content, true);
@@ -738,11 +738,11 @@ static void open_model_settings(App *app)
 /* The panel (drawn over everything; raygui draws ASCII only). */
 static void draw_model_settings(App *app, Rectangle screen)
 {
-    DrawRectangleRec(screen, (Color){ 0, 0, 0, 140 });
+    DrawRectangleRec(screen, THEME_SCRIM);
     float w = 620, rowh = 44, h = 110 + rowh * MODEL_SETTING_COUNT + 56 + (app->llm ? 26 : 0);
     Rectangle p = { (screen.width - w) / 2, (screen.height - h) / 2, w, h };
-    DrawRectangleRounded(p, 0.03f, 6, (Color){ 0x26, 0x27, 0x2B, 0xFF });
-    DrawRectangleRoundedLinesEx(p, 0.03f, 6, 1.0f, (Color){ 0x45, 0x47, 0x4D, 0xFF });
+    DrawRectangleRounded(p, 0.03f, 6, THEME_SURFACE);
+    DrawRectangleRoundedLinesEx(p, 0.03f, 6, 1.0f, THEME_BORDER_STRONG);
     GuiLabel((Rectangle){ p.x + 24, p.y + 16, w - 48, 24 }, "Model settings (chat)");
     GuiLabel((Rectangle){ p.x + 24, p.y + 44, w - 48, 20 },
              "The observer always uses temperature 0, so its findings stay reproducible.");
@@ -870,7 +870,7 @@ static void draft_tick(App *app)
 static int draw_empty(App *app, Rectangle r)
 {
     const SFont *big = &app->fonts[FONT_PROSE], *ui = &app->fonts[FONT_UI];
-    Color text = { 0xDD, 0xDD, 0xDD, 0xFF }, muted = { 0x8B, 0x8B, 0x8B, 0xFF };
+    Color text = THEME_TEXT_STRONG, muted = THEME_TEXT_MUTED;
     float x = r.x + (r.width > 520 ? (r.width - 440) / 2 : 40), y = r.y + r.height * 0.18f;
     int act = 0;
     for (int i = 0; i < 3; i++) app->welcome_btn[i] = (Rectangle){ 0 };
@@ -897,8 +897,8 @@ static int draw_empty(App *app, Rectangle r)
                 Rectangle rr = { x - 6, y - 3, row_w < 440 ? row_w : 440, ui->line_height + 6 };
                 app->recent_rect[i] = rr;
                 bool hot = CheckCollisionPointRec(GetMousePosition(), rr) && !prompt_active(app->prompt) && !app->menu.active;
-                if (hot) DrawRectangleRounded(rr, 0.2f, 4, (Color){ 0x2A, 0x2D, 0x2E, 0xFF });
-                sfont_draw_utf8(ui, name, (int)strlen(name), x, y, (Color){ 0x6C, 0xA8, 0xE0, 0xFF });
+                if (hot) DrawRectangleRounded(rr, 0.2f, 4, THEME_HOVER);
+                sfont_draw_utf8(ui, name, (int)strlen(name), x, y, THEME_LINK);
                 float nw = sfont_measure_utf8(ui, name, (int)strlen(name));
                 /* The folder it lives in, with ~ for home, cut to fit. */
                 char dir[PATH_MAX];
@@ -1508,7 +1508,7 @@ static void frame_cursor(App *app, MainLoop *loop, Vector2 mouse)
 static int frame_draw_panes(App *app, Clay_RenderCommandArray cmds, const FrameRects *rects, bool modal)
 {
     BeginDrawing();
-    ClearBackground((Color){ 0x1F, 0x1F, 0x1F, 0xFF });
+    ClearBackground(THEME_BG);
     clay_render(cmds, app->font_ptrs);
     if (modal) GuiLock(); /* nothing behind a prompt or menu reacts */
     if (GuiButton(rects->open_rect, "Open...")) choose_project(app, false);
@@ -1721,6 +1721,10 @@ static bool frame_end(App *app, MainLoop *loop)
 /* One frame after the worker polls in main(). False to leave the loop. */
 static bool frame_step(App *app, MainLoop *loop)
 {
+    if (app->font_notice[0]) { /* a font problem found at launch (app_lifecycle.c load_fonts) */
+        set_status(app, app->font_notice);
+        app->font_notice[0] = '\0';
+    }
     frame_poll_workers(app);
     if (frame_close_requested(app)) {
         loop->closed_by_window = true;
@@ -1768,6 +1772,8 @@ int main(int argc, char **argv)
     static StartupEnv env;
     static MainLoop loop;
     (void)startup_env_prepare(&env);
+    /* A font probe (ui/font.h): rasterise one face and exit, before anything else starts. */
+    if (argc == 4 && !strcmp(argv[1], "--font-probe")) return sfont_probe_main(argv[2], atoi(argv[3]));
     atomic_init(&app.history_hold, false);
     app.store = store_manager_create();
     if (!app.store) return 1;

@@ -2,6 +2,8 @@
 #define _DARWIN_C_SOURCE
 #include "app/app_internal.h"
 
+#include <mach-o/dyld.h>
+
 static void clay_error(Clay_ErrorData err);
 static void style_raygui(const SFont *ui);
 static bool load_fonts(App *app, float dpi);
@@ -20,61 +22,71 @@ static void style_raygui(const SFont *ui)
     for (size_t i = 0; i < sizeof(controls) / sizeof(controls[0]); i++) {
         int c = controls[i];
         GuiSetStyle(c, BORDER_WIDTH, 1);
-        GuiSetStyle(c, BASE_COLOR_NORMAL, ColorToInt((Color){ 0x31, 0x31, 0x31, 0xFF }));
-        GuiSetStyle(c, BORDER_COLOR_NORMAL, ColorToInt((Color){ 0x4A, 0x4A, 0x4A, 0xFF }));
-        GuiSetStyle(c, TEXT_COLOR_NORMAL, ColorToInt((Color){ 0xCC, 0xCC, 0xCC, 0xFF }));
-        GuiSetStyle(c, BASE_COLOR_FOCUSED, ColorToInt((Color){ 0x3C, 0x3C, 0x3C, 0xFF }));
-        GuiSetStyle(c, BORDER_COLOR_FOCUSED, ColorToInt((Color){ 0x00, 0x78, 0xD4, 0xFF }));
-        GuiSetStyle(c, TEXT_COLOR_FOCUSED, ColorToInt(WHITE));
-        GuiSetStyle(c, BASE_COLOR_PRESSED, ColorToInt((Color){ 0x00, 0x78, 0xD4, 0xFF }));
-        GuiSetStyle(c, BORDER_COLOR_PRESSED, ColorToInt((Color){ 0x00, 0x78, 0xD4, 0xFF }));
-        GuiSetStyle(c, TEXT_COLOR_PRESSED, ColorToInt(WHITE));
-        GuiSetStyle(c, BASE_COLOR_DISABLED, ColorToInt((Color){ 0x25, 0x25, 0x25, 0xFF }));
-        GuiSetStyle(c, BORDER_COLOR_DISABLED, ColorToInt((Color){ 0x30, 0x30, 0x30, 0xFF }));
-        GuiSetStyle(c, TEXT_COLOR_DISABLED, ColorToInt((Color){ 0x6B, 0x6B, 0x6B, 0xFF }));
+        GuiSetStyle(c, BASE_COLOR_NORMAL, ColorToInt(THEME_CONTROL));
+        GuiSetStyle(c, BORDER_COLOR_NORMAL, ColorToInt(THEME_BORDER_STRONG));
+        GuiSetStyle(c, TEXT_COLOR_NORMAL, ColorToInt(THEME_TEXT));
+        GuiSetStyle(c, BASE_COLOR_FOCUSED, ColorToInt(THEME_CONTROL_HOVER));
+        GuiSetStyle(c, BORDER_COLOR_FOCUSED, ColorToInt(THEME_ACCENT));
+        GuiSetStyle(c, TEXT_COLOR_FOCUSED, ColorToInt(THEME_ON_ACCENT));
+        GuiSetStyle(c, BASE_COLOR_PRESSED, ColorToInt(THEME_ACCENT));
+        GuiSetStyle(c, BORDER_COLOR_PRESSED, ColorToInt(THEME_ACCENT));
+        GuiSetStyle(c, TEXT_COLOR_PRESSED, ColorToInt(THEME_ON_ACCENT));
+        GuiSetStyle(c, BASE_COLOR_DISABLED, ColorToInt(THEME_INPUT));
+        GuiSetStyle(c, BORDER_COLOR_DISABLED, ColorToInt(THEME_BORDER));
+        GuiSetStyle(c, TEXT_COLOR_DISABLED, ColorToInt(THEME_TEXT_DIM));
     }
 }
 
 /* One role's font: the author's choice (SCRIBODO_PROSE_FONT first for documents and chat), else the bundled default,
  * then the fallbacks. A choice that does not load falls back to the default and says so in `why`. */
-static bool load_role(App *app, int role, SFont *out, char *why, size_t whylen)
+static bool load_role(App *app, int role, SFont *out, bool *choice_failed)
 {
     const AppearanceRoleInfo *in = appearance_role_info(role);
     float size = app->appearance.role[role].size;
     SFontSource src[SFONT_MAX_FACES + 1];
     char paths[SFONT_MAX_FACES][PATH_MAX];
     const char *prose = (role == FONT_PROSE || role == FONT_CHAT) ? getenv("SCRIBODO_PROSE_FONT") : NULL;
+    int chosen = prose && prose[0] ? 1 : 0; /* where the saved choice sits in src */
+    bool has_choice = appearance_has_choice(&app->appearance, role);
+    *choice_failed = false;
     for (int pass = 0; pass < 2; pass++) {
         bool with_choice = pass == 0;
         int n = 0;
-        if (prose && prose[0]) src[n++] = (SFontSource){ prose, 0 };
+        if (prose && prose[0]) src[n++] = (SFontSource){ prose, 0, false };
         SFontSource rest[SFONT_MAX_FACES];
         int m = appearance_sources(&app->appearance, role, with_choice, app->assets_dir, rest, paths);
         for (int i = 0; i < m && n < SFONT_MAX_FACES; i++) src[n++] = rest[i];
         bool ok = sfont_load(out, src, n, size, in->line_height, app->dpi);
-        int chosen = prose && prose[0] ? 1 : 0; /* where the saved choice sits in src */
-        if (ok && (!with_choice || !appearance_has_choice(&app->appearance, role) || out->primary_source <= chosen))
-            return true;
+        if (ok && (!with_choice || !has_choice || out->primary_source <= chosen)) return true;
         if (ok) sfont_unload(out);
-        if (with_choice && appearance_has_choice(&app->appearance, role) && why && !why[0])
-            snprintf(why, whylen, "The %s font could not be loaded (%s); using the default", in->label,
-                     app->appearance.role[role].path);
+        if (with_choice && has_choice) *choice_failed = true;
+        if (!has_choice) break; /* the second pass would load the same faces */
     }
     return false;
 }
 
-/* Every role's font from app->appearance. Each loads into a scratch SFont and replaces the old one only when it
- * loaded, so a failure keeps what is on screen; the SFont addresses never change (views and Clay hold them).
- * Afterwards raygui and Clay's text-measurement cache follow; views reflow because each load has a new version. */
-bool app_fonts_apply(App *app, unsigned roles, char *why, size_t whylen)
+/* The fonts of `roles` from app->appearance. Each loads into a scratch SFont and replaces the old one only when it
+ * loaded, so a failure keeps what is on screen; the SFont addresses never change (views and Clay hold them). The batch
+ * of text already queued this frame is drawn first, since it names the textures about to be freed. Afterwards raygui
+ * and Clay's text-measurement cache follow; views reflow because each load has a new version. */
+unsigned app_fonts_apply(App *app, unsigned roles, char *why, size_t whylen)
 {
     if (why && whylen) why[0] = '\0';
-    bool all = true;
+    unsigned failed = 0;
+    if (app->window_ready) rlDrawRenderBatchActive();
     for (int r = 0; r < FONT_COUNT; r++) {
         if (!(roles & (1u << r))) continue;
         SFont next;
-        if (!load_role(app, r, &next, why, whylen)) {
-            all = false;
+        bool choice_failed = false;
+        bool ok = load_role(app, r, &next, &choice_failed);
+        if (choice_failed) {
+            failed |= 1u << r;
+            if (why && whylen && !why[0])
+                snprintf(why, whylen, "The %s font could not be loaded (%s); using the default",
+                         appearance_role_info(r)->label, app->appearance.role[r].path);
+        }
+        if (!ok) {
+            if (why && whylen && !why[0]) snprintf(why, whylen, "No %s font could be loaded", appearance_role_info(r)->label);
             continue;
         }
         if (app->fonts[r].nfaces) sfont_unload(&app->fonts[r]);
@@ -83,19 +95,31 @@ bool app_fonts_apply(App *app, unsigned roles, char *why, size_t whylen)
     for (int i = 0; i < FONT_COUNT; i++) app->font_ptrs[i] = &app->fonts[i];
     if (app->fonts[FONT_UI].nfaces) style_raygui(&app->fonts[FONT_UI]);
     if (app->clay_buf) Clay_ResetMeasureTextCache();
-    return all;
+    return failed;
 }
 
 static bool load_fonts(App *app, float dpi)
 {
     app->dpi = dpi;
+    char exe[PATH_MAX];
+    uint32_t exe_len = sizeof(exe);
+    if (_NSGetExecutablePath(exe, &exe_len) == 0) sfont_set_probe_executable(exe); /* untrusted faces: ui/font.h */
     appearance_load(&app->appearance);
     if (!assets_dir_resolve(GetApplicationDirectory(), app->assets_dir, sizeof(app->assets_dir)))
         fprintf(stderr, "scribodo: the bundled fonts were not found beside the app; using the system fallbacks\n");
     char why[PATH_MAX + 128];
-    bool ok = app_fonts_apply(app, APP_FONTS_ALL, why, sizeof(why));
-    if (why[0]) fprintf(stderr, "scribodo: %s\n", why);
-    return ok;
+    unsigned failed = app_fonts_apply(app, APP_FONTS_ALL, why, sizeof(why));
+    /* A saved face that no longer loads: the role shows the default, and the panel starts from it (saved again only
+     * when the author presses Done). */
+    for (int r = 0; r < FONT_COUNT; r++)
+        if (failed & (1u << r)) app->appearance.role[r].path[0] = '\0', app->appearance.role[r].index = 0;
+    if (!app->assets_dir[0]) snprintf(app->font_notice, sizeof(app->font_notice), "%s",
+                                      "The bundled fonts were not found beside Scribodo; showing Arial instead");
+    else if (why[0]) snprintf(app->font_notice, sizeof(app->font_notice), "%s", why);
+    if (app->font_notice[0]) fprintf(stderr, "scribodo: %s\n", app->font_notice);
+    for (int r = 0; r < FONT_COUNT; r++)
+        if (!app->fonts[r].nfaces) return false;
+    return true;
 }
 
 void app_destroy(App *app)

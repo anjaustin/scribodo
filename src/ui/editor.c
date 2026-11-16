@@ -1,4 +1,5 @@
 #include "editor.h"
+#include "ui/theme.h"
 
 #include <limits.h>
 #include <math.h>
@@ -1059,10 +1060,10 @@ void editor_update(Editor *e, Rectangle bounds, bool focused)
 
 /* ---- drawing --------------------------------------------------------------- */
 
-static const Color COL_TEXT      = { 0xD4, 0xD4, 0xD4, 0xFF };
-static const Color COL_SELECTION = { 0x26, 0x4F, 0x78, 0xFF };
-static const Color COL_CURSOR    = { 0xAE, 0xAF, 0xAD, 0xFF };
-static const Color COL_SCROLL    = { 0x79, 0x79, 0x79, 0x66 };
+#define COL_TEXT THEME_TEXT_PROSE
+#define COL_SELECTION THEME_SELECTION
+#define COL_CURSOR THEME_CARET
+#define COL_SCROLL THEME_SCROLLBAR
 
 void editor_draw(Editor *e, Rectangle b, bool focused)
 {
@@ -1090,7 +1091,7 @@ void editor_draw(Editor *e, Rectangle b, bool focused)
             size_t a = e->anc_start > row->start ? e->anc_start : row->start;
             size_t z = e->anc_start + e->anc_len < end ? e->anc_start + e->anc_len : end;
             float x0 = row_x(e, row, a), x1 = row_x(e, row, z);
-            DrawRectangleRec((Rectangle){ e->text_x + x0, y, x1 - x0, lh }, (Color){ 0x3A, 0x34, 0x1A, 0xFF });
+            DrawRectangleRec((Rectangle){ e->text_x + x0, y, x1 - x0, lh }, THEME_HIGHLIGHT);
         }
         if (sel && (size_t)sel_lo < end + (row->len == 0) && (size_t)sel_hi > row->start) {
             size_t a = (size_t)sel_lo > row->start ? (size_t)sel_lo : row->start;
@@ -1113,14 +1114,14 @@ void editor_draw(Editor *e, Rectangle b, bool focused)
 
     if (tb_len(&e->buf) == 0 && e->placeholder[0]) {
         sfont_draw_utf8(f, e->placeholder, (int)strlen(e->placeholder), e->text_x, e->text_y - e->scroll_y,
-                        (Color){ 0x6E, 0x6E, 0x6E, 0xFF });
+                        THEME_TEXT_DIM);
     }
 
     if (e->anc_active && !e->anc_touched && e->anc_len == 0 && e->anc_start <= tb_len(&e->buf)) {
         size_t r = wrap_row_for_index(&e->layout, e->anc_start);
         float mx = e->text_x + row_x(e, &e->layout.rows[r], e->anc_start);
         float my = e->text_y + (float)r * lh - e->scroll_y;
-        DrawRectangleRec((Rectangle){ floorf(mx) - 2.0f, my + 2, 4.0f, lh - 4 }, (Color){ 0xE6, 0xB4, 0x50, 0xFF });
+        DrawRectangleRec((Rectangle){ floorf(mx) - 2.0f, my + 2, 4.0f, lh - 4 }, THEME_WARN);
     }
 
     if (focused && fmod(GetTime() - e->blink_t0, 1.0) < 0.6) {

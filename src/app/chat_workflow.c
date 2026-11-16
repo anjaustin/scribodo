@@ -533,8 +533,8 @@ void fit_label(const SFont *f, const char *s, float maxw, char *out, size_t outl
 int draw_attach_row(App *app, Rectangle r)
 {
     const SFont *ui = &app->fonts[FONT_UI];
-    Color muted = { 0x8B, 0x8B, 0x8B, 0xFF }, chip_bg = { 0x2C, 0x30, 0x36, 0xFF }, text = { 0xD0, 0xD0, 0xD0, 0xFF };
-    Color link = { 0x6C, 0xA8, 0xE0, 0xFF };
+    Color muted = THEME_TEXT_MUTED, chip_bg = THEME_CHIP, text = THEME_TEXT;
+    Color link = THEME_LINK;
     float x = r.x, y = r.y + (r.height - ui->line_height) / 2, right = r.x + r.width;
     Vector2 m = GetMousePosition();
     bool click = !input_mouse_blocked() && IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
@@ -564,7 +564,7 @@ int draw_attach_row(App *app, Rectangle r)
         sfont_draw_utf8(ui, name, (int)strlen(name), x + 8, y, text);
         Rectangle xr = { x + w - 20, r.y + 3, 18, r.height - 6 };
         bool hot = CheckCollisionPointRec(m, xr);
-        sfont_draw_utf8(ui, "\xC3\x97", 2, xr.x + 4, y, hot ? (Color){ 0xF2, 0x8B, 0x82, 0xFF } : muted);
+        sfont_draw_utf8(ui, "\xC3\x97", 2, xr.x + 4, y, hot ? THEME_ERR : muted);
         app->attach_chip[i] = chip;
         app->attach_x[i] = xr;
         if (click && hot) act = (int)i;

@@ -37,7 +37,9 @@ static void refilter(FontsPanel *p)
 void fonts_panel_open(App *app)
 {
     FontsPanel *p = &app->fonts_panel;
-    appearance_load(&p->saved);
+    p->saved = app->appearance; /* Cancel returns to what was shown, which a failed save may have left unsaved */
+    font_catalog_free(&p->catalog); /* listed afresh each time: a font installed since shows up */
+    p->scanned = false;
     p->open = true;
     p->picking = -1;
 }
@@ -58,7 +60,8 @@ static unsigned changed_roles(const Appearance *a, const Appearance *b)
     return m;
 }
 
-/* Shows `next` (only the roles that differ are reloaded). A chosen face that does not load is put back as it was. */
+/* Shows `next` (only the roles that differ are reloaded). A newly chosen face that does not load is put back to the
+ * role's previous choice; a choice that stopped loading since (the file was removed) is dropped for the default. */
 static void show(App *app, const Appearance *next)
 {
     Appearance before = app->appearance;
@@ -66,12 +69,22 @@ static void show(App *app, const Appearance *next)
     if (!roles) return;
     app->appearance = *next;
     char why[PATH_MAX + 128];
-    app_fonts_apply(app, roles, why, sizeof(why));
-    if (why[0]) {
-        set_status(app, why);
-        app->appearance = before;
-        app_fonts_apply(app, roles, NULL, 0);
+    unsigned failed = app_fonts_apply(app, roles, why, sizeof(why));
+    if (!failed) return;
+    set_status(app, why);
+    for (int r = 0; r < APPEARANCE_ROLE_COUNT; r++) {
+        if (!(failed & (1u << r))) continue;
+        AppearanceFont *f = &app->appearance.role[r];
+        bool was_chosen = strcmp(before.role[r].path, f->path) || before.role[r].index != f->index;
+        if (was_chosen) {
+            snprintf(f->path, sizeof(f->path), "%s", before.role[r].path);
+            f->index = before.role[r].index;
+        } else {
+            f->path[0] = '\0';
+            f->index = 0;
+        }
     }
+    app_fonts_apply(app, failed, NULL, 0);
 }
 
 static void close_panel(App *app, bool keep)
@@ -113,12 +126,14 @@ static void pick(App *app, int row)
     }
     show(app, &next);
     p->picking = -1;
+    p->picked = true;
 }
 
 /* The list's keys and typed filter: read in the frame's update phase, before unread keystrokes are dropped
  * (input_discard_chars), so typing reaches the filter. */
 void fonts_panel_update(App *app)
 {
+    app->fonts_panel.picked = false;
     if (!app->fonts_panel.open || app->fonts_panel.picking < 0) return;
     FontsPanel *p = &app->fonts_panel;
     int c;
@@ -139,12 +154,13 @@ void fonts_panel_update(App *app)
     int rows = (int)p->nmatch + 1;
     if ((IsKeyPressed(KEY_DOWN) || IsKeyPressedRepeat(KEY_DOWN)) && p->sel + 1 < rows) p->sel++;
     if ((IsKeyPressed(KEY_UP) || IsKeyPressedRepeat(KEY_UP)) && p->sel > 0) p->sel--;
+    int fit = p->fit > 0 ? p->fit : FONTS_PANEL_ROWS;
     if (p->sel < p->top) p->top = p->sel;
-    if (p->sel >= p->top + FONTS_PANEL_ROWS) p->top = p->sel - FONTS_PANEL_ROWS + 1;
+    if (p->sel >= p->top + fit) p->top = p->sel - fit + 1;
     float wheel = GetMouseWheelMove();
     if (wheel != 0) {
         p->top -= (int)(wheel > 0 ? ceilf(wheel) : floorf(wheel));
-        int max_top = rows > FONTS_PANEL_ROWS ? rows - FONTS_PANEL_ROWS : 0;
+        int max_top = rows > fit ? rows - fit : 0;
         p->top = p->top < 0 ? 0 : p->top > max_top ? max_top : p->top;
     }
     if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER)) pick(app, p->sel);
@@ -174,11 +190,16 @@ static void draw_list(App *app, Rectangle d)
     }
 
     float row_h = 30, y0 = field.y + field.height + SP_3;
+    float footer = d.y + d.height - 60; /* the count and Back sit below; rows never reach them */
+    int fit = (int)((footer - y0) / row_h);
+    if (fit > FONTS_PANEL_ROWS) fit = FONTS_PANEL_ROWS;
+    if (fit < 1) fit = 1;
+    p->fit = fit;
     int rows = (int)p->nmatch + 1;
     p->nitem = 0;
     const char *current = app->appearance.role[r].path;
     int cur_index = app->appearance.role[r].index;
-    for (int i = p->top; i < rows && p->nitem < FONTS_PANEL_ROWS; i++) {
+    for (int i = p->top; i < rows && p->nitem < fit; i++) {
         Rectangle row = { d.x + SP_4, y0 + row_h * (float)p->nitem, d.width - 2 * SP_4, row_h };
         p->item[p->nitem++] = row;
         char label[260];
@@ -200,7 +221,7 @@ static void draw_list(App *app, Rectangle d)
         widget_text(ui, label, row.x + SP_8, row.y + (row_h - ui->line_height) * 0.5f, row.width - SP_8 - nw - SP_4,
                     i == p->sel ? THEME_TEXT : THEME_TEXT_MUTED);
         if (note[0]) widget_text(ui, note, row.x + row.width - nw - SP_2, row.y + (row_h - ui->line_height) * 0.5f, 0, THEME_TEXT_DIM);
-        if (hover && IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
+        if (widget_clicked(row)) {
             pick(app, i);
             return;
         }
@@ -217,7 +238,13 @@ static void draw_list(App *app, Rectangle d)
 
 /* --- the roles ------------------------------------------------------------------------------------------------- */
 
-static void draw_roles(App *app, Rectangle d)
+/* A role's row: its label, then (when the window has room) a line in the role's own font. */
+static float role_row_height(const App *app, int r, bool previews)
+{
+    return previews ? 24 + app->fonts[r].line_height + SP_4 + 22 : 44;
+}
+
+static void draw_roles(App *app, Rectangle d, bool previews)
 {
     FontsPanel *p = &app->fonts_panel;
     const SFont *ui = &app->fonts[FONT_UI];
@@ -229,7 +256,6 @@ static void draw_roles(App *app, Rectangle d)
     for (int r = 0; r < APPEARANCE_ROLE_COUNT; r++) {
         const AppearanceRoleInfo *in = appearance_role_info(r);
         const SFont *rf = &app->fonts[r];
-        float row_h = 24 + rf->line_height + SP_4;
         DrawRectangle((int)(d.x + SP_6), (int)y, (int)(d.width - 2 * SP_6), 1, THEME_BORDER);
         widget_text(ui, in->label, d.x + SP_6, y + SP_2, 0, THEME_TEXT);
         float lw = sfont_measure_utf8(ui, in->label, (int)strlen(in->label));
@@ -266,10 +292,12 @@ static void draw_roles(App *app, Rectangle d)
             appearance_set_size(&next, r, next.role[r].size + 1.0f);
 
         /* A line in the role's own font, as it will look. */
-        BeginScissorMode((int)(d.x + SP_6), (int)(y + 40), (int)(d.width - 2 * SP_6), (int)(rf->line_height + 4));
-        widget_text(rf, k_samples[r], d.x + SP_6, y + 40, d.width - 2 * SP_6, THEME_TEXT_PROSE);
-        EndScissorMode();
-        y += row_h + 22;
+        if (previews) {
+            BeginScissorMode((int)(d.x + SP_6), (int)(y + 40), (int)(d.width - 2 * SP_6), (int)(rf->line_height + 4));
+            widget_text(rf, k_samples[r], d.x + SP_6, y + 40, d.width - 2 * SP_6, THEME_TEXT_PROSE);
+            EndScissorMode();
+        }
+        y += role_row_height(app, r, previews);
     }
     show(app, &next);
 
@@ -282,17 +310,17 @@ static void draw_roles(App *app, Rectangle d)
         appearance_defaults(&def);
         show(app, &def);
     }
-    if (widget_button(p->cancel, "Cancel", ui, WIDGET_OUTLINE, true) || IsKeyPressed(KEY_ESCAPE)) {
+    if (widget_button(p->cancel, "Cancel", ui, WIDGET_OUTLINE, true) || (IsKeyPressed(KEY_ESCAPE) && !p->picked)) {
         close_panel(app, false);
         return;
     }
-    if (widget_button(p->done, "Done", ui, WIDGET_PRIMARY, true) || IsKeyPressed(KEY_ENTER)) close_panel(app, true);
+    if (widget_button(p->done, "Done", ui, WIDGET_PRIMARY, true) || (IsKeyPressed(KEY_ENTER) && !p->picked)) close_panel(app, true);
 }
 
-static float roles_height(const App *app)
+static float roles_height(const App *app, bool previews)
 {
     float h = 76 + 70;
-    for (int r = 0; r < APPEARANCE_ROLE_COUNT; r++) h += 24 + app->fonts[r].line_height + SP_4 + 22;
+    for (int r = 0; r < APPEARANCE_ROLE_COUNT; r++) h += role_row_height(app, r, previews);
     return h;
 }
 
@@ -302,14 +330,16 @@ void fonts_panel_draw(App *app, Rectangle screen)
     if (!p->open) return;
     DrawRectangleRec(screen, THEME_SCRIM);
     float w = 720;
-    float h = p->picking >= 0 ? 56 + 52 + 30 * FONTS_PANEL_ROWS + 80 : roles_height(app);
+    /* A short window drops the preview lines rather than let rows run under the buttons. */
+    bool previews = roles_height(app, true) <= screen.height - 40;
+    float h = p->picking >= 0 ? 56 + 52 + 30 * FONTS_PANEL_ROWS + 80 : roles_height(app, previews);
     if (h > screen.height - 40) h = screen.height - 40;
     if (w > screen.width - 40) w = screen.width - 40;
     Rectangle d = { roundf((screen.width - w) / 2), roundf((screen.height - h) / 2), w, h };
     widget_round_rect(d, RADIUS_M, THEME_SURFACE);
     widget_round_outline(d, RADIUS_M, 1.0f, THEME_BORDER_STRONG);
     if (p->picking >= 0) draw_list(app, d);
-    else draw_roles(app, d);
+    else draw_roles(app, d, previews);
 }
 
 Rectangle fonts_panel_element(const FontsPanel *p, const char *name)

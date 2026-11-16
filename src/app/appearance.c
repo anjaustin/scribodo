@@ -13,10 +13,10 @@
 #include "core/json.h"
 
 static const AppearanceRoleInfo k_roles[APPEARANCE_ROLE_COUNT] = {
-    { "interface", "Interface", "menus, lists, buttons and labels", "ShareTech-Regular.ttf", "Share Tech", 14.0f, 10.0f, 24.0f, 1.45f },
+    { "interface", "Interface", "menus, lists, buttons and labels", "ShareTech-Regular.ttf", "Share Tech", 14.0f, 11.0f, 16.0f, 1.45f },
     { "document", "Documents", "the text you write", "Share-Regular.ttf", "Share", 18.0f, 12.0f, 36.0f, 1.6f },
     { "chat", "Chat", "messages and replies", "Share-Regular.ttf", "Share", 15.0f, 11.0f, 28.0f, 1.5f },
-    { "monospace", "Figures", "the status bar, counts and positions", "ShareTechMono-Regular.ttf", "Share Tech Mono", 13.0f, 9.0f, 24.0f, 1.45f },
+    { "monospace", "Figures", "the status bar, counts and positions", "ShareTechMono-Regular.ttf", "Share Tech Mono", 13.0f, 10.0f, 16.0f, 1.45f },
 };
 
 /* Letters the chosen and bundled faces lack (ř, Greek, Cyrillic, ⌘) come from these, in order. */
@@ -111,6 +111,17 @@ bool appearance_save(const Appearance *a)
     return ok;
 }
 
+/* macOS's own fonts sit on the read-only, signed system volume; the bundled ones are pinned by hash. Anything else
+ * (/Library/Fonts, ~/Library/Fonts, a path in appearance.json) is probed before it is loaded (ui/font.h). */
+static bool trusted_path(const char *path, const char *assets_dir)
+{
+    static const char sys[] = "/System/Library/Fonts/";
+    if (!strncmp(path, sys, sizeof(sys) - 1) && !strstr(path, "/../")) return true;
+    if (!assets_dir || !assets_dir[0]) return false;
+    size_t n = strlen(assets_dir);
+    return !strncmp(path, assets_dir, n) && !strncmp(path + n, "/fonts/", 7) && !strstr(path + n, "/../");
+}
+
 bool appearance_has_choice(const Appearance *a, int role)
 {
     return appearance_role_info(role) && a->role[role].path[0];
@@ -124,18 +135,18 @@ int appearance_sources(const Appearance *a, int role, bool with_choice, const ch
     int n = 0;
     if (with_choice && a->role[role].path[0]) {
         snprintf(paths[n], PATH_MAX, "%s", a->role[role].path);
-        out[n] = (SFontSource){ paths[n], a->role[role].index };
+        out[n] = (SFontSource){ paths[n], a->role[role].index, trusted_path(paths[n], assets_dir) };
         n++;
     } else if (assets_dir && assets_dir[0]) {
         int w = snprintf(paths[n], PATH_MAX, "%s/fonts/%s", assets_dir, in->default_file);
         if (w > 0 && w < PATH_MAX) {
-            out[n] = (SFontSource){ paths[n], 0 };
+            out[n] = (SFontSource){ paths[n], 0, true };
             n++;
         }
     }
     for (size_t i = 0; i < sizeof(k_fallbacks) / sizeof(k_fallbacks[0]) && n < SFONT_MAX_FACES; i++) {
         snprintf(paths[n], PATH_MAX, "%s", k_fallbacks[i]);
-        out[n] = (SFontSource){ paths[n], 0 };
+        out[n] = (SFontSource){ paths[n], 0, true };
         n++;
     }
     return n;
