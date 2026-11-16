@@ -30,7 +30,7 @@ void clay_render(Clay_RenderCommandArray commands, SFont *const *fonts)
             float radius = d->cornerRadius.topLeft;
             if (radius > 0) {
                 float shortest = r.width < r.height ? r.width : r.height;
-                DrawRectangleRounded(r, shortest > 0 ? (radius * 2.0f) / shortest : 0, 8, to_color(d->backgroundColor));
+                DrawRectangleRounded(r, shortest > 0 ? (radius * 2.0f) / shortest : 0, 16, to_color(d->backgroundColor)); /* 16: round on Retina */
             } else {
                 DrawRectangleRec(r, to_color(d->backgroundColor));
             }

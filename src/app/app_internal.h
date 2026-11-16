@@ -130,6 +130,7 @@ typedef struct {
     char font_notice[PATH_MAX + 128]; /* a font problem found at launch, shown once the window is up */
     float dpi;
     float explorer_w, observer_w, chat_w;
+    float side_shown; /* the right pane's width as drawn: glides to observer_w or 0 (ui/motion.h) */
     bool observer_open;
     int dragging;
     int focus;

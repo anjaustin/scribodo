@@ -336,6 +336,7 @@ void fonts_panel_draw(App *app, Rectangle screen)
     if (h > screen.height - 40) h = screen.height - 40;
     if (w > screen.width - 40) w = screen.width - 40;
     Rectangle d = { roundf((screen.width - w) / 2), roundf((screen.height - h) / 2), w, h };
+    widget_shadow(d, RADIUS_M, 16);
     widget_round_rect(d, RADIUS_M, THEME_SURFACE);
     widget_round_outline(d, RADIUS_M, 1.0f, THEME_BORDER_STRONG);
     if (p->picking >= 0) draw_list(app, d);

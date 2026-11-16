@@ -14,6 +14,7 @@ bool g_stub_mouse_pressed;
 static char *g_clipboard = NULL;
 
 double GetTime(void) { return g_stub_time; }
+float GetFrameTime(void) { return 1.0f / 60.0f; }
 void SetClipboardText(const char *text)
 {
     free(g_clipboard);
@@ -47,3 +48,9 @@ void sfont_draw_utf8(const SFont *f, const char *s, int len, float x, float y, C
 /* Used by the review panel (test_editor: review_warnings). */
 void DrawRectangleLinesEx(Rectangle r, float t, Color c) { (void)r; (void)t; (void)c; }
 float sfont_measure_utf8(const SFont *f, const char *s, int len) { (void)f; (void)s; return (float)len * 8.0f; }
+
+/* ui/widgets.c, drawn by the review panel (the theme's shadow and outlines, 2026-11-16). */
+Color ColorBrightness(Color c, float f) { (void)f; return c; }
+void DrawLineEx(Vector2 a, Vector2 b, float t, Color c) { (void)a; (void)b; (void)t; (void)c; }
+void DrawRectangleRoundedLinesEx(Rectangle r, float rf, int s, float t, Color c) { (void)r; (void)rf; (void)s; (void)t; (void)c; }
+bool IsMouseButtonReleased(int b) { (void)b; return false; }

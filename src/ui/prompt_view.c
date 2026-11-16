@@ -109,11 +109,12 @@ PromptResult prompt_draw(PromptView *v, Rectangle screen)
     if (!v->active) return PR_NONE;
     layout(v, screen);
     DrawRectangleRec(screen, THEME_SCRIM); /* dim everything behind */
-    DrawRectangleRounded(v->box, 0.05f, 6, THEME_SURFACE);
-    DrawRectangleRoundedLinesEx(v->box, 0.05f, 6, 1.0f, THEME_ACCENT_EDGE);
+    widget_shadow(v->box, RADIUS_M, 16);
+    widget_round_rect(v->box, RADIUS_M, THEME_SURFACE);
+    widget_round_outline(v->box, RADIUS_M, 1.0f, THEME_ACCENT_EDGE);
     sfont_draw_utf8(v->label, v->title, (int)strlen(v->title), v->box.x + 16, v->box.y + 14, THEME_TEXT_STRONG);
-    DrawRectangleRec(v->field_r, THEME_FIELD);
-    DrawRectangleLinesEx(v->field_r, 1.0f, THEME_ACCENT_EDGE);
+    widget_round_rect(v->field_r, RADIUS_S, THEME_FIELD);
+    widget_round_outline(v->field_r, RADIUS_S, 1.0f, THEME_ACCENT_EDGE);
     editor_draw(v->field, v->field_r, true);
     if (v->error[0])
         sfont_draw_utf8(v->label, v->error, (int)strlen(v->error), v->box.x + 16, v->field_r.y + v->field_r.height + 8,

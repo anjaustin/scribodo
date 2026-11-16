@@ -1,5 +1,6 @@
 #include "menu_view.h"
 #include "ui/theme.h"
+#include "ui/widgets.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,8 +32,9 @@ int menu_draw(MenuView *m, const SFont *font, Rectangle screen)
     if (y < screen.y) y = screen.y; /* never off the top (a menu opened upwards) */
     if (x < screen.x) x = screen.x;
     Rectangle box = { x, y, w, h };
-    DrawRectangleRounded(box, 0.08f, 6, THEME_SURFACE);
-    DrawRectangleRoundedLinesEx(box, 0.08f, 6, 1.0f, THEME_BORDER_STRONG);
+    widget_shadow(box, RADIUS_M, 8);
+    widget_round_rect(box, RADIUS_M, THEME_SURFACE);
+    widget_round_outline(box, RADIUS_M, 1.0f, THEME_BORDER_STRONG);
     Vector2 mouse = GetMousePosition();
     int picked = -1;
     for (int i = 0; i < m->n; i++) {

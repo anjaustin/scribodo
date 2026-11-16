@@ -349,10 +349,10 @@ static void layout_side_panel(App *app)
     if (app->recall_open) {
         splitter(CLAY_ID("SplitRight"), app->dragging == DRAG_OBSERVER);
         CLAY({ .id = CLAY_ID("Recall"),
-               .layout = { .sizing = { CLAY_SIZING_FIXED(app->observer_w), CLAY_SIZING_GROW(0) },
+               .layout = { .sizing = { CLAY_SIZING_FIXED(app->side_shown), CLAY_SIZING_GROW(0) },
                            .padding = CLAY_PADDING_ALL(12), .childGap = 8,
                            .layoutDirection = CLAY_TOP_TO_BOTTOM },
-               .backgroundColor = COL_PANEL, .clip = { .vertical = true } }) {
+               .backgroundColor = COL_PANEL, .clip = { .horizontal = true, .vertical = true } }) {
             section_header(app, "RECALL");
             label(app, "Your committed canon and verified original text", FONT_UI, COL_DIM);
             CLAY({ .id = CLAY_ID("RecallBody"),
@@ -361,10 +361,10 @@ static void layout_side_panel(App *app)
     } else if (app->observer_open) {
         splitter(CLAY_ID("SplitRight"), app->dragging == DRAG_OBSERVER);
         CLAY({ .id = CLAY_ID("Observer"),
-               .layout = { .sizing = { CLAY_SIZING_FIXED(app->observer_w), CLAY_SIZING_GROW(0) },
+               .layout = { .sizing = { CLAY_SIZING_FIXED(app->side_shown), CLAY_SIZING_GROW(0) },
                            .padding = CLAY_PADDING_ALL(12), .childGap = 8,
                            .layoutDirection = CLAY_TOP_TO_BOTTOM },
-               .backgroundColor = COL_PANEL, .clip = { .vertical = true } }) {
+               .backgroundColor = COL_PANEL, .clip = { .horizontal = true, .vertical = true } }) {
             section_header(app, "OBSERVER");
             label(app, app->observer_label, FONT_UI, COL_DIM);
             if (app->store_inspection.capabilities & PROJECT_STORE_CAP_SEMANTIC)
@@ -372,6 +372,11 @@ static void layout_side_panel(App *app)
             CLAY({ .id = CLAY_ID("Findings"),
                    .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } } }) {}
         }
+    } else if (app->side_shown > 0.0f) { /* closing: the empty pane narrows away (ui/motion.h) */
+        splitter(CLAY_ID("SplitRight"), false);
+        CLAY({ .id = CLAY_ID("SideClosing"),
+               .layout = { .sizing = { CLAY_SIZING_FIXED(app->side_shown), CLAY_SIZING_GROW(0) } },
+               .backgroundColor = COL_PANEL }) {}
     }
 }
 

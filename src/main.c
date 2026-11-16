@@ -15,6 +15,7 @@
 
 #include "app/app_internal.h"
 #include "ui/widgets.h"
+#include "ui/motion.h"
 #include "app/tools_dir.h"
 
 static bool store_adopt_project(App *app);
@@ -197,7 +198,9 @@ static void draw_memory_sources(App *app)
 {
     float width = fminf(900, GetScreenWidth() - 60.0f), height = fminf(700, GetScreenHeight() - 60.0f);
     Rectangle box = { (GetScreenWidth() - width) / 2, (GetScreenHeight() - height) / 2, width, height };
-    DrawRectangleRec(box, THEME_SURFACE);
+    widget_shadow(box, RADIUS_M, 16);
+    widget_round_rect(box, RADIUS_M, THEME_SURFACE);
+    widget_round_outline(box, RADIUS_M, 1.0f, THEME_BORDER_STRONG);
     const char *title = "As-of retrieval sources - read only; not canon or proof of exhaustive recall";
     sfont_draw_utf8(&app->fonts[FONT_UI], title, (int)strlen(title), box.x + 14, box.y + 12, THEME_TEXT);
     app->memory_sources_close = (Rectangle){ box.x + box.width - 90, box.y + box.height - 40, 76, 28 };
@@ -742,8 +745,9 @@ static void draw_model_settings(App *app, Rectangle screen)
     DrawRectangleRec(screen, THEME_SCRIM);
     float w = 620, rowh = 44, h = 110 + rowh * MODEL_SETTING_COUNT + 56 + (app->llm ? 26 : 0);
     Rectangle p = { (screen.width - w) / 2, (screen.height - h) / 2, w, h };
-    DrawRectangleRounded(p, 0.03f, 6, THEME_SURFACE);
-    DrawRectangleRoundedLinesEx(p, 0.03f, 6, 1.0f, THEME_BORDER_STRONG);
+    widget_shadow(p, RADIUS_M, 16);
+    widget_round_rect(p, RADIUS_M, THEME_SURFACE);
+    widget_round_outline(p, RADIUS_M, 1.0f, THEME_BORDER_STRONG);
     const SFont *ui = &app->fonts[FONT_UI];
     widget_text(ui, "Model settings (chat)", p.x + 24, p.y + 16, w - 48, THEME_TEXT_STRONG);
     widget_text(ui, "The observer always uses temperature 0, so its findings stay reproducible.", p.x + 24, p.y + 44,
@@ -1330,6 +1334,10 @@ static void frame_pane_widths(App *app, Vector2 mouse, bool mouse_down)
         else if (pass == 2) app->explorer_w = fmaxf(140.0f, app->explorer_w - deficit);
         else if (pass == 3) app->observer_open = app->recall_open = false;
     }
+    /* The right pane glides open and shut; a drag or a window resize places it at once. */
+    float target = app->observer_open || app->recall_open ? app->observer_w : 0.0f;
+    bool placed = app->dragging == DRAG_OBSERVER || (app->side_shown > 0.0f && target > 0.0f);
+    app->side_shown = placed ? target : motion_approach(app->side_shown, target, GetFrameTime(), MOTION_PANE_MS);
 }
 
 static void frame_shortcuts(App *app, bool modal)

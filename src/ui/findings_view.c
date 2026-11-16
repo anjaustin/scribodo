@@ -1,4 +1,5 @@
 #include "findings_view.h"
+#include "ui/motion.h"
 #include "ui/theme.h"
 #include "ui/widgets.h"
 
@@ -27,6 +28,7 @@ typedef struct {
     bool stale;         /* conflict whose canon entry changed or was retracted */
     float height;       /* as last laid out */
     float layout_w;
+    double born;        /* when it first appeared in the list (GetTime): a new finding fades in (ui/motion.h) */
 } Item;
 
 struct FindingsView {
@@ -97,14 +99,28 @@ static bool conflict_current(const RecordVersion *cur, const Record *canon, size
 
 void findings_view_set(FindingsView *v, const Record *f, size_t n, const Record *canon, size_t ncanon)
 {
+    /* When each listed finding first appeared, kept across refreshes so only a new one fades in. */
+    size_t nold = v->n;
+    struct { char id[40]; double born; } *old = nold ? malloc(nold * sizeof(*old)) : NULL;
+    for (size_t i = 0; old && i < nold; i++) {
+        memcpy(old[i].id, v->items[i].id, sizeof(old[i].id));
+        old[i].born = v->items[i].born;
+    }
+    double now = GetTime();
     clear_items(v);
     v->items = calloc(n ? n : 1, sizeof(Item));
     v->cards = calloc(n ? n : 1, sizeof(Rectangle));
-    if (!v->items || !v->cards) return;
+    if (!v->items || !v->cards) {
+        free(old);
+        return;
+    }
     /* New conflicts first (they matter most), then newest first by when the
      * finding was made, so acting on one doesn't move it. */
     size_t *order = malloc((n ? n : 1) * sizeof(size_t));
-    if (!order) return;
+    if (!order) {
+        free(old);
+        return;
+    }
     for (size_t i = 0; i < n; i++) order[i] = i;
     for (size_t i = 1; i < n; i++) /* insertion sort, descending created_seq */
         for (size_t k = i; k > 0 && f[order[k - 1]].created_seq < f[order[k]].created_seq; k--) {
@@ -123,6 +139,9 @@ void findings_view_set(FindingsView *v, const Record *f, size_t n, const Record 
             if ((pass == 0) != first) continue;
             Item *it = &v->items[v->n];
             snprintf(it->id, sizeof(it->id), "%s", f[i].id);
+            it->born = now;
+            for (size_t k = 0; old && k < nold; k++)
+                if (!strcmp(old[k].id, it->id)) it->born = old[k].born;
             it->stale = stale;
             snprintf(it->type, sizeof(it->type), "%s", cur->finding.type[0] ? cur->finding.type : "finding");
             snprintf(it->status, sizeof(it->status), "%s", cur->status);
@@ -146,6 +165,7 @@ void findings_view_set(FindingsView *v, const Record *f, size_t n, const Record 
             v->n++;
         }
     free(order);
+    free(old);
 }
 
 size_t findings_view_count(const FindingsView *v) { return v->n; }
@@ -351,6 +371,10 @@ FindingAction findings_view_draw(FindingsView *v, Rectangle r, char *id_out, siz
                     }
                 }
             }
+            /* Fading in: the panel's colour over the card, thinning as it settles. */
+            float shown = motion_fade_in(it->born, GetTime(), MOTION_FADE_MS);
+            if (shown < 1.0f) DrawRectangleRec((Rectangle){ card.x - 1, card.y - 1, card.width + 2, h + 2 },
+                                               ColorAlpha(THEME_PANEL, 1.0f - shown));
         }
         y += h + GAP;
     }

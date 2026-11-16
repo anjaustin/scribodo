@@ -45,6 +45,21 @@ void widget_round_rect(Rectangle r, float radius, Color fill)
     DrawRectangleRounded(r, rf > 1.0f ? 1.0f : rf, 16, fill);
 }
 
+void widget_shadow(Rectangle r, float radius, float depth)
+{
+    Color c = THEME_SHADOW;
+    int layers = depth > 4 ? (int)(depth / 2) : 2;
+    for (int k = layers; k >= 1; k--) {
+        float spread = (float)k * depth / (float)layers;
+        float fall = spread * 0.35f;
+        Color layer = c;
+        float w = 1.0f - (float)k / (float)(layers + 1);
+        layer.a = (unsigned char)((float)c.a * w * w * 2.2f / (float)layers);
+        widget_round_rect((Rectangle){ r.x - spread, r.y - spread + fall, r.width + 2 * spread, r.height + 2 * spread },
+                          radius + spread, layer);
+    }
+}
+
 void widget_round_outline(Rectangle r, float radius, float thick, Color line)
 {
     float shortest = r.width < r.height ? r.width : r.height;

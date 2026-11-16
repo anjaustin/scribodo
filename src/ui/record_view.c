@@ -300,8 +300,9 @@ RecordAction record_view_draw(RecordView *v, Rectangle r, bool focused)
     const Color MUTED = THEME_TEXT_MUTED, LINK = THEME_LINK;
     const Color FIELD = THEME_FIELD;
     layout(v, r);
-    DrawRectangleRec(r, BG);
-    DrawRectangleLinesEx(r, 1.0f, v->kind == REC_CANON ? BORDER : NOTE_BORDER);
+    widget_shadow(r, RADIUS_M, 10);
+    widget_round_rect(r, RADIUS_M, BG);
+    widget_round_outline(r, RADIUS_M, 1.0f, v->kind == REC_CANON ? BORDER : NOTE_BORDER);
     sfont_draw_utf8(v->label, v->header, (int)strlen(v->header), r.x + PAD, r.y + 11, HEAD);
     DrawRectangleRec(v->ed_rect, FIELD);
     editor_draw(v->ed, v->ed_rect, focused);

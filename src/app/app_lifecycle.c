@@ -4,6 +4,7 @@
 
 #include <mach-o/dyld.h>
 
+#include "ui/motion.h"
 #include "ui/widgets.h"
 
 static void clay_error(Clay_ErrorData err);
@@ -217,6 +218,8 @@ int app_init_jobs(App *app, const char *script_path)
 /* The window, the services and backup workers, fonts and the Clay arena. 0, or the exit code. */
 int app_open_window(App *app, const char *script_path)
 {
+    /* Motion (ui/motion.h): off in UI test runs, whose checks read the end state, and under macOS's Reduce motion. */
+    motion_set_enabled(!script_path && !motion_system_reduced());
     unsigned flags = FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_HIGHDPI | FLAG_VSYNC_HINT;
     if (script_path) {
         flags |= FLAG_WINDOW_HIDDEN;

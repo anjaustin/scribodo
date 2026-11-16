@@ -64,6 +64,7 @@ CORE_SRCS += src/core/experiments.c src/core/text_rules.c
 CORE_SRCS += src/app/tools_dir.c
 CORE_SRCS += src/core/child_process.c
 CORE_SRCS += src/core/font_file.c
+CORE_SRCS += src/ui/theme.c src/ui/motion.c
 STORE_SRCS := src/app/db.c src/app/store.c src/app/project_store.c src/app/observer_store.c src/app/store_revisions.c src/app/store_records.c src/app/store_chats.c src/app/store_chat_history.c src/app/store_import.c src/app/store_entities.c src/app/backup.c src/app/backup_job.c src/app/service_supervisor.c src/app/entity_backfill_job.c src/app/name_detection_job.c src/app/project_session.c src/app/explorer_snapshot.c src/app/profile.c src/app/model_settings.c src/app/appearance.c src/app/font_catalog.c
 STORE_SRCS += src/app/chat_history_job.c
 STORE_SRCS += src/app/memory_store.c src/app/memory_job.c
@@ -81,7 +82,7 @@ LLM_SRCS += src/llm/rerank.c src/llm/answer_pipeline.c src/llm/answer_receipt.c
 LLM_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(LLM_SRCS)) $(BUILD)/third_party/cJSON/cJSON.o
 APP_SRCS  := src/main.c src/app/app_lifecycle.c src/app/chat_workflow.c src/app/document_workflow.c src/app/record_workflow.c src/app/script_host_app.c src/ui/layout.c src/app/script.c src/app/script_host.c src/app/startup_env.c src/app/draft_controller.c src/app/chat_controller.c src/app/reviewed_edit_controller.c src/ui/font.c src/ui/clay_render.c src/ui/editor.c src/ui/input.c src/ui/recall_view.c \
              src/ui/chat_view.c src/ui/review_view.c src/ui/record_view.c src/ui/findings_view.c src/ui/prompt_view.c src/ui/menu_view.c src/ui/vendor_impl.c \
-             src/ui/widgets.c src/app/fonts_panel.c
+             src/ui/widgets.c src/app/fonts_panel.c src/ui/motion_system.c
 CORE_OBJS := $(patsubst %.c,$(BUILD)/%.o,$(CORE_SRCS))
 APP_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(APP_SRCS))
 # Native dialogs (Objective-C on macOS).
@@ -101,7 +102,7 @@ TESTS += $(BUILD)/test_http_deadlines $(BUILD)/test_db_deadlines $(BUILD)/test_m
 TESTS += $(BUILD)/test_http_poll_errno
 TESTS += $(BUILD)/test_draft_controller $(BUILD)/test_script_host $(BUILD)/test_startup_env
 TESTS += $(BUILD)/test_services
-TESTS += $(BUILD)/test_font_file $(BUILD)/test_appearance $(BUILD)/test_font_catalog $(BUILD)/test_widgets
+TESTS += $(BUILD)/test_font_file $(BUILD)/test_appearance $(BUILD)/test_font_catalog $(BUILD)/test_widgets $(BUILD)/test_motion
 
 .PHONY: all run test analyze analyzetest uitest uitest-real sanitize tsan cstest dbtest crashtest envs tools uitest-db backuptest servicestest remotetest offlinetest dependency-report qdrant clean distclean llama model llmtest
 
@@ -220,9 +221,12 @@ $(BUILD)/test_font_catalog: tests/test_font_catalog.c src/app/font_catalog.c src
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Isrc tests/test_font_catalog.c src/app/font_catalog.c src/core/font_file.c -o $@
 
-$(BUILD)/test_widgets: tests/test_widgets.c src/ui/widgets.c src/ui/widgets.h src/ui/theme.h
+$(BUILD)/test_widgets: tests/test_widgets.c src/ui/widgets.c src/ui/theme.c src/ui/widgets.h src/ui/theme.h
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) $(INCLUDES) tests/test_widgets.c src/ui/widgets.c -o $@
+	$(CC) $(CFLAGS) $(INCLUDES) tests/test_widgets.c src/ui/widgets.c src/ui/theme.c -o $@
+
+$(BUILD)/test_motion: $(CORE_OBJS) $(BUILD)/tests/test_motion.o
+	$(CC) $(CFLAGS) $^ -o $@
 
 APPEARANCE_TEST_SRCS := tests/test_appearance.c src/app/appearance.c src/core/file_text.c src/core/json.c src/core/json_vendor.c
 $(BUILD)/test_appearance: $(APPEARANCE_TEST_SRCS) src/app/appearance.h src/ui/font.h
@@ -295,7 +299,7 @@ $(BUILD)/test_observer_fake: $(BUILD)/src/llm/observer_text.o $(BUILD)/src/core/
 	$(CC) $(CFLAGS) $^ -o $@
 
 # The real editor, linked against headless raylib stubs.
-$(BUILD)/test_editor: $(CORE_OBJS) $(BUILD)/src/ui/editor.o $(BUILD)/src/ui/input.o $(BUILD)/src/ui/review_view.o $(BUILD)/src/app/reviewed_edit_controller.o $(BUILD)/tests/raylib_stubs.o $(BUILD)/tests/test_editor.o
+$(BUILD)/test_editor: $(CORE_OBJS) $(BUILD)/src/ui/editor.o $(BUILD)/src/ui/input.o $(BUILD)/src/ui/review_view.o $(BUILD)/src/ui/widgets.o $(BUILD)/src/app/reviewed_edit_controller.o $(BUILD)/tests/raylib_stubs.o $(BUILD)/tests/test_editor.o
 	$(CC) $(CFLAGS) $^ -o $@ -lm
 
 # Every test runs under tools/watchdog.sh: a hang is killed after a time limit
@@ -336,6 +340,7 @@ test: $(TESTS) $(CORE_OBJS) $(LLM_OBJS) $(APP_OBJS) $(APP)
 	$(WATCHDOG) $(TEST_TIMEOUT) test_config_documented python3 tests/test_config_documented.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_bundled_fonts python3 tests/test_bundled_fonts.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_theme_literals python3 tests/test_theme_literals.py
+	$(WATCHDOG) $(TEST_TIMEOUT) test_theme_contrast python3 tests/test_theme_contrast.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_font_probe python3 tests/test_font_probe.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_sysmem_sample python3 tests/test_sysmem_sample.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_observer_faults python3 tests/test_observer_faults.py

@@ -45,6 +45,10 @@ void widget_text_in(const SFont *f, const char *s, Rectangle r, Color c);
 /* A rounded rectangle with radius in pixels (raylib's takes a fraction of the shorter side), and enough segments
  * that the corner stays round on a Retina screen. */
 void widget_round_rect(Rectangle r, float radius, Color fill);
+/* A soft shadow under a floating surface (a menu, a dialog): layered rounded rectangles in the palette's shadow
+ * colour, fading outward and falling slightly below. Draw it before the surface. `depth` in px (8 for a menu, 16 for a
+ * dialog). */
+void widget_shadow(Rectangle r, float radius, float depth);
 void widget_round_outline(Rectangle r, float radius, float thick, Color line);
 
 #endif

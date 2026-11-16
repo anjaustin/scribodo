@@ -1,4 +1,5 @@
 #include "editor.h"
+#include "ui/motion.h"
 #include "ui/theme.h"
 
 #include <limits.h>
@@ -81,6 +82,8 @@ struct Editor {
     /* Geometry of the text column, updated every frame. */
     float text_x, text_y, text_w, view_h;
     float scroll_y;
+    float scroll_goal; /* where a wheel scroll is gliding to (ui/motion.h) */
+    bool gliding;
     bool want_cursor_visible;
     double blink_t0;
 
@@ -683,7 +686,8 @@ bool editor_load_file(Editor *e, const char *path, char *err, size_t errlen)
     else
         e->read_only_reason[0] = '\0';
     e->saved_id = undo_state_id(&e->undo);
-    e->scroll_y = 0;
+    e->scroll_y = e->scroll_goal = 0;
+    e->gliding = false;
     e->mouse_selecting = false;
     mark_changed(e);
 
@@ -730,7 +734,8 @@ void editor_close(Editor *e)
     e->read_only = true;
     snprintf(e->read_only_reason, sizeof(e->read_only_reason), "No document is open");
     e->saved_id = undo_state_id(&e->undo);
-    e->scroll_y = 0;
+    e->scroll_y = e->scroll_goal = 0;
+    e->gliding = false;
     e->mouse_selecting = false;
     mark_changed(e);
 }
@@ -860,6 +865,17 @@ static void clamp_scroll(Editor *e)
     float m = max_scroll(e);
     if (e->scroll_y > m) e->scroll_y = m;
     if (e->scroll_y < 0) e->scroll_y = 0;
+    if (e->scroll_goal > m) e->scroll_goal = m;
+    if (e->scroll_goal < 0) e->scroll_goal = 0;
+}
+
+/* The wheel sets a goal the view glides to; anything that places the view itself (the caret, a drag, a new text)
+ * ends the glide where it is. */
+static void glide(Editor *e)
+{
+    if (!e->gliding) return;
+    e->scroll_y = motion_approach(e->scroll_y, e->scroll_goal, GetFrameTime(), MOTION_SCROLL_MS);
+    if (!motion_moving(e->scroll_y, e->scroll_goal)) e->gliding = false;
 }
 
 static void scroll_to_cursor(Editor *e)
@@ -868,6 +884,7 @@ static void scroll_to_cursor(Editor *e)
     size_t r = wrap_row_for_index(&e->layout, (size_t)e->st.cursor);
     float y = (float)r * lh;
     float margin = lh;
+    e->gliding = false;
     if (y - margin < e->scroll_y) e->scroll_y = y - margin;
     if (y + lh + margin > e->scroll_y + e->view_h) e->scroll_y = y + lh + margin - e->view_h;
     clamp_scroll(e);
@@ -914,8 +931,10 @@ static void handle_mouse(Editor *e, Rectangle b)
     if (inside) {
         Vector2 wheel = GetMouseWheelMoveV();
         if (wheel.y != 0.0f) {
-            e->scroll_y -= wheel.y * e->font->line_height * 1.5f;
+            e->scroll_goal = (e->gliding ? e->scroll_goal : e->scroll_y) - wheel.y * e->font->line_height * 1.5f;
+            e->gliding = true;
             clamp_scroll(e);
+            glide(e);
         }
     }
 
@@ -947,6 +966,7 @@ static void handle_mouse(Editor *e, Rectangle b)
         } else {
             /* Auto-scroll while dragging above or below the view. */
             float top = b.y, bottom = b.y + b.height;
+            if (m.y < top || m.y > bottom) e->gliding = false;
             if (m.y < top) e->scroll_y -= (top - m.y) * 0.5f;
             if (m.y > bottom) e->scroll_y += (m.y - bottom) * 0.5f;
             clamp_scroll(e);
@@ -1045,6 +1065,7 @@ static void handle_keyboard(Editor *e)
 void editor_update(Editor *e, Rectangle bounds, bool focused)
 {
     update_geometry(e, bounds);
+    glide(e);
     handle_mouse(e, bounds);
     /* Unfocused editors leave the typed-character queue alone: several text
      * views share it, and the app drains it once per frame when no view has
@@ -1350,7 +1371,8 @@ void editor_clear(Editor *e)
     reset_undo(e);
     stb_textedit_initialize_state(&e->st, 0);
     e->saved_id = undo_state_id(&e->undo);
-    e->scroll_y = 0;
+    e->scroll_y = e->scroll_goal = 0;
+    e->gliding = false;
     mark_changed(e);
 }
 
@@ -1370,7 +1392,8 @@ bool editor_set_text_utf8(Editor *e, const char *utf8)
     reset_undo(e);
     stb_textedit_initialize_state(&e->st, 0);
     e->saved_id = undo_state_id(&e->undo);
-    e->scroll_y = 0;
+    e->scroll_y = e->scroll_goal = 0;
+    e->gliding = false;
     mark_changed(e);
     return true;
 }

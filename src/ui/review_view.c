@@ -1,5 +1,6 @@
 #include "review_view.h"
 #include "ui/theme.h"
+#include "ui/widgets.h"
 
 #include <stdio.h>
 
@@ -181,8 +182,9 @@ void review_draw(ReviewView *v, Rectangle r)
     const Color TEXT = THEME_TEXT_PROSE, DEL = THEME_ERR;
     const Color INS = THEME_INSERT, INS_BG = THEME_INSERT_BG;
     const Color HEAD = THEME_TEXT;
-    DrawRectangleRec(r, BG);
-    DrawRectangleLinesEx(r, 1.0f, BORDER);
+    widget_shadow(r, RADIUS_M, 10);
+    widget_round_rect(r, RADIUS_M, BG);
+    widget_round_outline(r, RADIUS_M, 1.0f, BORDER);
     /* Header: clipped to the space left of the buttons, with an ellipsis. */
     float max_w = review_accept_rect(r).x - (r.x + PAD) - 12;
     int len = (int)strlen(v->header);

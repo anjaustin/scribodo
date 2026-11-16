@@ -17,7 +17,7 @@ class ThemeLiteralTests(unittest.TestCase):
     def test_no_colour_literals_outside_the_theme(self):
         found = []
         for path in FILES:
-            if path.name == "theme.h":
+            if path.name in ("theme.h", "theme.c"):
                 continue
             for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
                 code = line.split("//")[0]
