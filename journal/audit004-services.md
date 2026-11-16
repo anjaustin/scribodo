@@ -190,3 +190,36 @@ installed 11.4.13_1, not pinned; the installed binary parses to 11.4.13, so the 
 `mariadbd` reads the version from the defaults file.
 
 **Gates (item 6 tree):** `make test` exit 0; `make analyze` exit 0; `make sanitize` exit 0; `make dependency-report` exit 0.
+
+## Item 7 — spawned tools get 0-2 and nothing else
+
+**Before:** `backup.c:107` spawned the backup pipeline with only `POSIX_SPAWN_SETPGROUP`, closing just its own pipe
+ends, so every other descriptor the app held without close-on-exec reached docker/gzip; `server.c:330` ran
+`popen("ps -p N -o args=")`, a shell child with the whole table. The supervisor already set
+`POSIX_SPAWN_CLOEXEC_DEFAULT` (AUDIT-004 recheck).
+
+**Now:** one helper, `src/core/child_process.c`:
+- `child_pipe()`: both ends above 2 and close-on-exec in the app, so no other spawn inherits them;
+- `child_spawn()`: stdin `/dev/null`, stdout/stderr on the given descriptors or `/dev/null`, explicit file actions
+  (`adddup2`, or `addinherit_np` when a descriptor is already in place), `POSIX_SPAWN_CLOEXEC_DEFAULT`, optionally its
+  own process group;
+- `child_process_args()`: a process's arguments from the kernel (`sysctl KERN_PROCARGS2`), no child at all.
+The backup pipeline's `run()` and the supervisor's `run_services()` spawn through it (behaviour otherwise unchanged:
+same group-kill cleanup, same pipe draining); `reap_pidfile()` in `server.c` reads the pid's arguments with
+`child_process_args()` instead of `popen` (the llama-server spawn already had `CLOEXEC_DEFAULT` and is unchanged).
+
+**Test:** `test_child_descriptors` in `tests/test_services.c`. The test binary is also the child: `--list-fds`
+prints its open descriptors ("fds 0 1 2") on stdout and stderr. With a file and both ends of a pipe held open
+*without* close-on-exec (as the register's flock descriptor was), it spawns the lister through the helper (stdout
+pipe), through the supervisor (a fake `services.sh` that execs the lister; the reason line must be exactly
+"fds 0 1 2"), and through `backup_project` (a fake `backup.sh` that does the same; the error line). Then
+`child_process_args` on a spawned `/bin/sleep 30` (exact arguments, truncation to the buffer, its own process group)
+and on the same pid after it is reaped (false). Mutation: without `POSIX_SPAWN_CLOEXEC_DEFAULT` all three spawn checks
+fail (the held descriptors appear in the child). `test_llm`'s `reap_orphan` and `orphan_after_owner_kill` exercise the
+new pid check end to end and pass.
+
+**Gates (item 7 tree):** `make test` exit 0; `make analyze` exit 0 (0 warnings, 89 files); `make sanitize` exit 0.
+
+The coordinator warned that an outside `pkill -f "clang --analyze"` around 16:50 may have killed analyze runs. Every
+analyze recorded here exited 0 and printed its "0 warnings across N files" line; a clang killed by a signal exits
+nonzero, which this rule turns into a failure, so none of them was cut short.

@@ -8,7 +8,6 @@
 #include <limits.h>
 #include <poll.h>
 #include <signal.h>
-#include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,8 +20,8 @@
 #include "app/store_backends.h"
 #include "core/json.h"
 #include "core/deadline_clock.h"
+#include "core/child_process.h"
 
-extern char **environ;
 
 enum { RUN_TIMEOUT_SECONDS = 60 * 60 };
 
@@ -82,34 +81,17 @@ static time_t monotonic_seconds(void)
 static int run(char *const argv[], char *last, size_t lastlen, char *err, size_t errlen)
 {
     int out[2], er[2];
-    if (pipe(out) != 0) return -1;
-    if (pipe(er) != 0) {
+    if (!child_pipe(out)) return -1;
+    if (!child_pipe(er)) {
         close(out[0]);
         close(out[1]);
         return -1;
     }
-    posix_spawn_file_actions_t fa;
-    posix_spawnattr_t attr;
-    bool fa_init = posix_spawn_file_actions_init(&fa) == 0;
-    bool attr_init = posix_spawnattr_init(&attr) == 0;
-    int setup = fa_init && attr_init ? 0 : -1;
-    if (!setup) setup = posix_spawn_file_actions_adddup2(&fa, out[1], STDOUT_FILENO);
-    if (!setup) setup = posix_spawn_file_actions_adddup2(&fa, er[1], STDERR_FILENO);
-    if (!setup && out[0] > STDERR_FILENO) setup = posix_spawn_file_actions_addclose(&fa, out[0]);
-    if (!setup && er[0] > STDERR_FILENO) setup = posix_spawn_file_actions_addclose(&fa, er[0]);
-    if (!setup && out[1] != STDOUT_FILENO && out[1] != STDERR_FILENO)
-        setup = posix_spawn_file_actions_addclose(&fa, out[1]);
-    if (!setup && er[1] != STDOUT_FILENO && er[1] != STDERR_FILENO)
-        setup = posix_spawn_file_actions_addclose(&fa, er[1]);
-    if (!setup) setup = posix_spawn_file_actions_addopen(&fa, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
-    /* A private process group lets timeout cleanup include docker/gzip and
-     * any other descendants that still hold a pipe open. */
-    if (!setup) setup = posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);
-    if (!setup) setup = posix_spawnattr_setpgroup(&attr, 0);
+    /* Only stdin (/dev/null) and the two pipes reach the helper: nothing else the app holds (its store and model
+     * sockets, the instance lock) outlives the pipeline in docker or gzip (AUDIT-004). A private process group lets
+     * timeout cleanup include docker/gzip and any other descendants that still hold a pipe open. */
     pid_t pid = -1;
-    int rc = setup ? setup : posix_spawn(&pid, argv[0], &fa, &attr, argv, environ);
-    if (attr_init) posix_spawnattr_destroy(&attr);
-    if (fa_init) posix_spawn_file_actions_destroy(&fa);
+    int rc = child_spawn(&pid, argv[0], argv, out[1], er[1], true);
     close(out[1]);
     close(er[1]);
     if (rc != 0) {

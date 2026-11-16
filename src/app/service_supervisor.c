@@ -3,7 +3,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
-#include <spawn.h>
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
@@ -13,8 +12,8 @@
 
 #include "app/store.h"
 #include "core/deadline_clock.h"
+#include "core/child_process.h"
 
-extern char **environ;
 
 static double monotonic_seconds(void)
 {
@@ -74,57 +73,26 @@ static void drain(int fd, StderrTail *t, bool *open)
     }
 }
 
-/* A pipe end above the standard descriptors, close-on-exec in this process: a spawn elsewhere in the app never
- * inherits it, and in the child the file actions place the write end on 2 explicitly. */
-static int above_stdio(int fd)
-{
-    if (fd > STDERR_FILENO) return fd;
-    int moved = fcntl(fd, F_DUPFD_CLOEXEC, STDERR_FILENO + 1);
-    close(fd);
-    return moved;
-}
-
 /* `services.sh up`: its exit status, and its last stderr line in `result->reason`. */
 static int run_services(ServiceSupervisor *supervisor, const char *tool, ServiceSupervisorResult *result)
 {
     int er[2];
-    if (pipe(er) != 0) {
-        snprintf(result->reason, sizeof(result->reason), "couldn't run %s: %s", tool, strerror(errno));
-        return -1;
-    }
-    er[0] = above_stdio(er[0]);
-    er[1] = above_stdio(er[1]);
-    if (er[0] < 0 || er[1] < 0 || fcntl(er[0], F_SETFD, FD_CLOEXEC) != 0 || fcntl(er[1], F_SETFD, FD_CLOEXEC) != 0 ||
-        fcntl(er[0], F_SETFL, O_NONBLOCK) != 0) {
-        if (er[0] >= 0) close(er[0]);
-        if (er[1] >= 0) close(er[1]);
+    if (!child_pipe(er)) {
         snprintf(result->reason, sizeof(result->reason), "couldn't run %s: no pipe", tool);
         return -1;
     }
-    char *argv[] = { (char *)tool, "up", NULL };
-    posix_spawn_file_actions_t actions;
-    posix_spawnattr_t attr;
-    if (posix_spawn_file_actions_init(&actions) != 0) {
+    if (fcntl(er[0], F_SETFL, O_NONBLOCK) != 0) {
         close(er[0]);
         close(er[1]);
+        snprintf(result->reason, sizeof(result->reason), "couldn't run %s: no pipe", tool);
         return -1;
     }
-    bool actions_ok = posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0) == 0 &&
-                      posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0) == 0 &&
-                      posix_spawn_file_actions_adddup2(&actions, er[1], STDERR_FILENO) == 0;
-    bool attr_inited = posix_spawnattr_init(&attr) == 0;
-    bool attr_ok = attr_inited;
-    if (attr_inited) {
-        /* Only the three descriptors above reach the script: the app's model and store sockets must not outlive it in
-         * the daemons it starts (REDTEAM-023; the script also starts them with nothing inherited, so no daemon holds
-         * the stderr pipe either). */
-        attr_ok = posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT) == 0 &&
-                  posix_spawnattr_setpgroup(&attr, 0) == 0;
-    }
+    /* Only stdin and stdout (/dev/null) and the stderr pipe reach the script: the app's model and store sockets must
+     * not outlive it in the daemons it starts (REDTEAM-023; the script also starts them with nothing inherited, so no
+     * daemon holds the pipe either). Its own process group, for a cancel. */
+    char *argv[] = { (char *)tool, "up", NULL };
     pid_t pid = 0;
-    int spawn_rc = actions_ok && attr_ok ? posix_spawn(&pid, tool, &actions, &attr, argv, environ) : EINVAL;
-    if (attr_inited) posix_spawnattr_destroy(&attr);
-    posix_spawn_file_actions_destroy(&actions);
+    int spawn_rc = child_spawn(&pid, tool, argv, -1, er[1], true);
     close(er[1]);
     if (spawn_rc != 0) {
         close(er[0]);

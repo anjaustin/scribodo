@@ -1,5 +1,6 @@
 #define _DARWIN_C_SOURCE
 #include "server.h"
+#include "core/child_process.h"
 
 #include <CommonCrypto/CommonDigest.h>
 #include <errno.h>
@@ -325,13 +326,10 @@ static bool reap_pidfile(const char *pidfile, const char *sock)
     if (fscanf(f, "%d", &pid) == 1 && pid > 1 && kill(pid, 0) == 0) {
         /* Only kill it if it is *our* llama-server: pids get reused, so the
          * command line must name this run directory's socket. */
-        char cmd[128], out[4096] = "";
-        snprintf(cmd, sizeof(cmd), "ps -p %d -o args=", pid);
-        FILE *p = popen(cmd, "r");
-        if (p) {
-            if (!fgets(out, sizeof(out), p)) out[0] = '\0';
-            pclose(p);
-        }
+        char out[4096] = "";
+        /* Read from the kernel, not `ps` through popen: no shell and no child, so nothing the app holds is inherited
+         * (AUDIT-004). */
+        if (!child_process_args((pid_t)pid, out, sizeof(out))) out[0] = '\0';
         if (strstr(out, "llama-server") && strstr(out, sock)) {
             kill(pid, SIGTERM);
             for (int i = 0; i < 50 && kill(pid, 0) == 0; i++) usleep(100000);

@@ -4,6 +4,7 @@
 #define _DARWIN_C_SOURCE
 #include <arpa/inet.h>
 #include <errno.h>
+#include <signal.h>
 #include <limits.h>
 #include <netinet/in.h>
 #include <stdlib.h>
@@ -14,6 +15,10 @@
 
 #include "app/service_supervisor.h"
 #include "app/tools_dir.h"
+#include "app/backup.h"
+#include "core/child_process.h"
+#include <fcntl.h>
+#include <sys/wait.h>
 #include "test_state_fixture.h"
 #include "test_util.h"
 
@@ -21,6 +26,7 @@ static char g_dir[PATH_MAX];
 static char g_repo_tools[PATH_MAX];
 static StoreManager *g_store;
 static int g_case;
+static char g_self[PATH_MAX];
 
 static void write_file(const char *path, const char *text, mode_t mode)
 {
@@ -273,6 +279,99 @@ static void test_tools_dir(void)
     CHECK(!tools_dir_resolve(app, tiny, sizeof(tiny)));
 }
 
+/* --list-fds: this binary as the child, printing its open descriptors on one line ("fds 0 1 2"). */
+static int list_fds_main(void)
+{
+    char line[1024] = "fds";
+    size_t n = strlen(line);
+    for (int fd = 0; fd < 1024 && n + 8 < sizeof(line); fd++)
+        if (fcntl(fd, F_GETFD) != -1) n += (size_t)snprintf(line + n, sizeof(line) - n, " %d", fd);
+    fprintf(stdout, "%s\n", line);
+    fprintf(stderr, "%s\n", line);
+    return 1;
+}
+
+/* Descriptors the app holds without close-on-exec, as the register's flock descriptor was: none may reach a child. */
+static void hold_leaky_descriptors(int held[3])
+{
+    char path[PATH_MAX + 16];
+    snprintf(path, sizeof(path), "%s/held", g_dir);
+    held[0] = open(path, O_WRONLY | O_CREAT, 0600);
+    int p[2] = { -1, -1 };
+    CHECK(pipe(p) == 0);
+    held[1] = p[0];
+    held[2] = p[1];
+    for (int i = 0; i < 3; i++) CHECK(held[i] > 2 && !(fcntl(held[i], F_GETFD) & FD_CLOEXEC));
+}
+
+static void release(int held[3])
+{
+    for (int i = 0; i < 3; i++)
+        if (held[i] >= 0) close(held[i]);
+}
+
+/* Each spawn site hands its child 0-2 and nothing else (AUDIT-004; the register's "spawned tools inherit the app's
+ * descriptors"): the shared helper, the services supervisor, the backup pipeline; and the server's pid check
+ * spawns nothing. */
+static void test_child_descriptors(void)
+{
+    int held[3];
+    hold_leaky_descriptors(held);
+
+    /* The helper: stdout on a pipe, stderr to /dev/null. */
+    int out[2];
+    CHECK(child_pipe(out) && out[0] > 2 && out[1] > 2 && (fcntl(out[0], F_GETFD) & FD_CLOEXEC));
+    char *argv[] = { g_self, "--list-fds", NULL };
+    pid_t pid = -1;
+    CHECK(child_spawn(&pid, g_self, argv, out[1], -1, true) == 0);
+    close(out[1]);
+    char buf[512] = "";
+    ssize_t n, got = 0;
+    while ((n = read(out[0], buf + got, sizeof(buf) - 1 - (size_t)got)) > 0) got += n;
+    buf[got] = '\0';
+    close(out[0]);
+    int st = 0;
+    CHECK(waitpid(pid, &st, 0) == pid && WIFEXITED(st));
+    CHECK(!strcmp(buf, "fds 0 1 2\n"));
+
+    /* The supervisor: the script is the child, and execs the lister with its stderr (the supervisor's pipe). */
+    char dir[PATH_MAX], script[PATH_MAX + 32], text[PATH_MAX + 64];
+    fresh_dir(dir, sizeof(dir), "fds-tools");
+    snprintf(script, sizeof(script), "%s/services.sh", dir);
+    snprintf(text, sizeof(text), "#!/bin/sh\nexec '%s' --list-fds\n", g_self);
+    write_file(script, text, 0700);
+    ServiceSupervisorResult r = run_up(dir);
+    CHECK(r.exit_code == 1 && !strcmp(r.reason, "fds 0 1 2"));
+
+    /* The backup pipeline: backup.sh is the child, the lister's stderr is the error line. */
+    snprintf(script, sizeof(script), "%s/backup.sh", dir);
+    write_file(script, text, 0700);
+    char project[PATH_MAX + 16], backups[PATH_MAX + 16], dest[PATH_MAX + 64] = "", why[400] = "";
+    snprintf(project, sizeof(project), "%s/project", dir);
+    snprintf(backups, sizeof(backups), "%s/backups", dir);
+    CHECK(mkdir(project, 0700) == 0);
+    setenv("SCRIBODO_BACKUPS", backups, 1);
+    CHECK(!backup_project(g_store, dir, project, dest, sizeof(dest), why, sizeof(why)));
+    CHECK(strstr(why, ": fds 0 1 2") && why[strlen(why) - 1] == '2');
+    unsetenv("SCRIBODO_BACKUPS");
+    release(held);
+
+    /* The server's pid check reads arguments from the kernel: a known child's, a dead one's. */
+    char *sleeper[] = { "/bin/sleep", "30", NULL };
+    CHECK(child_spawn(&pid, "/bin/sleep", sleeper, -1, -1, true) == 0);
+    char args[256] = "";
+    bool read_ok = false;
+    for (int i = 0; i < 200 && !(read_ok = child_process_args(pid, args, sizeof(args)) && !strcmp(args, "/bin/sleep 30")); i++)
+        usleep(5000); /* until the exec has happened */
+    CHECK(read_ok);
+    CHECK(getpgid(pid) == pid); /* own_group */
+    char tiny[6];
+    CHECK(child_process_args(pid, tiny, sizeof(tiny)) && !strcmp(tiny, "/bin/"));
+    kill(pid, SIGKILL);
+    CHECK(waitpid(pid, &st, 0) == pid);
+    CHECK(!child_process_args(pid, args, sizeof(args)));
+}
+
 /* The script's header and the C enum name the same codes. */
 static void test_contract_written_once(void)
 {
@@ -301,8 +400,10 @@ static void test_contract_written_once(void)
     CHECK(count == (int)(sizeof(expected) / sizeof(expected[0])));
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
+    if (argc > 1 && !strcmp(argv[1], "--list-fds")) return list_fds_main();
+    if (!realpath(argv[0], g_self)) return 1;
     char cwd[PATH_MAX];
     if (!getcwd(cwd, sizeof(cwd))) return 1;
     snprintf(g_repo_tools, sizeof(g_repo_tools), "%s/tools", cwd);
@@ -321,6 +422,7 @@ int main(void)
         { "real_script_refusals", test_real_script_refusals },
         { "contract_written_once", test_contract_written_once },
         { "tools_dir", test_tools_dir },
+        { "child_descriptors", test_child_descriptors },
     };
     int rc = run_tests(tests, sizeof(tests) / sizeof(tests[0]));
     test_state_fixture_destroy(g_dir, g_store);
