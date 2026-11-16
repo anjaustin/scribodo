@@ -1,7 +1,7 @@
 # The local services' defaults, written once (AUDIT-004 F6). Sourced by tools/services_lib.sh, which exports what
 # docker/compose.yml reads (the Compose file has no defaults of its own); the C side has the same values in
 # src/app/service_defaults.h. tests/test_service_defaults.py fails if any copy disagrees or a literal reappears.
-# Plain assignments only: this file is also read by that test.
+# Plain assignments and `: "${NAME:=value}"` defaults only: that test reads this file too.
 
 # Ports on 127.0.0.1 (SCRIBODO_DB_PORT and SCRIBODO_QDRANT_PORT override them).
 SCRIBODO_DEFAULT_DB_PORT=33061
@@ -10,9 +10,11 @@ SCRIBODO_DEFAULT_QDRANT_PORT=6333
 # The secrets folder, under $HOME (SCRIBODO_SECRETS overrides it).
 SCRIBODO_DEFAULT_SECRETS_DIR="Library/Application Support/Scribodo/services"
 
-# The MariaDB version the store is pinned to: the container image's tag (docker/compose.yml, by digest) and the exact
-# version native mode requires of Homebrew's mariadb@11.4 (AUDIT-004 F13: both paths run the same server release).
-SCRIBODO_MARIADB_VERSION=11.4.13
+# The MariaDB release the store is pinned to: the container image's tag (docker/compose.yml, by digest) and the floor
+# native mode requires of Homebrew's mariadb@11.4. Native accepts this release or a newer patch of its series (with a
+# warning naming both), and refuses another series or an older patch (AUDIT-004 F13, the coordinator's decision).
+# Overridable, to rehearse another release.
+: "${SCRIBODO_MARIADB_VERSION:=11.4.13}"
 
 # The MariaDB server's settings beyond its paths and listener, the same for the native server and the container.
 SCRIBODO_MARIADB_SERVER_FLAGS="--character-set-server=utf8mb4 --collation-server=utf8mb4_uca1400_ai_ci --innodb-buffer-pool-size=128M --max-connections=32 --skip-name-resolve"

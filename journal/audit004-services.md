@@ -261,3 +261,32 @@ removal. The probe must print `absent`, so a probe that cannot run fails the ste
   interpolated).
 
 **Gates (RT1):** `make test` exit 0; `make analyze` exit 0 (no other analyze running); `make sanitize` exit 0.
+
+## RT2 — the MariaDB version policy (medium; the coordinator's design decision)
+
+Item 6's exact-release check is replaced by the coordinator's policy, which lives in
+`services_lib.sh:mariadb_version_check`:
+- the pinned release passes silently;
+- a newer patch of the same series passes, and `up` ends with `warning: MariaDB 11.4.14 is running; the store is
+  pinned to 11.4.13 (…)` on stderr and exit 0;
+- another series, an older patch, or a version that cannot be read is refused with exit 3, saying what is needed.
+
+`tools/services.defaults` now writes `: "${SCRIBODO_MARIADB_VERSION:=11.4.13}"`, so the pin can be overridden (the
+defaults test's parser accepts that form; the header documents the variable among the user-settable ones). The
+exit-code contract gains one line: on success, a last stderr line starting `warning: ` is for the author.
+`service_supervisor_warning()` returns it without its prefix, only after a success. `main.c` shows it in the status
+line once per distinct warning (one field outside the unions, five lines).
+
+**Tests:**
+- `tests/test_services_docker.sh`, through the library with a fake `mariadbd`: the pin passes silently; pin+1 passes
+  with a warning naming both versions; pin−1, 11.5.0, 10.11.9 and an unreadable version are refused with 3 and the
+  reason; the override moves the floor in both directions.
+- `tests/test_services.c`, the real script: 11.4.12 and 10.11.9 are refused (3, by name); 11.4.14 gets past the
+  version check (the missing stand-in Qdrant then refuses with 4); an override to 11.4.15 refuses 11.4.14. The
+  supervisor's warning accessor returns the line after a success, and nothing after a plain success or a failure.
+- The real Homebrew binary passes silently (rc 0, no warning).
+
+Not exercised: the warning at the end of a whole successful native `up` with a newer patch. That needs a real newer
+server; the pieces it joins (the check, the final `echo`, the accessor) are each tested.
+
+**Gates (RT2):** `make test` exit 0; `make analyze` exit 0; `make sanitize` exit 0.

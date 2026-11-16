@@ -1774,6 +1774,11 @@ int main(int argc, char **argv)
             if (service_result.command_attempted && service_result.command_succeeded) {
                 app.services_started = true;
                 app.services_started_at = GetTime();
+                const char *warning = service_supervisor_warning(&service_result);
+                if (warning && strcmp(warning, app.services_warning)) {
+                    snprintf(app.services_warning, sizeof(app.services_warning), "%s", warning);
+                    set_status(&app, warning);
+                }
             }
             if (service_result.reachable || service_result.command_succeeded) {
                 app.services_headline = NULL;

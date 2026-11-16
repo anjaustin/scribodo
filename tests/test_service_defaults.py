@@ -29,8 +29,8 @@ def read_defaults() -> dict[str, str]:
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        m = re.fullmatch(r"([A-Z_]+)=(.*)", line)
-        assert m, f"tools/services.defaults: not a plain assignment: {line}"
+        m = re.fullmatch(r"([A-Z_]+)=(.*)", line) or re.fullmatch(r': "\$\{([A-Z_]+):=([^}]*)\}"', line)
+        assert m, f"tools/services.defaults: not a plain assignment or overridable default: {line}"
         words = shlex.split(m.group(2))
         assert len(words) == 1, f"tools/services.defaults: {m.group(1)} is not one word or one quoted string"
         values[m.group(1)] = words[0]

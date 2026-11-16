@@ -103,6 +103,14 @@ static void test_exit_codes(void)
     service_supervisor_describe(&ok, text, sizeof(text));
     CHECK(ok.command_succeeded && ok.exit_code == 0 && !service_supervisor_headline(&ok) && !text[0]);
 
+    /* A start that succeeded with a warning: shown (without its prefix), and only then. */
+    ServiceSupervisorResult warned = run_fake("echo 'warning: MariaDB 11.4.14 is running; the store is pinned to 11.4.13' >&2", 0);
+    CHECK(warned.command_succeeded && !service_supervisor_headline(&warned));
+    CHECK(service_supervisor_warning(&warned) && !strcmp(service_supervisor_warning(&warned), "MariaDB 11.4.14 is running; the store is pinned to 11.4.13"));
+    CHECK(!service_supervisor_warning(&ok));
+    ServiceSupervisorResult failed_warning = run_fake("echo 'warning: not after a failure' >&2", 1);
+    CHECK(!service_supervisor_warning(&failed_warning));
+
     /* No line on stderr: the code is still said. */
     ServiceSupervisorResult quiet = run_fake(":", SERVICES_EXIT_PORT);
     service_supervisor_describe(&quiet, text, sizeof(text));
@@ -182,12 +190,21 @@ static void test_real_script_refusals(void)
 
     fake_install(&f, "10.11.9", true);
     r = run_up(g_repo_tools);
-    CHECK(r.exit_code == SERVICES_EXIT_MARIADB && strstr(r.reason, "MariaDB at ") && strstr(r.reason, "is 10.11.9, not "));
+    CHECK(r.exit_code == SERVICES_EXIT_MARIADB && strstr(r.reason, "MariaDB at ") && strstr(r.reason, "is 10.11.9; the store needs 11.4.13"));
 
-    /* The same series, another release: refused by name (the pin is one release, AUDIT-004 F13). */
+    /* An older patch of the series: refused by name (AUDIT-004 F13). A newer one passes the check (the next step,
+     * here the missing Qdrant, is what refuses), and an override moves the floor. */
     fake_install(&f, "11.4.12", true);
     r = run_up(g_repo_tools);
-    CHECK(r.exit_code == SERVICES_EXIT_MARIADB && strstr(r.reason, "is 11.4.12, not 11.4.13"));
+    CHECK(r.exit_code == SERVICES_EXIT_MARIADB && strstr(r.reason, "is 11.4.12; the store needs 11.4.13"));
+    fake_install(&f, "11.4.14", false);
+    r = run_up(g_repo_tools);
+    CHECK(r.exit_code == SERVICES_EXIT_QDRANT);
+    fake_install(&f, "11.4.14", true);
+    setenv("SCRIBODO_MARIADB_VERSION", "11.4.15", 1);
+    r = run_up(g_repo_tools);
+    unsetenv("SCRIBODO_MARIADB_VERSION");
+    CHECK(r.exit_code == SERVICES_EXIT_MARIADB && strstr(r.reason, "the store needs 11.4.15"));
 
     fake_install(&f, "11.4.13", false);
     r = run_up(g_repo_tools);

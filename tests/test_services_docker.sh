@@ -175,6 +175,28 @@ tools/services.sh testdb create scribodo_test_x >/dev/null 2>&1; r=$?
 [ "$r" = 0 ] && [ "$(cat "$CLIENT_LOG")" = "mariadb|-uroot|pw=rootpw-docker|stdin=CREATE DATABASE IF NOT EXISTS \`scribodo_test_x\` CHARACTER SET utf8mb4; GRANT ALL ON \`scribodo_test_x\`.* TO 'scribodo'@'%';" ]
 check "testdb create: the database and its grant, as root in the container" $?
 
+# ---- the MariaDB release: the pin or a newer patch of its series ----------------------------------------------------
+version_case() { # version_case FOUND [PIN]: prints the check's status, then its warning, then its stderr
+    printf 'V=%s\n' "$1" > "$T/version"
+    ( [ -n "${2:-}" ] && export SCRIBODO_MARIADB_VERSION="$2"
+      bash -c '. tools/services_lib.sh; mariadb_version_check "$1/mariadbd" 2>"$2"; r=$?; printf "%s|%s|%s" "$r" "$MARIADB_VERSION_WARNING" "$(cat "$2")"' lib "$T/clients" "$T/version.err" )
+}
+pin="$(. tools/services.defaults; echo "$SCRIBODO_MARIADB_VERSION")"; series="${pin%.*}"; patch="${pin##*.}"
+[ "$(version_case "$pin")" = "0||" ]
+check "the pinned MariaDB release passes, silently" $?
+out="$(version_case "$series.$((patch + 1))")"
+[ "${out%%|*}" = 0 ] && printf '%s' "$out" | grep -qF "MariaDB $series.$((patch + 1)) is running; the store is pinned to $pin" &&
+    [ "${out##*|}" = "" ]
+check "a newer patch of the series passes, with a warning naming both versions" $?
+for v in "$series.$((patch - 1))" "11.5.0" "10.11.9" ""; do
+    out="$(version_case "$v")"
+    [ "${out%%|*}" = 3 ] && printf '%s' "$out" | grep -qF "the store needs $pin or a newer $series patch" || { check "MariaDB '$v' refused" 1; continue; }
+done
+check "an older patch, another series or an unreadable version is refused (3), saying what is needed" 0
+[ "$(version_case "$pin" "$series.$((patch + 2))" | cut -d'|' -f1)" = 3 ] && [ "$(version_case "$series.$((patch + 2))" "$series.$((patch + 2))")" = "0||" ]
+check "SCRIBODO_MARIADB_VERSION overrides the pin" $?
+printf 'V=%s\n' "$pin" > "$T/version"
+
 # ---- Compose is called only through the library ------------------------------------------------------------------
 # docker/compose.yml requires variables only services_lib.sh exports: a direct `docker compose` elsewhere fails at parse
 # time, and a check reading its (empty) output passes vacuously (the red-team finding on servicestest and backuptest).

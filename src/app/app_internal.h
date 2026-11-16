@@ -271,6 +271,7 @@ typedef struct {
     StoreManager *store;
     ServiceSupervisor services;
     const char *services_headline; /* why the last `services.sh up` failed (static), NULL once one succeeds */
+    char services_warning[SERVICES_REASON_MAX]; /* the last `up` warning shown, so each is shown once */
     /* A backup running in the background (Explorer: PROJECT). */
     BackupJob backup;
     char backup_label[160];

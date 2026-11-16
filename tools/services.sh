@@ -31,10 +31,11 @@
 #   SCRIBODO_NATIVE_FRESH      1: `up` starts an empty native store over credentials whose store is in the containers
 #   SCRIBODO_MIGRATE_REPLACE   1: migrate-from-docker replaces an existing native store, keeping a dump of it first
 #   SCRIBODO_PURGE_CONFIRM     1: purge may delete the author's own store
+#   SCRIBODO_MARIADB_VERSION   the MariaDB release the store is pinned to (tools/services.defaults); native mode takes
+#                              it or a newer patch of its series
 # Set by the scripts themselves, not by hand:
 #   SCRIBODO_SERVICES_LOCKED   marks the re-run under the store's lock (lockf), so it does not lock again
 #   SCRIBODO_MARIADB_SERVER_FLAGS  the MariaDB server's settings from tools/services.defaults, exported for Compose
-#   SCRIBODO_MARIADB_VERSION   the MariaDB release the store is pinned to, from tools/services.defaults
 #
 # Exit codes: the contract the app reads (src/app/service_supervisor.h, SERVICES_EXIT_*; tests/test_services.c pins
 # both). The last line on stderr says what happened in words; the app shows it beside the code's sentence.
@@ -47,6 +48,8 @@
 #   5   a service's port is taken by another program
 #   6   docker mode, and Docker is not running
 #   75  another services.sh held this store's lock for five minutes (lockf's EX_TEMPFAIL)
+# On success, a last stderr line beginning `warning: ` is for the author (the app shows it once): today, a newer MariaDB
+# patch than the pin.
 set -euo pipefail
 . "$(dirname "$0")/services_lib.sh"
 
@@ -142,15 +145,9 @@ native_need() { # returns 3 (MariaDB) or 4 (Qdrant), the exit codes above
     [ -x "$QDRANT_BIN" ] || { echo "Qdrant isn't built: make qdrant (the pinned 1.20.0 release binary; or set SCRIBODO_QDRANT_BIN)" >&2; missing=4; }
     [ -x "$MARIADB_BIN/mariadbd" ] || { echo "MariaDB 11.4 isn't installed: brew install mariadb@11.4 (or set SCRIBODO_MARIADB_BIN)" >&2; missing=3; }
     [ "$missing" = 0 ] || return "$missing"
-    # The exact release the container image is pinned to (AUDIT-004 F13): the store is tested on what runs natively,
-    # and the dependency report checks the image, so the two must be one release. A `brew upgrade` to the next patch
-    # release is refused here, by name, until the pin is reviewed and moved (tools/services.defaults, the image digest).
-    local found
-    found="$("$MARIADB_BIN/mariadbd" --no-defaults --version 2>/dev/null | sed -n 's/.* Ver \([0-9][0-9.]*\)-MariaDB.*/\1/p')"
-    [ "$found" = "$SCRIBODO_MARIADB_VERSION" ] || {
-        echo "MariaDB at $MARIADB_BIN is ${found:-of unknown version}, not $SCRIBODO_MARIADB_VERSION, the release the store is pinned to (brew pin mariadb@11.4 keeps it)" >&2
-        return 3
-    }
+    # The release the container image is pinned to, or a newer patch of its series with a warning that `up` gives last
+    # (AUDIT-004 F13): another series or an older patch is refused by name.
+    mariadb_version_check "$MARIADB_BIN/mariadbd" || return 3
 }
 
 mariadbd_args() {
@@ -422,6 +419,8 @@ case "${1:-status}" in
             native_up || leave $?
             remember_mode native
             native_status
+            # Last on stderr, so the app shows it (the `warning: ` line in the exit-code contract above).
+            [ -z "${MARIADB_VERSION_WARNING:-}" ] || echo "warning: $MARIADB_VERSION_WARNING" >&2
         else
             docker info >/dev/null 2>&1 || { echo "Docker isn't running (start Docker Desktop, or install the native services: brew install mariadb@11.4 && make qdrant, then tools/services.sh migrate-from-docker)" >&2; leave 6; }
             secrets docker

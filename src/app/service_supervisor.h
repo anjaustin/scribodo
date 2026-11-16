@@ -53,6 +53,9 @@ bool service_supervisor_poll(ServiceSupervisor *supervisor, ServiceSupervisorRes
  * alone is what service_supervisor_headline() returns (a static string; NULL for success or no attempt). */
 const char *service_supervisor_headline(const ServiceSupervisorResult *result);
 void service_supervisor_describe(const ServiceSupervisorResult *result, char *out, size_t outlen);
+/* After a start that succeeded: the script's `warning: ` line without its prefix (a newer MariaDB patch than the pin),
+ * for the author to see once; NULL when there is none. Points into `result`. */
+const char *service_supervisor_warning(const ServiceSupervisorResult *result);
 /* Ends the object's lifetime; requires exclusive ownership with no concurrent
  * API entry. A running start/probe is allowed to finish and is joined. */
 bool service_supervisor_destroy(ServiceSupervisor *supervisor);

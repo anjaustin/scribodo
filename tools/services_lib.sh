@@ -24,6 +24,23 @@ MARIADB_BIN="${SCRIBODO_MARIADB_BIN:-/opt/homebrew/opt/mariadb@11.4/bin}"
 QDRANT_BIN="${SCRIBODO_QDRANT_BIN:-$here/build/qdrant/qdrant}"
 SCRIBODO_LOGS="${SCRIBODO_LOGS:-$HOME/Library/Logs/Scribodo}"
 
+# mariadb_version_check MARIADBD: 0 when the server is the pinned release (SCRIBODO_MARIADB_VERSION) or a newer patch
+# of its series, and then MARIADB_VERSION_WARNING names both versions (empty for the pinned release); 3, with the
+# reason on stderr, for another series, an older patch, or a version that cannot be read.
+mariadb_version_check() {
+    local found pin="$SCRIBODO_MARIADB_VERSION"
+    MARIADB_VERSION_WARNING=""
+    found="$("$1" --no-defaults --version 2>/dev/null | sed -n 's/.* Ver \([0-9][0-9.]*\)-MariaDB.*/\1/p')"
+    local re='^[0-9]+\.[0-9]+\.[0-9]+$'
+    if ! [[ "$pin" =~ $re ]]; then echo "SCRIBODO_MARIADB_VERSION is $pin, not a release such as 11.4.13" >&2; return 3; fi
+    if ! [[ "$found" =~ $re ]] || [ "${found%.*}" != "${pin%.*}" ] || [ "${found##*.}" -lt "${pin##*.}" ]; then
+        echo "MariaDB at $(dirname "$1") is ${found:-of unknown version}; the store needs $pin or a newer ${pin%.*} patch (brew install mariadb@${pin%.*})" >&2
+        return 3
+    fi
+    [ "$found" = "$pin" ] ||
+        MARIADB_VERSION_WARNING="MariaDB $found is running; the store is pinned to $pin (a newer ${pin%.*} patch is accepted until the pin is reviewed)"
+}
+
 native_store_exists() { [ -d "$SCRIBODO_SECRETS/mariadb/data/mysql" ]; }
 
 services_mode() {

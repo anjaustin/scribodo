@@ -240,3 +240,10 @@ void service_supervisor_describe(const ServiceSupervisorResult *result, char *ou
     if (result->reason[0]) snprintf(out, outlen, "%s: %s", headline, result->reason);
     else snprintf(out, outlen, "%s (tools/services.sh exit %d)", headline, result->exit_code);
 }
+
+const char *service_supervisor_warning(const ServiceSupervisorResult *result)
+{
+    static const char prefix[] = "warning: ";
+    if (!result || !result->command_succeeded || strncmp(result->reason, prefix, sizeof(prefix) - 1)) return NULL;
+    return result->reason + sizeof(prefix) - 1;
+}
