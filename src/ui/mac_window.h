@@ -31,4 +31,10 @@ bool mac_window_begin_drag(void *nswindow);
 /* A double-click on an empty part of the toolbar: zoom, minimise or nothing, as the author's system setting says. */
 void mac_window_title_double_click(void *nswindow);
 
+/* The translucent sidebar: macOS's own sidebar material (an NSVisualEffectView, blending with what is behind the
+ * window) placed beneath the app's drawing, which must then be a transparent window (FLAG_WINDOW_TRANSPARENT) and clear
+ * to transparent where the material should show. `dark` picks the material's dark or light look to match the palette.
+ * Installed once; `on` false hides it (nothing is composited). False when the window cannot take it. */
+bool mac_window_vibrancy(void *nswindow, bool on, bool dark);
+
 #endif

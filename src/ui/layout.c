@@ -164,7 +164,7 @@ static void layout_toolbar(App *app)
            .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(TOOLBAR_H) },
                        .padding = { (uint16_t)(14 + mac_window_toolbar_inset(GetWindowHandle())), 14, 0, 0 }, .childGap = 14,
                        .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
-           .backgroundColor = COL_PANEL,
+           .backgroundColor = COL_SIDEBAR,
            .border = { .color = COL_BORDER, .width = { .bottom = 1 } } }) {
         /* Scribodo: the app's menu (Fonts, Model settings). */
         CLAY({ .id = CLAY_ID("AppMenu"),
@@ -241,7 +241,7 @@ static void layout_explorer(App *app)
            .layout = { .sizing = { CLAY_SIZING_FIXED(app->explorer_w), CLAY_SIZING_GROW(0) },
                        .padding = CLAY_PADDING_ALL(12), .childGap = 2,
                        .layoutDirection = CLAY_TOP_TO_BOTTOM },
-           .backgroundColor = COL_PANEL, .clip = { .horizontal = true, .vertical = true, .childOffset = Clay_GetScrollOffset() } }) {
+           .backgroundColor = COL_SIDEBAR, .clip = { .horizontal = true, .vertical = true, .childOffset = Clay_GetScrollOffset() } }) {
         if (app->store_problem == STORE_PROBLEM_COPY) {
             coming_soon(app, "This folder is a copy of a project in the store.");
             coming_soon(app, "Notes, canon, chats and History are paused.");
@@ -423,7 +423,7 @@ Clay_RenderCommandArray build_layout(App *app)
     CLAY({ .id = CLAY_ID("Root"),
            .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
                        .layoutDirection = CLAY_TOP_TO_BOTTOM },
-           .backgroundColor = COL_BG }) {
+           .backgroundColor = theme_translucent() ? (Clay_Color){ 0 } : COL_BG }) {
 
         layout_toolbar(app);
 

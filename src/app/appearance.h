@@ -26,6 +26,7 @@ typedef struct {
     int theme;           /* ui/theme.h: THEME_DARK (default), THEME_LIGHT, THEME_PAPER */
     bool typewriter;     /* the caret's line stays at the middle of the document while you write */
     bool dim_paragraphs; /* paragraphs other than the caret's are drawn faint */
+    bool translucent_sidebar; /* the toolbar and Explorer show the desktop through macOS's sidebar material */
 } Appearance;
 
 typedef struct {

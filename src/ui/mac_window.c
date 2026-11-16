@@ -173,6 +173,48 @@ int mac_window_last_click_count(void *nswindow)
     return (int)((long (*)(id, SEL))objc_msgSend)(ev, SEL_("clickCount"));
 }
 
+/* The effect view sits beside the GL view inside a plain container that becomes the window's content view: AppKit
+ * draws a view's subviews over its own content, so the material must be a sibling below, not a child. */
+static id g_effect;
+
+bool mac_window_vibrancy(void *nswindow, bool on, bool dark)
+{
+    id win = (id)nswindow;
+    if (!win || !answers(win, "setContentView:") || !cls("NSVisualEffectView")) return false;
+    if (!g_effect) {
+        if (!on) return true; /* nothing to hide */
+        id glview = send_id(win, "contentView");
+        if (!answers(glview, "bounds")) return false;
+        MwRect bounds = ((MwRect(*)(id, SEL))objc_msgSend)(glview, SEL_("bounds"));
+        id container = ((id(*)(id, SEL, MwRect))objc_msgSend)(send_id(cls("NSView"), "alloc"), SEL_("initWithFrame:"), bounds);
+        id fx = ((id(*)(id, SEL, MwRect))objc_msgSend)(send_id(cls("NSVisualEffectView"), "alloc"), SEL_("initWithFrame:"), bounds);
+        if (!container || !fx) return false;
+        ((void (*)(id, SEL, long))objc_msgSend)(fx, SEL_("setMaterial:"), 7L);     /* NSVisualEffectMaterialSidebar */
+        ((void (*)(id, SEL, long))objc_msgSend)(fx, SEL_("setBlendingMode:"), 0L); /* behind the window */
+        ((void (*)(id, SEL, long))objc_msgSend)(fx, SEL_("setState:"), 1L);        /* active even when not key */
+        const unsigned long width_height = 2UL | 16UL;                             /* NSViewWidthSizable | HeightSizable */
+        ((void (*)(id, SEL, unsigned long))objc_msgSend)(fx, SEL_("setAutoresizingMask:"), width_height);
+        ((void (*)(id, SEL, unsigned long))objc_msgSend)(glview, SEL_("setAutoresizingMask:"), width_height);
+        ((void (*)(id, SEL, unsigned long))objc_msgSend)(container, SEL_("setAutoresizingMask:"), width_height);
+        send_id(glview, "retain"); /* held while it moves into the container */
+        ((void (*)(id, SEL, id))objc_msgSend)(win, SEL_("setContentView:"), container);
+        ((void (*)(id, SEL, id))objc_msgSend)(container, SEL_("addSubview:"), fx);
+        ((void (*)(id, SEL, id))objc_msgSend)(container, SEL_("addSubview:"), glview);
+        ((void (*)(id, SEL))objc_msgSend)(glview, SEL_("release"));
+        ((void (*)(id, SEL))objc_msgSend)(container, SEL_("release"));
+        ((void (*)(id, SEL, id))objc_msgSend)(win, SEL_("makeFirstResponder:"), glview);
+        g_effect = fx; /* the container holds it */
+        ((void (*)(id, SEL))objc_msgSend)(fx, SEL_("release"));
+    }
+    id appearance_class = cls("NSAppearance");
+    id name = ((id(*)(id, SEL, const char *))objc_msgSend)(cls("NSString"), SEL_("stringWithUTF8String:"),
+                                                          dark ? "NSAppearanceNameDarkAqua" : "NSAppearanceNameAqua");
+    id look = answers(appearance_class, "appearanceNamed:") ? ((id(*)(id, SEL, id))objc_msgSend)(appearance_class, SEL_("appearanceNamed:"), name) : nil;
+    if (look && answers(g_effect, "setAppearance:")) ((void (*)(id, SEL, id))objc_msgSend)(g_effect, SEL_("setAppearance:"), look);
+    ((void (*)(id, SEL, BOOL))objc_msgSend)(g_effect, SEL_("setHidden:"), on ? NO : YES);
+    return true;
+}
+
 void mac_window_title_double_click(void *nswindow)
 {
     id win = (id)nswindow;

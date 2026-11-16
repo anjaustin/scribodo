@@ -54,6 +54,17 @@ click_element RecallToggle
 expect element_w Recall 255 265
 expect element_w Explorer 205 215
 click_element RecallToggle
+# The translucent sidebar (a branch to judge by eye): saved, and the window keeps working with it on.
+key COMMA cmd
+click_element FontsTranslucent
+click_element FontsDone
+expect lines "$DIR/appearance.json" "\"translucent_sidebar\":true" 1
+shot translucent
+click_element ChatInput
+click_element Editor
+key COMMA cmd
+click_element FontsTranslucent
+click_element FontsDone
 # Dark again, and nothing but the palette changed.
 key COMMA cmd
 click_element FontsTheme0

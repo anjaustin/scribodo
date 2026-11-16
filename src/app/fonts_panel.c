@@ -70,7 +70,7 @@ static void show(App *app, const Appearance *next)
     Appearance before = app->appearance;
     unsigned roles = changed_roles(&before, next);
     if (roles || before.theme != next->theme || before.typewriter != next->typewriter ||
-        before.dim_paragraphs != next->dim_paragraphs)
+        before.dim_paragraphs != next->dim_paragraphs || before.translucent_sidebar != next->translucent_sidebar)
         backdrop_invalidate(); /* the window behind changed: the frosted snapshot is taken again next frame */
     app->appearance = *next;
     app_apply_look(app); /* the palette and writing aids show at once */
@@ -266,6 +266,8 @@ static void draw_roles(App *app, Rectangle d, bool previews)
     /* The palette: one of three, side by side. */
     DrawRectangle((int)(d.x + SP_6), (int)y, (int)(d.width - 2 * SP_6), 1, THEME_BORDER);
     widget_text(ui, "Theme", d.x + SP_6, y + SP_2 + (28 - ui->line_height) / 2, 0, THEME_TEXT);
+    p->translucent = (Rectangle){ d.x + 180, y + SP_2, 220, 28 };
+    widget_checkbox(p->translucent, "Translucent sidebar", ui, &next.translucent_sidebar);
     for (int t = 0; t < THEME_COUNT; t++) {
         p->theme[t] = (Rectangle){ d.x + d.width - SP_6 - (float)(THEME_COUNT - t) * 100, y + SP_2, 96, 28 };
         if (widget_toggle(p->theme[t], theme_palette(t)->label, ui, next.theme == t)) next.theme = t;
@@ -385,6 +387,7 @@ Rectangle fonts_panel_element(const FontsPanel *p, const char *name)
     if (!strcmp(name, "FontsDone")) return p->done;
     if (!strcmp(name, "FontsTypewriter")) return p->typewriter;
     if (!strcmp(name, "FontsDim")) return p->dim;
+    if (!strcmp(name, "FontsTranslucent")) return p->translucent;
     if (!strncmp(name, "FontsTheme", 10) && name[10]) {
         int t = atoi(name + 10);
         return t >= 0 && t < THEME_COUNT ? p->theme[t] : none;

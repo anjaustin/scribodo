@@ -104,6 +104,11 @@ void app_match_refresh_rate(App *app)
 void app_apply_look(App *app)
 {
     theme_select(app->appearance.theme);
+    /* The translucent sidebar needs the unified title bar (the toolbar is part of the sidebar's glass). */
+    bool glass = app->appearance.translucent_sidebar && app->unified_titlebar && app->window_ready &&
+                 mac_window_vibrancy(GetWindowHandle(), app->appearance.translucent_sidebar, app->appearance.theme == THEME_DARK);
+    if (!app->appearance.translucent_sidebar && app->window_ready) mac_window_vibrancy(GetWindowHandle(), false, false);
+    theme_set_translucent(glass);
     if (app->editor) editor_set_writing_aids(app->editor, app->appearance.typewriter, app->appearance.dim_paragraphs);
 }
 
@@ -235,7 +240,9 @@ int app_open_window(App *app, const char *script_path)
 {
     /* Motion (ui/motion.h): off in UI test runs, whose checks read the end state, and under macOS's Reduce motion. */
     motion_set_enabled(!script_path && !motion_system_reduced());
-    unsigned flags = FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_HIGHDPI | FLAG_VSYNC_HINT;
+    /* Transparent from the start (it cannot be changed later), so the translucent sidebar can be switched on at any
+     * time; with it off every pixel is drawn opaque and nothing shows through. */
+    unsigned flags = FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_HIGHDPI | FLAG_VSYNC_HINT | FLAG_WINDOW_TRANSPARENT;
     if (script_path) {
         flags |= FLAG_WINDOW_HIDDEN;
         input_set_scripted(true);

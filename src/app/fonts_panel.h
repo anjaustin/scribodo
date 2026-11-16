@@ -32,7 +32,7 @@ typedef struct {
     Rectangle done, cancel, defaults, back;
     Rectangle pick[APPEARANCE_ROLE_COUNT], minus[APPEARANCE_ROLE_COUNT], plus[APPEARANCE_ROLE_COUNT];
     Rectangle item[FONTS_PANEL_ROWS];
-    Rectangle theme[3], typewriter, dim; /* the palettes (THEME_COUNT), the writing aids */
+    Rectangle theme[3], typewriter, dim, translucent; /* the palettes (THEME_COUNT), the writing aids, the glass */
     int nitem;
     int fit;               /* list rows that fit above the footer this frame */
     bool picked;           /* a row was picked this frame: its Enter or click must not reach the roles view */

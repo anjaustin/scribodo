@@ -63,6 +63,22 @@ int theme_current(void) { return (int)(g_theme - k_palettes); }
 
 const ThemePalette *theme_palette(int which) { return which >= 0 && which < THEME_COUNT ? &k_palettes[which] : NULL; }
 
+static bool g_translucent;
+
+void theme_set_translucent(bool on) { g_translucent = on; }
+bool theme_translucent(void) { return g_translucent; }
+
+/* How much of the panel colour covers the material: enough to keep each palette's character (Paper stays warm) and
+ * the text's contrast, little enough that the desktop shows. */
+Color theme_sidebar(void)
+{
+    Color c = g_theme->panel;
+    if (!g_translucent) return c;
+    float keep = g_theme == &k_palettes[THEME_DARK] ? 0.62f : g_theme == &k_palettes[THEME_PAPER] ? 0.74f : 0.66f;
+    c.a = (unsigned char)(255.0f * keep);
+    return c;
+}
+
 int theme_by_name(const char *name)
 {
     for (int i = 0; name && i < THEME_COUNT; i++)

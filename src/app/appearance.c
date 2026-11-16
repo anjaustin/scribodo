@@ -70,6 +70,7 @@ void appearance_load(Appearance *a)
     if (cJSON_IsString(theme) && theme_by_name(theme->valuestring) >= 0) a->theme = theme_by_name(theme->valuestring);
     a->typewriter = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(j, "typewriter"));
     a->dim_paragraphs = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(j, "dim_paragraphs"));
+    a->translucent_sidebar = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(j, "translucent_sidebar"));
     for (int r = 0; r < APPEARANCE_ROLE_COUNT; r++) {
         const cJSON *o = cJSON_GetObjectItemCaseSensitive(j, k_roles[r].key);
         if (!cJSON_IsObject(o)) continue;
@@ -102,6 +103,7 @@ bool appearance_save(const Appearance *a)
     cJSON_AddStringToObject(j, "theme", pal ? pal->name : "dark");
     cJSON_AddBoolToObject(j, "typewriter", a->typewriter);
     cJSON_AddBoolToObject(j, "dim_paragraphs", a->dim_paragraphs);
+    cJSON_AddBoolToObject(j, "translucent_sidebar", a->translucent_sidebar);
     for (int r = 0; r < APPEARANCE_ROLE_COUNT; r++) {
         Appearance c = *a;
         appearance_set_size(&c, r, a->role[r].size);

@@ -9,6 +9,8 @@
 #ifndef SCRIBODO_THEME_H
 #define SCRIBODO_THEME_H
 
+#include <stdbool.h>
+
 #include "raylib.h"
 
 /* One palette: every colour role. The three palettes and their contrast checks are in theme.c. */
@@ -68,8 +70,14 @@ void theme_select(int which); /* out of range: dark */
 int theme_current(void);
 const ThemePalette *theme_palette(int which); /* NULL out of range */
 int theme_by_name(const char *name);          /* -1 when unknown */
+void theme_set_translucent(bool on);
+bool theme_translucent(void);
+Color theme_sidebar(void);
 
 #define THEME_PANEL         (g_theme->panel)
+/* The toolbar and Explorer: the panel colour, or, with the translucent sidebar on, the same colour partly transparent
+ * over macOS's own sidebar material (ui/mac_window.h), so the desktop shows through, blurred and tinted. */
+#define THEME_SIDEBAR       (theme_sidebar())
 #define THEME_FIELD         (g_theme->field)
 #define THEME_BG            (g_theme->bg)
 #define THEME_CARD          (g_theme->card)

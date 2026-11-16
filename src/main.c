@@ -1556,7 +1556,11 @@ static void frame_cursor(App *app, MainLoop *loop, Vector2 mouse)
 static int frame_draw_panes(App *app, Clay_RenderCommandArray cmds, const FrameRects *rects, bool modal)
 {
     BeginDrawing();
-    ClearBackground(THEME_BG);
+    /* Alpha blends on its own factors so the frame stays premultiplied where it is not opaque: text and fills over the
+     * translucent sidebar keep clean edges when the window server composites them over the material. */
+    rlSetBlendFactorsSeparate(RL_SRC_ALPHA, RL_ONE_MINUS_SRC_ALPHA, RL_ONE, RL_ONE_MINUS_SRC_ALPHA, RL_FUNC_ADD, RL_FUNC_ADD);
+    BeginBlendMode(BLEND_CUSTOM_SEPARATE);
+    ClearBackground(theme_translucent() ? (Color){ 0 } : THEME_BG);
     clay_render(cmds, app->font_ptrs);
     widget_frame_begin();
     widget_set_locked(modal); /* nothing behind a prompt or menu reacts */
@@ -1767,6 +1771,7 @@ static bool frame_end(App *app, MainLoop *loop)
         ExportImage(shot, shot_path);
         UnloadImage(shot);
     }
+    EndBlendMode();
     EndDrawing();
 
     if (loop->screenshot_path && ++loop->frame == 10) {
