@@ -34,7 +34,7 @@ def main():
         ("chat_eof_hides_allocation_failure", "src/app/chat_store.c",
          ("cJSON_Delete(j); lines_ok = false; break;", "cJSON_Delete(j); break;", 2)),
         ("chat_title_not_restored", "src/app/chat_store.c",
-         ('snprintf(c->title, sizeof(c->title), "%s", t->valuestring);', "(void)t;", 1)),
+         ("title_clean(c->title, sizeof(c->title), t->valuestring);", "(void)t;", 1)),
         ("chat_observer_flag_not_restored", "src/app/chat_store.c",
          ("c->observer_ignore = !cJSON_IsTrue(rd);", "c->observer_ignore = false;", 1)),
         ("rules_trailing_bytes_accepted", "src/app/observer_store.c",
