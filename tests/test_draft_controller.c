@@ -269,6 +269,36 @@ static void test_quit_while_writing(void)
     CHECK(doc_recover_strays(doc, recovered, sizeof(recovered), &differs) == 1 && differs);
 }
 
+/* ⌘S, then the same document opened before the next poll: the load must not find a half-written draft. Clean: the
+ * draft is gone before recovery looks; dirty: the draft is whole, and recovery keeps it whole. */
+static void test_load_while_writing(void)
+{
+    char doc[700], first[PATH_MAX];
+    make_doc(doc, sizeof(doc), "j.md");
+    DraftController d;
+    TextSource src = { "first\n", 0 };
+    start_held_write(&d, doc, &src, first, sizeof(first));
+    gate_open(&g_gate);
+    draft_controller_before_load(&d, doc, false); /* saved: clean */
+    CHECK(!d.busy && !d.path[0] && count_drafts(g_dir, "j.md.scribodo-") == 0);
+    bool differs = true;
+    char recovered[PATH_MAX];
+    CHECK(doc_recover_strays(doc, recovered, sizeof(recovered), &differs) == 0);
+    draft_controller_destroy(&d);
+
+    src.text = "first\n";
+    start_held_write(&d, doc, &src, first, sizeof(first));
+    gate_open(&g_gate);
+    draft_controller_before_load(&d, doc, true); /* reloaded with unsaved text: the draft is kept, complete */
+    CHECK(!d.busy && d.path[0] && file_is(d.path, "held in flight\n"));
+    CHECK(doc_recover_strays(doc, recovered, sizeof(recovered), &differs) == 1 && differs);
+    char kept[PATH_MAX + 600];
+    snprintf(kept, sizeof(kept), "%s/%s", g_dir, recovered); /* recovery names the copy, beside the document */
+    CHECK(file_is(kept, "held in flight\n"));
+    unlink(kept);
+    draft_controller_destroy(&d);
+}
+
 static void rm_rf(const char *dir)
 {
     DIR *d = opendir(dir);
@@ -302,6 +332,7 @@ int main(void)
         { "discard_while_writing", test_discard_while_writing },
         { "switch_while_writing", test_switch_while_writing },
         { "quit_while_writing", test_quit_while_writing },
+        { "load_while_writing", test_load_while_writing },
     };
     int rc = run_tests(tests, sizeof(tests) / sizeof(tests[0]));
     rm_rf(g_dir);

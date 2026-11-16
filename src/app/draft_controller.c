@@ -65,7 +65,13 @@ void draft_controller_set_write_hook(DraftController *draft, DraftWriteHook hook
     draft->write_hook_ctx = ctx;
 }
 
-
+void draft_controller_before_load(DraftController *draft, const char *doc, bool dirty)
+{
+    draft_controller_wait(draft);
+    if (!doc || !dirty || (draft->doc[0] && strcmp(draft->doc, doc) != 0)) {
+        if (draft->path[0]) draft_controller_discard(draft);
+    }
+}
 
 bool draft_controller_poll(DraftController *draft)
 {

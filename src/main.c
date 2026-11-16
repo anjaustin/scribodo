@@ -1103,6 +1103,9 @@ static void open_path(App *app, const char *path)
         project_of(path, proj, sizeof(proj));
         if (strcmp(proj, app->project_dir) != 0 && !close_record(app, false)) return;
     }
+    /* No draft write may be in flight while the load recovers strays beside the document (draft_controller.h). */
+    const char *open_doc = editor_path(app->editor);
+    draft_controller_before_load(&app->draft, open_doc, open_doc && editor_is_dirty(app->editor));
     if (editor_load_file(app->editor, path, msg, sizeof(msg))) {
         /* Edits and proposals belong to the document they were made for. */
         clear_proposal(app);

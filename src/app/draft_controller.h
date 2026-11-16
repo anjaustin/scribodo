@@ -66,6 +66,11 @@ bool draft_controller_tick(DraftController *draft, const char *doc, bool dirty, 
 bool draft_controller_poll(DraftController *draft);
 /* Blocks until no write is in flight, and adopts its result (tests, shutdown). */
 void draft_controller_wait(DraftController *draft);
+/* Before the editor loads a document: doc_recover_strays renames every save-temp-named file beside it, so a write
+ * in flight could be caught half written (red team on remed/main). Waits for it and adopts it, then applies the
+ * tick's rule at once: the draft is removed unless it holds unsaved text of `doc` (the open document, NULL for none),
+ * in which case it stays complete and the load keeps it as a recovered copy, as before the worker. */
+void draft_controller_before_load(DraftController *draft, const char *doc, bool dirty);
 /* Tests only. */
 void draft_controller_set_write_hook(DraftController *draft, DraftWriteHook hook, void *ctx);
 /* 64-bit FNV-1a of a NUL-terminated string (the draft's change check). */
