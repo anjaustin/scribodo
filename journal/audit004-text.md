@@ -764,3 +764,31 @@ or verdicts changed; C vs `b7d6220`: 0 of 670 differ, and the full output over 5
 manuscript paragraph) is identical; C and arm agree on all 670 (63 flagged) and on 120,000 fuzzed replies with the
 new shapes among the tokens; the 230-row fixture and the novels' sentence counts are unchanged. Evidence:
 `build/audit004-text/g1/`.
+
+### 2. The backfill marks each conversation done in its own transaction
+
+**Residual (from per-conversation commits).** A rerun recognised a committed conversation by its titles and their
+times, and an untimed title takes the legacy file's time. A death between two conversations followed by a sync or copy
+tool restamping the legacy files made the rerun apply the committed conversation again and double its titles.
+
+**Change.** Each conversation's transaction now also writes its progress row, `chat-titles-legacy:<conversation>` in
+`project_backfills` (the existing table: `name` is 64 characters, the prefix 19 and an id at most 40, so no migration
+and no column change); the rerun skips a marked conversation before reading its rows. The time comparison stays for
+conversations archived by the importer or by an earlier backfill. A crash point follows the progress row, so a death
+after the mark and before the commit is exercised.
+
+**Tests.** `test_db` `chat_title_backfill_restamp`: two chats with untimed renames, the state a death after the first
+leaves (the first done and marked, the second untouched, no receipt), the legacy files restamped, then the rerun: the
+first is not doubled, the second is done, nothing is pending. With the mark not consulted the test fails (checked by
+mutation; the rerun then also trips over the existing mark's key). The crash row (`test_crash_points`
+`titles_points`) now has two conversations, eight statements (the first conversation's rewritten row, two inserted rows
+and mark; the second's two rows and mark; the receipt), so deaths between the two conversations are among them; at
+each death each conversation is untouched or whole and there is no receipt, and the next open completes the archive
+once with one receipt. GAP-004's row says so.
+
+**`import_poll` (main.c) is not driven by a unit test.** It and `store_adopt_project` are static functions of
+`src/main.c`, which holds `main()`, the frame loop and the App's raylib state; no test binary links `main.c`. The
+decision they make is `import_job_next` (`src/app/import_job.c`), which `test_db` `chat_title_backfill_worker` drives
+with a real `ImportJob` (deferred while busy, the import after the poll, the backfill when free). The glue itself is
+exercised only by the UI scripts (`make uitest`, `uitest-db`), which this stream does not run; moving the two functions
+to a workflow module with an App-free interface would make them testable, and is the main.c stream's call.

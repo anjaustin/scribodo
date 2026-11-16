@@ -440,34 +440,44 @@ static int child_titles_main(const char *name, const char *dir)
     return ok ? 0 : 2;
 }
 
-/* The project's archived titles joined by '|', and its backfill receipts. */
-static void titles_state(StoreManager *manager, const char *pid, char *titles, size_t len, long *receipts)
+/* Each conversation's archived titles joined by '|' ("<first> / <second>"), and the backfill's receipt (not the
+ * per-conversation progress rows). */
+static void titles_state(StoreManager *manager, const char *c1, const char *c2, char *titles, size_t len, long *receipts)
 {
     DbRows r;
-    titles[0] = '\0';
+    char part[2][200] = { "", "" };
     *receipts = -1;
     Db *db = store_db(manager);
-    if (db && db_query(db, "SELECT GROUP_CONCAT(t.title ORDER BY t.seq SEPARATOR '|') FROM conversation_titles t"
-                           " JOIN conversations c ON c.id = t.conversation_id WHERE c.project_id = ?",
-                       (DbArg[1]){ DB_S(pid) }, 1, &r)) {
-        if (r.nrows == 1 && db_cell(&r, 0, 0)) snprintf(titles, len, "%s", db_cell(&r, 0, 0));
+    for (int k = 0; k < 2 && db; k++) {
+        if (!db_query(db, "SELECT GROUP_CONCAT(title ORDER BY seq SEPARATOR '|') FROM conversation_titles WHERE conversation_id = ?",
+                      (DbArg[1]){ DB_S(k ? c2 : c1) }, 1, &r))
+            continue;
+        if (r.nrows == 1 && db_cell(&r, 0, 0)) snprintf(part[k], sizeof(part[k]), "%s", db_cell(&r, 0, 0));
         db_rows_free(&r);
     }
-    if (db && db_query(db, "SELECT COUNT(*) FROM project_backfills WHERE project_id = ?", (DbArg[1]){ DB_S(pid) }, 1, &r)) {
+    snprintf(titles, len, "%s / %s", part[0], part[1]);
+    if (db && db_query(db, "SELECT COUNT(*) FROM project_backfills WHERE name = 'chat-titles-legacy'", NULL, 0, &r)) {
         if (r.nrows == 1) *receipts = atol(db_cell(&r, 0, 0));
         db_rows_free(&r);
     }
 }
 
-/* A project imported before migration 019 (its archive empty, no receipt), renamed once in the store since: the
- * backfill rewrites one row and inserts two in the conversation's transaction, then writes the receipt in its own. A death after any of
- * those statements, then the next open, must leave the file's titles before the store's rename, each once. */
+/* A project imported before migration 019 (its archive empty, no receipt) with two renamed chats, the first renamed once
+ * in the store since: the backfill writes each conversation's rows and its progress row in that conversation's
+ * transaction (the first: one row rewritten, two inserted, the mark; the second: two inserted, the mark), then the
+ * receipt in its own. A death after any statement, then the next open, must leave each conversation's earlier titles
+ * once, in order, and one receipt; a death between the two conversations is among them (the second pass's item 2). */
 static void test_titles_points(void)
 {
-    const char *point = "titles.statement", *want = "Two messages|Renamed once|Renamed twice";
+    const char *point = "titles.statement";
+    const char *want1 = "Two messages|Renamed once|Renamed twice", *before1 = "Renamed twice";
+    const char *want2 = "Second chat|S once", *before2 = "";
+    char want[200], before[200];
+    snprintf(want, sizeof(want), "%s / %s", want1, want2);
+    snprintf(before, sizeof(before), "%s / %s", before1, before2);
     const char *base = getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp";
     for (long k = 1; k < 100; k++) {
-        char name[64], spec[160], why[256] = "", dir[1024], chat_id[40], pid[40] = "", got[400];
+        char name[64], spec[160], why[256] = "", dir[1024], chat_id[40], chat2[40], pid[40] = "", got[400];
         snprintf(name, sizeof(name), "scribodo_crash_%d_t%ld", (int)getpid(), k);
         snprintf(spec, sizeof(spec), "%s#%ld", point, k);
         snprintf(dir, sizeof(dir), "%s/scribodo-crash-titles-XXXXXX", base);
@@ -478,6 +488,10 @@ static void test_titles_points(void)
         CHECK(make_legacy_project(manager, dir, chat_id, sizeof(chat_id)));
         CHECK(chat_store_title_line_files(dir, chat_id, "Renamed once", 1700000000) &&
               chat_store_title_line_files(dir, chat_id, "Renamed twice", 1700000100));
+        snprintf(chat2, sizeof(chat2), "%.15s-ffff", chat_id); /* a second chat id of the same shape */
+        ChatMessage m2 = { .role = CHAT_USER, .content = "A second chat" };
+        CHECK(chat_store_append(manager, dir, chat2, "Second chat", &m2) &&
+              chat_store_title_line_files(dir, chat2, "S once", 1700000200) && chat_store_title_line_files(dir, chat2, "S twice", 1700000300));
         CHECK(store_import(manager, dir, why, sizeof(why)) && store_mode(manager, dir, pid, sizeof(pid), NULL) == STORE_DB);
         Db *db = store_db(manager);
         CHECK(db && db_run(db, "DELETE t FROM conversation_titles t JOIN conversations c ON c.id = t.conversation_id WHERE c.project_id = ?",
@@ -485,13 +499,13 @@ static void test_titles_points(void)
         CHECK(db_run(db, "DELETE FROM project_backfills WHERE project_id = ?", (DbArg[1]){ DB_S(pid) }, 1, NULL)); /* an old import's state */
         CHECK(chat_store_rename(manager, dir, chat_id, "In the store"));
         long receipts;
-        titles_state(manager, pid, got, sizeof(got), &receipts);
-        CHECK(!strcmp(got, "Renamed twice") && receipts == 0);
+        titles_state(manager, chat_id, chat2, got, sizeof(got), &receipts);
+        CHECK(!strcmp(got, before) && receipts == 0);
         ChildResult r;
         CHECK(run_child2(g_self, spec, "--child-titles", name, dir, &r));
         if (r.exited) {
             CHECK(r.code == 0 && r.hits == k - 1 && r.hits >= 1);
-            titles_state(manager, pid, got, sizeof(got), &receipts);
+            titles_state(manager, chat_id, chat2, got, sizeof(got), &receipts);
             CHECK(!strcmp(got, want) && receipts == 1);
             fprintf(g_matrix, "%s\t%ld\tnone\t-\t-\t-\t%ld hits in all\n", point, k, r.hits);
             printf("%s: %ld points\n", point, k - 1);
@@ -506,14 +520,19 @@ static void test_titles_points(void)
         CHECK(manager && store_start(manager, name, why, sizeof(why)));
         char at_death[400];
         long receipts_at_death;
-        titles_state(manager, pid, at_death, sizeof(at_death), &receipts_at_death);
+        titles_state(manager, chat_id, chat2, at_death, sizeof(at_death), &receipts_at_death);
         store_backfill_chat_titles(manager, dir, NULL, 0); /* the next open */
         store_backfill_chat_titles(manager, dir, NULL, 0); /* and the one after: nothing more */
-        titles_state(manager, pid, got, sizeof(got), &receipts);
-        /* One transaction per conversation, then the receipt's (final verification 2c): at death the conversation is
-         * either untouched or whole, never half, and there is no receipt yet. */
-        bool held = (!strcmp(at_death, "Renamed twice") || !strcmp(at_death, want)) && receipts_at_death == 0 && !strcmp(got, want) &&
-                    receipts == 1;
+        titles_state(manager, chat_id, chat2, got, sizeof(got), &receipts);
+        /* At death each conversation is untouched or whole (its transaction), never half, and there is no receipt. */
+        char a1[200] = "", a2[200] = "";
+        const char *slash = strstr(at_death, " / ");
+        if (slash) {
+            snprintf(a1, sizeof(a1), "%.*s", (int)(slash - at_death), at_death);
+            snprintf(a2, sizeof(a2), "%s", slash + 3);
+        }
+        bool held = slash && (!strcmp(a1, before1) || !strcmp(a1, want1)) && (!strcmp(a2, before2) || !strcmp(a2, want2)) &&
+                    receipts_at_death == 0 && !strcmp(got, want) && receipts == 1;
         CHECK(held);
         if (!held) fprintf(stderr, "    %s#%ld: at death [%s] %ld, after [%s] %ld\n", point, k, at_death, receipts_at_death, got, receipts);
         fprintf(g_matrix, "%s\t%ld\tSIGKILL\tarchive [%s], receipts %ld\trecovered at the next open\tarchive [%s], receipts %ld\t%s\n",

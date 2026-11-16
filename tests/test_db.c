@@ -2489,6 +2489,84 @@ static void test_record_ids_two_writers(void)
     system(cmd);
 }
 
+/* The final verification's second pass, item 2: a death between two conversations, then a sync or copy tool restamping
+ * the legacy files, then the rerun. The first conversation's untimed titles carry the file's time, which no longer
+ * matches; its progress row keeps the rerun from applying it twice. */
+static void conversation_titles_of(Db *db, const char *cid, char *out, size_t len)
+{
+    DbRows r;
+    out[0] = '\0';
+    if (!db_query(db, "SELECT GROUP_CONCAT(title ORDER BY seq SEPARATOR '|') FROM conversation_titles WHERE conversation_id = ?",
+                  (DbArg[1]){ DB_S(cid) }, 1, &r))
+        return;
+    if (r.nrows == 1 && db_cell(&r, 0, 0)) snprintf(out, len, "%s", db_cell(&r, 0, 0));
+    db_rows_free(&r);
+}
+
+static void test_chat_title_backfill_restamp(void)
+{
+    char why[256] = "", root[PATH_MAX], proj[PATH_MAX + 16], pid[40] = "", got[200], status[400];
+    CHECK(store_start(g_store, g_name, why, sizeof(why)));
+    Db *db = store_db(g_store);
+    snprintf(root, sizeof(root), "%sscribodo-title-restamp-XXXXXX", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp/");
+    CHECK(mkdtemp(root) != NULL);
+    snprintf(proj, sizeof(proj), "%s/p", root);
+    CHECK(mkdir(proj, 0755) == 0);
+    const char *a = "20261115-190000-abcd", *b = "20261115-190100-abcd";
+    for (int k = 0; k < 2; k++) {
+        const char *id = k ? b : a;
+        char path[PATH_MAX + 120];
+        ChatMessage u = { .role = CHAT_USER, .content = k ? "Second chat" : "First chat" };
+        CHECK(chat_store_append(g_store, proj, id, "A", &u));
+        snprintf(path, sizeof(path), "%s/.scribodo/chats/%s.jsonl", proj, id);
+        FILE *f = fopen(path, "a"); /* untimed renames: the import and the backfill stamp them with the file's time */
+        if (f) {
+            fputs("{\"type\":\"title\",\"title\":\"B\"}\n{\"type\":\"title\",\"title\":\"C\"}\n", f);
+            fclose(f);
+        }
+    }
+    CHECK(store_import(g_store, proj, why, sizeof(why)) && store_mode(g_store, proj, pid, sizeof(pid), NULL) == STORE_DB);
+    CHECK(db_run(db, "DELETE t FROM conversation_titles t JOIN conversations c ON c.id = t.conversation_id WHERE c.project_id = ?",
+                 (DbArg[1]){ DB_S(pid) }, 1, NULL) &&
+          db_run(db, "DELETE FROM project_backfills WHERE project_id = ?", (DbArg[1]){ DB_S(pid) }, 1, NULL));
+    CHECK(store_backfill_chat_titles(g_store, proj, status, sizeof(status)));
+    conversation_titles_of(db, a, got, sizeof(got));
+    CHECK(!strcmp(got, "A|B"));
+    /* The state a death after the first conversation leaves: it done and marked, the second untouched, no receipt. */
+    char mark[80];
+    snprintf(mark, sizeof(mark), "chat-titles-legacy:%s", b);
+    CHECK(db_run(db, "DELETE FROM conversation_titles WHERE conversation_id = ?", (DbArg[1]){ DB_S(b) }, 1, NULL) &&
+          db_run(db, "DELETE FROM project_backfills WHERE project_id = ? AND name IN ('chat-titles-legacy', ?)",
+                 (DbArg[2]){ DB_S(pid), DB_S(mark) }, 2, NULL));
+    /* A sync tool restamps the legacy files. */
+    char legacy_dir[PATH_MAX + 64] = "";
+    {
+        char base[PATH_MAX + 32];
+        snprintf(base, sizeof(base), "%s/.scribodo", proj);
+        DIR *d = opendir(base);
+        struct dirent *ent;
+        while (d && (ent = readdir(d)) != NULL)
+            if (!strncmp(ent->d_name, "legacy-", 7)) snprintf(legacy_dir, sizeof(legacy_dir), "%s/%s/chats", base, ent->d_name);
+        if (d) closedir(d);
+    }
+    CHECK(legacy_dir[0] != '\0');
+    for (int k = 0; k < 2; k++) {
+        char path[PATH_MAX + 120];
+        snprintf(path, sizeof(path), "%s/%s.jsonl", legacy_dir, k ? b : a);
+        struct timeval tv[2] = { { 1800000000, 0 }, { 1800000000, 0 } };
+        CHECK(utimes(path, tv) == 0);
+    }
+    CHECK(store_backfill_pending(g_store, proj) && store_backfill_chat_titles(g_store, proj, status, sizeof(status)));
+    conversation_titles_of(db, a, got, sizeof(got));
+    CHECK(!strcmp(got, "A|B")); /* not doubled */
+    conversation_titles_of(db, b, got, sizeof(got));
+    CHECK(!strcmp(got, "A|B")); /* done now */
+    CHECK(!store_backfill_pending(g_store, proj));
+    char cmd[PATH_MAX + 20];
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root);
+    system(cmd);
+}
+
 /* Round 3 (c), measured, not a gate: SCRIBODO_TITLE_BACKFILL_TIMING=1 builds an old-imported project of 200 chats with
  * 100 title lines each (20,000 lines) and times the open's frame-thread part (store_backfill_pending) and the
  * worker's part (store_backfill_chat_titles). Recorded in journal/audit004-text.md. */
@@ -2690,6 +2768,7 @@ int main(void)
                           { "chat_title_backfill_timing", test_chat_title_backfill_timing },
                           { "chat_title_backfill_worker", test_chat_title_backfill_worker },
                           { "record_ids_two_writers", test_record_ids_two_writers },
+                          { "chat_title_backfill_restamp", test_chat_title_backfill_restamp },
                          { "entities_redteam", test_entities_redteam }, { "semantic", test_semantic } };
     int rc = run_db_core_tests();
     if (run_tests(tests, sizeof(tests) / sizeof(tests[0])) != 0) rc = 1;

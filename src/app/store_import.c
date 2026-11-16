@@ -1641,13 +1641,32 @@ bool store_backfill_chat_titles_db(Db *db, const char *pid, const char *project_
         }
     for (size_t i = 0; i < nclaims; i++) skipped += claims[i].ambiguous;
     /* One transaction per conversation, so a rename on the frame thread waits at most for one conversation's rows
-     * (FOR UPDATE), never for the whole project; each is whole, and a death between two leaves the earlier ones done,
-     * which the next run recognises (the archive already starts with the file's titles and times). */
+     * (FOR UPDATE), never for the whole project. Each conversation's transaction also writes its own progress row
+     * ("chat-titles-legacy:<conversation>" in project_backfills), so a death between two leaves the earlier ones marked
+     * done and the next run skips them by the mark, not by matching times: a sync or copy tool that restamps the legacy
+     * files in between would make untimed titles (stamped with the file's time) look new and doubled them (the final
+     * verification's second pass). The times are still compared for conversations imported or backfilled before. */
     for (size_t i = 0; ok && i < nclaims; i++) {
         if (claims[i].skip) continue;
+        char mark[80];
+        snprintf(mark, sizeof(mark), "%s:%s", TITLE_BACKFILL, claims[i].cid);
+        DbRows mr;
+        ok = db_query(db, "SELECT COUNT(*) FROM project_backfills WHERE project_id = ? AND name = ?",
+                      (DbArg[2]){ DB_S(pid), DB_S(mark) }, 2, &mr);
+        int64_t marked = 0;
+        if (ok) {
+            ok = mr.nrows == 1 && db_rows_has_columns(&mr, 1) && db_cell_i64(&mr, 0, 0, &marked);
+            db_rows_free(&mr);
+        }
+        if (!ok || marked) continue;
         bool applied = false;
         ok = db_begin(db);
         if (ok) ok = title_claim_apply(db, &claims[i], &applied);
+        if (ok && applied) {
+            ok = db_run(db, "INSERT INTO project_backfills (project_id, name, done_at, detail) VALUES (?,?,?,?)",
+                        (DbArg[4]){ DB_S(pid), DB_S(mark), DB_D((double)time(NULL)), DB_S(claims[i].label) }, 4, NULL);
+            if (ok) crash_point("titles.statement");
+        }
         if (ok) ok = db_commit(db);
         else db_rollback(db);
         if (ok && applied) {
