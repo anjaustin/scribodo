@@ -1917,7 +1917,7 @@ static void test_observer_wait_mode(void)
     fputs("The fog came in off the fjord.\n\nZo\xC3\xAB's eyes are brown. Dvo\xC5\x99\xC3\xA1k waited.\n", f);
     fclose(f);
     setenv("SCRIBODO_FAKE_EXTRACT_MS", "600", 1);
-    experiments_reload(); /* the hook is read once, with the flags */
+    experiments_reload(); /* the hook is read once, with the flags, before any observer thread exists */
     Observer *o = observer_create(g_store, NULL, NULL);
     CHECK(o != NULL);
     if (!o) { unsetenv("SCRIBODO_FAKE_EXTRACT_MS"); experiments_reload(); return; }
@@ -1936,8 +1936,6 @@ static void test_observer_wait_mode(void)
     char st[200];
     observer_status(o, st, sizeof(st));
     CHECK(strstr(st, "Waiting for the chat to settle (3 s)") != NULL);
-    unsetenv("SCRIBODO_FAKE_EXTRACT_MS");
-    experiments_reload();
     observer_set_chat_active(o, false);
     /* the job starts only after 3 s of idleness, then completes and the requirement resets */
     usleep(1500000);
@@ -1945,6 +1943,10 @@ static void test_observer_wait_mode(void)
     CHECK(wait_jobs(o, 1, 10));
     CHECK(observer_idle_required(o) == 1.5 && observer_chat_cancels(o) == 1);
     observer_destroy(o);
+    /* The table is reloaded only with no observer thread running (experiments.h: reloads are single-threaded); the
+     * restarted job above is held by the hook too, well inside wait_jobs' limit. */
+    unsetenv("SCRIBODO_FAKE_EXTRACT_MS");
+    experiments_reload();
 }
 
 static void test_observer_redteam(void)
