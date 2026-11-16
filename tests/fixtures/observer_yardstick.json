@@ -1,0 +1,20 @@
+{
+ "about": "tools/observer_yardstick.py: the observer's default-path replay output per novel (flags off, fake backend); rewrite only with --record for a measured, journaled change",
+ "novels": {
+  "heights": {
+   "inputs_sha256": "372580a1a535faf56b4b104b64a625442215041147bbbd929822715fc485b3c7",
+   "lines": 948,
+   "sha256": "8d0dcb1b95362949d348a8d6396c10db18647c9841a2fa4fc1a5821c8e557785"
+  },
+  "mars": {
+   "inputs_sha256": "f2f21475de3f0062c646fb62403d9cc512c4aed35ac099bf6e81c6f1fc4eddf5",
+   "lines": 348,
+   "sha256": "0697dd7ffc32d317c83d47f36ef9a3fcf480e80f6697a706a5f713309472c196"
+  },
+  "pp": {
+   "inputs_sha256": "ebdd69fe970a2a960af41f7f83e31b8e3a489013e6807693f10fc4a6a852c61b",
+   "lines": 717,
+   "sha256": "e58ec79c8e7651a58aa06f198df42a0479921877067ae84fb7117188724791ea"
+  }
+ }
+}

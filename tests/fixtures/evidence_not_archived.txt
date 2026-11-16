@@ -67,3 +67,5 @@ build/qdrant/qdrant	the pinned Qdrant release binary (make qdrant)
 build/observer_replay.base	a copy of the unchanged tree's observer_replay binary, the yardstick's reference
 build/draft_tick_probe	a tool binary (make tools)
 build/observer/<label>-flags.txt	the file name observer_replay_run.sh writes per run (a family named in prose)
+build/observer/yardstick-check-*	the yardstick check's own scratch output (tools/observer_yardstick.py, rewritten by every make test); its expectation is tracked in tests/fixtures/observer_yardstick.json	walk
+build/observer/yardstick-check-*/**	the yardstick check's project copies (tools/observer_yardstick.py), rewritten by every make test	walk

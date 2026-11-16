@@ -217,6 +217,19 @@ Binaries, objects and debug symbols are excluded. The journals keep citing the w
 them under those same paths, so the citations stay checkable after the worktrees are removed. Archive SHA-256:
 `df1c9555ab506d91f943ebf1788c47c41433472bb248bea45e2ceea516957d1e`.
 
+The data/text stream's third verification round and final items are in
+`scribodo-evidence-2026-11-15-audit004e.tar.gz` (114 files, 840 KB compressed), with
+`manifest-scribodo-evidence-2026-11-15-audit004e.txt` and an entry in `SHA256SUMS`:
+- the round-3 gate logs and exit files (`build/audit004-text/r3-2`, `build/audit004-text/r3-3`);
+- the round-3 relation re-measurement (`build/audit004-text/r3-measure`);
+- the F10 wave-2 observer yardstick runs, before and after the change, flag off and every arm
+  (`build/audit004-text/r4-a`);
+- the final-tree gate logs (`build/audit004-text/r4-gates`);
+- the nine observer arm references the journal compares against
+  (`build/wt-observer/build/observer/base-{sent,gate,both}-{pp,mars,heights}.txt`).
+
+Archive SHA-256: `c96a25572e29be6a8bc3033b1b5ede68774d663514cd8735829a3c68c729d70d`.
+
 Since 2026-11-15 `make test` runs `tools/evidence_check.py`. Every cited `build/` path must be one of:
 - archived: checked against each tarball's real file list, so a cited directory counts only when every file under
   it is archived, and a file stem (`build/recover/gates2`) resolves to its files;

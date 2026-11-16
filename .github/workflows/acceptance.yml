@@ -29,6 +29,9 @@ jobs:
       # job's temporary folder, on ports beside the author's, purged at the end. The compose project name stays for a
       # run that sets SCRIBODO_SERVICES=docker by hand.
       SCRIBODO_SERVICES: native
+      # The observer yardstick needs the untracked test novels (build/manuscripts), which a fresh checkout lacks; it
+      # runs in every local make test instead (tools/observer_yardstick.py).
+      SCRIBODO_YARDSTICK_SKIP: "1"
       SCRIBODO_COMPOSE_PROJECT: scribodo-ci
       SCRIBODO_DB_PORT: "33062"
       SCRIBODO_QDRANT_PORT: "6334"

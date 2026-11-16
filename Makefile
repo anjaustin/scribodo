@@ -357,6 +357,15 @@ evidencecheck:
 	$(WATCHDOG) $(TEST_TIMEOUT) evidence_check python3 tools/evidence_check.py
 test: evidencecheck
 
+# The observer's default path, byte for byte, against its tracked record (AUDIT-004 F9; tools/observer_yardstick.py).
+# The test novels are untracked: without them it fails, except on a GitHub-hosted runner or with
+# SCRIBODO_YARDSTICK_SKIP set.
+.PHONY: yardstick
+yardstick: $(BUILD)/observer_replay
+	$(WATCHDOG) $(TEST_TIMEOUT) test_observer_yardstick python3 tests/test_observer_yardstick.py
+	$(WATCHDOG) $(TEST_TIMEOUT) observer_yardstick python3 tools/observer_yardstick.py --binary $(BUILD)/observer_replay
+test: yardstick
+
 # Measurements pin every experiment arm and record it (AUDIT-004 F4; tools/experiment_arms.py).
 .PHONY: armstest
 armstest:
