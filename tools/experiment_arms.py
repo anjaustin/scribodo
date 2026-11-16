@@ -28,6 +28,39 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "src/core/experiments.c"
 
 
+def enclosing_block(text, at):
+    """The outermost {...} block of the source that contains position at (a function body), or None. Braces in
+    string literals and comments are skipped."""
+    depth, start = 0, None
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if text.startswith("/*", i):
+            i = text.find("*/", i + 2)
+            i = n if i < 0 else i + 2
+            continue
+        if text.startswith("//", i):
+            i = text.find("\n", i)
+            i = n if i < 0 else i
+            continue
+        if c in "\"'":
+            j = i + 1
+            while j < n and text[j] != c:
+                j += 2 if text[j] == "\\" else 1
+            i = j + 1
+            continue
+        if c == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0 and start is not None and start < at < i:
+                return text[start:i + 1]
+        i += 1
+    return None
+
+
 def classify(source=SOURCE):
     """[(variable, kind, pinned default or None)] for every "SCRIBODO_*" literal in the flag table's source, in order.
 
@@ -53,9 +86,11 @@ def classify(source=SOURCE):
         elif before.endswith("getenv(") and re.match(r"\)\s*!=\s*NULL", after):
             uses.setdefault(var, []).append(("switch", None))
         elif before.endswith("getenv("):
-            end = text.find("\n}", m.end())
-            body = text[m.end():end if end >= 0 else len(text)]
-            if "off_value(" in body:
+            # A level flag: "const char *v = getenv(X)" inside a function that tests off_value(v); the function is
+            # bounded by brace matching, so an off_value call in a later helper does not count.
+            assigned = re.search(r"(\w+)\s*=\s*getenv\($", text[max(0, m.start() - 64):m.start()])
+            block = enclosing_block(text, m.start())
+            if assigned and block and re.search(r"\boff_value\(\s*%s\s*\)" % re.escape(assigned.group(1)), block):
                 uses.setdefault(var, []).append(("level", None))
             else:
                 unknown.append(var)

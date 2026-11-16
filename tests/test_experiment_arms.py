@@ -61,6 +61,23 @@ class ArmsTests(unittest.TestCase):
                     ea.classify(self.src)
                 self.assertIn("cannot classify", str(cm.exception))
 
+    def test_a_getenv_before_a_level_helper_is_not_a_level(self):
+        # Verification hole C: atoi(getenv(X)) on one line, followed by a multi-line helper using off_value, was
+        # classified as a level flag and pinned off.
+        text = SYNTHETIC.replace("static int level_arm(void)",
+                                 'static int count(void) { return atoi(getenv("SCRIBODO_N")); }\nstatic int level_arm(void)')
+        self.src.write_text(text)
+        with self.assertRaises(SystemExit) as cm:
+            ea.classify(self.src)
+        self.assertIn("SCRIBODO_N", str(cm.exception))
+        # The same getenv into a variable that a later function, not its own, tests with off_value: not a level.
+        text = SYNTHETIC.replace("static int level_arm(void)", 'static int other(void)\n{\n    const char *w = getenv("SCRIBODO_W");\n'
+                                 '    return w != 0;\n}\nstatic int level_arm(void)')
+        self.src.write_text(text)
+        with self.assertRaises(SystemExit) as cm:
+            ea.classify(self.src)
+        self.assertIn("SCRIBODO_W", str(cm.exception))
+
     def test_hooks_are_recorded_only_when_set_and_never_pinned(self):
         env = ea.pin({}, self.src)
         self.assertNotIn("SCRIBODO_H", env)
