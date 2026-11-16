@@ -257,6 +257,15 @@ The services stream's Docker-mode work of 2026-11-16 (journal `audit004-services
 
 Archive SHA-256: `7cc03f8c0354d4ba822138cfe51ac30b2b22a2ae10b0340956b7f46ed8c15212`.
 
+The red-team round on that work (journal `audit004-services.md`, "Red team of remed/services-docker") is in
+`scribodo-evidence-2026-11-16-docker-r.tar.gz` (12 files, `build/audit004-services-docker-r`), with
+`manifest-scribodo-evidence-2026-11-16-docker-r.txt` and an entry in `SHA256SUMS`:
+- the Docker rehearsal with the pre-red-team `services.sh` and the new cases, twice (`before-fix-*`,
+  `before-fix2-*`: the empty-store, mid-load-kill and partial-restart cases failing);
+- the two back-to-back rehearsals with the fixes and the rehearsal leftovers after each (`after-fix-run{1,2}.*`).
+
+Archive SHA-256: `39dc390101d8e0830ad656c165e74615868f945c415ce45bcaf448c13949f028`.
+
 Since 2026-11-15 `make test` runs `tools/evidence_check.py`. Every cited `build/` path must be one of:
 - archived: checked against each tarball's real file list, so a cited directory counts only when every file under
   it is archived, and a file stem (`build/recover/gates2`) resolves to its files;

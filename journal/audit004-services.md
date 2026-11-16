@@ -643,3 +643,10 @@ n).
 `scribodo_qdrant` at the author's request ("We were just testing"); no run of this stream removed them. Lines above
 that record them as present describe the state when those runs ended. No script or check expects them. The state
 files of this round list only rehearsal leftovers.
+
+**Gates on the final tree (`241ae56` plus this journal and EVIDENCE.md):**
+- the two Docker rehearsals: exit 0 and 0 (above);
+- `make test`: exit 0, including the evidence check with this round archived;
+- `make sanitize`: exit 0;
+- `make analyze`: exit 0 (0 warnings, 102 files);
+- `make dbtest`: exit 0 (12 suites, 0 failures; no `test_db` or `test_crash_points` process was running).
