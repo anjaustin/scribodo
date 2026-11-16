@@ -1,16 +1,18 @@
 #include "observer_arms.h"
 
 /* journal/observer-cycle2_quality.md. Conflicts on a planted fault over conflicts shown, both planted novels (A Princess
- * of Mars and Pride and Prejudice). The default row's text is the one shown since step 4, unchanged. */
+ * of Mars and Pride and Prejudice), rounded to the nearest "1 in N" (11 of 60 is 0.183: 1 in 6). The default row's text
+ * is the one shown since step 4, unchanged. */
 static const ObserverArm k_arms[] = {
     { false, OBSERVER_SENTENCES_OFF, "default",
       "Possible conflicts are suggestions: about 1 in 13 was real on the test novels. Each links to its source.",
       "7 of 92 (step 4, end to end)" },
     { true, OBSERVER_SENTENCES_OFF, "conflict gate",
       "Possible conflicts are suggestions: about 1 in 30 was real on the test novels. Each links to its source.",
-      "5 of 149: Mars 3 of 64, P&P 2 of 85 (step 5, end to end)" },
+      "5 of 149: Mars 3 of 64, P&P 2 of 85 (step 5; both runs stopped at their time limit, Mars at chapter 25 of 28 and "
+      "P&P at part 7 of 8, so neither read the whole novel)" },
     { false, OBSERVER_SENTENCES_ATTRIBUTES, "sentences, attributes",
-      "Possible conflicts are suggestions: about 1 in 5 was real on the test novels. Each links to its source.",
+      "Possible conflicts are suggestions: about 1 in 6 was real on the test novels. Each links to its source.",
       "11 of 60: Mars 6 of 42, P&P 5 of 18 (step 8, end to end)" },
     { false, OBSERVER_SENTENCES_SUBJECT, "sentences, subject",
       "Possible conflicts are suggestions: about 3 in 4 were real on the test novels, scored on recorded replies. Each "

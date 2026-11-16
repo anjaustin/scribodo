@@ -332,6 +332,11 @@ static void test_observer_arm_table(void)
     setenv("SCRIBODO_OBSERVER_SENTENCES", "attributes", 1);
     experiments_reload();
     CHECK(strstr(observer_arm(experiments())->measured, "step 8") != NULL);
+    CHECK(strstr(observer_arm(experiments())->disclosure, "about 1 in 6 was real") != NULL); /* 11 of 60 = 0.183 */
+    unsetenv("SCRIBODO_OBSERVER_SENTENCES");
+    setenv("SCRIBODO_OBSERVER_CONFLICT_GATE", "1", 1);
+    experiments_reload();
+    CHECK(strstr(observer_arm(experiments())->measured, "time limit") != NULL); /* step 5's runs read part of each novel */
     setenv("SCRIBODO_OBSERVER_SENTENCES", "subject", 1);
     setenv("SCRIBODO_OBSERVER_CONFLICT_GATE", "1", 1);
     experiments_reload();
