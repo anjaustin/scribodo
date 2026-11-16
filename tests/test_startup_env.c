@@ -1,7 +1,11 @@
 /* The environment is written only before the first thread starts (app/startup_env.h, AUDIT-004 F12). One process:
  * the cases run in order, sealing at the end of the first. */
 #define _POSIX_C_SOURCE 200809L
+#include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <string.h>
 
 #include "app/startup_env.h"
@@ -33,24 +37,45 @@ static void test_prepare_scripted(void)
     CHECK(getenv("SSLKEYLOGFILE") == NULL);
 }
 
-/* Once sealed, every write is refused and the environment is left as it was; a second prepare is refused too. */
-static void test_sealed_refuses_writes(void)
+/* Runs `fn` in a child; true when the child died of SIGABRT (the assertion), with the environment of the parent
+ * untouched either way. */
+static bool aborts(void (*fn)(void))
+{
+    fflush(NULL);
+    pid_t pid = fork();
+    if (pid == 0) {
+        freopen("/dev/null", "w", stderr); /* the expected assertion message */
+        fn();
+        _exit(0);
+    }
+    int status = 0;
+    return pid > 0 && waitpid(pid, &status, 0) == pid && WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT;
+}
+
+static void set_after_seal(void) { (void)startup_env_set("SCRIBODO_PROFILE", "/elsewhere.json"); }
+static void unset_after_seal(void) { (void)startup_env_unset("SCRIBODO_PROFILE"); }
+static void prepare_again(void)
+{
+    StartupEnv env;
+    (void)startup_env_prepare(&env);
+}
+
+/* Once sealed, a write fails loudly (the assertion aborts) and a second prepare does too. */
+static void test_sealed_writes_fail_loudly(void)
 {
     CHECK(startup_env_sealed());
-    CHECK(!startup_env_set("SCRIBODO_PROFILE", "/elsewhere.json"));
+    CHECK(aborts(set_after_seal));
+    CHECK(aborts(unset_after_seal));
+    CHECK(aborts(prepare_again));
     const char *v = getenv("SCRIBODO_PROFILE");
     CHECK(v && !strcmp(v, "/fixture/profile.json"));
-    CHECK(!startup_env_unset("SCRIBODO_PROFILE") && getenv("SCRIBODO_PROFILE") != NULL);
-    StartupEnv env;
-    CHECK(!startup_env_prepare(&env));
-    CHECK(env.scripted && !strcmp(env.script_dir, "/fixture")); /* still read */
 }
 
 int main(void)
 {
     TestCase tests[] = {
         { "prepare_scripted", test_prepare_scripted },
-        { "sealed_refuses_writes", test_sealed_refuses_writes },
+        { "sealed_writes_fail_loudly", test_sealed_writes_fail_loudly },
     };
     return run_tests(tests, sizeof(tests) / sizeof(tests[0]));
 }
