@@ -12,6 +12,16 @@ sys.path.insert(0, str(ROOT / "tools"))
 import experiment_arms as ea  # noqa: E402
 
 SYNTHETIC = '''
+static int positive_int(const char *name) { const char *v = getenv(name); return v ? atoi(v) : 0; }
+static bool off_value(const char *v) { return !v || !strcmp(v, "off"); }
+static int level_arm(void)
+{
+    const char *v = getenv("SCRIBODO_L");
+    if (off_value(v)) return 0;
+    warn_value("SCRIBODO_L", v, "off, a");
+    return 1;
+}
+
 static void read_environment(void)
 {
     Experiments e = {
@@ -21,6 +31,8 @@ static void read_environment(void)
         .d = getenv("SCRIBODO_D") != NULL,
         .e = flag_on("SCRIBODO_E"),
         .e_req = flag_is("SCRIBODO_E", "verified"),
+        .l = level_arm(),
+        .h = positive_int("SCRIBODO_H"),
     };
 }
 '''
@@ -34,8 +46,27 @@ class ArmsTests(unittest.TestCase):
         self.src.write_text(SYNTHETIC)
 
     def test_defaults_are_stated_as_values(self):
-        self.assertEqual(ea.arms(self.src), [("SCRIBODO_A", "0"), ("SCRIBODO_B", "1"), ("SCRIBODO_C", "off"),
-                                             ("SCRIBODO_D", None), ("SCRIBODO_E", "1")])
+        self.assertEqual(ea.arms(self.src), [("SCRIBODO_L", "off"), ("SCRIBODO_A", "0"), ("SCRIBODO_B", "1"),
+                                             ("SCRIBODO_C", "off"), ("SCRIBODO_D", None), ("SCRIBODO_E", "1"),
+                                             ("SCRIBODO_H", None)])
+        kinds = {v: k for v, k, _ in ea.classify(self.src)}
+        self.assertEqual((kinds["SCRIBODO_L"], kinds["SCRIBODO_D"], kinds["SCRIBODO_H"]), ("level", "switch", "hook"))
+
+    def test_an_unclassifiable_literal_stops_the_run(self):
+        for extra in ('    const char *x = getenv("SCRIBODO_NEW");\n', '    puts("SCRIBODO_ODD");\n'):
+            with self.subTest(extra=extra):
+                self.src.write_text(SYNTHETIC.replace("static void read_environment(void)\n{\n",
+                                                      "static void read_environment(void)\n{\n" + extra))
+                with self.assertRaises(SystemExit) as cm:
+                    ea.classify(self.src)
+                self.assertIn("cannot classify", str(cm.exception))
+
+    def test_hooks_are_recorded_only_when_set_and_never_pinned(self):
+        env = ea.pin({}, self.src)
+        self.assertNotIn("SCRIBODO_H", env)
+        self.assertNotIn("SCRIBODO_H", ea.record(env, self.src))
+        self.assertEqual(ea.record(dict(env, SCRIBODO_H="250"), self.src)["SCRIBODO_H"], "250")
+        self.assertEqual(env["SCRIBODO_L"], "off")
 
     def test_pin_keeps_a_callers_value_and_fills_the_rest(self):
         env = ea.pin({"SCRIBODO_E": "off", "PATH": "/bin"}, self.src)
@@ -49,14 +80,15 @@ class ArmsTests(unittest.TestCase):
         env = ea.pin({}, self.src)
         self.assertEqual(ea.record(env, self.src)["SCRIBODO_D"], None)
         self.assertEqual(ea.line(env, self.src),
-                         "ARMS SCRIBODO_A=0 SCRIBODO_B=1 SCRIBODO_C=off SCRIBODO_D=unset SCRIBODO_E=1")
+                         "ARMS SCRIBODO_L=off SCRIBODO_A=0 SCRIBODO_B=1 SCRIBODO_C=off SCRIBODO_D=unset SCRIBODO_E=1")
 
     def test_shell_export_round_trip(self):
         env = {"PATH": os.environ["PATH"], "SCRIBODO_B": "0"}
         out = subprocess.run(["bash", "-c", 'eval "$(python3 %s --export --source %s)"; python3 %s --line --source %s'
                               % (ROOT / "tools/experiment_arms.py", self.src, ROOT / "tools/experiment_arms.py", self.src)],
                              env=env, capture_output=True, text=True, check=True).stdout
-        self.assertEqual(out.strip(), "ARMS SCRIBODO_A=0 SCRIBODO_B=0 SCRIBODO_C=off SCRIBODO_D=unset SCRIBODO_E=1")
+        self.assertEqual(out.strip(), "ARMS SCRIBODO_L=off SCRIBODO_A=0 SCRIBODO_B=0 SCRIBODO_C=off SCRIBODO_D=unset "
+                                      "SCRIBODO_E=1")
 
 
 class ProductTableTests(unittest.TestCase):
@@ -71,6 +103,24 @@ class ProductTableTests(unittest.TestCase):
         self.assertIn("SCRIBODO_ANSWER_PIPELINE", names)
         self.assertIn("SCRIBODO_MEMORY_EXPERIMENT", names)
         self.assertEqual(dict(ea.arms())["SCRIBODO_ANSWER_PIPELINE"], "1")  # default on since 52d44fe
+
+
+class ObserverBranchTests(unittest.TestCase):
+    """remed/observer reads its two observer flags in helpers above read_environment (levels) and adds a test hook."""
+
+    def test_the_observer_branch_table_classifies(self):
+        shown = subprocess.run(["git", "-C", str(ROOT), "show", "remed/observer:src/core/experiments.c"],
+                               capture_output=True, text=True)
+        if shown.returncode != 0:
+            self.skipTest("no remed/observer branch here")
+        with tempfile.TemporaryDirectory() as d:
+            src = Path(d) / "experiments.c"
+            src.write_text(shown.stdout)
+            kinds = {v: (k, dflt) for v, k, dflt in ea.classify(src)}
+        self.assertEqual(kinds["SCRIBODO_OBSERVER_SENTENCES"], ("level", "off"))
+        self.assertEqual(kinds["SCRIBODO_OBSERVER_CONFLICT_GATE"], ("level", "off"))
+        self.assertEqual(kinds["SCRIBODO_FAKE_EXTRACT_MS"], ("hook", None))
+        self.assertEqual(kinds["SCRIBODO_ANSWER_PIPELINE"], ("arm", "1"))
 
 
 class MeasurementsPinTests(unittest.TestCase):

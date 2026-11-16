@@ -859,9 +859,11 @@ documents each flag's effect and record.
 
 A measurement never leaves an experiment flag to the product's default (AUDIT-004 F4): `SCRIBODO_ANSWER_PIPELINE`
 turned on by default on 2026-11-14, so one command line measured two different arms on either side of that day.
-`tools/experiment_arms.py` reads the flag table from `src/core/experiments.c`, pins every flag the caller left unset
-to its default stated as a value (`flag_on` flags `1`, `flag_is` flags `0` or `off`; `SCRIBODO_SEM_DEBUG`, which any
-value turns on, stays unset) and prints one `ARMS` line. `manuscript_baseline.sh`, `manuscript_restart.sh` (also
+`tools/experiment_arms.py` reads every `SCRIBODO_*` literal in `src/core/experiments.c`, classifies it, pins every arm
+the caller left unset to its default stated as a value (`flag_on` flags `1`, `flag_is` flags `0` or `off`, level flags
+read through `off_value` such as the observer's `off`; `SCRIBODO_SEM_DEBUG`, which any value turns on, stays unset;
+test hooks such as `SCRIBODO_FAKE_EXTRACT_MS` are never pinned and are recorded when set) and prints one `ARMS` line.
+A literal it cannot classify stops the run. `manuscript_baseline.sh`, `manuscript_restart.sh` (also
 `arms.json` in its `--out`), `history_frame_soak.sh`, `memory_pipeline_soak.sh` and `frame_soak_run.py` print it with
 the run; the memory reach, quality, native and operation evaluations, `answer_product_run.py` and
 `answer_gate_replay.py` write `experiment_arms` into their manifest or output. To reproduce a run from before

@@ -5,10 +5,13 @@ The product reads its experiment flags once from the environment (src/core/exper
 the product's current default, so the same command line changes arm when a default flips (SCRIBODO_ANSWER_PIPELINE,
 on since 2026-11-14). Measurements therefore set every flag explicitly, stating defaults as values, and record them.
 
-The flag list is read from src/core/experiments.c itself, so a new flag is pinned without editing this file:
-  flag_on("X")        default on: unset is pinned as X=1 (off only for "off" or "0")
-  flag_is("X", "v")   default off: unset is pinned as X=0 (or X=off when the on value is not "1")
-  getenv("X") != NULL a debug switch any value turns on: never pinned (setting it would turn it on), recorded unset
+The flag list is every "SCRIBODO_*" literal in src/core/experiments.c, so a new flag is pinned without editing this
+file, and a literal of a kind it does not know stops the run (classify):
+  flag_on("X")              default on: unset is pinned as X=1 (off only for "off" or "0")
+  flag_is("X", "v")         default off: unset is pinned as X=0 (or X=off when the on value is not "1")
+  getenv("X") + off_value   a level flag (the observer's): unset is pinned as X=off
+  getenv("X") != NULL       a debug switch any value turns on: never pinned, recorded (unset when unset)
+  positive_int("X")         a test hook (SCRIBODO_FAKE_EXTRACT_MS): never pinned, recorded when set
 
 Shell:   eval "$(python3 tools/experiment_arms.py --export)"; python3 tools/experiment_arms.py --line
 Python:  env = experiment_arms.pin(env); manifest["experiment_arms"] = experiment_arms.record(env)
@@ -25,26 +28,66 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "src/core/experiments.c"
 
 
-def arms(source=SOURCE):
-    """[(variable, pinned default or None)] in source order."""
+def classify(source=SOURCE):
+    """[(variable, kind, pinned default or None)] for every "SCRIBODO_*" literal in the flag table's source, in order.
+
+    kinds: "arm" (flag_on: pinned 1; flag_is: pinned 0, or off when its on value is not "1"), "level" (read with
+    getenv inside a helper that tests off_value, as the observer's level flags are: pinned off), "switch"
+    (getenv(...) != NULL, any value turns it on: never pinned, recorded) and "hook" (positive_int, a test hook:
+    never pinned, recorded when set). A literal that fits none of these, or a variable with only mentions
+    (warn_value's message), stops the run: a new kind of flag needs a decision here, not a silent drop."""
     text = Path(source).read_text()
-    body = text[text.index("read_environment"):]
-    found = {}
-    for kind, var, value in re.findall(r'(flag_on|flag_is|getenv)\("(SCRIBODO_[A-Z0-9_]+)"(?:,\s*"([^"]*)")?\)', body):
-        found.setdefault(var, []).append((kind, value))
-    out = []
-    for var, uses in found.items():
-        kinds = {k for k, _ in uses}
-        if "flag_on" in kinds:
-            default = "1"
-        elif "flag_is" in kinds:
-            default = "0" if all(v == "1" for k, v in uses if k == "flag_is") else "off"
+    uses = {}
+    unknown = []
+    for m in re.finditer(r'"(SCRIBODO_[A-Z0-9_]+)"', text):
+        var = m.group(1)
+        before = text[max(0, m.start() - 16):m.start()]
+        after = text[m.end():m.end() + 24]
+        if before.endswith("flag_on("):
+            uses.setdefault(var, []).append(("flag_on", None))
+        elif before.endswith("flag_is("):
+            value = re.match(r'\s*,\s*"([^"]*)"', after)
+            uses.setdefault(var, []).append(("flag_is", value.group(1) if value else None))
+        elif before.endswith("positive_int("):
+            uses.setdefault(var, []).append(("hook", None))
+        elif before.endswith("getenv(") and re.match(r"\)\s*!=\s*NULL", after):
+            uses.setdefault(var, []).append(("switch", None))
+        elif before.endswith("getenv("):
+            end = text.find("\n}", m.end())
+            body = text[m.end():end if end >= 0 else len(text)]
+            if "off_value(" in body:
+                uses.setdefault(var, []).append(("level", None))
+            else:
+                unknown.append(var)
+        elif before.endswith("warn_value("):
+            uses.setdefault(var, [])
         else:
-            default = None
-        out.append((var, default))
+            unknown.append(var)
+    unknown += [v for v, u in uses.items() if not u]
+    if unknown:
+        raise SystemExit("experiment_arms: cannot classify %s in %s; add its kind to tools/experiment_arms.py"
+                         % (", ".join(sorted(set(unknown))), source))
+    out = []
+    for var, u in uses.items():
+        kinds = {k for k, _ in u}
+        if "flag_on" in kinds:
+            out.append((var, "arm", "1"))
+        elif "flag_is" in kinds:
+            out.append((var, "arm", "0" if all(v == "1" for k, v in u if k == "flag_is") else "off"))
+        elif "level" in kinds:
+            out.append((var, "level", "off"))
+        elif "switch" in kinds:
+            out.append((var, "switch", None))
+        else:
+            out.append((var, "hook", None))
     if not out:
         raise SystemExit("experiment_arms: no flags found in %s" % source)
     return out
+
+
+def arms(source=SOURCE):
+    """[(variable, pinned default or None)] in source order: None for a switch or a test hook, never pinned."""
+    return [(var, default) for var, _, default in classify(source)]
 
 
 def pin(env, source=SOURCE):
@@ -57,8 +100,8 @@ def pin(env, source=SOURCE):
 
 
 def record(env, source=SOURCE):
-    """{variable: value, or None when unset} for every experiment flag."""
-    return {var: env.get(var) for var, _ in arms(source)}
+    """{variable: value, or None when unset} for every arm, level and switch, and each test hook that is set."""
+    return {var: env.get(var) for var, kind, _ in classify(source) if kind != "hook" or var in env}
 
 
 def line(env, source=SOURCE):
