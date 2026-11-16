@@ -276,5 +276,43 @@ yardstick was 15 of 15 identical.
 | `a04fecb` (5) | 96,142, 0 | 214 | 0, 89 |
 | `f2d1e0f` (8) | 96,156, 0 | 214 | 0, 89 |
 
-The journal commit changes no code (its tree is `f2d1e0f`'s plus this file). I never used `git stash` in this stream;
+The journal commit changes no code (its tree is `f2d1e0f`'s plus this file).
+
+## Verification round (2026-11-15): item 8 reopened, a gap in item 4
+
+**Item 8, second pass (`e2eb779`).** The verifier found the first rule cut names: it rejected an initial at offset 1
+and required a capitalised, spaced word before it, so "I admire J. R. R. Tolkien", "\"J. Smith came,\"", P&P's
+"\u201cE. GARDINER.\u201d" and "\u201cM. GARDINER.\u201d" and Wuthering Heights' "letters W. H." were split, and
+`obs_first_sentence` (the default path) turned "Written by J. R. R. Tolkien." into "Written by J.", "T. S. Eliot wrote"
+into "T." and "names E. Bennet" into "names E.", the step 3/4 truncation back again. My first-pass measurement did not
+catch it: the novels' recorded explanations hold no such initials, and I counted splits without reading every new one.
+Adopted the verifier's rule in C and in `observer_plant.name_initial`: a capital other than I, no word character
+before it, the next word capitalised and not a sentence starter, the previous word (any case, past an opening quote,
+or none) not a label. Fixture: Tolkien, Eliot, "names E. Bennet", "J. Smith", both GARDINER signatures and "W. H."
+added; "I met a K. Smith there." is now one sentence; `test_observer_text` checks `obs_first_sentence` on Tolkien,
+Eliot and E. Bennet. Measured:
+- fake yardstick flag off byte-identical, 717 / 348 / 948; every arm and both flags identical with their references;
+- C sentences against the first pass: *Mars* 2,386 to 2,386, *P&P* 5,911 to 5,909, *Wuthering Heights* 6,290 to 6,288.
+  The four splits removed are exactly "\u201cE. GARDINER.\u201d", "\u201cM. GARDINER.\u201d", "W. H." and "T. G."
+  (the carved letters "T. G. It serves", now cut only before "It"; the verifier listed three of the four). Against the
+  tree before item 8: 14,566 to 14,583. The C and the Python agree on all 14,583;
+- `obs_first_sentence` on the 5,412 recorded real-model explanations: 0 changed against both earlier versions;
+- step 6 and step 8 rescoring byte-identical; both novels plant byte-identically.
+
+**Item 4 gap (`9b1f991`).** The Python rules used the interpreter's `\b`, so under Homebrew's Python 3.12 (Unicode 15)
+or CI's `python3` they read characters added after Unicode 13 unlike the C's table, while the table test skipped:
+the contract was unchecked there. Of the coordinator's options I took a fourth that keeps the C table byte-stable and
+checks the contract everywhere: `observer_judge_score.py` builds its word class from `src/llm/observer_unicode_word.h`
+and uses table-defined lookarounds in the place and possessive rules, so both sides read one definition on any Python.
+(`/usr/bin/python3` here is 3.9.6 / Unicode 13.0, the table's source, but CI's `macos-15` image cannot be checked
+from this Mac, so pinning an interpreter would not have been a guarantee.) A test on every Python checks the scorer's
+class is the table; the generator check still needs a matching Unicode version. Two U+0870 cases (a letter for 3.12,
+not in the table) were added; the previous scorer gets both wrong under 3.12. `test_observer_rules.py` passes under
+3.9.6 and 3.12; the random mixed-script differential is 0 of 60,000 under each; the rescoring is byte-identical under
+both. The bounded-time test now measures `CLOCK_PROCESS_CPUTIME_ID`.
+
+Gates, each commit alone (`rt8b-*`, `rt4b-*` in `build/audit004-gates/`): `e2eb779` `make test` exit 0, 96,173 C
+checks and 214 Python tests, 0 failures; `make analyze` exit 0, 0 warnings across 89 files; `make sanitize` exit 0,
+96,173, 0; yardstick 15 of 15 identical. `9b1f991`: `make test` exit 0, 96,177 and 215, 0 failures; `make analyze`
+exit 0, 0 warnings across 89 files; `make sanitize` exit 0, 96,177, 0; yardstick 15 of 15 identical. No `git stash`. I never used `git stash` in this stream;
 the tree held only the intended journal edit when checked after the coordinator's stash warning.
