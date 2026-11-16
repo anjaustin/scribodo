@@ -16,7 +16,8 @@
 #  10. with Docker running (SCRIBODO_SERVICESTEST_DOCKER=1 requires it): migrate-from-docker moves a store and keeps the
 #      dump; a second migration over the native store is refused and changes nothing; a migration whose load fails puts
 #      both stores back as they were, and a replacing one leaves the native store exactly as it was; a migration over a
-#      volume made under other credentials is refused by name and leaves the running native store running
+#      volume made under other credentials is refused by name and leaves the running native store running; a failed
+#      load over an existing but empty native store leaves it exactly as it was (no table of the containers' left)
 # Logs of every store are kept in build/servicestest-logs (uploaded by CI on failure).
 set -u
 cd "$(dirname "$0")/.."
@@ -60,7 +61,7 @@ cleanup() {
     done < <(find "$root" -type d -path '*/mariadb/data' 2>/dev/null)
     [ -n "${sleeper:-}" ] && kill "$sleeper" 2>/dev/null
     if docker info >/dev/null 2>&1; then   # step 10's containers and volumes, whether or not its secrets folder exists
-        for p in e g h i; do fresh_project "$p" || echo "cleanup: scribodo-st-$p could not be removed" >&2; done
+        for p in e g h i j; do fresh_project "$p" || echo "cleanup: scribodo-st-$p could not be removed" >&2; done
     fi
     rm -rf "$keep_logs"; mkdir -p "$keep_logs"
     find "$root" -maxdepth 1 -type d -name 'logs-*' -exec cp -R {} "$keep_logs/" \; 2>/dev/null
@@ -292,6 +293,34 @@ SQL
         { [ "$mode_before" = none ] || [ "$mode_after" = "$mode_before" ]; }; ok $?
     [ "$r" = 1 ] && [ "$running" = 2 ] && [ "$got" = "native original" ] ||
         { echo "      exit $r, running $running, read back [$got], mode $mode_before -> $mode_after"; echo "$out" | tail -6 | sed 's/^/      /'; }
+    SCRIBODO_SERVICES=native svc down >/dev/null 2>&1
+    SCRIBODO_SERVICES=docker SCRIBODO_PURGE_CONFIRM=1 svc purge >/dev/null 2>&1
+
+    store j 33080 6350
+    unset SCRIBODO_SERVICES
+    step "    a failed load over an existing, empty native store leaves it empty"
+    # The native store exists and runs but has no table: it used to be undumped, so the rollback never emptied it and the
+    # containers' half-loaded tables stayed in the store the app would open (verification of AUDIT-004, 2026-11-16).
+    setup=0; fresh_project j || setup=1
+    SCRIBODO_SERVICES=docker svc up >/dev/null 2>&1 || SCRIBODO_SERVICES=docker svc up >/dev/null 2>&1 || setup=1
+    SCRIBODO_SERVICES=docker svc rootsql scribodo <<'SQL' >/dev/null 2>&1 || setup=1
+CREATE TABLE schema_migrations (version INT PRIMARY KEY); INSERT INTO schema_migrations VALUES (18);
+CREATE TABLE probe (t TEXT); INSERT INTO probe VALUES ('docker');
+CREATE DEFINER = 'root'@'%' SQL SECURITY DEFINER VIEW probe_view AS SELECT t FROM probe;
+SQL
+    SCRIBODO_SERVICES=docker svc down >/dev/null 2>&1 || setup=1
+    SCRIBODO_SERVICES=native SCRIBODO_NATIVE_FRESH=1 svc up >/dev/null 2>&1 || setup=1
+    before="$(SCRIBODO_SERVICES=native svc rootsql -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='scribodo'" 2>/dev/null)"
+    [ "$before" = 0 ] || setup=1
+    [ "$setup" = 0 ] || echo "      (setup failed: the case below is not what it claims)"
+    r=0; out="$(SCRIBODO_MIGRATE_REPLACE=1 svc migrate-from-docker 2>&1)" || r=$?
+    after="$(SCRIBODO_SERVICES=native svc rootsql -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='scribodo'" 2>/dev/null)"
+    running="$(SCRIBODO_SERVICES=native svc status 2>/dev/null | grep -c running)"
+    [ "$setup" = 0 ] && [ "$r" = 1 ] && echo "$out" | grep -q "kept the native store's previous contents" &&
+        echo "$out" | grep -q "both stores are as they were" && [ "$after" = 0 ] && [ "$running" = 2 ] &&
+        [ "$(cat "$SCRIBODO_SECRETS/mode")" = native ] && containers_down scribodo-st-j; ok $?
+    [ "$r" = 1 ] && [ "$after" = 0 ] && [ "$running" = 2 ] ||
+        { echo "      exit $r, tables after [$after], running $running"; echo "$out" | tail -6 | sed 's/^/      /'; }
     SCRIBODO_SERVICES=native svc down >/dev/null 2>&1
     SCRIBODO_SERVICES=docker SCRIBODO_PURGE_CONFIRM=1 svc purge >/dev/null 2>&1
 else

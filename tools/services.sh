@@ -369,11 +369,15 @@ migrate_from_docker() {
     export SCRIBODO_SERVICES=native
     SCRIBODO_NATIVE_FRESH=1 native_up >/dev/null || migration_rollback
     tables="$(rootsql -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'scribodo'")" || migration_rollback
-    if [ "$tables" != 0 ]; then
-        if [ "${SCRIBODO_MIGRATE_REPLACE:-}" != 1 ]; then
-            echo "the native store already holds $tables tables; nothing was replaced (SCRIBODO_MIGRATE_REPLACE=1 keeps a dump of it and replaces it)" >&2
-            migration_restore || true; leave 2
-        fi
+    if [ "$tables" != 0 ] && [ "${SCRIBODO_MIGRATE_REPLACE:-}" != 1 ]; then
+        echo "the native store already holds $tables tables; nothing was replaced (SCRIBODO_MIGRATE_REPLACE=1 keeps a dump of it and replaces it)" >&2
+        migration_restore || true; leave 2
+    fi
+    # A native store that existed before the migration is dumped before the load, even with no table in it: a failed
+    # load is undone by reloading this dump into an emptied database, so the store is exactly as it was (verification
+    # of AUDIT-004, 2026-11-16: an empty store was skipped and kept the containers' half-loaded tables). A store this
+    # migration created is removed whole instead.
+    if [ "$native_existed" = 1 ] || [ "$tables" != 0 ]; then
         # The dump is trusted for a reload only once it is complete (REDTEAM-023: a part-written one would have been
         # loaded over the intact native store).
         native_dump="$SCRIBODO_SECRETS/migration-native-$stamp.sql.gz"

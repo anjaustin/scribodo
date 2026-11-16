@@ -570,3 +570,26 @@ container. Steps:
 - `make backuptest` in Docker mode: exit 0 (above).
 
 The evidence is in `scribodo-evidence-2026-11-16-docker.tar.gz`; `docs/EVIDENCE.md` gives its manifest and SHA-256.
+
+# Red team of remed/services-docker (2026-11-16)
+
+The restore-order fix and the rehearsal hygiene held under the red team's fault injection. It found one product bug
+and three smaller items.
+
+## R1 — a failed load over an empty native store left the containers' tables in it (product bug)
+
+The migration dumped the native store before the load only when it had tables (`tables != 0`). A native store that
+existed but held no table (`native_existed=1`, `SCRIBODO_MIGRATE_REPLACE=1`) was not dumped. A failed load or schema
+check then rolled back without emptying it, and still reported "as they were". The red team reproduced the native
+store, mode native and running, holding `probe='docker'` and `schema_migrations=18`: a partly loaded store the app
+would open.
+
+**Fix:** a native store that existed before the migration is always dumped before the load, empty or not. The restore
+then empties `scribodo` and reloads that dump, so the store is exactly as it was. A store the migration created is
+still removed whole. The "already holds N tables" refusal without `SCRIBODO_MIGRATE_REPLACE` is unchanged.
+
+**Rehearsal case, step 10 (store j, 33080/6350):** the containers hold `schema_migrations`, `probe='docker'` and a
+DEFINER view (so the load fails part-way); the native store exists, runs and has no table. After
+`SCRIBODO_MIGRATE_REPLACE=1 migrate-from-docker`, the case asserts: exit 1; the native contents kept; "as they were";
+**0 tables** in native `scribodo`; both native services running; mode native; containers removed. Results are below
+with the other items'.
