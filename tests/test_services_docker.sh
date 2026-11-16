@@ -18,8 +18,12 @@ check() { # check NAME STATUS
     sed 's/^/      docker: /' "$SHIM_LOG" | cut -c1-240; sed 's/^/      client: /' "$CLIENT_LOG"
 }
 
-mkdir -p "$T/home" "$T/run/secrets" "$T/clients" "$T/secrets"
+mkdir -p "$T/home/.docker/bin" "$T/run/secrets" "$T/clients" "$T/secrets"
 export HOME="$T/home"
+# A guard where the library looks first ($HOME/.docker/bin heads its PATH): if the function shim below ever stopped
+# applying, the scripts would reach this, not a real Docker, and every docker check would fail on 97.
+printf '#!/bin/sh\necho "the real docker was reached: $*" >&2\nexit 97\n' > "$T/home/.docker/bin/docker"
+chmod 755 "$T/home/.docker/bin/docker"
 for k in $(env | sed -n 's/^\(SCRIBODO_[A-Z_]*\)=.*/\1/p'); do unset "$k"; done
 export SHIM_ENV="$T/compose.env" SHIM_LOG="$T/docker.log" SHIM_RUN="$T/run/secrets" SHIM_CLIENTS="$T/clients" CLIENT_LOG="$T/client.log"
 export SCRIBODO_SECRETS="$T/secrets" SCRIBODO_LOGS="$T/logs" SCRIBODO_COMPOSE_PROJECT=scribodo-test-shim
@@ -79,6 +83,11 @@ export -f docker curl
 lib() { bash -c '. tools/services_lib.sh; "$@"' lib "$@"; }
 reset() { : > "$SHIM_LOG"; : > "$CLIENT_LOG"; }
 compose_prefix="docker [compose] [-p] [scribodo-test-shim] [-f] [$ROOT/docker/compose.yml]"
+
+# The guard is what the library would run without the shim.
+[ "$(bash -c 'unset -f docker; . tools/services_lib.sh; command -v docker')" = "$T/home/.docker/bin/docker" ] &&
+    { bash -c 'unset -f docker; . tools/services_lib.sh; docker info' >/dev/null 2>&1; [ $? = 97 ]; }
+check "without the shim, the library's docker is the guard (97), never a real Docker" $?
 
 # ---- the root operations, both modes -------------------------------------------------------------------------------
 for mode in docker native; do

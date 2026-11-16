@@ -303,6 +303,7 @@ test: $(TESTS) $(CORE_OBJS) $(LLM_OBJS) $(APP_OBJS)
 	$(WATCHDOG) $(TEST_TIMEOUT) test_env_symbols python3 tests/test_env_symbols.py $(CORE_OBJS) $(LLM_OBJS) $(APP_OBJS)
 	$(WATCHDOG) $(TEST_TIMEOUT) test_backup python3 tests/test_backup.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_service_defaults python3 tests/test_service_defaults.py
+	$(WATCHDOG) $(TEST_TIMEOUT) test_spawn_hygiene python3 tests/test_spawn_hygiene.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_services_docker /bin/bash tests/test_services_docker.sh
 	$(WATCHDOG) $(TEST_TIMEOUT) test_frame_soak python3 tests/test_frame_soak.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_manuscript_series python3 tests/test_manuscript_series.py

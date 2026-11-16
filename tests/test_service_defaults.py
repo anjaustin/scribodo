@@ -77,6 +77,12 @@ class ServiceDefaults(unittest.TestCase):
         self.assertIn('<<< "$SCRIBODO_MARIADB_SERVER_FLAGS"', body.group(1))
         self.assertIn('"${flags[@]}"', body.group(1))
 
+    def test_literal_check_bites(self) -> None:
+        # The red team's example: the pre-AUDIT-004 services_lib.sh default is caught.
+        old = 'export SCRIBODO_QDRANT_PORT="${SCRIBODO_QDRANT_PORT:-6333}"'
+        self.assertRegex(old, r"\b" + self.d["SCRIBODO_DEFAULT_QDRANT_PORT"] + r"\b")
+        self.assertRegex(old, r":-" + self.d["SCRIBODO_DEFAULT_QDRANT_PORT"] + r"\b")
+
     def test_compose_has_no_copy(self) -> None:
         text = (ROOT / "docker/compose.yml").read_text()
         mariadb = text.split("\n  qdrant:")[0]
@@ -93,8 +99,13 @@ class ServiceDefaults(unittest.TestCase):
             text = (ROOT / rel).read_text()
             for literal in literals:
                 self.assertNotIn(literal, text, f"{rel} writes {literal!r}; it belongs in tools/services.defaults")
-            if rel.endswith((".c", ".h")):
-                self.assertNotRegex(text, r"\b" + self.d["SCRIBODO_DEFAULT_QDRANT_PORT"] + r"\b", rel)
+            q = self.d["SCRIBODO_DEFAULT_QDRANT_PORT"]
+            if rel.endswith((".c", ".h", ".sh")):
+                # Qdrant's port in C or shell, a literal or a shell default such as ${SCRIBODO_QDRANT_PORT:-6333}
+                self.assertNotRegex(text, r"\b" + q + r"\b", rel)
+            for port in (q, self.d["SCRIBODO_DEFAULT_DB_PORT"]):
+                # a default in any shell or Compose expansion (Compose keeps 6333 only as the container's own port)
+                self.assertNotRegex(text, r":-" + port + r"\b", rel)
 
     def test_mariadb_pin_is_one_release(self) -> None:
         compose = (ROOT / "docker/compose.yml").read_text()

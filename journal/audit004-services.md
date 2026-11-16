@@ -305,3 +305,29 @@ A command failing under `set -e` with its own 7 (curl) or 75 passed straight thr
 With the old 3–6 trap restored, the 7 and 75 cases fail. The 4 case passed either way, being inside the old range.
 
 **Gates (RT3):** `make test` exit 0; `make sanitize` exit 0; `make analyze` skipped (another stream's `clang --analyze` was running). RT3 changes no C source, which is all analyze covers.
+
+## RT4 — tests that would have passed with the fixes reverted (low)
+
+- **server.c's popen.** `tests/test_spawn_hygiene.py` (in `make test`) is the static check the coordinator offered as
+  the alternative. Comments and string literals are stripped first. It forbids `popen`, `system`, `fork`, `vfork` and
+  the `exec*` family in `src/`, and allows `posix_spawn` only in `child_process.c` and `server.c`, each of which must
+  contain `POSIX_SPAWN_CLOEXEC_DEFAULT`. Run on the pre-AUDIT-004 `server.c`, it finds the `popen`. I chose this over
+  driving `reap_pidfile`: `test_llm`'s reap tests pass with either implementation, because both read the right
+  arguments; the difference is only what the child inherits, which a static rule pins.
+- **Shell literals.** `test_service_defaults.py` now also forbids Qdrant's port in shell files and any `:-<port>`
+  default in the product files (Compose keeps 6333 only as the container's own port). The pre-AUDIT-004
+  `services_lib.sh` line `${SCRIBODO_QDRANT_PORT:-6333}` is caught, and a test case pins that.
+- **Docker guard.** `tests/test_services_docker.sh` puts a `docker` that prints "the real docker was reached" and
+  exits 97 at `$HOME/.docker/bin`, the throwaway HOME's copy of the directory the library puts first on PATH. A check
+  confirms that, without the function shim, the library resolves to the guard and gets 97. With the shim's export
+  removed, 13 checks fail on the guard, and no real Docker is contacted.
+
+**Stash audit (the coordinator's warning that the stash stack is shared).** During RT1 I ran one bare `git stash`
+followed by `git stash pop`, intending to check the old scripts. Afterwards:
+- the shared stash list is empty, so no entry of mine was left behind, as there would be had my pop taken another
+  stream's entry;
+- the pop restored exactly my three RT1 files (`tests/test_services_docker.sh`, `tools/backuptest.sh`,
+  `tools/servicestest.sh`), which are what `78f2049` commits, so no other stream popped mine.
+Nothing odd found. No stash has been used since; old file versions are read with `git show <sha>:<path>`.
+
+**Gates (RT4):** `make test` exit 0; `make sanitize` exit 0; `make analyze` skipped (another stream's analyze was running). RT4 changes tests only, no C source.
