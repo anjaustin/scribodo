@@ -1,5 +1,6 @@
 #include "recall_view.h"
 #include "ui/theme.h"
+#include "ui/widgets.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -243,8 +244,7 @@ RecallAction recall_view_draw(RecallView *v, Rectangle r, bool focused)
     if (!v) return act;
     layout(v, r);
     editor_draw(v->input, v->input_rect, focused);
-    if (v->busy) GuiDisable();
-    if (GuiButton(v->button_rect, "Search") && !v->busy) {
+    if (widget_button(v->button_rect, "Search", v->label, WIDGET_OUTLINE, !v->busy)) {
         char *text = editor_text_utf8(v->input);
         bool blank = true;
         for (const char *p = text; p && *p; p++)
@@ -253,7 +253,6 @@ RecallAction recall_view_draw(RecallView *v, Rectangle r, bool focused)
         v->submitted = blank ? NULL : text;
         if (blank) free(text);
     }
-    GuiEnable();
     LineCtx cov = { v->label, r.x, r.y + INPUT_H + GAP, v->label->line_height, v->has_result && !v->ok ? ERR : MUTED };
     wrap(v->label, v->coverage, r.width, MAX_COVERAGE_LINES, draw_line, &cov);
 

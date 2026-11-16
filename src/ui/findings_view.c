@@ -1,5 +1,6 @@
 #include "findings_view.h"
 #include "ui/theme.h"
+#include "ui/widgets.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -344,12 +345,10 @@ FindingAction findings_view_draw(FindingsView *v, Rectangle r, char *id_out, siz
                         v->btn[b] = (Rectangle){ 0 };
                         continue;
                     }
-                    if (off) GuiDisable();
-                    if (GuiButton(rects[b], labels[b]) && !off && armed) {
+                    if (widget_button(rects[b], labels[b], NULL, WIDGET_OUTLINE, !off) && armed) {
                         act = acts[b];
                         snprintf(id_out, id_len, "%s", it->id);
                     }
-                    GuiEnable();
                 }
             }
         }

@@ -562,9 +562,17 @@ void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_foc
     float y = list.y + PAD - v->scroll;
     bool blink = fmod(GetTime(), 1.0) < 0.6;
     v->last_apply = v->last_note = v->last_canon = v->last_sources = (Rectangle){ 0 };
+    /* A reply's actions (Copy, Apply, Note, Canon) show under the latest reply and under the message the pointer is
+     * on, so the history reads as text; Sources, part navigation and a stopped reply's notice always show. */
+    size_t last_reply = n;
+    for (size_t i = n; i-- > 0;)
+        if (footer(chat_message(v->chat, i))) { last_reply = i; break; }
+    Vector2 pointer = GetMousePosition();
+    bool pointer_in = !input_mouse_blocked() && CheckCollisionPointRec(pointer, list);
     for (size_t i = 0; i < n; i++) {
         const ChatMessage *m = chat_message(v->chat, i);
         const MsgCache *c = refresh(v, i, m->content, m->role == CHAT_ASSISTANT && !m->is_edit, width);
+        float msg_top = y;
         /* A message that went to (or came from) a remote model says so,
          * also when the chat is reopened later. */
         char who[480];
@@ -604,9 +612,14 @@ void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_foc
             y += LABEL_H;
         }
         FooterLayout f = footer_layout(v, m, info.active, list.x + PAD, y, list.width - 2 * PAD);
-        for (int k = 0; k < FOOT_COUNT; k++)
-            if (f.label[k]) sfont_draw_utf8(v->label, f.label[k], (int)strlen(f.label[k]), f.rect[k].x, f.rect[k].y,
-                                          k == FOOT_STATUS ? COL_LABEL : COL_LINK);
+        Rectangle whole = { list.x, msg_top, list.width, y + f.height + GAP - msg_top };
+        bool actions = i == last_reply || (pointer_in && CheckCollisionPointRec(pointer, whole));
+        for (int k = 0; k < FOOT_COUNT; k++) {
+            bool on_demand = k == FOOT_COPY || k == FOOT_APPLY || k == FOOT_NOTE || k == FOOT_CANON;
+            if (f.label[k] && (actions || !on_demand))
+                sfont_draw_utf8(v->label, f.label[k], (int)strlen(f.label[k]), f.rect[k].x, f.rect[k].y,
+                                k == FOOT_STATUS ? COL_LABEL : COL_LINK);
+        }
         if (f.label[FOOT_APPLY] || i == n - 1) v->last_apply = f.rect[FOOT_APPLY];
         if (f.label[FOOT_NOTE] || i == n - 1) v->last_note = f.rect[FOOT_NOTE];
         if (f.label[FOOT_CANON] || i == n - 1) v->last_canon = f.rect[FOOT_CANON];

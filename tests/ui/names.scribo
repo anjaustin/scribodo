@@ -1,8 +1,9 @@
-# Who is who (user testing): names are stored settings (Explorer → PROJECT
-# → Names…), a name said in chat is offered for confirmation, and the
-# author is never a finding in chats.
+# Who is who (user testing): names are stored settings (Scribodo → Names…),
+# a name said in chat is offered for confirmation, and the author is never a
+# finding in chats.
 open "$DIR/chapter.md"
-click_element NamesItem
+click_element AppMenu
+click_element MenuItem4
 key A cmd
 type "Tripp"
 key ENTER

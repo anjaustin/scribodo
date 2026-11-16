@@ -4,6 +4,8 @@
 
 #include <mach-o/dyld.h>
 
+#include "ui/widgets.h"
+
 static void clay_error(Clay_ErrorData err);
 static void style_raygui(const SFont *ui);
 static bool load_fonts(App *app, float dpi);
@@ -93,7 +95,10 @@ unsigned app_fonts_apply(App *app, unsigned roles, char *why, size_t whylen)
         app->fonts[r] = next;
     }
     for (int i = 0; i < FONT_COUNT; i++) app->font_ptrs[i] = &app->fonts[i];
-    if (app->fonts[FONT_UI].nfaces) style_raygui(&app->fonts[FONT_UI]);
+    if (app->fonts[FONT_UI].nfaces) {
+        style_raygui(&app->fonts[FONT_UI]);
+        widget_set_font(&app->fonts[FONT_UI]);
+    }
     if (app->clay_buf) Clay_ResetMeasureTextCache();
     return failed;
 }

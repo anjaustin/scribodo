@@ -17,8 +17,19 @@ typedef enum {
     WIDGET_PRIMARY, /* filled with the accent */
 } WidgetKind;
 
-/* Draws the button; true on the frame it is clicked (never when disabled). */
+/* The font a control uses when given none (the interface font; set again whenever fonts reload). */
+void widget_set_font(const SFont *f);
+/* While locked (a dialog, menu or prompt is open over the panes), controls draw but do not react, as raygui's
+ * GuiLock did. */
+void widget_set_locked(bool locked);
+bool widget_locked(void);
+
+/* Draws the button; true on the frame it is clicked (never when disabled or locked). `f` NULL: the default font. */
 bool widget_button(Rectangle r, const char *label, const SFont *f, WidgetKind kind, bool enabled);
+/* A quiet button that stays filled while `on` (Observer, Recall). */
+bool widget_toggle(Rectangle r, const char *label, const SFont *f, bool on);
+/* A check box with its label to the right; flips *value and returns true on a click. */
+bool widget_checkbox(Rectangle r, const char *label, const SFont *f, bool *value);
 
 /* The click rule of widget_button without drawing: true on the release of a press that began inside `r`. */
 bool widget_clicked(Rectangle r);

@@ -130,7 +130,8 @@ bool editor_set_path(Editor *e, const char *path);
 void editor_set_placeholder(Editor *e, const char *placeholder);
 /* Replace the whole text (scratch editors): no undo step, not dirty. */
 bool editor_set_text_utf8(Editor *e, const char *utf8);
-/* Padding and maximum text-column width (defaults suit the prose view). */
+/* Padding and maximum text-column width (defaults suit the prose view: a column of 34 ems of the editor's font, a
+ * comfortable measure in any face; 0 keeps that). */
 void editor_set_layout(Editor *e, float side_pad, float top_pad, float max_col);
 /* Enter submits (see editor_take_submit) and Shift+Enter inserts a newline. */
 void editor_set_submit_on_enter(Editor *e, bool on);

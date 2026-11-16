@@ -81,7 +81,7 @@ containers to the native services.
 Commits survive the app or the database dying. A sudden power loss can lose
 the last moments of commits, because MariaDB does not force the drive's
 cache; see [USER-GUIDE](USER-GUIDE.md#how-saving-protects-your-text) for the
-measurement. **Back up now** in the app exports the whole store to files.
+measurement. **Scribodo ▸ Back up now** in the app exports the whole store to files.
 `make backuptest` rehearses losing the folder, the database and the index,
 then restoring and resuming.
 

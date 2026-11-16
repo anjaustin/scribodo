@@ -1,5 +1,6 @@
 #include "record_view.h"
 #include "ui/theme.h"
+#include "ui/widgets.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -327,9 +328,7 @@ RecordAction record_view_draw(RecordView *v, Rectangle r, bool focused)
     RecordAction act = RA_NONE;
     for (int i = 0; i < v->nbtn; i++) {
         bool disable = (v->btn_action[i] == RA_SAVE || v->btn_action[i] == RA_REVISE) && !record_view_dirty(v);
-        if (disable) GuiDisable();
-        if (GuiButton(v->btn[i], v->btn_label[i])) act = v->btn_action[i];
-        GuiEnable();
+        if (widget_button(v->btn[i], v->btn_label[i], NULL, WIDGET_OUTLINE, !disable)) act = v->btn_action[i];
     }
     if (!input_mouse_blocked() && v->nsources && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
         CheckCollisionPointRec(GetMousePosition(), v->src_rect))

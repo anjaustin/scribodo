@@ -10,6 +10,12 @@
 /* The button the current press began on (its rectangle), so a release elsewhere clicks nothing. */
 static Rectangle g_pressed;
 static bool g_has_pressed;
+static const SFont *g_font;
+static bool g_locked;
+
+void widget_set_font(const SFont *f) { g_font = f; }
+void widget_set_locked(bool locked) { g_locked = locked; }
+bool widget_locked(void) { return g_locked; }
 
 static bool same_rect(Rectangle a, Rectangle b) { return a.x == b.x && a.y == b.y && a.width == b.width && a.height == b.height; }
 
@@ -64,6 +70,7 @@ void widget_text_in(const SFont *f, const char *s, Rectangle r, Color c)
 /* The press/release rule shared by every control; `held` reports a press in progress on `r`. */
 static bool press_rule(Rectangle r, bool enabled, bool *held)
 {
+    enabled = enabled && !g_locked;
     bool inside = CheckCollisionPointRec(GetMousePosition(), r);
     bool clicked = false;
     if (enabled && inside && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
@@ -80,9 +87,11 @@ static bool press_rule(Rectangle r, bool enabled, bool *held)
 
 bool widget_clicked(Rectangle r) { return press_rule(r, true, NULL); }
 
-bool widget_button(Rectangle r, const char *label, const SFont *f, WidgetKind kind, bool enabled)
+static bool draw_button(Rectangle r, const char *label, const SFont *f, WidgetKind kind, bool enabled, bool on)
 {
-    bool inside = CheckCollisionPointRec(GetMousePosition(), r);
+    if (!f) f = g_font;
+    if (!f) return false;
+    bool inside = CheckCollisionPointRec(GetMousePosition(), r) && !g_locked;
     bool held = false;
     bool clicked = press_rule(r, enabled, &held);
 
@@ -98,7 +107,8 @@ bool widget_button(Rectangle r, const char *label, const SFont *f, WidgetKind ki
         break;
     case WIDGET_QUIET:
     default:
-        fill = enabled && held ? THEME_ACTIVE : enabled && inside ? THEME_HOVER : BLANK;
+        fill = enabled && held ? THEME_ACTIVE : on ? THEME_ACTIVE : enabled && inside ? THEME_HOVER : BLANK;
+        if (on && enabled) text = THEME_TEXT_STRONG;
         break;
     }
     if (fill.a) widget_round_rect(r, RADIUS_S, fill);
@@ -107,5 +117,38 @@ bool widget_button(Rectangle r, const char *label, const SFont *f, WidgetKind ki
     float x = r.x + (r.width - w) * 0.5f;
     if (x < r.x + SP_2) x = r.x + SP_2;
     widget_text(f, label, roundf(x), roundf(r.y + (r.height - f->line_height) * 0.5f), r.width - SP_4, text);
+    return clicked;
+}
+
+bool widget_button(Rectangle r, const char *label, const SFont *f, WidgetKind kind, bool enabled)
+{
+    return draw_button(r, label, f, kind, enabled, false);
+}
+
+bool widget_toggle(Rectangle r, const char *label, const SFont *f, bool on)
+{
+    return draw_button(r, label, f, WIDGET_QUIET, true, on);
+}
+
+bool widget_checkbox(Rectangle r, const char *label, const SFont *f, bool *value)
+{
+    if (!f) f = g_font;
+    if (!f) return false;
+    bool clicked = press_rule(r, true, NULL);
+    if (clicked) *value = !*value;
+    float s = 14;
+    Rectangle box = { r.x, roundf(r.y + (r.height - s) * 0.5f), s, s };
+    bool hover = CheckCollisionPointRec(GetMousePosition(), r) && !g_locked;
+    if (*value) {
+        widget_round_rect(box, 3, THEME_ACCENT);
+        /* A check drawn as two strokes, so it does not depend on the font having one. */
+        Vector2 a = { box.x + 3.5f, box.y + 7.5f }, b = { box.x + 6.0f, box.y + 10.0f }, c = { box.x + 10.5f, box.y + 4.0f };
+        DrawLineEx(a, b, 1.8f, THEME_ON_ACCENT);
+        DrawLineEx(b, c, 1.8f, THEME_ON_ACCENT);
+    } else {
+        widget_round_outline(box, 3, 1.0f, hover ? THEME_TEXT_MUTED : THEME_BORDER_STRONG);
+    }
+    widget_text(f, label, box.x + s + SP_2, roundf(r.y + (r.height - f->line_height) * 0.5f), r.width - s - SP_2,
+                hover ? THEME_TEXT : THEME_TEXT_MUTED);
     return clicked;
 }

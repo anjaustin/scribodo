@@ -25,7 +25,7 @@
  * few KB and risks hitting untested paths in its ring-buffer code. */
 #include "stb_textedit.h"
 
-#define MAX_COLUMN_WIDTH 720.0f
+#define MEASURE_EM 34.0f /* the document's column: 34 ems of its font, about 68 characters a line */
 #define MIN_SIDE_PADDING 32.0f
 #define TOP_PADDING      28.0f
 #define CLICK_INTERVAL_S 0.4
@@ -623,7 +623,7 @@ Editor *editor_create(SFont *font)
     e->max_chars = EDITOR_MAX_CHARS;
     e->side_pad = MIN_SIDE_PADDING;
     e->top_pad = TOP_PADDING;
-    e->max_col = MAX_COLUMN_WIDTH;
+    e->max_col = 0.0f; /* 0: the measure (MEASURE_EM) of the editor's font */
     /* Nothing is editable until a document with a usable path is open, so
      * text can never be typed into a buffer that has nowhere to be saved. */
     e->read_only = true;
@@ -831,7 +831,8 @@ static void update_geometry(Editor *e, Rectangle b)
 {
     float side = e->side_pad;
     float w = b.width - 2.0f * side;
-    if (w > e->max_col) w = e->max_col;
+    float max_col = e->max_col > 0.0f ? e->max_col : roundf(e->font->size * MEASURE_EM);
+    if (w > max_col) w = max_col;
     if (w < 40.0f) w = 40.0f;
     e->text_w = floorf(w);
     e->text_x = floorf(b.x + (b.width - e->text_w) * 0.5f);

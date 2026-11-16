@@ -14,6 +14,7 @@
 #define _DARWIN_C_SOURCE
 
 #include "app/app_internal.h"
+#include "ui/widgets.h"
 #include "app/tools_dir.h"
 
 static bool store_adopt_project(App *app);
@@ -140,7 +141,7 @@ static void memory_tick(App *app)
     if (!bound) {
         if (app->memory_bound_chat[0]) memory_job_clear(app->memory_job);
         app->memory_bound_chat[0] = app->memory_bound_project[0] = 0;
-        snprintf(app->memory_label, sizeof(app->memory_label), "Memory (experimental): disabled/unavailable");
+        app->memory_label[0] = '\0'; /* no stored conversation: nothing to say (memory needs one) */
         return;
     }
     if (strcmp(app->memory_bound_project, app->chat_project) || strcmp(app->memory_bound_chat, app->chat_id) ||
@@ -156,7 +157,7 @@ static void memory_tick(App *app)
     memory_job_pause(app->memory_job, chat_busy(app->chat) || chat_remote_selected(app->chat) || history_read_busy(app));
     MemoryJobStatus status;
     if (memory_job_status(app->memory_job, &status))
-        snprintf(app->memory_label, sizeof(app->memory_label), "Memory (chat/saved attachments): %.220s", status.why);
+        snprintf(app->memory_label, sizeof(app->memory_label), "Memory \xC2\xB7 %.220s", status.why);
 }
 
 static void memory_control(App *app, MemoryJobAction action)
@@ -203,7 +204,7 @@ static void draw_memory_sources(App *app)
     Rectangle content = { box.x + 8, box.y + 38, box.width - 16, box.height - 88 };
     editor_update(app->memory_sources_editor, content, true);
     editor_draw(app->memory_sources_editor, content, true);
-    if (GuiButton(app->memory_sources_close, "Close") || IsKeyPressed(KEY_ESCAPE)) app->memory_sources_open = false;
+    if (widget_button(app->memory_sources_close, "Close", NULL, WIDGET_OUTLINE, true) || IsKeyPressed(KEY_ESCAPE)) app->memory_sources_open = false;
 }
 
 static void set_project(App *app, const char *real)
@@ -743,23 +744,26 @@ static void draw_model_settings(App *app, Rectangle screen)
     Rectangle p = { (screen.width - w) / 2, (screen.height - h) / 2, w, h };
     DrawRectangleRounded(p, 0.03f, 6, THEME_SURFACE);
     DrawRectangleRoundedLinesEx(p, 0.03f, 6, 1.0f, THEME_BORDER_STRONG);
-    GuiLabel((Rectangle){ p.x + 24, p.y + 16, w - 48, 24 }, "Model settings (chat)");
-    GuiLabel((Rectangle){ p.x + 24, p.y + 44, w - 48, 20 },
-             "The observer always uses temperature 0, so its findings stay reproducible.");
+    const SFont *ui = &app->fonts[FONT_UI];
+    widget_text(ui, "Model settings (chat)", p.x + 24, p.y + 16, w - 48, THEME_TEXT_STRONG);
+    widget_text(ui, "The observer always uses temperature 0, so its findings stay reproducible.", p.x + 24, p.y + 44,
+                w - 48, THEME_TEXT_MUTED);
     for (int i = 0; i < MODEL_SETTING_COUNT; i++) {
         const ModelSettingInfo *in = model_setting_info(i);
         float y = p.y + 80 + rowh * (float)i;
-        GuiLabel((Rectangle){ p.x + 24, y, 230, 20 }, in->label);
-        GuiLabel((Rectangle){ p.x + 24, y + 18, 330, 18 }, in->hint);
+        widget_text(ui, in->label, p.x + 24, y, 230, THEME_TEXT);
+        widget_text(ui, in->hint, p.x + 24, y + 18, 330, THEME_TEXT_DIM);
         double v = model_setting_get(&app->model_edit, i);
         char val[32];
         if (in->integer) snprintf(val, sizeof(val), "%d", (int)v);
         else snprintf(val, sizeof(val), "%.2f", v);
         app->set_minus[i] = (Rectangle){ p.x + w - 200, y + 4, 36, 28 };
         app->set_plus[i] = (Rectangle){ p.x + w - 60, y + 4, 36, 28 };
-        if (GuiButton(app->set_minus[i], "-")) model_setting_set(&app->model_edit, i, v - in->step);
-        GuiLabel((Rectangle){ p.x + w - 156, y + 4, 92, 28 }, val);
-        if (GuiButton(app->set_plus[i], "+")) model_setting_set(&app->model_edit, i, v + in->step);
+        if (widget_button(app->set_minus[i], "\xE2\x88\x92", NULL, WIDGET_OUTLINE, true)) model_setting_set(&app->model_edit, i, v - in->step);
+        const SFont *mono = &app->fonts[FONT_MONO];
+        float vw = sfont_measure_utf8(mono, val, (int)strlen(val));
+        widget_text(mono, val, p.x + w - 110 - vw / 2, y + 4 + (28 - mono->line_height) / 2, 0, THEME_TEXT);
+        if (widget_button(app->set_plus[i], "+", NULL, WIDGET_OUTLINE, true)) model_setting_set(&app->model_edit, i, v + in->step);
     }
     model_settings_clamp(&app->model_edit);
     float by = p.y + h - 48;
@@ -778,14 +782,14 @@ static void draw_model_settings(App *app, Rectangle screen)
             snprintf(line, sizeof(line), "Memory: about %s at this context, %s free (running with %dK now)", a, b, running / 1024);
         else
             snprintf(line, sizeof(line), "Memory: about %s at this context, %s free", a, b);
-        GuiLabel((Rectangle){ p.x + 24, by - 32, w - 48, 20 }, line);
+        widget_text(ui, line, p.x + 24, by - 32, w - 48, THEME_TEXT_MUTED);
     }
     app->set_defaults = (Rectangle){ p.x + 24, by, 100, 30 };
     app->set_cancel = (Rectangle){ p.x + w - 228, by, 96, 30 };
     app->set_apply = (Rectangle){ p.x + w - 120, by, 96, 30 };
-    if (GuiButton(app->set_defaults, "Defaults")) model_settings_defaults(&app->model_edit);
-    if (GuiButton(app->set_cancel, "Cancel") || IsKeyPressed(KEY_ESCAPE)) app->settings_open = false;
-    if (GuiButton(app->set_apply, "Apply")) {
+    if (widget_button(app->set_defaults, "Defaults", NULL, WIDGET_QUIET, true)) model_settings_defaults(&app->model_edit);
+    if (widget_button(app->set_cancel, "Cancel", NULL, WIDGET_OUTLINE, true) || IsKeyPressed(KEY_ESCAPE)) app->settings_open = false;
+    if (widget_button(app->set_apply, "Apply", NULL, WIDGET_PRIMARY, true)) {
         if (model_settings_save(&app->model_edit)) {
             app->model = app->model_edit;
             app->settings_open = false;
@@ -885,7 +889,7 @@ static int draw_empty(App *app, Rectangle r)
         const char *labels[3] = { "Open folder...", "New project...", "Open the sample" };
         for (int i = 0; i < 3; i++) {
             app->welcome_btn[i] = (Rectangle){ x + (float)i * 148, y, 140, 30 };
-            if (GuiButton(app->welcome_btn[i], labels[i])) act = 1 + i;
+            if (widget_button(app->welcome_btn[i], labels[i], NULL, i == 0 ? WIDGET_PRIMARY : WIDGET_OUTLINE, true)) act = 1 + i;
         }
         y += 56;
         if (app->nrecents) {
@@ -936,8 +940,8 @@ static int draw_empty(App *app, Rectangle r)
         y += big->line_height + 40;
         app->empty_btn[0] = (Rectangle){ x, y, 150, 30 };
         app->empty_btn[1] = (Rectangle){ x + 158, y, 150, 30 };
-        if (GuiButton(app->empty_btn[0], "New document")) act = 20;
-        if (GuiButton(app->empty_btn[1], "Import...")) act = 21;
+        if (widget_button(app->empty_btn[0], "New document", NULL, WIDGET_PRIMARY, true)) act = 20;
+        if (widget_button(app->empty_btn[1], "Import\xE2\x80\xA6", NULL, WIDGET_OUTLINE, true)) act = 21;
     }
     return act;
 }
@@ -1162,9 +1166,6 @@ static void frame_left_click(App *app, Vector2 mouse, bool modal, bool trace)
         }
         else if (app->store_problem && Clay_PointerOver(CLAY_ID("StoreFixItem"))) store_resolve_problem(app);
         else if (Clay_PointerOver(CLAY_ID("NewDocItem"))) begin_new_document(app);
-        else if (Clay_PointerOver(CLAY_ID("BackupItem"))) begin_backup(app);
-        else if (Clay_PointerOver(CLAY_ID("RestoreItem"))) begin_restore(app);
-        else if (Clay_PointerOver(CLAY_ID("NamesItem"))) begin_names(app);
         else if (Clay_PointerOver(CLAY_ID("ImportItem"))) import_documents(app);
         else if (Clay_PointerOver(CLAY_ID("NewNoteItem"))) {
             if (close_record(app, false) && record_view_open(app->record, REC_NOTE, NULL, "", NULL, 0))
@@ -1243,9 +1244,12 @@ static void frame_left_click(App *app, Vector2 mouse, bool modal, bool trace)
 static void frame_app_menu(App *app, bool modal)
 {
     if (modal || !IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || !Clay_PointerOver(CLAY_ID("AppMenu"))) return;
-    static const char *const items[] = { "Fonts\xE2\x80\xA6          \xE2\x8C\x98,", "Model settings\xE2\x80\xA6" };
+    /* The app's settings, then the open project's own: back up, restore, names (once in the Explorer). */
+    const char *items[] = { "Fonts\xE2\x80\xA6          \xE2\x8C\x98,", "Model settings\xE2\x80\xA6",
+                            backup_job_busy(&app->backup) ? "Backing up\xE2\x80\xA6" : "Back up now",
+                            "Restore from a backup\xE2\x80\xA6", "Names\xE2\x80\xA6" };
     Rectangle r = ELEMENT_RECT("AppMenu");
-    menu_open(&app->menu, MT_APP, 0, (Vector2){ r.x, r.y + r.height + 4 }, items, 2);
+    menu_open(&app->menu, MT_APP, 0, (Vector2){ r.x, r.y + r.height + 4 }, items, app->project_dir[0] ? 5 : 2);
 }
 
 static void frame_model_picker(App *app, bool modal)
@@ -1510,14 +1514,14 @@ static int frame_draw_panes(App *app, Clay_RenderCommandArray cmds, const FrameR
     BeginDrawing();
     ClearBackground(THEME_BG);
     clay_render(cmds, app->font_ptrs);
-    if (modal) GuiLock(); /* nothing behind a prompt or menu reacts */
-    if (GuiButton(rects->open_rect, "Open...")) choose_project(app, false);
+    widget_set_locked(modal); /* nothing behind a prompt or menu reacts */
+    if (widget_button(rects->open_rect, "Open\xE2\x80\xA6", NULL, WIDGET_QUIET, true)) choose_project(app, false);
     if (editor_path(app->editor)) editor_draw(app->editor, app->editor_rect, app->focus == FOCUS_DOC);
     int empty_act = editor_path(app->editor) ? 0 : draw_empty(app, app->editor_rect);
     if (review_active(app->review)) {
         review_draw(app->review, app->review_rect);
-        if (GuiButton(review_accept_rect(app->review_rect), "Accept")) accept_proposal(app);
-        if (GuiButton(review_reject_rect(app->review_rect), "Reject")) reject_proposal(app);
+        if (widget_button(review_accept_rect(app->review_rect), "Accept", NULL, WIDGET_PRIMARY, true)) accept_proposal(app);
+        if (widget_button(review_reject_rect(app->review_rect), "Reject", NULL, WIDGET_OUTLINE, true)) reject_proposal(app);
     }
     if (record_view_active(app->record))
         record_action(app, record_view_draw(app->record, app->record_rect, app->focus == FOCUS_RECORD));
@@ -1538,21 +1542,18 @@ static void frame_draw_toolbar(App *app, const FrameRects *rects)
 {
     bool can_save = (editor_is_dirty(app->editor) || editor_overwrite_armed(app->editor)) &&
                     !editor_is_read_only(app->editor);
-    if (!can_save) GuiDisable();
-    if (GuiButton(rects->save_rect, "Save")) save(app);
-    GuiEnable();
-    /* raygui draws with the primary face only (no fallback), so ASCII. */
-    if (GuiButton(rects->obs_rect, app->observer_open ? "Hide observer" : app->observer_button[0] ? app->observer_button : "Observer")) {
+    if (widget_button(rects->save_rect, "Save", NULL, WIDGET_QUIET, can_save)) save(app);
+    if (widget_toggle(rects->obs_rect, app->observer_button[0] ? app->observer_button : "Observer", NULL, app->observer_open)) {
         app->observer_open = !app->observer_open;
         if (app->observer_open && app->recall_open) toggle_recall(app);
     }
-    if (GuiButton(ELEMENT_RECT("RecallToggle"), app->recall_open ? "Hide recall" : "Recall")) toggle_recall(app);
+    if (widget_toggle(ELEMENT_RECT("RecallToggle"), "Recall", NULL, app->recall_open)) toggle_recall(app);
     /* Whether the observer reads the open chat (the author's choice). */
     if (open_chat_stored(app)) {
         Rectangle orr = ELEMENT_RECT("ObserverReads");
         const ChatSummary *cs = find_chat(app, app->chat_id);
         bool reads = cs && !cs->observer_ignore, was = reads;
-        GuiCheckBox((Rectangle){ orr.x, orr.y + 4, 16, 16 }, "Observer reads this chat", &reads);
+        widget_checkbox(orr, "Observer reads this chat", NULL, &reads);
         if (reads != was) set_chat_observer(app, app->chat_id, reads);
     }
 }
@@ -1560,14 +1561,12 @@ static void frame_draw_toolbar(App *app, const FrameRects *rects)
 static void frame_draw_chat_controls(App *app, const FrameRects *rects)
 {
     if (app->suggest_text[0]) {
-        if (GuiButton(ELEMENT_RECT("NameSave"), "Save")) names_answer(app, true);
-        else if (GuiButton(ELEMENT_RECT("NameSkip"), "Not now")) names_answer(app, false);
+        if (widget_button(ELEMENT_RECT("NameSave"), "Save", NULL, WIDGET_PRIMARY, true)) names_answer(app, true);
+        else if (widget_button(ELEMENT_RECT("NameSkip"), "Not now", NULL, WIDGET_QUIET, true)) names_answer(app, false);
     }
-    if (chat_busy(app->chat)) GuiDisable();
-    if (GuiButton(rects->new_rect, "New chat")) new_chat(app);
-    GuiEnable();
+    if (widget_button(rects->new_rect, "New chat", NULL, WIDGET_QUIET, !chat_busy(app->chat))) new_chat(app);
     if (app->edit_mode) {
-        if (GuiButton(ELEMENT_RECT("CancelEdit"), "Cancel")) {
+        if (widget_button(ELEMENT_RECT("CancelEdit"), "Cancel", NULL, WIDGET_OUTLINE, true)) {
             leave_edit_mode(app);
             editor_anchor_clear(app->editor);
         }
@@ -1604,28 +1603,26 @@ static void frame_draw_chat_controls(App *app, const FrameRects *rects)
         }
     }
     if (chat_busy(app->chat)) {
-        if (GuiButton(rects->send_rect, "Stop")) chat_cancel(app->chat);
+        if (widget_button(rects->send_rect, "Stop", NULL, WIDGET_OUTLINE, true)) chat_cancel(app->chat);
     } else if (app->history_pending) {
-        if (GuiButton(rects->send_rect, "Cancel")) {
+        if (widget_button(rects->send_rect, "Cancel", NULL, WIDGET_OUTLINE, true)) {
             cancel_history(app);
             set_status(app, "History loading cancelled; the current window was kept");
         }
     } else {
         bool ready = !app->llm || chat_remote_selected(app->chat) || llm_server_state(app->llm, NULL, 0) == LLM_READY;
-        if (!ready) GuiDisable();
-        if (GuiButton(rects->send_rect, "Send")) {
+        if (widget_button(rects->send_rect, "Send", NULL, WIDGET_PRIMARY, ready)) {
             chat_view_submit_now(app->chat_view);
             char *t = chat_view_take_submit(app->chat_view);
             if (t) send_chat(app, t);
             app->focus = FOCUS_CHAT;
         }
-        GuiEnable();
     }
 }
 
 static void frame_draw_overlays(App *app, MainLoop *loop, int empty_act, bool modal)
 {
-    GuiUnlock();
+    widget_set_locked(false);
     if (!modal && empty_act) empty_action(app, empty_act, loop->sample);
     {
         Rectangle screen = { 0, 0, (float)GetScreenWidth(), (float)GetScreenHeight() };
@@ -1647,6 +1644,9 @@ static void frame_draw_overlays(App *app, MainLoop *loop, int empty_act, bool mo
         }
         if (pick == 0 && app->menu.tag == MT_APP) fonts_panel_open(app);
         if (pick == 1 && app->menu.tag == MT_APP) open_model_settings(app);
+        if (pick == 2 && app->menu.tag == MT_APP) begin_backup(app);
+        if (pick == 3 && app->menu.tag == MT_APP) begin_restore(app);
+        if (pick == 4 && app->menu.tag == MT_APP) begin_names(app);
         if (pick >= 0 && app->menu.tag == MT_MODEL && pick == app->model_menu_settings) {
             open_model_settings(app);
         } else if (pick >= 0 && app->menu.tag == MT_MODEL) {

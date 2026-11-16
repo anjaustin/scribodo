@@ -1,5 +1,6 @@
 #include "prompt_view.h"
 #include "ui/theme.h"
+#include "ui/widgets.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -118,8 +119,8 @@ PromptResult prompt_draw(PromptView *v, Rectangle screen)
         sfont_draw_utf8(v->label, v->error, (int)strlen(v->error), v->box.x + 16, v->field_r.y + v->field_r.height + 8,
                         THEME_ERR);
     PromptResult r = PR_NONE;
-    if (GuiButton(v->cancel_r, "Cancel")) r = PR_CANCEL;
-    if (GuiButton(v->ok_r, v->ok)) r = PR_OK;
+    if (widget_button(v->cancel_r, "Cancel", v->label, WIDGET_OUTLINE, true)) r = PR_CANCEL;
+    if (widget_button(v->ok_r, v->ok, v->label, WIDGET_PRIMARY, true)) r = PR_OK;
     return r;
 }
 

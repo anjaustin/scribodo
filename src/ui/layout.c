@@ -267,13 +267,8 @@ static void layout_explorer(App *app)
         if (app->project_dir[0] && app->ncanon == 0) coming_soon(app, "Select a passage, then \xE2\x8C\x98\xE2\x87\xA7" "C");
         for (size_t i = 0; i < app->ncanon && i < REC_SHOW; i++)
             list_item(app, CLAY_IDI("CanonItem", (uint32_t)i), app->canon_labels[i], !strcmp(open_id, app->canon[i].id));
-        if (app->project_dir[0]) {
-            section_header(app, "PROJECT");
-            list_item(app, CLAY_ID("BackupItem"), backup_job_busy(&app->backup) ? "Backing up\xE2\x80\xA6" : "Back up now", false);
-            list_item(app, CLAY_ID("RestoreItem"), "Restore from a backup\xE2\x80\xA6", false);
-            list_item(app, CLAY_ID("NamesItem"), "Names\xE2\x80\xA6", false);
-            if (app->backup_label[0]) coming_soon(app, app->backup_label);
-        }
+        /* Back up, Restore and Names live in the Scribodo menu; the last backup's outcome stays in view here. */
+        if (app->project_dir[0] && app->backup_label[0]) coming_soon(app, app->backup_label);
         layout_entities(app);
     }
 }
@@ -300,10 +295,10 @@ static void layout_chat(App *app)
             if (open_chat_stored(app)) slot(CLAY_ID("ObserverReads"), 190, 24);
             slot(CLAY_ID("NewChatButton"), 80, 24);
         }
-        if (app->memory_experiment) {
+        if (app->memory_experiment && app->memory_label[0]) {
             CLAY({ .id = CLAY_ID("MemoryStatus"),
                    .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(24) }, .padding = { 12, 8, 4, 0 } },
-                   .clip = { .horizontal = true } }) { label(app, app->memory_label, FONT_UI, COL_MUTED); }
+                   .clip = { .horizontal = true } }) { label(app, app->memory_label, FONT_UI, COL_DIM); }
         }
         CLAY({ .id = CLAY_ID("ChatMessages"),
                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } } }) {}
