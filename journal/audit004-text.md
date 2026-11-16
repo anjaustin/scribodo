@@ -50,3 +50,50 @@ the test fails five checks (checked by reverting `store_import.c` only).
 `build/audit004-text/item1-dbtest.log`). `make crashtest` exit 0: 135 matrix rows, 131 process deaths, 1,496 checks,
 0 failures, 778 s; `migration.statement` 85 points and `migration.receipt` 19 points, every one recovered to schema
 19 (`item1-crashtest.log`, `item1-crash-matrix.tsv`). `make test`, `make analyze`, `make sanitize`: below.
+
+## Item 2: F10 defect, the relation check's splitter
+
+**Defect.** `rel_next_sentence` (and the arm's `SENTENCE_END`) treated only Mr., Mrs., Dr. and St. as titles and knew
+no initials, so "Ms. Bennet" and "James K. Powell" ended a sentence mid-name; the observer's splitters do not. A cut
+statement loses its own negation: "The daughter of Ms. Gardiner is not Lydia." was checked as "The daughter of Ms."
+(flagged, unsupported) beside a negated remainder.
+
+**Change.** Both sides take the observer's rule: a period after one of the fifteen titles (Mr Mrs Ms Dr St Capt Col Lt
+Gen Prof Sgt Jr Sr Rev Hon, case-sensitive as before) or after a single capital (an initial), each at a word boundary,
+ends no sentence. C: `rel_next_sentence`; Python: `TITLES` and one fixed-width lookbehind per title plus
+`(?<!\b[A-Z]\.)` in `tools/answer_relation_arm.py`. Tests on both sides: the two cut statements above now read as
+negated and unflagged, and a real sentence end after "Capt. Powell ..." still separates the next sentence.
+
+**Measured offline (no model).** Inputs: every captured composer reply under `build/` (46 capture directories,
+`build/audit004-text/item2/capture_dirs.txt`, 440 replies) plus the 230 rows of
+`tests/fixtures/answer_relation/replies.json`: 670 replies, 262 distinct question-and-reply pairs.
+
+| measure | old | new |
+|---|---|---|
+| sentences (arm, prose of every reply) | 5,095 | 5,095 |
+| replies whose split changed | | 0 |
+| replies whose phrases or outcomes changed (arm) | | 0 |
+| replies whose verdict changed (arm: flagged, first unsupported phrase, phrase count) | | 0 |
+| C `answer_relations` (old object vs new, probe linked against the product objects): rows differing | | 0 of 670 |
+| C new vs arm new (checked count and unsupported phrase) | | 0 of 670 differ |
+| replies flagged (C new) | | 63 of 670 |
+
+No recorded reply contains a title outside the old four or an initial before a sentence break, so no statement and no
+verdict changes on recorded data: no regression, and the fixture needs no regeneration (C and arm still agree on all
+230 rows). The defect is real but latent in the recordings; the unit tests pin it.
+
+**What the rule does on manuscript prose** (the arm's splitter over the three novels' chapters, not what the check
+reads; `item2/rel_manuscripts.txt`): sentences 2,004 to 2,003 (Mars, "K."), 3,161 to 3,160 (P&P, "P."), 3,744 to
+3,737 (Wuthering Heights). Most of Wuthering Heights' joins are the pronoun: `said I. "Proud people ..."` reads as an
+initial. This is the observer's rule as it stands (its `obs_sentence_end` makes the same join); a reply rarely ends a
+sentence with "I." (none of the 670 do), and a join can only widen a sentence, so the cost in the check is a negation
+in the following sentence reaching back across the false join. Recorded here rather than tuned: changing the initial
+rule changes the observer's measured splitter too and belongs to a measured change of both.
+
+**Decision.** Ship: 0 of 670 recorded replies change, the C/Python parity holds, and the cut-statement defect is
+closed. Reproduce: `python3 -I build/audit004-text/item2/rel_measure.py <worktree> <dir holding old/> <build>
+<capture dirs...>`; the C probe with `relprobe_build.sh` (old object compiled from `git show ed95681:...`).
+
+**Gates.** Item 1 commit (`85c2e19`), the other items' changes stashed: `make test` exit 0, `make analyze` exit 0 (0
+warnings, 87 files), `make sanitize` exit 0 (`build/audit004-text/item1-{test,analyze,sanitize}.{log,exit}`). Item 2:
+below.

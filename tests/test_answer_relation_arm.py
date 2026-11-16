@@ -57,6 +57,16 @@ class RelationArmTests(unittest.TestCase):
         self.assertEqual(ra.phrase_class("Elizabeth's father is Mr. Bennet"), 'kinship')
         self.assertEqual(ra.phrase_class("daughter of Mr. Bennet"), 'kinship')
 
+    def test_a_title_or_initial_period_ends_no_sentence(self):
+        """AUDIT-004 F10: cut at "Ms." or "K.", the negation was left in the other half."""
+        self.assertEqual(ra.sentences('Ms. Bennet came. James K. Powell left. Capt. Kidd sailed!'),
+                         ['Ms. Bennet came.', 'James K. Powell left.', 'Capt. Kidd sailed!'])
+        for reply in ('The daughter of Ms. Gardiner is not Lydia.', 'The son of James K. Powell is not Hareton.'):
+            rows = ra.check(reply, [], [], 'q')
+            self.assertEqual([(r['negated'], r['flag']) for r in rows], [(True, False)])
+        rows = ra.check('The son of Capt. Powell is not Hareton. Her father is Tardos Mors.', [], [], 'q')
+        self.assertEqual([r['phrase'] for r in rows if r['flag']], ['Her father is Tardos Mors'])
+
     def test_author_turns_and_the_question_support_a_phrase(self):
         rows = ra.check("Lydia's age is seventeen.", [], ['Note for later: Lydia, my youngest, is seventeen.'], 'How old?')
         self.assertEqual(rows, [])  # "age" is not in the closed kin list

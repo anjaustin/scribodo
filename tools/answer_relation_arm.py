@@ -80,11 +80,15 @@ def prose(reply):
     return '\n'.join(out)
 
 
-SENTENCE_END = re.compile(r'(?<!\bMr\.)(?<!\bMrs\.)(?<!\bDr\.)(?<!\bSt\.)(?<=[.!?])\s+|\n+')
+# The titles of src/core/text_rules.c (TEXT_TITLES, the observer's list) and an initial: their period ends no
+# sentence, so "Ms. Bennet" and "James K. Powell" stay whole (AUDIT-004 F10; journal/audit004-text.md). One fixed-width
+# lookbehind per title, as the C's rel_next_sentence checks each title before the period at a word boundary.
+TITLES = ('Mr', 'Mrs', 'Ms', 'Dr', 'St', 'Capt', 'Col', 'Lt', 'Gen', 'Prof', 'Sgt', 'Jr', 'Sr', 'Rev', 'Hon')
+SENTENCE_END = re.compile(''.join(rf'(?<!\b{t}\.)' for t in TITLES) + r'(?<!\b[A-Z]\.)(?<=[.!?])\s+|\n+')
 
 
 def sentences(text):
-    """Sentences of the prose; an honorific's period ("Mr. Bingley") does not end one."""
+    """Sentences of the prose; a title's or an initial's period ("Mr. Bingley", "James K. Powell") does not end one."""
     return [s for s in SENTENCE_END.split(text) if s.strip()]
 
 

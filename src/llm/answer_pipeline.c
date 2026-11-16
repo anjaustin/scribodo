@@ -892,7 +892,9 @@ static char *rel_prose(const char *reply_text)
 }
 
 /* The next sentence of `text` from `*pos`: [start, end) or false when none is left. A sentence ends at a run of
- * newlines, or at [.!?] followed by whitespace unless the period closes Mr., Mrs., Dr. or St. */
+ * newlines, or at [.!?] followed by whitespace unless the period closes a title or an initial, each at a word
+ * boundary: the observer's titles and rule, so "Ms. Bennet" and "James K. Powell" are not cut in two (AUDIT-004 F10;
+ * measured on 670 recorded replies, no sentence changed: journal/audit004-text.md). */
 static bool rel_next_sentence(const char *text, size_t *pos, size_t *start, size_t *end)
 {
     size_t n = strlen(text), i = *pos;
@@ -903,8 +905,10 @@ static bool rel_next_sentence(const char *text, size_t *pos, size_t *start, size
             if ((text[i] == '.' || text[i] == '!' || text[i] == '?') && i + 1 < n && isspace((unsigned char)text[i + 1])) {
                 bool honorific = false;
                 if (text[i] == '.') {
-                    static const char *const h[] = { "Mr", "Mrs", "Dr", "St" };
-                    for (size_t k = 0; k < 4 && !honorific; k++) {
+                    static const char *const h[] = { "Mr", "Mrs", "Ms", "Dr", "St", "Capt", "Col", "Lt", "Gen", "Prof",
+                                                     "Sgt", "Jr", "Sr", "Rev", "Hon" };
+                    honorific = i >= 1 && text[i - 1] >= 'A' && text[i - 1] <= 'Z' && rel_boundary(text, i - 1); /* an initial */
+                    for (size_t k = 0; k < sizeof(h) / sizeof(h[0]) && !honorific; k++) {
                         size_t hl = strlen(h[k]);
                         honorific = i >= hl && !strncmp(text + i - hl, h[k], hl) && rel_boundary(text, i - hl);
                     }

@@ -361,6 +361,15 @@ static void test_relations(void)
     CHECK(n == 2 && bad && !strcmp(bad, "Mr. Bennet's estate"));
     free(bad); bad = NULL;
     CHECK(answer_relations(NULL, NULL, 0, NULL, 0, NULL, &bad) == 0 && bad == NULL);
+    /* A title's or an initial's period ends no sentence (AUDIT-004 F10): cut at "Ms." or "K.", the negation was left in
+     * the other half and the denial read as a statement. */
+    n = answer_relations("The daughter of Ms. Gardiner is not Lydia.", NULL, 0, NULL, 0, "q", &bad);
+    CHECK(n == 1 && bad == NULL);
+    n = answer_relations("The son of James K. Powell is not Hareton.", NULL, 0, NULL, 0, "q", &bad);
+    CHECK(n == 1 && bad == NULL);
+    n = answer_relations("The son of Capt. Powell is not Hareton. Her father is Tardos Mors.", NULL, 0, NULL, 0, "q", &bad);
+    CHECK(n == 2 && bad && !strcmp(bad, "Her father is Tardos Mors")); /* the next sentence still starts after a real end */
+    free(bad); bad = NULL;
     /* The subject of "<subject> <kin> is <Name>" is a pronoun or a possessive name, checked whole with both names; a
      * family name used as an adjective ("the youngest Bennet daughter is Lydia", live on the first novel) is not a
      * relation statement, and a label subject is no name. */
