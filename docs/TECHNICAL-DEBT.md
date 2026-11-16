@@ -192,10 +192,13 @@ the 2026-11-11 and -12 steps is in `scribodo-evidence-2026-11-12-p0.tar.gz`
 archive at every dated report.
 
 2026-11-15 (AUDIT-004 F1): the rule lapsed for three days. Of 433 `build/` paths
-that docs and journals cite, 106 existed in no archive, and 35 exist nowhere.
-Among the 35, `build/ui/fit-on` and `build/ui/fit-native2` were written where
-`make uitest` deletes (`Makefile:330`), and five `build/gap003/*/gates`
-directories are gone. The 106 are in `scribodo-evidence-2026-11-15-audit004`.
+that docs and journals cite, 106 existed in no archive (an undercount: 75 more,
+chiefly `build/observer`, were found by the remediation's tarball-content check
+and are in `audit004b`), and 35 exist nowhere. Among the 35, `build/ui/fit-on`
+and `build/ui/fit-native2` were written where `make uitest` deletes
+(`Makefile:330`). (The audit also named five `build/gap003/*/gates`
+directories as gone; they are file-name stems whose logs are archived.) The
+106 are in `scribodo-evidence-2026-11-15-audit004`.
 **Remaining:** a check that every cited path is archived or marked as not
 evidence, run by `make test`; and no evidence under a directory a gate deletes.
 

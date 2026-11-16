@@ -155,18 +155,42 @@ Archive SHA-256:
 Everything cited from 2026-11-12 to 2026-11-15 that no earlier archive held is in
 `scribodo-evidence-2026-11-15-audit004.tar.gz` in the same folder, with
 `manifest-scribodo-evidence-2026-11-15-audit004.txt` and an entry in
-`SHA256SUMS`. It contains 3,804 files (21 MB compressed):
-- the 106 `build/` paths that docs, journals and the README cite and that
-  existed in no archive (AUDIT-004 F1);
-- the observer cycle's real-model runs, judge logs and gate logs
-  (`build/observer/*`);
-- the GAP-003 series;
-- the native-services move;
-- REDTEAM-023's durability runs;
-- the AUDIT-004 matrix logs and `results.tsv` (`build/audit004`).
+`SHA256SUMS`. It contains 3,804 files (21 MB compressed) under 66 top-level `build/` directories, most of them
+the answer-cycle and red-team runs (`build/redteam020-mutations`, `build/ux1`..`ux4`, `build/answer-unity-query`,
+`build/pcl1`, `build/answer-ri-capture`), 35 files of `build/gap003` and the AUDIT-004 matrix logs
+(`build/audit004`).
+
+**Correction (2026-11-15, AUDIT-004 remediation):** this paragraph first said the archive also held the observer
+cycle's runs (`build/observer/*`), the GAP-003 series, the native-services move and REDTEAM-023's durability runs.
+It holds no `build/observer` file. The audit's scan counted a cited path as archived when an older manifest
+listed files under it, so directories that had grown since were skipped. `tools/evidence_check.py`, which reads
+each tarball's real file list, found 75 more existing paths; they are in the `audit004b` archive below.
 
 Excluded: binaries, objects, the two locked Python environments (`make envs`
 recreates them) and the sanitizer build. Thirty-five cited paths existed
 nowhere when the audit ran; AUDIT-004 F1 lists the ones that were evidence.
 Archive SHA-256:
 `2fa9b638d6422fcbc833b38f7dc70edf3bd9700640cef054235f611d5808277b`.
+
+Everything cited that existed and that no archive held after the correction above is in
+`scribodo-evidence-2026-11-15-audit004b.tar.gz` in the same folder, with
+`manifest-scribodo-evidence-2026-11-15-audit004b.txt` and an entry in `SHA256SUMS`. It contains 6,130 files
+(40 MB compressed), the list `tools/evidence_check.py --unarchived` printed:
+- `build/observer`: the observer cycle's real-model runs, judge and gate logs, REDTEAM-023's durability and
+  batch runs, and the native-services gate logs;
+- the GAP-003, recovery, tolerance and relation gate logs;
+- the memory-reach runs not yet archived;
+- `build/product-memory-use/defaultpath-pp`;
+- the REDTEAM-020/021 and MEMORY-022 logs.
+
+Binaries, objects, debug symbols and sockets are excluded. Archive SHA-256:
+`cdd4079ee949c70ed77a5f7a648e75289710590c368efbf93a4a2256d10362c5`.
+
+The tooling remediation stream's gate logs (`journal/audit004-tooling.md`) are in
+`scribodo-evidence-2026-11-15-audit004-tooling.tar.gz` (15 files), with its manifest and `SHA256SUMS` entry.
+Archive SHA-256: `8333d169392724b61a11f2c55ac6fe8d39ce1ad1fe40f6d4f4630916f470e5b2`.
+
+Since 2026-11-15 `make test` runs `tools/evidence_check.py`. Every cited `build/` path must be one of:
+- archived (checked against each tarball's real file list);
+- declared not evidence (`tests/fixtures/evidence_not_archived.txt`);
+- recorded lost (`tests/fixtures/evidence_lost.txt`).

@@ -41,7 +41,7 @@ after another on battery, the machine otherwise idle; wall times are in `build/a
 | `dbtest` | **18,006 checks** in 12 binaries, 0 failures |
 | `crashtest` | 1,478 checks, 0 failures; 133 matrix rows (495 s) |
 | `sanitize` | the same 95,807 checks and 200 Python tests, 0 failures; 0 ASan/UBSan diagnostics |
-| `tsan` | **48,352 checks** (the sum of the "N checks" lines), 0 failures; 0 ThreadSanitizer diagnostics |
+| `tsan` | **48,648 checks**, 0 failures; 0 ThreadSanitizer diagnostics (first recorded as 48,352: the sum missed the one prefixed `answer_pipeline: 296 checks` line) |
 | `uitest` | 409 passed, 0 failed (23 scripts) |
 | `uitest-db` | 304 passed, 0 failed (16 scripts) |
 | `backuptest` | 38 UI assertions and 17 checks, 0 failed |
@@ -54,8 +54,9 @@ after another on battery, the machine otherwise idle; wall times are in `build/a
 | `offlinetest` | script passes and 24 real-model checks, 0 failed |
 | `tools/test_audit_mutations.py` | 10 mutants killed, 0 survived; both controls passed |
 
-Every count is at or above AUDIT-003's except `tsan` (48,488 to 48,352); its binary list is unchanged, and this
-audit did not trace the 136-check difference.
+Every count is at or above AUDIT-003's. (`tsan` was first recorded here as falling, 48,488 to 48,352; the
+remediation traced it to this audit's own tally, which skipped a prefixed line. The same 18 binaries ran, and
+three counts rose: `test_llm` 4,690 to 4,741, `test_components` 104 to 105, `test_answer_pipeline` 188 to 296.)
 
 ## Findings
 
@@ -63,7 +64,8 @@ audit did not trace the 136-check difference.
 
 The last archive is `scribodo-evidence-2026-11-12-loose-ends` (2026-11-12). A scan of every `build/` path cited in
 `docs/`, `journal/` and the README against the fourteen archive manifests finds 433 cited paths: **106 exist and
-are in no archive** (about 2.2 GB; the observer cycle's six-hour real-model runs, the GAP-003 series, the native
+are in no archive** (an undercount: the remediation's tarball-content check found 75 more, chiefly `build/observer`; see
+the Evidence section) (about 2.2 GB; the observer cycle's six-hour real-model runs, the GAP-003 series, the native
 services move, REDTEAM-023) and **35 exist nowhere**. Most of the 35 are pre-archive history or make's own
 directories named in prose (`build/unit`, `build/headless`, `build/test/DB`), but some are recent and real:
 
@@ -71,7 +73,9 @@ directories named in prose (`build/unit`, `build/headless`, `build/test/DB`), bu
   `build/ui/fit-native2` (`journal/store-cycle2_native_services.md:92`, the 32K-context fit) were written into
   a directory that `make uitest` deletes on every run (`Makefile:330`, `rm -rf build/ui`) and that the acceptance
   runner runs on every push.
-- `build/gap003/{gates,frames/gates,orphan/gates,reap/gates,soak-smoke}` and `build/recover/gates2` are gone.
+- ~~`build/gap003/{gates,frames/gates,orphan/gates,reap/gates,soak-smoke}` and `build/recover/gates2` are gone.~~
+  **Corrected 2026-11-15:** these are file-name stems, not directories. The journals cite `gates-<target>.log` and
+  similar files, which exist and are archived. The audit's scan read the stems as missing directories.
 
 The README (`:242`) cites unarchived `build/observer/redteam023/durability/` as living guidance. One `make
 distclean` would erase three days of observer and GAP-003 evidence. The rule ("archive at every dated report")
@@ -287,6 +291,9 @@ See the 2026-11-15 session log in [TECHNICAL-DEBT](TECHNICAL-DEBT.md).
 The matrix logs, `results.tsv` and every cited `build/` path that existed in no archive are in
 `scribodo-evidence-2026-11-15-audit004.tar.gz` (3,804 files; binaries, objects, the locked Python environments
 and the sanitizer build excluded); see [EVIDENCE](EVIDENCE.md) for the manifest and SHA-256. After it, every
-cited path that exists is archived except those exclusions. The four reviews' and the citation scan's scratch
+cited path that exists is archived except those exclusions. **That last claim was wrong** (see the correction in
+[EVIDENCE](EVIDENCE.md)): the scan treated a path as archived when an older manifest listed files under it, and
+missed 75 existing cited paths, chiefly `build/observer`. They are in `scribodo-evidence-2026-11-15-audit004b`, and
+`tools/evidence_check.py` now checks tarball contents in `make test`. The four reviews' and the citation scan's scratch
 scripts were session files and are not kept; every figure is re-derivable from the tree, the manifests and
 `grep`, `wc` and `git log`.
