@@ -38,6 +38,9 @@ static bool valid_id(const char *id)
  * records_new_id_unused without 65,536 x n comparisons or a second boundary. 0 means the real clock and 0x10000. */
 static _Atomic long long g_test_id_time;
 static _Atomic unsigned g_test_id_attempts;
+static _Atomic bool g_test_id_exhausted;
+
+void records_test_id_exhausted(bool exhausted) { g_test_id_exhausted = exhausted; }
 
 void records_test_id_hooks(time_t fixed_time, unsigned max_attempts)
 {
@@ -79,6 +82,10 @@ void records_new_id(RecordKind kind, char *out, size_t outlen)
 
 bool records_new_id_unused(RecordKind kind, const Record *taken, size_t ntaken, char *out, size_t outlen)
 {
+    if (g_test_id_exhausted) { /* test hook: every attempt taken */
+        if (outlen) out[0] = '\0';
+        return false;
+    }
     unsigned budget = g_test_id_attempts;
     if (!budget) budget = 0x10000;
     for (unsigned tries = 0; tries < budget; tries++) { /* every suffix of this second at most once */

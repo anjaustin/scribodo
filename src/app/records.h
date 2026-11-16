@@ -83,6 +83,8 @@ bool records_new_id_unused(RecordKind kind, const Record *taken, size_t ntaken, 
 /* Test hook: records_new_id stamps `fixed_time` (0: the clock) and records_new_id_unused gives up after
  * `max_attempts` (0: 65,536). Process-wide; a test restores both with records_test_id_hooks(0, 0). */
 void records_test_id_hooks(time_t fixed_time, unsigned max_attempts);
+/* Test hook: records_new_id_unused reports exhaustion at once (the observer's handling of it is tested with this). */
+void records_test_id_exhausted(bool exhausted);
 
 /* Append a new version of record `id` (its number is one past the newest).
  * Returns false on I/O failure or an invalid id; *ver_out gets the number. */

@@ -110,6 +110,7 @@ struct Observer {
     uint64_t version;
     unsigned jobs_done;
     unsigned attempts;      /* jobs started, including failed ones (tests) */
+    bool ids_exhausted;     /* the last job could not draw a finding id (records_new_id_unused): it stays unread */
     FILE *judge_log;        /* borrowed: one JSON line per judge call (observer_set_judge_log), worker thread only */
 };
 
@@ -924,13 +925,27 @@ static void job_revalidate(JobRun *r)
  * drawn against the findings re-read under the lock, so it is never one another process (or a log written before the
  * per-second count) already holds: records_create_ex writes without reading, and a reused id would hide the earlier
  * finding as a version of the new one (red-team 2026-11-12, journal/redteam-loose_ends.md). */
+/* Every finding id of this second was taken (records_new_id_unused, AUDIT-004 F12): no finding is written under a
+ * used id. The job fails like a write failure, so it is not marked read and runs again after the back-off; the status
+ * says why (worker_job_done). */
+static void ids_exhausted(JobRun *r)
+{
+    r->io_failed = true;
+    pthread_mutex_lock(&r->o->mu);
+    r->o->ids_exhausted = true;
+    pthread_mutex_unlock(&r->o->mu);
+}
+
 static void job_create(JobRun *r, int findings_fd)
 {
     for (size_t i = 0; !r->io_failed && findings_fd >= 0 && i < r->nc; i++) {
         if (!generation_current(r->o, r->fence)) { r->ok = false; break; }
         if (!r->cands[i].keep) continue;
         char id[40];
-        records_new_id_unused(REC_FINDING, r->existing, r->ne, id, sizeof(id));
+        if (!records_new_id_unused(REC_FINDING, r->existing, r->ne, id, sizeof(id))) {
+            ids_exhausted(r);
+            break;
+        }
         if (!records_create_ex(r->o->store, r->project, REC_FINDING, id, "new", r->cands[i].desc, &r->cands[i].src, 1, &r->cands[i].info))
             r->io_failed = true;
     }
@@ -944,7 +959,10 @@ static void job_create(JobRun *r, int findings_fd)
         snprintf(fi.related, sizeof(fi.related), "%s", r->conflicts[c].canon_id);
         fi.related_text = r->conflicts[c].canon_text;
         char id[40];
-        records_new_id_unused(REC_FINDING, r->existing, r->ne, id, sizeof(id));
+        if (!records_new_id_unused(REC_FINDING, r->existing, r->ne, id, sizeof(id))) {
+            ids_exhausted(r);
+            break;
+        }
         if (!records_create_ex(r->o->store, r->project, REC_FINDING, id, "new", r->conflicts[c].check, &cd->src, 1, &fi)) r->io_failed = true;
     }
 }
@@ -1205,6 +1223,8 @@ static void worker_job_done(Observer *o, const WorkerTurn *t, bool done, bool io
     pthread_mutex_lock(&o->mu);
     o->running = false;
     o->poked = true; /* more may be waiting (or this one, again) */
+    bool exhausted = o->ids_exhausted; /* this job's, read and cleared under the lock */
+    o->ids_exhausted = false;
     if (done) {
         o->version++;
         o->jobs_done++;
@@ -1217,7 +1237,9 @@ static void worker_job_done(Observer *o, const WorkerTurn *t, bool done, bool io
         o->version++;
         o->io_error = true;
         o->retry_at = now_s() + 60.0;
-        snprintf(o->status, sizeof(o->status), "Can't write .scribodo/observer/state.json \xE2\x80\x94 retrying in a minute");
+        snprintf(o->status, sizeof(o->status), "%s",
+                 exhausted ? "Couldn't draw a new finding id (every id of this second is taken) \xE2\x80\x94 retrying in a minute"
+                                  : "Can't write .scribodo/observer/state.json \xE2\x80\x94 retrying in a minute");
     } else if (!atomic_load(&o->cancel) && t->gen == o->gen) {
         o->retry_at = now_s() + RETRY_DELAY;
         snprintf(o->status, sizeof(o->status), "%s",

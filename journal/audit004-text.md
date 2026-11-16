@@ -577,3 +577,13 @@ Flag off is 717 / 348 / 948 lines, byte-identical with `build/observer/judgelog-
 checkout; `=attributes` is identical with step 8's `build/observer/senton-*`, `=subject` with
 `build/wt-observer/build/observer/base-sent-*`, the gate with `base-gate-*` and gate with `subject` with
 `base-both-*`, as `journal/audit004-observer.md` pairs them. Runs: `build/audit004-text/r4-a/`.
+
+### B. The observer handles an exhausted id draw
+
+`job_create` (`src/llm/observer.c`) now checks `records_new_id_unused`'s result at both of its calls (kept candidates
+and conflicts). On exhaustion it writes nothing under a used id, fails the job as a write failure (so the job is not
+marked read and runs again after the minute's back-off) and sets the status to "Couldn't draw a new finding id (every
+id of this second is taken) — retrying in a minute" instead of the state-file message. Test: `test_llm`
+`observer_id_exhaustion` forces the exhaustion (`records_test_id_exhausted`, a test hook beside
+`records_test_id_hooks`), sees that status, no job done and no finding, then lifts it and sees the retry write the
+findings; with the previous `observer.c` the test fails at the status check (run).

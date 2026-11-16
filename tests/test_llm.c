@@ -1923,6 +1923,38 @@ static bool has_finding(const char *proj, const char *needle, Record *out_copy_s
 /* Wait mode (2026-11-14): chat cancelling a running job doubles the idleness the next job needs (1.5 s to 3 s), the
  * status says so, and a completed job resets it. The fake backend is held inside the job by SCRIBODO_FAKE_EXTRACT_MS
  * (a test hook in the experiments table, read at experiments_reload). */
+/* AUDIT-004 F12, the observer's side: when no finding id can be drawn (records_new_id_unused exhausted, forced by the
+ * test hook) nothing is written under a used id, the job is not marked read, the status says why, and the next run
+ * (here after the project is set again, which ends the back-off) writes the findings. */
+static void test_observer_id_exhaustion(void)
+{
+    char proj[700], doc[800];
+    snprintf(proj, sizeof(proj), "%s/obs-ids", g_dir);
+    mkdir(proj, 0755);
+    snprintf(doc, sizeof(doc), "%s/ch1.md", proj);
+    FILE *f = fopen(doc, "wb");
+    fputs("The fog came in off the fjord.\n\nDvo\xC5\x99\xC3\xA1k waited for Ingrid at the quay.\n", f);
+    fclose(f);
+    records_test_id_exhausted(true);
+    Observer *o = observer_create(g_store, NULL, NULL);
+    CHECK(o != NULL);
+    if (!o) { records_test_id_exhausted(false); return; }
+    observer_set_project(o, proj);
+    char st[200] = "";
+    for (int i = 0; i < 500 && !strstr(st, "finding id"); i++) {
+        usleep(20000);
+        observer_status(o, st, sizeof(st));
+    }
+    CHECK(strstr(st, "Couldn't draw a new finding id") && strstr(st, "retrying"));
+    CHECK(observer_jobs_done(o) == 0 && count_findings(proj, NULL, NULL, NULL) == 0);
+    records_test_id_exhausted(false);
+    observer_set_project(o, "");
+    observer_set_project(o, proj); /* the retry, without the minute's back-off */
+    CHECK(wait_jobs(o, 1, 10));
+    CHECK(count_findings(proj, NULL, NULL, NULL) >= 1);
+    observer_destroy(o);
+}
+
 static void test_observer_wait_mode(void)
 {
     char proj[700], doc[800];
@@ -2998,6 +3030,7 @@ int main(int argc, char **argv)
         { "snapshot_name_exhaustion", test_snapshot_name_exhaustion },
         { "snapshot_reuse_integrity", test_snapshot_reuse_integrity },
         { "observer_run", test_observer_run },
+        { "observer_id_exhaustion", test_observer_id_exhaustion },
         { "observer_judge_log", test_observer_judge_log },
         { "observer_sentence_pairs", test_observer_sentence_pairs },
         { "observer_sentence_arms", test_observer_sentence_arms },
