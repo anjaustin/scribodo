@@ -201,6 +201,7 @@ def main():
         manifest = {'model_sha256': SHA, 'command': command, 'case_index': args.index,
                     'server_sha256': hashlib.sha256(Path(command[0]).read_bytes()).hexdigest(),
                     'probe_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+                    'common_sha256': hashlib.sha256((ROOT / 'tools/answer_common.py').read_bytes()).hexdigest(),
                     'capture_request_sha256': hashlib.sha256(json.dumps(original, sort_keys=True).encode()).hexdigest(),
                     'diagnostic_cap': args.max_tokens, 'default_temperature': 0, 'cache_prompt': False,
                     'phase': args.phase,

@@ -50,7 +50,7 @@ def prepare(args):
     args.run.mkdir(parents=True, mode=0o700, exist_ok=False)
     write(args.run / 'points.json', points)
     write(args.run / 'manifest.json', {'source': str(args.source.resolve()), 'tool_sha256': sha(Path(__file__)),
-          'points_sha256': sha(args.run / 'points.json'), 'gguf_sha256': GGUF_SHA,
+          'common_sha256': sha(ROOT / 'tools/answer_common.py'), 'points_sha256': sha(args.run / 'points.json'), 'gguf_sha256': GGUF_SHA,
           'slot_tokens': 8192, 'configs': CONFIGS,
           'source_sha256': {p.name: sha(p) for p in args.source.iterdir() if p.name in
               ('cases.json', 'comparison.json', 'reference-full-1.json', 'reference-full-2.json', 'llama-1.json', 'llama-2.json')},

@@ -14,7 +14,9 @@ not-evidence list cannot excuse it, because the next run of the gate erases it. 
 (build/ui/<script>/, build/audit004/<target>.log) and globs are families: covered when an archive holds a member
 that matches, or when the not-evidence list names them.
 
-Without the archive folder (hosted CI) the check is skipped, and says so. Exit 1 lists every violation.
+Without the archive folder the check fails (exit 2) unless CI (set on hosted runners) or SCRIBODO_EVIDENCE_SKIP is
+set, when it skips and says so. Exit 1 lists every violation. Files are looked for in the main checkout's build/
+(git's common directory), also from a worktree; the summary line names it.
 
     tools/evidence_check.py [--root DIR] [--evidence DIR] [--build DIR] [--list]
 """
@@ -38,9 +40,10 @@ TRAILING = ".,;:)]!?"
 def gate_owned_dirs(root):
     """Directories a make target deletes before it writes, or in make clean: build/src, build/tests and build/asan,
     one build/ui/<script> per UI script (uitest, uitest-real), the store, backup, offline and remote suites',
-    cstest's volume and make mutationtest's build/mutationtest (Makefile UI_OWNED and clean; tools/*test.sh). make distclean removes all of build/ and is the
+    cstest's volume, make mutationtest's build/mutationtest and servicestest's kept logs (Makefile UI_OWNED and clean; tools/*test.sh). make distclean removes all of build/ and is the
     one explicit exception: run it only after an archive pass. tests/test_evidence_check.py pins this list."""
     owned = ["build/src", "build/tests", "build/asan", "build/csvol", "build/cs.sparseimage", "build/mutationtest",
+             "build/servicestest-logs",
              "build/ui/store", "build/ui/backup", "build/ui/offline", "build/ui/remote"]
     for script in sorted((Path(root) / "tests/ui").glob("*.scribo")):
         if script.stem != "case_sensitive":  # cstest runs it on its own volume (build/csvol)
@@ -402,9 +405,15 @@ def main(argv=None):
                     help="print every existing file under a cited path that no archive holds (the next archive pass)")
     a = ap.parse_args(argv)
     if not Path(a.evidence).is_dir():
-        print("evidence_check: skipped: no archive folder at %s (hosted CI has none; the check runs where the "
-              "archives are)" % a.evidence)
-        return 0
+        # Hosted CI has no archive folder; anywhere else a missing folder is a fault, not a pass (red-team 5a).
+        why = "CI=%s" % os.environ["CI"] if os.environ.get("CI") else \
+            "SCRIBODO_EVIDENCE_SKIP=%s" % os.environ["SCRIBODO_EVIDENCE_SKIP"] if os.environ.get("SCRIBODO_EVIDENCE_SKIP") else None
+        if why:
+            print("evidence_check: skipped (%s): no archive folder at %s" % (why, a.evidence))
+            return 0
+        print("evidence_check: no archive folder at %s; set SCRIBODO_EVIDENCE_DIR, or SCRIBODO_EVIDENCE_SKIP=1 where "
+              "there are no archives (hosted CI sets CI)" % a.evidence)
+        return 2
     if a.unarchived:
         for name in unarchived_files(a.root, a.evidence, a.build):
             print(name)

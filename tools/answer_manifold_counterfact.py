@@ -63,7 +63,7 @@ def main():
                    '--jinja', '--reasoning-format', 'deepseek', '-np', '2', '-c', '16384', '-b', '128', '-ub', '128',
                    '--cache-ram', '0', '--host', str(sock), '--no-webui', '--no-slots']
         manifest = {'command': command, 'binary_sha256': sha(binary), 'model_sha256': GGUF_SHA,
-                    'tool_sha256': sha(Path(__file__)), 'runner_sha256': sha(ROOT / 'tools/answer_bedrock_probe.py'),
+                    'tool_sha256': sha(Path(__file__)), 'runner_sha256': sha(ROOT / 'tools/answer_bedrock_probe.py'), 'common_sha256': sha(ROOT / 'tools/answer_common.py'),
                     'token_helper_sha256': sha(ROOT / 'tools/answer_live_ablation.py'),
                     'arms_sha256': sha(args.output / 'arms.json'), 'prompt_tokens': counts,
                     'derived_from_unit': found[0]['unit_id'], 'original_text_sha256': found[0]['text_hash'],

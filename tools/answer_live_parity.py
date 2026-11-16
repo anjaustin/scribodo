@@ -65,7 +65,7 @@ def prepare(args):
         'indices': list(INDICES), 'max_new_tokens': args.tokens, 'cases_sha256': sha(args.run / 'cases.json'),
         'slot_tokens': SLOT_TOKENS,
         'tool_sha256': sha(Path(__file__)), 'official_files_sha256': {name: sha(SNAPSHOT / name) for name in CODE},
-        'helpers_sha256': {name: sha(ROOT / 'tools' / name) for name in ('memory_causal_parity.py', 'memory_bedrock_probe.py')},
+        'helpers_sha256': {name: sha(ROOT / 'tools' / name) for name in ('memory_causal_parity.py', 'memory_bedrock_probe.py', 'answer_common.py')},
         'inputs_sha256': {p.name: sha(p) for p in inputs.iterdir()},
         'limits': '512 diagnostic tokens by default, not the 2048-token native gate. Teacher forcing is not a reference free-running answer after divergence.',
     })

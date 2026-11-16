@@ -149,6 +149,7 @@ def main():
         manifest = {'model_sha256': SHA, 'command': command, 'marker': args.marker, 'arms': arms_wanted,
                     'server_sha256': hashlib.sha256(Path(command[0]).read_bytes()).hexdigest(),
                     'tool_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+                    'common_sha256': hashlib.sha256((ROOT / 'tools/answer_common.py').read_bytes()).hexdigest(),
                     'captures': args.capture,
                     'method': 'Captured composer requests regenerated with the history window changed; no production change'}
         (args.output / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')

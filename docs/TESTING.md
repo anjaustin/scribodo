@@ -827,8 +827,9 @@ exists counts only when every file it denotes is archived, so one archived file 
 within a path component and only a trailing `/**` covers a directory's contents; the lost list matches the same way) (binaries, environments, make's
 directories named in prose), or recorded in `tests/fixtures/evidence_lost.txt` (cited paths that existed
 nowhere at AUDIT-004, with the citing document; the list only shrinks). A dated report whose evidence is not
-yet archived therefore fails `make test` until the archive pass. Where the archive folder is absent (hosted
-CI) the check says it skipped and passes. `tools/evidence_check.py --unarchived` prints every existing file
+yet archived therefore fails `make test` until the archive pass. Where the archive folder is absent the check
+fails, unless `CI` (set on hosted runners) or `SCRIBODO_EVIDENCE_SKIP=1` says there are no archives there, when it
+says it skipped and passes. `tools/evidence_check.py --unarchived` prints every existing file
 under a cited path that no archive holds (binaries, objects, debug symbols and sockets left out): the file
 list of the next archive pass. Relative names in backticks (`gates-exit.txt`, `series-real-3/*`) count as
 citations when they name an existing file under a directory the same document cites. Files are looked for in the

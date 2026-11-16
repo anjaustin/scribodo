@@ -46,5 +46,17 @@ class AnswerCommonTests(unittest.TestCase):
         self.assertEqual(probe.ROOT, ac.ROOT)
 
 
+    def test_tools_that_hash_themselves_hash_answer_common_too(self):
+        """A run that records its tool's or runner's hash records the shared helpers' too (red-team 5d)."""
+        for path in sorted((ROOT / "tools").glob("answer_*.py")):
+            text = path.read_text()
+            if path.name == "answer_common.py" or "answer_common" not in text:
+                continue
+            if "runner_sha256" in text or "probe_sha256" in text or "helpers_sha256" in text \
+                    or ("tool_sha256" in text and "manifest" in text and "GGUF" in text):
+                with self.subTest(tool=path.name):
+                    self.assertIn("answer_common.py')", text.replace('"', "'"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

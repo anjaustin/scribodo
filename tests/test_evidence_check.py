@@ -1,5 +1,6 @@
 """tools/evidence_check.py: cited build/ paths against synthetic documents, manifests and archives (AUDIT-004 F1)."""
 import io
+import os
 import contextlib
 import re
 import subprocess
@@ -265,12 +266,30 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("warning: no document cites", out)
 
-    def test_absent_archive_folder_skips_with_a_message(self):
+    def absent(self, **env):
         out = io.StringIO()
-        with tempfile.TemporaryDirectory() as d, contextlib.redirect_stdout(out):
-            code = ec.main(["--root", str(ROOT), "--evidence", str(Path(d) / "missing")])
+        saved = {k: os.environ.pop(k, None) for k in ("CI", "SCRIBODO_EVIDENCE_SKIP")}
+        os.environ.update(env)
+        try:
+            with tempfile.TemporaryDirectory() as d, contextlib.redirect_stdout(out):
+                code = ec.main(["--root", str(ROOT), "--evidence", str(Path(d) / "missing")])
+        finally:
+            for k in ("CI", "SCRIBODO_EVIDENCE_SKIP"):
+                os.environ.pop(k, None)
+                if saved[k] is not None:
+                    os.environ[k] = saved[k]
+        return code, out.getvalue()
+
+    def test_absent_archive_folder_is_an_error_unless_told_to_skip(self):
+        code, out = self.absent()
+        self.assertEqual(code, 2)
+        self.assertIn("no archive folder", out)
+        code, out = self.absent(CI="true")
         self.assertEqual(code, 0)
-        self.assertIn("evidence_check: skipped: no archive folder", out.getvalue())
+        self.assertIn("skipped (CI=true)", out)
+        code, out = self.absent(SCRIBODO_EVIDENCE_SKIP="1")
+        self.assertEqual(code, 0)
+        self.assertIn("skipped (SCRIBODO_EVIDENCE_SKIP=1)", out)
 
     def test_unarchived_lists_the_next_archive_pass(self):
         t = self.tree(docs="`build/run` `build/tool` `build/old`\n", allow="build/tool\ta binary\n",
@@ -303,6 +322,8 @@ class GateOwnedDirsTests(unittest.TestCase):
             text = (ROOT / "tools" / script).read_text()
             for m in re.findall(r"\$PWD/(build/ui/[a-z]+)", text):
                 paths.append(m)
+        text = (ROOT / "tools/servicestest.sh").read_text()
+        paths += re.findall(r'keep_logs="\$PWD/(build/[A-Za-z.-]+)"', text)
         text = (ROOT / "tools/cstest.sh").read_text()
         paths += re.findall(r"=(build/[A-Za-z.]+)", text)
         clean = subprocess.run(["make", "-n", "-C", str(ROOT), "clean"], capture_output=True, text=True)

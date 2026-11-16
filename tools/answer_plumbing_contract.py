@@ -112,7 +112,7 @@ def main():
                    '--cache-ram', '0', '--host', str(sock), '--no-webui', '--no-slots']
         manifest = {'command': command, 'model_sha256': GGUF_SHA, 'binary_sha256': sha(binary),
                     'inputs_sha256': {p.name: sha(p) for p in inputs.iterdir()}, 'arms_sha256': sha(args.output / 'arms.json'),
-                    'runner_sha256': sha(ROOT / 'tools/answer_bedrock_probe.py'), 'model_card': CARD,
+                    'runner_sha256': sha(ROOT / 'tools/answer_bedrock_probe.py'), 'common_sha256': sha(ROOT / 'tools/answer_common.py'), 'model_card': CARD,
                     'token_helper_sha256': sha(ROOT / 'tools/answer_live_ablation.py'),
                     'backend_helper_sha256': sha(ROOT / 'tools/answer_plumbing_arithmetic.py'),
                     'prompt_tokens': counts, 'slot_tokens': slot_tokens, 'slots': slots, 'indices': indices,
