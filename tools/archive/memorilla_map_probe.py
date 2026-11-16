@@ -8,7 +8,7 @@ Setup (outside the product; nothing here ships): a folder MEMORILLA_DIR (default
   encoder-4b/    hf download Qwen/Qwen3-Embedding-4B        (7.5 GB)
   encoder-0.6b/  hf download Qwen/Qwen3-Embedding-0.6B      (the product's embedder, as safetensors)
   .venv/         uv venv --python 3.11; uv pip install torch transformers safetensors huggingface_hub numpy pyyaml
-usage: MEMORILLA_DIR=build/memorilla build/memorilla/.venv/bin/python -I tools/memorilla_map_probe.py [--novels ...]
+usage: MEMORILLA_DIR=build/memorilla build/memorilla/.venv/bin/python -I tools/archive/memorilla_map_probe.py [--novels ...]
 Results: journal/memory-map-memorilla.md (2026-11-15).
 
 Units: each part file split at blank lines, paragraphs packed up to 2,000 bytes (the product's MEMORY_UNIT_BYTES),
@@ -35,7 +35,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # tools/archive/ -> the repository
 HERE = os.path.abspath(os.environ.get("MEMORILLA_DIR", os.path.join(ROOT, "build/memorilla")))
 sys.path.insert(0, os.path.join(HERE, "repo"))
 from memorilla.memory import MemoryModule  # noqa: E402

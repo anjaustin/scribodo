@@ -10,10 +10,11 @@ import json
 from pathlib import Path
 import shutil
 
-from answer_bedrock_probe import private_socket, run_server
+from answer_common import private_socket, GGUF, GGUF_SHA, ROOT, sha
+from answer_bedrock_probe import run_server
 from answer_live_ablation import variants as component_variants
 from answer_live_audit import PASSAGES
-from memory_causal_parity import GGUF, GGUF_SHA, ROOT, sha, tokenizer
+from memory_causal_parity import tokenizer
 
 SENTENCE = '\nAnswer in one sentence.'
 QUOTE = ('\nReply only with one verbatim sentence from the supplied original that directly answers '

@@ -20,11 +20,11 @@ import shutil
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from answer_bedrock_probe import private_socket, run_server  # noqa: E402
+from answer_common import private_socket, GGUF, GGUF_SHA, ROOT, sha  # noqa: E402
+from answer_bedrock_probe import run_server  # noqa: E402
 from answer_boundary_bind import bind  # noqa: E402
 from answer_citation_binding import QUOTE, normalize, pieces  # noqa: E402
 from answer_plumbing_arithmetic import backend_flags  # noqa: E402
-from memory_causal_parity import GGUF, GGUF_SHA, ROOT, sha  # noqa: E402
 
 FIXTURE = ROOT / 'tests/fixtures/answer_boundary/questions.json'
 UNIT_ID = re.compile(r'--- SOURCE (\d+) \| [^\n]*?unit=([0-9a-f]{64})[^\n]*? ---\n(.*?)\n--- END SOURCE ---', re.S)

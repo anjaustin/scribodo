@@ -7,7 +7,8 @@ from pathlib import Path
 import time
 
 from answer_live_parity import validate, write
-from memory_causal_parity import SNAPSHOT, sha
+from answer_common import sha
+from memory_causal_parity import SNAPSHOT
 
 
 def main():

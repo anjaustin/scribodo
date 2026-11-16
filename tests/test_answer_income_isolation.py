@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # Heavy helpers (tokenizer, model paths) are stubbed; only pure packet code runs.
 stubs = {
     'answer_bedrock_probe': types.SimpleNamespace(private_socket=None, run_server=None),
+    'answer_common': types.SimpleNamespace(private_socket=None, GGUF=None, GGUF_SHA=None, ROOT=ROOT, sha=None),
     'answer_live_ablation': types.SimpleNamespace(BOUNDARY="\nAuthor's current request (not part of the retrieved sources):\n", prompt_token_ids=None),
     'answer_live_audit': types.SimpleNamespace(PASSAGES=(('part01.md', 'opening'), ('part01.md', 'four or five thousand a year'))),
     'answer_manifold_probe': types.SimpleNamespace(SENTENCE='\nAnswer in one sentence.'),

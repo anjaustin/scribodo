@@ -28,11 +28,10 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from answer_bedrock_probe import call, private_socket  # noqa: E402
+from answer_common import call, private_socket, GGUF, GGUF_SHA, ROOT, sha  # noqa: E402
 from answer_boundary_bind import bind  # noqa: E402
 from answer_citation_binding import classify, normalize  # noqa: E402
 from answer_plumbing_arithmetic import backend_flags  # noqa: E402
-from memory_causal_parity import GGUF, GGUF_SHA, ROOT, sha  # noqa: E402
 
 EMBED_GGUF = Path.home() / 'Library/Application Support/Scribodo/models/Qwen3-Embedding-0.6B-f16.gguf'
 EMBED_SHA = '421a27e58d165478cc7acb984a688c2aa41404968b0203e7cd743ece44c54340'  # QWEN3_EMBED_SHA256 in src/llm/server.c

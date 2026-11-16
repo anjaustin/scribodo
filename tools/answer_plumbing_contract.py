@@ -10,10 +10,11 @@ import json
 from pathlib import Path
 import shutil
 
-from answer_bedrock_probe import private_socket, run_server
+from answer_common import private_socket, GGUF, GGUF_SHA, ROOT, sha
+from answer_bedrock_probe import run_server
 from answer_live_ablation import prompt_token_ids
 from answer_plumbing_arithmetic import backend_flags
-from memory_causal_parity import GGUF, GGUF_SHA, ROOT, SNAPSHOT, sha, tokenizer
+from memory_causal_parity import SNAPSHOT, tokenizer
 
 INDICES = (2, 6)  # Fully admitted factual failure and unavailable-fact failure.
 CARD = 'https://huggingface.co/LiquidAI/LFM3-1.7B/blob/0dc4268b561499c648c7ba7c9466bf3d8d01517a/README.md'

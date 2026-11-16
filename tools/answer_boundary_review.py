@@ -15,9 +15,9 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from answer_common import ROOT  # noqa: E402
 from answer_citation_binding import classify  # noqa: E402
 
-ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / 'tests/fixtures/answer_boundary/questions.json'
 
 

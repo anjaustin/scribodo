@@ -16,7 +16,8 @@ import shutil
 import subprocess
 import time
 
-from memory_causal_parity import CODE, GGUF, GGUF_SHA, ROOT, SNAPSHOT, sha, tokenizer
+from answer_common import GGUF, GGUF_SHA, ROOT, sha
+from memory_causal_parity import CODE, SNAPSHOT, tokenizer
 from memory_bedrock_probe import request
 
 INDICES = (1, 2)  # Income and Collins, fixed before inspecting this live run.

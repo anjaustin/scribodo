@@ -20,12 +20,11 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from answer_bedrock_probe import private_socket  # noqa: E402
+from answer_common import private_socket, ROOT, sha  # noqa: E402
 from answer_question_parts import clip_utf8, ranks  # noqa: E402
 from answer_rerank_arm import rerank_prompt  # noqa: E402
 from answer_rerank_runtime import GGUF, GGUF_SHA, llama_score, token_id  # noqa: E402
 from answer_unit_extraction import session  # noqa: E402
-from memory_causal_parity import ROOT, sha  # noqa: E402
 
 # A sentence ends at . ? or !, optionally followed by a closing quote; an honorific's period is not an end.
 SENTENCE_END = re.compile(r'(?<!\bMr\.)(?<!\bMrs\.)(?<!\bMs\.)(?<!\bDr\.)(?<!\bSt\.)(?:(?<=[.?!])|(?<=[.?!][”"’\']))\s+')

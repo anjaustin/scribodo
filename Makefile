@@ -363,6 +363,12 @@ armstest:
 	$(WATCHDOG) $(TEST_TIMEOUT) test_experiment_arms python3 tests/test_experiment_arms.py
 test: armstest
 
+# The answer tools' shared helpers (AUDIT-004 F12; tools/answer_common.py).
+.PHONY: answercommontest
+answercommontest:
+	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_common python3 tests/test_answer_common.py
+test: answercommontest
+
 # Verify pinned dependency inventory, upstream refs, container digests and OSV
 # advisories. The scheduled workflow publishes the same report as an artifact.
 dependency-report:

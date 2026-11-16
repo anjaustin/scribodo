@@ -9,7 +9,7 @@ import ctypes
 import json
 from pathlib import Path
 
-from memory_causal_parity import ROOT, sha
+from answer_common import ROOT, sha
 
 
 def main():

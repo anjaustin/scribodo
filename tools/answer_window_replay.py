@@ -36,8 +36,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from answer_bedrock_probe import ROOT, SHA, call, private_socket  # noqa: E402
-from memory_causal_parity import GGUF  # noqa: E402
+from answer_common import ROOT, GGUF_SHA as SHA, call, private_socket, GGUF  # noqa: E402
 
 REFUSAL = [re.compile(p, re.I) for p in (
     r'^\W*the supplied (manuscript )?passages do not',

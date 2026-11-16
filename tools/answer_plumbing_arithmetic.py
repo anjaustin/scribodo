@@ -13,7 +13,7 @@ import time
 
 from answer_live_parity import validate, write
 from memory_bedrock_probe import request
-from memory_causal_parity import GGUF, GGUF_SHA, ROOT, sha
+from answer_common import GGUF, GGUF_SHA, ROOT, sha
 
 CONFIGS = {'metal_bf16': (99, 'bf16'), 'cpu_bf16': (0, 'bf16'),
            'metal_f32': (99, 'f32'), 'cpu_f32': (0, 'f32')}

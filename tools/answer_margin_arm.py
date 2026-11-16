@@ -39,14 +39,13 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from answer_bedrock_probe import private_socket  # noqa: E402
+from answer_common import private_socket, ROOT, sha  # noqa: E402
 from answer_pipeline_review import designated_units, parse_trace, review  # noqa: E402
 from answer_question_parts import clip_utf8  # noqa: E402
 from answer_rerank_arm import rerank_prompt  # noqa: E402
 from answer_rerank_runtime import GGUF, GGUF_SHA, llama_score, token_id  # noqa: E402
 from answer_unit_extraction import EMBED_GGUF, EMBED_SHA, embed, session  # noqa: E402
 from answer_window_rerank import windows  # noqa: E402
-from memory_causal_parity import ROOT, sha  # noqa: E402
 
 MARGINS = (0.002, 0.005, 0.01, 0.02, 0.03, 0.05)
 RRF_K = 60

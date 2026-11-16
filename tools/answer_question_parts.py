@@ -23,12 +23,11 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from answer_bedrock_probe import private_socket  # noqa: E402
+from answer_common import private_socket, ROOT, sha  # noqa: E402
 from answer_pipeline_review import RECEIPT, parse_trace  # noqa: E402
 from answer_rerank_arm import rerank_prompt  # noqa: E402
 from answer_rerank_runtime import GGUF, GGUF_SHA, llama_score, token_id  # noqa: E402
 from answer_unit_extraction import session  # noqa: E402
-from memory_causal_parity import ROOT, sha  # noqa: E402
 
 FIXTURE = ROOT / 'tests/fixtures/answer_boundary/questions.json'
 RERANK_CLIP_BYTES = 2000  # src/llm/rerank.c

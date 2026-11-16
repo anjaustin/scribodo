@@ -6,56 +6,17 @@ configuration is changed. The shorter diagnostic generation cap is explicit.
 """
 import argparse
 import copy
-from contextlib import contextmanager
 import hashlib
-import http.client
 import json
 from pathlib import Path
 import re
-import socket
 import subprocess
-import tempfile
+import sys
 import time
 
-ROOT = Path(__file__).resolve().parents[1]
-REV = 'cd0c74c575b5c416f3011b5b4c298077f26ca8c2'
-SHA = '39158a79f56edb85e0c4252ce6447b8d7883ef82ffedd02f0cda7c84da5e9f68'
-
-
-class UnixHTTP(http.client.HTTPConnection):
-    def __init__(self, path, timeout=180):
-        super().__init__('localhost', timeout=timeout)
-        self.path = str(path)
-
-    def connect(self):
-        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.sock.settimeout(self.timeout)
-        self.sock.connect(self.path)
-
-
-def call(sock, endpoint, data=None, timeout=180):
-    connection = UnixHTTP(sock, timeout=timeout)
-    try:
-        connection.request('GET' if data is None else 'POST', endpoint,
-                           body=None if data is None else json.dumps(data).encode(),
-                           headers={'Content-Type': 'application/json'})
-        response = connection.getresponse()
-        body = response.read()
-        if response.status != 200:
-            raise RuntimeError(f'{endpoint}: HTTP {response.status}: {body[:1000]!r}')
-        return json.loads(body)
-    finally:
-        connection.close()
-
-
-@contextmanager
-def private_socket():
-    preferred = Path(tempfile.gettempdir()) / 'opencode'
-    with tempfile.TemporaryDirectory(prefix='ab-', dir=preferred if preferred.is_dir() else None) as directory:
-        sock = Path(directory) / 's.sock'
-        if len(str(sock).encode()) >= 104:
-            raise ValueError('Temporary Unix socket path is too long; set a shorter TMPDIR')
-        yield sock
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+# The socket client and the model pin live in answer_common (AUDIT-004 F12); re-exported for older callers.
+from answer_common import ROOT, GGUF_REV as REV, GGUF_SHA as SHA, UnixHTTP, call, private_socket  # noqa: E402,F401
 
 
 def run_server(output, command, sock, variants, timeout=180):

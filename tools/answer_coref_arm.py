@@ -48,7 +48,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from memory_causal_parity import ROOT, sha  # noqa: E402
+from answer_common import ROOT, sha  # noqa: E402
 
 FIXTURE = ROOT / 'tests/fixtures/answer_boundary/questions.json'
 ADMISSION_ARM = ROOT / 'tools/answer_admission_arm.py'

@@ -24,10 +24,9 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from answer_bedrock_probe import private_socket  # noqa: E402
+from answer_common import private_socket, ROOT, sha  # noqa: E402
 from answer_ranker_instruction import expected_ranks, mrr, pools_from_record, ranked  # noqa: E402
 from answer_unit_extraction import EMBED_GGUF, EMBED_SHA, QUERY_INSTRUCTION, embed, session  # noqa: E402
-from memory_causal_parity import ROOT, sha  # noqa: E402
 
 FIXTURE = ROOT / 'tests/fixtures/answer_boundary/questions.json'
 RERANKER = 'Qwen/Qwen3-Reranker-0.6B'

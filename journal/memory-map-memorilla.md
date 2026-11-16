@@ -6,7 +6,7 @@ every document embedding. Could that attention serve as a *map*: rank the passag
 text is fetched from the store and the model answers from exact, citable words (MEMORY-015), rather than from
 Memorilla's soft tokens (which the paper says "can lose fine-grained factual details")?
 
-**Method** (`tools/memorilla_map_probe.py`; setup in its header; nothing installed into the product). The 44
+**Method** (`tools/archive/memorilla_map_probe.py`, archived 2026-11-15 when the experiment closed; setup in its header; nothing installed into the product). The 44
 hand-written reach questions over the three novels (`tests/fixtures/memory_reach/*-tasks.json`), each with the one
 sentence that answers it. Each novel's 8 part files cut into units the product's way in size (paragraphs packed to
 2,000 bytes, an oversize paragraph at sentence ends): 212, 415 and 396 units, every question with exactly one

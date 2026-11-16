@@ -10,9 +10,10 @@ import json
 from pathlib import Path
 import shutil
 
-from answer_bedrock_probe import private_socket, run_server
+from answer_common import private_socket, GGUF, GGUF_SHA, ROOT, sha
+from answer_bedrock_probe import run_server
 from answer_live_audit import PASSAGES
-from memory_causal_parity import GGUF, GGUF_SHA, ROOT, sha, tokenizer
+from memory_causal_parity import tokenizer
 
 BOUNDARY = "\nAuthor's current request (not part of the retrieved sources):\n"
 

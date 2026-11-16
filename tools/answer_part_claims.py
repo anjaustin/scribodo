@@ -26,10 +26,10 @@ import shutil
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from answer_bedrock_probe import private_socket, run_server  # noqa: E402
+from answer_common import private_socket, GGUF, GGUF_SHA, ROOT, sha  # noqa: E402
+from answer_bedrock_probe import run_server  # noqa: E402
 from answer_plumbing_arithmetic import backend_flags  # noqa: E402
 from answer_question_parts import question_parts  # noqa: E402
-from memory_causal_parity import GGUF, GGUF_SHA, ROOT, sha  # noqa: E402
 
 FIXTURE = ROOT / 'tests/fixtures/answer_boundary/questions.json'
 # src/llm/answer_pipeline.c, byte for byte (tests/test_answer_part_claims.py pins them to the C source).
