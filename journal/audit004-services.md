@@ -138,3 +138,16 @@ trailing slash), an empty layout (false, the tree path), the override over a bun
 Not done here: building a bundle (GAP-002) — the resolver only makes one possible without touching main.c again.
 
 **Gates (item 4 tree):** `make test` exit 0; `make analyze` exit 0; `make sanitize` exit 0.
+
+## Item 5 — the variables documented
+
+`tools/services.sh` opens with a usage block: each command in a line, then every variable the services scripts and
+Compose read, with its default (pointing at `tools/services.defaults` rather than repeating its values), and the two
+the scripts set for themselves (`SCRIBODO_SERVICES_LOCKED`, `SCRIBODO_MARIADB_SERVER_FLAGS`).
+`test_variables_documented` in `tests/test_service_defaults.py` fails if a `SCRIBODO_*` name read by `services.sh`,
+`services_lib.sh` or `docker/compose.yml` is missing from the block, or the block names one nobody reads (mutation:
+deleting the `SCRIBODO_LOGS` line fails it). README.md is not edited by this stream; the rows to add are in the
+stream's report (the six from F6 plus `SCRIBODO_SERVICES`, `SCRIBODO_NATIVE_FRESH` and `SCRIBODO_TOOLS_DIR`, which the
+table also lacks).
+
+**Gates (item 5 tree):** `make test` exit 0; `make analyze` exit 0; `make sanitize` exit 0.

@@ -96,6 +96,17 @@ class ServiceDefaults(unittest.TestCase):
             if rel.endswith((".c", ".h")):
                 self.assertNotRegex(text, r"\b" + self.d["SCRIBODO_DEFAULT_QDRANT_PORT"] + r"\b", rel)
 
+    def test_variables_documented(self) -> None:
+        # Every variable the services scripts and Compose read is in services.sh's header block (AUDIT-004 F6).
+        header = (ROOT / "tools/services.sh").read_text().split("\nset -euo pipefail", 1)[0]
+        documented = set(re.findall(r"^#   (SCRIBODO_[A-Z_]+)", header, re.M)) - {"SCRIBODO_DEFAULT_SECRETS_DIR"}
+        used = set()
+        for rel in ("tools/services.sh", "tools/services_lib.sh", "docker/compose.yml"):
+            used |= set(re.findall(r"SCRIBODO_[A-Z_]+", (ROOT / rel).read_text()))
+        used -= {k for k in self.d if k.startswith("SCRIBODO_DEFAULT_")}
+        self.assertEqual(sorted(used - documented), [], "used by the scripts but not in services.sh's header")
+        self.assertEqual(sorted(documented - used), [], "documented in services.sh's header but never read")
+
 
 if __name__ == "__main__":
     unittest.main()

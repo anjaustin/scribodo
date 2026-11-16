@@ -6,6 +6,35 @@
 # changing the remembered mode). Credentials are generated once into a 0700 folder in Application Support and never
 # printed. Everything binds to 127.0.0.1.
 #
+#   up                   start the services (the app runs this); prints their status
+#   down                 stop them; the data stays
+#   status | logs        what runs where | the last 50 lines of each log
+#   mode                 native or docker, as this call would use
+#   purge                stop and delete the store (refused for the author's store without SCRIBODO_PURGE_CONFIRM=1)
+#   testdb create|drop|sql NAME   a throwaway scribodo_test_* database for tests (sql: stdin against it)
+#   rootsql [args] | dump DB      stdin to the MariaDB client as root | one consistent dump to stdout
+#   rotate-root          a new MariaDB root password
+#   migrate-from-docker  move the containers' store to the native services (see the function for its guarantees)
+#
+# Variables (every one optional; defaults in tools/services.defaults and below; README.md, "Environment variables"):
+#   SCRIBODO_SERVICES          native|docker: the mode for this call only, never remembered
+#   SCRIBODO_SECRETS           the store's folder: credentials, the native data, the remembered mode
+#                              (~/ then SCRIBODO_DEFAULT_SECRETS_DIR in tools/services.defaults)
+#   SCRIBODO_DB_PORT           MariaDB's port on 127.0.0.1 (SCRIBODO_DEFAULT_DB_PORT)
+#   SCRIBODO_QDRANT_PORT       Qdrant's port on 127.0.0.1 (SCRIBODO_DEFAULT_QDRANT_PORT)
+#   SCRIBODO_LOGS              the native daemons' logs (~/Library/Logs/Scribodo)
+#   SCRIBODO_MARIADB_BIN       the folder with mariadbd and its clients (/opt/homebrew/opt/mariadb@11.4/bin)
+#   SCRIBODO_QDRANT_BIN        the Qdrant executable (build/qdrant/qdrant, from make qdrant)
+#   SCRIBODO_COMPOSE_PROJECT   docker mode's Compose project name (scribodo); a throwaway store uses its own
+#   SCRIBODO_MARIADB_MEM_LIMIT docker mode's memory cap for MariaDB (768m)
+#   SCRIBODO_QDRANT_MEM_LIMIT  docker mode's memory cap for Qdrant (1g)
+#   SCRIBODO_NATIVE_FRESH      1: `up` starts an empty native store over credentials whose store is in the containers
+#   SCRIBODO_MIGRATE_REPLACE   1: migrate-from-docker replaces an existing native store, keeping a dump of it first
+#   SCRIBODO_PURGE_CONFIRM     1: purge may delete the author's own store
+# Set by the scripts themselves, not by hand:
+#   SCRIBODO_SERVICES_LOCKED   marks the re-run under the store's lock (lockf), so it does not lock again
+#   SCRIBODO_MARIADB_SERVER_FLAGS  the MariaDB server's settings from tools/services.defaults, exported for Compose
+#
 # Exit codes: the contract the app reads (src/app/service_supervisor.h, SERVICES_EXIT_*; tests/test_services.c pins
 # both). The last line on stderr says what happened in words; the app shows it beside the code's sentence.
 #   0   done
