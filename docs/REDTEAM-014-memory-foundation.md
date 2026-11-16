@@ -78,7 +78,7 @@ forces both. Clearing a session also clears stale notices.
 The research workspace contained roughly 118 MB of duplicate read-only upstream
 downloads. Narrow Git ignore entries retain those caches locally without
 vendoring them into Scribodo. Authored notes, pinned-source report and a
-[provenance/reproduction note](../research_notes/How%20billion%20context%20works/PROVENANCE.md)
+[provenance/reproduction note](../research_notes/billion-context/PROVENANCE.md)
 are committed instead. No upstream code was installed or executed.
 
 ## Validation

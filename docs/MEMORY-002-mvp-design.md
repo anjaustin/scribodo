@@ -432,7 +432,7 @@ model call, commit or push is part of this design pass.
 - [Decision rationale](../journal/memory-mvp-mariadb-qdrant_reflect.md)
 - [Adversarial verification and refinements](../journal/memory-mvp-mariadb-qdrant_turbo.md)
 - [Preliminary memory investigation](MEMORY-001-long-lived-context.md)
-- [Source-level upstream report](../reports/How%20billion%20context%20works.md)
+- [Source-level upstream report](../reports/billion-context.md)
 - Local integration evidence: `src/app/store_chats.c`, `src/app/db.c`,
   `src/llm/chat.c`, `src/ui/chat_view.c`, `src/llm/semantic.c` and
   `docs/STORE-001-design.md`. Where older design prose and current code differ,

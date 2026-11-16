@@ -257,7 +257,7 @@ Local constraints/evidence: `SOW.md` (observer/author authority),
 
 ## Source-level research follow-up — 2026-11-06
 
-The full [How billion context works report](../reports/How%20billion%20context%20works.md)
+The full [How billion context works report](../reports/billion-context.md)
 examines the same pinned snapshot and separates kernel, orchestration, retention,
 recall, caching and empirical evidence. Important refinements: aging marks blocks
 old but does not automatically merge them; exposed `search_context` is lexical,

@@ -1,6 +1,6 @@
 # Research provenance and local source caches
 
-These four authored research notes and the [report](../../reports/How%20billion%20context%20works.md)
+These four authored research notes and the [report](../../reports/billion-context.md)
 inspect `ranxianglei/billion-context` at immutable commit
 `c3dfbe6b21a1b2fc3642594043bc81fd2ae91247`. Code/document citations link directly
 to that commit. Inspected upstream regression tests are not claimed as executed

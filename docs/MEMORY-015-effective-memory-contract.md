@@ -24,7 +24,7 @@ book, only the part of the book this turn needs.
 The lineage is recorded and should be read in this order:
 
 1. `journal/manuscript-memory_*.md` and
-   [`reports/How billion context works.md`](../reports/How%20billion%20context%20works.md):
+   [`reports/billion-context.md`](../reports/billion-context.md):
    the research pass on `ranxianglei/billion-context`. Its thesis is that
    long-session memory is a coordinated lifecycle: identity, coverage, protection
    and rendering managed by a kernel; summaries written by models; originals
