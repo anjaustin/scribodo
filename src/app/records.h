@@ -77,7 +77,12 @@ static inline const RecordVersion *record_current(const Record *r) { return &r->
 void records_new_id(RecordKind kind, char *out, size_t outlen);
 /* As records_new_id, but never an id in `taken` (the log the writer has just read under its lock): the count moves
  * past any id already there, so a new record cannot land on an existing one and hide it as its next version. */
-void records_new_id_unused(RecordKind kind, const Record *taken, size_t ntaken, char *out, size_t outlen);
+/* False, with `out` empty, when every attempt (all 65,536 suffixes of the second) is taken: the caller has no id and
+ * must not write (an empty id is refused by every record write in any case). */
+bool records_new_id_unused(RecordKind kind, const Record *taken, size_t ntaken, char *out, size_t outlen);
+/* Test hook: records_new_id stamps `fixed_time` (0: the clock) and records_new_id_unused gives up after
+ * `max_attempts` (0: 65,536). Process-wide; a test restores both with records_test_id_hooks(0, 0). */
+void records_test_id_hooks(time_t fixed_time, unsigned max_attempts);
 
 /* Append a new version of record `id` (its number is one past the newest).
  * Returns false on I/O failure or an invalid id; *ver_out gets the number. */

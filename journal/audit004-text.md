@@ -141,3 +141,66 @@ stop-word list (a stop list, not a title rule), `k_rel_not_names`, `k_rel_negati
 
 No `setlocale` call exists in the tree, so the old `isalnum` was the C locale's ASCII rule, which `text_word_char`
 now states without depending on the locale.
+Item 3 commit (`3a4368e`), item 4 stashed: `make test` exit 0, `make analyze` exit 0 (0 warnings, 88 files: the new
+module included), `make sanitize` exit 0 (`build/audit004-text/item3-*.{log,exit}`).
+
+## Item 4: F12, records ids
+
+**Defect.** `records_new_id_unused` returned void and, once all 65,536 attempts landed on taken ids, left the last
+(taken) id in `out`: the caller would write a new record under an existing id and hide the earlier record as one of
+its versions.
+
+**Change.** It returns `bool`; on exhaustion it returns false and empties `out`. An empty id is refused by every
+record write (`valid_id` in `append_impl`, both backends), so a caller that ignores the result still fails its write
+instead of overwriting: the two callers are `observer.c` `job_create` (not this stream's file), where the failed
+`records_create_ex` already sets `io_failed`. The observer stream should still test the result explicitly
+(`if (!records_new_id_unused(...)) { r->io_failed = true; continue; }` or `break`) when it next edits `job_create`.
+Test hook `records_test_id_hooks(fixed_time, max_attempts)` (atomics; 0, 0 restores the clock and 65,536): a fixed
+second makes the per-second count deterministic and a budget of 3 makes exhaustion reachable without 65,536 x n
+comparisons. `test_llm`: with the next three suffixes taken, the draw fails with an empty id, `records_create_ex`
+refuses that id, and the next draw (budget 3 again) lands just past the taken ones. The existing two calls now CHECK
+the true result. A comment in `records_new_id` records that its function-scope statics (mutex, last second, next
+suffix, started) are an intentional process-global: the per-second count must be shared by every caller in the
+process; the coordinator lists it in the register.
+
+**main.c (reported, not edited: another stream is refactoring it).** The five new-id sites (`save_note` ~2219,
+"Save as note" ~2319, the reply-as-note path ~2369, `save_canon` ~2480, the finding's `FA_NOTE` ~2611) draw with
+`records_new_id` and write with `records_append`, which is not fresh: if the id already exists in the project's log
+(another process's id, or a run before a restart, in the same second with the same random start and count) the new
+note or canon entry is appended as the next version of the existing record and hides it. The per-process count makes
+this a cross-process, same-second collision, probability about n/65,536 per draw: theoretical, as in the observer
+before it adopted `_unused`. Recommended change: one helper beside the five sites,
+
+    static bool new_record_id(App *app, RecordKind kind, char *id, size_t idlen)
+    {
+        Record *taken = NULL;
+        size_t ntaken = 0;
+        bool ok = records_list_checked(app->store, app->project_dir, kind, &taken, &ntaken) &&
+                  records_new_id_unused(kind, taken, ntaken, id, idlen);
+        records_free(taken, ntaken);
+        return ok;
+    }
+
+and at each site `records_new_id(K, id, sizeof(id));` becomes `if (!new_record_id(app, K, id, sizeof(id))) { <the
+site's existing failure path: set_status(app, "Couldn't save ..."), free(text), return false / break> }`. The list is
+read without the store's lock, so a concurrent writer can still land between the read and the write; closing that
+needs the draw and the write under one lock (the observer's pattern), which is the main.c refactor's to decide.
+
+## Final gates (the item 4 commit: all four items, nothing uncommitted)
+
+`make test` exit 0; `make analyze` exit 0 (0 warnings, 88 files); `make sanitize` exit 0; `make dbtest` exit 0 (every
+binary 0 failures, `chat_title_archive` ok); `make crashtest` exit 0 (135 matrix rows, 1,496 checks, 0 failures, 530 s;
+`migration.statement` 85 and `migration.receipt` 19 points, each recovered to schema 19). Logs and exit files:
+`build/audit004-text/final-*.{log,exit}`. Every `make analyze` here ran after 16:59, outside the window in which
+another stream's `pkill -f "clang --analyze"` could have killed analyzer processes, and each reported its full file
+count. Not run (out of this stream's scope): uitest, uitest-db, backuptest, llmtest, uitest-real, offlinetest, any
+real-model run.
+
+## Open, for the coordinator
+
+- `docs/LANDSCAPE.md` rows 8 and 9 still say 18 migrations / schema 18 / 133 rows; they are now 19 / 19 / 135.
+- The register should list `records_new_id`'s statics as an intentional process-global.
+- `observer.c` `job_create` should test `records_new_id_unused`'s result (today an exhausted draw fails at the write).
+- The initial rule joins sentences after the pronoun "I." (Wuthering Heights, item 2); it is the observer's rule too,
+  so any change is a measured change of both splitters.
+- main.c's five new-id sites: the recommended `new_record_id` helper (item 4).

@@ -1293,14 +1293,30 @@ static void test_records(void)
         Record taken[3];
         memset(taken, 0, sizeof(taken));
         for (unsigned k = 0; k < 3; k++) snprintf(taken[k].id, sizeof(taken[k].id), "%.18s%04x", first, (suffix + 1 + k) & 0xffffu);
-        records_new_id_unused(REC_FINDING, taken, 3, next, sizeof(next));
+        CHECK(records_new_id_unused(REC_FINDING, taken, 3, next, sizeof(next)));
         bool fresh = strlen(next) == 22 && next[0] == 'f';
         for (unsigned k = 0; k < 3; k++) fresh = fresh && strcmp(next, taken[k].id) != 0;
         CHECK(fresh);
         /* In the same second the count lands just past the three taken ids; across a second boundary the stamp differs. */
         if (!strncmp(next, first, 18)) CHECK((unsigned)strtoul(next + 18, NULL, 16) == ((suffix + 4) & 0xffffu));
-        records_new_id_unused(REC_FINDING, NULL, 0, next, sizeof(next));
+        CHECK(records_new_id_unused(REC_FINDING, NULL, 0, next, sizeof(next)));
         CHECK(strlen(next) == 22 && strcmp(next, first) != 0);
+    }
+    /* Exhausted (AUDIT-004 F12): when every attempt lands on a taken id there is no id, reported, and the empty id
+     * cannot be written; the hook fixes the second and shrinks the 65,536 attempts to 3. */
+    {
+        records_test_id_hooks((time_t)1763200000, 3);
+        char first[40], next[40] = "x";
+        records_new_id(REC_FINDING, first, sizeof(first));
+        unsigned suffix = (unsigned)strtoul(first + 18, NULL, 16);
+        Record taken[3];
+        memset(taken, 0, sizeof(taken));
+        for (unsigned k = 0; k < 3; k++) snprintf(taken[k].id, sizeof(taken[k].id), "%.18s%04x", first, (suffix + 1 + k) & 0xffffu);
+        CHECK(!records_new_id_unused(REC_FINDING, taken, 3, next, sizeof(next)) && next[0] == '\0');
+        CHECK(!records_create_ex(g_store, proj, REC_FINDING, next, "new", "No id.", NULL, 0, NULL));
+        CHECK(records_new_id_unused(REC_FINDING, taken, 3, next, sizeof(next)) && !strncmp(next, first, 18) &&
+              (unsigned)strtoul(next + 18, NULL, 16) == ((suffix + 4) & 0xffffu)); /* the count moved past them */
+        records_test_id_hooks(0, 0);
     }
     int ver = 0;
     CHECK(records_append(g_store, proj, REC_NOTE, nid, "active", "Check the letter's date.", &src, 1, &ver) && ver == 1);

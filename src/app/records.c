@@ -34,6 +34,17 @@ static bool valid_id(const char *id)
     return true;
 }
 
+/* Test hooks (records_test_id_hooks): a fixed second and a smaller attempt budget, so a test can exhaust
+ * records_new_id_unused without 65,536 x n comparisons or a second boundary. 0 means the real clock and 0x10000. */
+static _Atomic long long g_test_id_time;
+static _Atomic unsigned g_test_id_attempts;
+
+void records_test_id_hooks(time_t fixed_time, unsigned max_attempts)
+{
+    g_test_id_time = (long long)fixed_time;
+    g_test_id_attempts = max_attempts;
+}
+
 void records_new_id(RecordKind kind, char *out, size_t outlen)
 {
     /* The suffix is unique within this process for each second: a random start when the second changes, then a count.
@@ -41,12 +52,16 @@ void records_new_id(RecordKind kind, char *out, size_t outlen)
      * creating 716 findings in nine seconds drew the same id twice in two of six runs, and the later finding was
      * stored as the second version of the earlier one, hiding it. This makes one process's ids distinct; against another
      * process's ids, or a log written before this, a writer draws with records_new_id_unused over the log it has just
-     * read under its lock (the observer does; red-team 2026-11-12, journal/redteam-loose_ends.md). */
+     * read under its lock (the observer does; red-team 2026-11-12, journal/redteam-loose_ends.md).
+     *
+     * The statics below are an intentional process-global (AUDIT-004 F12): the per-second count is what makes one
+     * process's ids distinct, so it must be shared by every caller in the process, under its own mutex. */
     static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
     static time_t last_second;
     static unsigned next_suffix;
     static bool started;
-    time_t t = time(NULL);
+    long long fixed = g_test_id_time;
+    time_t t = fixed ? (time_t)fixed : time(NULL);
     pthread_mutex_lock(&mu);
     if (!started || t != last_second) {
         next_suffix = arc4random_uniform(0x10000);
@@ -62,14 +77,21 @@ void records_new_id(RecordKind kind, char *out, size_t outlen)
     snprintf(out, outlen, "%c-%s-%04x", kind == REC_NOTE ? 'n' : kind == REC_CANON ? 'c' : 'f', stamp, suffix);
 }
 
-void records_new_id_unused(RecordKind kind, const Record *taken, size_t ntaken, char *out, size_t outlen)
+bool records_new_id_unused(RecordKind kind, const Record *taken, size_t ntaken, char *out, size_t outlen)
 {
-    for (unsigned tries = 0; tries < 0x10000; tries++) { /* every suffix of this second at most once */
+    unsigned budget = g_test_id_attempts;
+    if (!budget) budget = 0x10000;
+    for (unsigned tries = 0; tries < budget; tries++) { /* every suffix of this second at most once */
         records_new_id(kind, out, outlen);
         bool used = false;
         for (size_t i = 0; i < ntaken && !used; i++) used = !strcmp(taken[i].id, out);
-        if (!used) return;
+        if (!used) return true;
     }
+    /* Every attempt landed on a taken id (AUDIT-004 F12): no id rather than a used one, which would hide the record
+     * already there as a version of the new one. An empty id is refused by every record write, so a caller that does
+     * not check the result still fails its write instead of overwriting. */
+    if (outlen) out[0] = '\0';
+    return false;
 }
 
 void records_free_sources(SourceRef *s, size_t n)
