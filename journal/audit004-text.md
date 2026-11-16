@@ -489,3 +489,20 @@ splitter would cut "Tardos Mors Jr. is ..." in two. "Esq." is not a title, so it
 
 **Tests.** Three lines in `negation_scope.txt` (Jr. then a negation, Jr. then a question, Sr. then a negation), each
 must flag the "Her father is Tardos Mors Jr" statement; the Jr.-continued denial stays negated (both languages).
+Gates (round-3 item 2): `make test` 0, `make sanitize` 0, `make dbtest` 0, `make analyze` 0; `build/audit004-text/r3-2/`.
+
+### 4. Re-measured after 1 and 2 (no model)
+
+| measure | result |
+|---|---|
+| 670 recorded replies (262 distinct), arm vs `ed95681` and vs `eced5df` | 5,095 sentences each; 0 splits, phrases or verdicts changed |
+| C `answer_relations`, 670 replies, vs `eced5df` and `ed95681` | 0 rows differ |
+| C full output (relations, question parts, gate, quotations), 5,220 inputs (replies and 4,550 manuscript paragraphs), vs `eced5df` | identical |
+| C vs arm, 670 replies | agree (63 flagged) |
+| C vs arm, fuzz, 3 new seeds x 40,000 | 0 differ |
+| fixture, 230 rows | unchanged on both sides (`test_relations`, `test_answer_relation_arm`) |
+| novels | the splitter is unchanged by 1 and 2 (Mars 2,003, Pride and Prejudice 3,160, Wuthering Heights 3,737 sentences); the C's relation output over every manuscript paragraph is identical to `eced5df` |
+
+No recorded reply contains a name continued past an initial inside a question, or a "Jr."/"Sr." before another
+statement, so the two fixes change nothing recorded; the 9 new fixture lines pin them. Evidence:
+`build/audit004-text/r3-measure/`.
