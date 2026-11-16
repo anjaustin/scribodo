@@ -10,12 +10,12 @@ run as `tools/observer_replay_run.sh base` (flags unset): 717 / 348 / 948 findin
 same binary was run under each observer flag for the arms' references: `base-gate`
 (`SCRIBODO_OBSERVER_CONFLICT_GATE=1`, identical to `base` on all three), `base-sent` (`SCRIBODO_OBSERVER_SENTENCES=1`,
 step 9's arm: 716 / 348 / 948, the seeded Wickham conflict dropped as step 8 recorded) and `base-both`. Step 8's own
-flag-on run from its commit is `build/observer/senton-*` in the main checkout. `build/audit004-gates/yard.sh <label>`
+flag-on run from its commit is `build/observer/senton-*` in the main checkout. `build/wt-observer/build/audit004-gates/yard.sh <label>`
 builds the replay and compares, per novel, flag off against `base`, `=attributes` against step 8's `senton`,
 `=subject` against `base-sent` and the gate against `base-gate`. Unchanged-tree `make test`: exit 0, 78 s.
 
 Gating: from item 1 on, each commit was checked out (detached) in a second worktree, `build/wt-observer/build/gatetree`
-(submodules and the MariaDB client build linked from this worktree), and `build/audit004-gates/gate-commit.sh <item>
+(submodules and the MariaDB client build linked from this worktree), and `build/wt-observer/build/audit004-gates/gate-commit.sh <item>
 <sha>` ran the three gates there on exactly the committed tree, then the yardstick from that tree's replay: flag off
 against `base`, each arm against its reference, and both flags on (`=1`) against `base-both`. The gate worktree was removed
 at the end; its runs' `.txt`, `.err` and flag files are kept in `build/wt-observer/build/audit004-gates/yard-runs/`. The tallies below are
@@ -311,7 +311,7 @@ not in the table) were added; the previous scorer gets both wrong under 3.12. `t
 3.9.6 and 3.12; the random mixed-script differential is 0 of 60,000 under each; the rescoring is byte-identical under
 both. The bounded-time test now measures `CLOCK_PROCESS_CPUTIME_ID`.
 
-Gates, each commit alone (`rt8b-*`, `rt4b-*` in `build/audit004-gates/`): `e2eb779` `make test` exit 0, 96,173 C
+Gates, each commit alone (`rt8b-*`, `rt4b-*` in `build/wt-observer/build/audit004-gates/`): `e2eb779` `make test` exit 0, 96,173 C
 checks and 214 Python tests, 0 failures; `make analyze` exit 0, 0 warnings across 89 files; `make sanitize` exit 0,
 96,173, 0; yardstick 15 of 15 identical. `9b1f991`: `make test` exit 0, 96,177 and 215, 0 failures; `make analyze`
 exit 0, 0 warnings across 89 files; `make sanitize` exit 0, 96,177, 0; yardstick 15 of 15 identical. No `git stash`. I never used `git stash` in this stream;
