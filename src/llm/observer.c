@@ -45,7 +45,11 @@
 #define MAX_JUDGE_PAIRS 24    /* canon checks per job: 8 findings x 3 entries, so none are skipped */
 /* Sentence pairing (experiments()->observer_sentences): a sentence is judged against its two best canon entries by
  * obs_overlap when they score at least 3 (journal/observer-cycle2_quality.md step 7: 16 of 20 planted faults reached
- * at today's judge cost), at most MAX_SENTENCE_PAIRS a job; pairs past it are counted, never silently dropped. */
+ * at today's judge cost), at most MAX_SENTENCE_PAIRS a job; pairs past it are counted and reported on stderr, never
+ * silently dropped. The source of 96: a bound on one job's judge time set when step 8 was built (b492605), four times
+ * MAX_JUDGE_PAIRS, with no measurement behind the number; it is not a tuned value. It never bound a measured
+ * job: the step 8 runs on both planted novels (build/observer/sentence-cycle/on-{mars,pp}.err, 670 and 1,574 judge
+ * calls) print no "sentence pairs past" line. A change to it changes the arm and is measured as one (AUDIT-004 F12). */
 #define SENTENCE_MIN_OVERLAP 3
 #define SENTENCE_TOP 2
 #define MAX_SENTENCE_PAIRS 96
@@ -567,8 +571,8 @@ typedef struct {
     bool use_sem;
     Cand *scands; /* sentence pairing: one per source sentence judged (never findings themselves) */
     size_t nsc, capsc, sentence_pairs_over;
-    Conflict conflicts[MAX_SENTENCE_PAIRS];
-    size_t nconf, pairs;
+    Conflict *conflicts; /* at most one per judged pair: sized by the path's cap (job_judge), never by the larger one */
+    size_t nconf, capconf, pairs;
     bool cancelled, io_failed, ok;
 } JobRun;
 
@@ -737,7 +741,7 @@ static bool job_judge_pair(JobRun *r, bool sentence, size_t i, size_t c, const c
             conflict = false;
     }
     if (conflict && conflict_recorded(r->existing, r->ne, r->canon[c].id, v->content, cd->src.quote)) conflict = false;
-    if (conflict && r->nconf < MAX_SENTENCE_PAIRS) {
+    if (conflict && r->nconf < r->capconf) {
         Conflict *cf = &r->conflicts[r->nconf++];
         cf->cand = i;
         cf->sentence = sentence;
@@ -849,6 +853,15 @@ static void job_judge_sentences(JobRun *r)
 static void job_judge(JobRun *r)
 {
     const bool sentences = experiments()->observer_sentences != OBSERVER_SENTENCES_OFF && r->j->is_doc;
+    /* A conflict comes from one judged pair, and a job judges at most its path's cap of pairs: canon pairs come only
+     * from sentences under sentence pairing, only from statements otherwise. */
+    r->capconf = sentences ? MAX_SENTENCE_PAIRS : MAX_JUDGE_PAIRS;
+    r->conflicts = calloc(r->capconf, sizeof(Conflict));
+    if (!r->conflicts) { /* the text is read again later rather than judged without room for its conflicts */
+        r->capconf = 0;
+        r->cancelled = true;
+        return;
+    }
     for (size_t i = 0; i < r->nc && !r->cancelled; i++) {
         if (!strcmp(r->cands[i].type, "question")) continue;
         /* The quote is clipped by characters, never by bytes: a cut inside a multi-byte character made the judge
@@ -1017,6 +1030,7 @@ static void job_end(JobRun *r)
     for (size_t i = 0; i < r->nsc; i++) free(r->scands[i].src.quote);
     free(r->scands);
     for (size_t c = 0; c < r->nconf; c++) free(r->conflicts[c].canon_text);
+    free(r->conflicts);
     records_free(r->existing, r->ne);
     records_free(r->canon, r->ncanon);
     records_free(r->notes, r->nnotes);
@@ -1040,132 +1054,204 @@ static bool run_job(Observer *o, const char *project, uint64_t gen, ObserverJob 
 }
 
 /* ---- worker ------------------------------------------------------------------------- */
+/* The worker was one 175-line loop (AUDIT-004 F12). It is now the stages below, in the loop's order, each taking and
+ * releasing the observer's lock where the loop did; the headless replay is byte-identical on three novels. */
+
+/* What one turn of the worker took from the observer under its lock. */
+typedef struct {
+    char project[PATH_MAX];
+    uint64_t gen;
+    bool rebuild, was_poked;
+} WorkerTurn;
+
+/* Waits, under the lock, until there is work and chat has been idle long enough, then takes it (and returns true with
+ * the lock released). False when the observer is stopping. */
+static bool worker_wait(Observer *o, WorkerTurn *t)
+{
+    pthread_mutex_lock(&o->mu);
+    bool waiting_shown = false;
+    while (!o->stop) {
+        double now = now_s();
+        bool idle = !atomic_load(&o->chat_active) && now - o->idle_since >= o->idle_required;
+        bool ready = (o->poked || o->rebuild) && o->project[0] && o->enabled && now >= o->retry_at;
+        if (ready && idle) break;
+        if (ready && !idle && !waiting_shown) {
+            /* Wait mode: after chat has cancelled a running job, the observer asks for more idleness before it
+             * starts again (doubling to IDLE_MAX), so a chat that sends every minute no longer costs a model call
+             * that is cancelled twelve seconds in and a job that restarts from its beginning each time
+             * (journal/gap003-cycle1_series.md, "the observer starves under continuous chat"). */
+            if (o->idle_required > IDLE_DELAY)
+                snprintf(o->status, sizeof(o->status), "Waiting for the chat to settle (%.0f s)\xE2\x80\xA6", o->idle_required);
+            else
+                snprintf(o->status, sizeof(o->status), "Waiting while you chat\xE2\x80\xA6");
+            waiting_shown = true;
+        }
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_nsec += 200 * 1000000L;
+        if (ts.tv_nsec >= 1000000000L) {
+            ts.tv_sec++;
+            ts.tv_nsec -= 1000000000L;
+        }
+        pthread_cond_timedwait(&o->cv, &o->mu, &ts);
+    }
+    if (o->stop) {
+        pthread_mutex_unlock(&o->mu);
+        return false;
+    }
+    snprintf(t->project, sizeof(t->project), "%s", o->project);
+    t->gen = o->gen;
+    t->rebuild = o->rebuild; /* read under the lock */
+    t->was_poked = o->poked;
+    o->rebuild = false;
+    o->poked = false;
+    o->running = true;
+    o->cancelled_by_chat = false; /* chat activity during discovery or a rebuild is not a cancelled job (red-team 2026-11-14) */
+    atomic_store(&o->cancel, false);
+    pthread_mutex_unlock(&o->mu);
+    return true;
+}
+
+/* The index is derived: drop it and rebuild it from MariaDB. */
+static void worker_rebuild(Observer *o, const WorkerTurn *t)
+{
+    char pid[64], err[200] = "";
+    long n = -1;
+    set_status(o, "Rebuilding the semantic index\xE2\x80\xA6");
+    if (project_store_feature_key(o->store, t->project, PROJECT_STORE_CAP_SEMANTIC, pid, sizeof(pid)))
+        n = semantic_rebuild(o->semantic, pid, err, sizeof(err));
+    else snprintf(err, sizeof(err), "this project isn't in the project store");
+    char msg[300];
+    if (n >= 0) snprintf(msg, sizeof(msg), "Index rebuilt: %ld passages", n);
+    else snprintf(msg, sizeof(msg), "Couldn't rebuild the index: %s", err);
+    pthread_mutex_lock(&o->mu);
+    snprintf(o->status, sizeof(o->status), "%s", msg);
+    o->running = false;
+    o->poked = t->was_poked; /* only work that was already waiting (the result stays visible) */
+    o->version++;
+    pthread_mutex_unlock(&o->mu);
+}
+
+/* The project's observer state, with this project's pending renames applied and the names copied out; NULL when the
+ * project store is down (the observer waits and says so). Then, when the rules (or the names) changed since this
+ * project's findings were made, they are re-checked, so the software repairs what it recorded. */
+static cJSON *worker_prepare(Observer *o, const WorkerTurn *t, char author[64], char assistant[64])
+{
+    cJSON *st = observer_job_state_load(o->store, t->project);
+    if (!st) {
+        pthread_mutex_lock(&o->mu);
+        o->running = false;
+        o->poked = true;
+        o->retry_at = now_s() + 30.0;
+        snprintf(o->status, sizeof(o->status), "Paused: the project store is offline");
+        pthread_mutex_unlock(&o->mu);
+        return NULL;
+    }
+    /* Renamed documents keep what was already read: apply this project's
+     * renames, in order; other projects' wait until they're open
+     * (red-team 006: they used to be applied to whatever was open). */
+    pthread_mutex_lock(&o->mu);
+    cJSON *sdocs = cJSON_GetObjectItem(st, "docs");
+    size_t keep = 0;
+    for (size_t r = 0; r < o->nrenames; r++) {
+        if (strcmp(o->renames[r].project, t->project) != 0) {
+            o->renames[keep++] = o->renames[r];
+            continue;
+        }
+        cJSON *seen = cJSON_DetachItemFromObject(sdocs, o->renames[r].from);
+        if (seen) {
+            cJSON_DeleteItemFromObject(sdocs, o->renames[r].to);
+            cJSON_AddItemToObject(sdocs, o->renames[r].to, seen);
+        }
+    }
+    o->nrenames = keep;
+    snprintf(author, 64, "%s", o->author_name);
+    snprintf(assistant, 64, "%s", o->assistant_name);
+    pthread_mutex_unlock(&o->mu);
+    char sig[17], had[17];
+    rules_signature(author, assistant, sig);
+    if (rules_get(o->store, t->project, had) && strcmp(had, sig) != 0) {
+        size_t changed = obs_refilter(o->store, t->project, author, assistant);
+        rules_set(o->store, t->project, sig);
+        if (changed) {
+            pthread_mutex_lock(&o->mu);
+            o->version++; /* the findings list and the graph refresh */
+            pthread_mutex_unlock(&o->mu);
+        }
+    }
+    return st;
+}
+
+/* No text left to read (or discovery failed): save the pruned state and say where things stand. Consumes st. */
+static void worker_nothing_to_read(Observer *o, const WorkerTurn *t, cJSON *st, bool discovery_error)
+{
+    bool saved = !discovery_error && observer_job_state_save(o->store, t->project, st); /* pruned state; blank text marked read */
+    cJSON_Delete(st);
+    pthread_mutex_lock(&o->mu);
+    if (t->gen == o->gen)
+        snprintf(o->status, sizeof(o->status), "%s",
+                 saved ? "Up to date" : discovery_error ? "Can't read observer inputs — retrying" : "Can't write .scribodo/observer/state.json");
+    if (discovery_error) {
+        o->poked = true;
+        o->retry_at = now_s() + RETRY_DELAY;
+    }
+    o->running = false;
+    pthread_mutex_unlock(&o->mu);
+}
+
+/* After a job: what happens next, and the status that says so. */
+static void worker_job_done(Observer *o, const WorkerTurn *t, bool done, bool io)
+{
+    pthread_mutex_lock(&o->mu);
+    o->running = false;
+    o->poked = true; /* more may be waiting (or this one, again) */
+    if (done) {
+        o->version++;
+        o->jobs_done++;
+        o->io_error = false;
+        o->idle_required = IDLE_DELAY; /* a job got through: the chat has settled */
+    } else if (io && t->gen == o->gen) {
+        /* Findings were written but progress couldn't be: back off a
+         * minute (saves don't cut it short) rather than re-asking the
+         * model every few seconds (red-team 005). */
+        o->version++;
+        o->io_error = true;
+        o->retry_at = now_s() + 60.0;
+        snprintf(o->status, sizeof(o->status), "Can't write .scribodo/observer/state.json \xE2\x80\x94 retrying in a minute");
+    } else if (!atomic_load(&o->cancel) && t->gen == o->gen) {
+        o->retry_at = now_s() + RETRY_DELAY;
+        snprintf(o->status, sizeof(o->status), "%s",
+                 o->server && llm_server_state(o->server, NULL, 0) != LLM_READY ? "Waiting for the model\xE2\x80\xA6"
+                                                                                : "Couldn't read that; will retry");
+    } else if (o->generative_gate && t->gen == o->gen) {
+        /* Admission is polled on this worker, never on the UI thread.
+         * Avoid a hot retry loop while foreground intent remains queued. */
+        o->retry_at = now_s() + 0.2;
+    }
+    if (o->cancelled_by_chat) {
+        o->cancelled_by_chat = false;
+        o->chat_cancels++;
+        o->idle_required = o->idle_required * 2 > IDLE_MAX ? IDLE_MAX : o->idle_required * 2;
+    }
+    pthread_mutex_unlock(&o->mu);
+}
 
 static void *worker(void *arg)
 {
     Observer *o = arg;
-    for (;;) {
-        pthread_mutex_lock(&o->mu);
-        bool waiting_shown = false;
-        while (!o->stop) {
-            double t = now_s();
-            bool idle = !atomic_load(&o->chat_active) && t - o->idle_since >= o->idle_required;
-            bool ready = (o->poked || o->rebuild) && o->project[0] && o->enabled && t >= o->retry_at;
-            if (ready && idle) break;
-            if (ready && !idle && !waiting_shown) {
-                /* Wait mode: after chat has cancelled a running job, the observer asks for more idleness before it
-                 * starts again (doubling to IDLE_MAX), so a chat that sends every minute no longer costs a model call
-                 * that is cancelled twelve seconds in and a job that restarts from its beginning each time
-                 * (journal/gap003-cycle1_series.md, "the observer starves under continuous chat"). */
-                if (o->idle_required > IDLE_DELAY)
-                    snprintf(o->status, sizeof(o->status), "Waiting for the chat to settle (%.0f s)\xE2\x80\xA6", o->idle_required);
-                else
-                    snprintf(o->status, sizeof(o->status), "Waiting while you chat\xE2\x80\xA6");
-                waiting_shown = true;
-            }
-            struct timespec ts;
-            clock_gettime(CLOCK_REALTIME, &ts);
-            ts.tv_nsec += 200 * 1000000L;
-            if (ts.tv_nsec >= 1000000000L) {
-                ts.tv_sec++;
-                ts.tv_nsec -= 1000000000L;
-            }
-            pthread_cond_timedwait(&o->cv, &o->mu, &ts);
-        }
-        if (o->stop) {
-            pthread_mutex_unlock(&o->mu);
-            break;
-        }
-        char project[PATH_MAX];
-        snprintf(project, sizeof(project), "%s", o->project);
-        uint64_t gen = o->gen;
-        bool rebuild = o->rebuild; /* read under the lock */
-        bool was_poked = o->poked;
-        o->rebuild = false;
-        o->poked = false;
-        o->running = true;
-        o->cancelled_by_chat = false; /* chat activity during discovery or a rebuild is not a cancelled job (red-team 2026-11-14) */
-        atomic_store(&o->cancel, false);
-        pthread_mutex_unlock(&o->mu);
-
-        if (rebuild) { /* the index is derived: drop it and rebuild it from MariaDB */
-            char pid[64], err[200] = "";
-            long n = -1;
-            set_status(o, "Rebuilding the semantic index\xE2\x80\xA6");
-            if (project_store_feature_key(o->store, project, PROJECT_STORE_CAP_SEMANTIC, pid, sizeof(pid)))
-                n = semantic_rebuild(o->semantic, pid, err, sizeof(err));
-            else snprintf(err, sizeof(err), "this project isn't in the project store");
-            char msg[300];
-            if (n >= 0) snprintf(msg, sizeof(msg), "Index rebuilt: %ld passages", n);
-            else snprintf(msg, sizeof(msg), "Couldn't rebuild the index: %s", err);
-            pthread_mutex_lock(&o->mu);
-            snprintf(o->status, sizeof(o->status), "%s", msg);
-            o->running = false;
-            o->poked = was_poked; /* only work that was already waiting (the result stays visible) */
-            o->version++;
-            pthread_mutex_unlock(&o->mu);
+    WorkerTurn t;
+    while (worker_wait(o, &t)) {
+        if (t.rebuild) {
+            worker_rebuild(o, &t);
             continue;
         }
-        cJSON *st = observer_job_state_load(o->store, project);
-        if (!st) { /* the project store is down: wait, and say so */
-            pthread_mutex_lock(&o->mu);
-            o->running = false;
-            o->poked = true;
-            o->retry_at = now_s() + 30.0;
-            snprintf(o->status, sizeof(o->status), "Paused: the project store is offline");
-            pthread_mutex_unlock(&o->mu);
-            continue;
-        }
-        /* Renamed documents keep what was already read: apply this project's
-         * renames, in order; other projects' wait until they're open
-         * (red-team 006: they used to be applied to whatever was open). */
-        pthread_mutex_lock(&o->mu);
-        cJSON *sdocs = cJSON_GetObjectItem(st, "docs");
-        size_t keep = 0;
-        for (size_t r = 0; r < o->nrenames; r++) {
-            if (strcmp(o->renames[r].project, project) != 0) {
-                o->renames[keep++] = o->renames[r];
-                continue;
-            }
-            cJSON *seen = cJSON_DetachItemFromObject(sdocs, o->renames[r].from);
-            if (seen) {
-                cJSON_DeleteItemFromObject(sdocs, o->renames[r].to);
-                cJSON_AddItemToObject(sdocs, o->renames[r].to, seen);
-            }
-        }
-        o->nrenames = keep;
         char author[64], assistant[64];
-        snprintf(author, sizeof(author), "%s", o->author_name);
-        snprintf(assistant, sizeof(assistant), "%s", o->assistant_name);
-        pthread_mutex_unlock(&o->mu);
-        /* The rules (or the names) changed since this project's findings were
-         * made: re-check them, so the software repairs what it recorded. */
-        char sig[17], had[17];
-        rules_signature(author, assistant, sig);
-        if (rules_get(o->store, project, had) && strcmp(had, sig) != 0) {
-            size_t changed = obs_refilter(o->store, project, author, assistant);
-            rules_set(o->store, project, sig);
-            if (changed) {
-                pthread_mutex_lock(&o->mu);
-                o->version++; /* the findings list and the graph refresh */
-                pthread_mutex_unlock(&o->mu);
-            }
-        }
+        cJSON *st = worker_prepare(o, &t, author, assistant);
+        if (!st) continue;
         ObserverJob j;
         bool discovery_error = false;
-        if (!observer_job_find(o->store, project, st, &j, &discovery_error)) {
-            bool saved = !discovery_error && observer_job_state_save(o->store, project, st); /* pruned state; blank text marked read */
-            cJSON_Delete(st);
-            pthread_mutex_lock(&o->mu);
-            if (gen == o->gen)
-                snprintf(o->status, sizeof(o->status), "%s",
-                         saved ? "Up to date" : discovery_error ? "Can't read observer inputs — retrying" : "Can't write .scribodo/observer/state.json");
-            if (discovery_error) {
-                o->poked = true;
-                o->retry_at = now_s() + RETRY_DELAY;
-            }
-            o->running = false;
-            pthread_mutex_unlock(&o->mu);
+        if (!observer_job_find(o->store, t.project, st, &j, &discovery_error)) {
+            worker_nothing_to_read(o, &t, st, discovery_error);
             continue;
         }
         snprintf(j.author, sizeof(j.author), "%s", author);
@@ -1177,41 +1263,10 @@ static void *worker(void *arg)
         pthread_mutex_lock(&o->mu);
         o->attempts++;
         pthread_mutex_unlock(&o->mu);
-        bool done = run_job(o, project, gen, &j, st, &io);
+        bool done = run_job(o, t.project, t.gen, &j, st, &io);
         observer_job_free(&j);
         cJSON_Delete(st);
-        pthread_mutex_lock(&o->mu);
-        o->running = false;
-        o->poked = true; /* more may be waiting (or this one, again) */
-        if (done) {
-            o->version++;
-            o->jobs_done++;
-            o->io_error = false;
-            o->idle_required = IDLE_DELAY; /* a job got through: the chat has settled */
-        } else if (io && gen == o->gen) {
-            /* Findings were written but progress couldn't be: back off a
-             * minute (saves don't cut it short) rather than re-asking the
-             * model every few seconds (red-team 005). */
-            o->version++;
-            o->io_error = true;
-            o->retry_at = now_s() + 60.0;
-            snprintf(o->status, sizeof(o->status), "Can't write .scribodo/observer/state.json \xE2\x80\x94 retrying in a minute");
-        } else if (!atomic_load(&o->cancel) && gen == o->gen) {
-            o->retry_at = now_s() + RETRY_DELAY;
-            snprintf(o->status, sizeof(o->status), "%s",
-                     o->server && llm_server_state(o->server, NULL, 0) != LLM_READY ? "Waiting for the model\xE2\x80\xA6"
-                                                                                    : "Couldn't read that; will retry");
-        } else if (o->generative_gate && gen == o->gen) {
-            /* Admission is polled on this worker, never on the UI thread.
-             * Avoid a hot retry loop while foreground intent remains queued. */
-            o->retry_at = now_s() + 0.2;
-        }
-        if (o->cancelled_by_chat) {
-            o->cancelled_by_chat = false;
-            o->chat_cancels++;
-            o->idle_required = o->idle_required * 2 > IDLE_MAX ? IDLE_MAX : o->idle_required * 2;
-        }
-        pthread_mutex_unlock(&o->mu);
+        worker_job_done(o, &t, done, io);
     }
     store_thread_done(o->store); /* this thread's database connection, if any */
     return NULL;

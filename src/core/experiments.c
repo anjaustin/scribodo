@@ -21,6 +21,14 @@ static bool flag_on(const char *name)
     return !(v && (!strcmp(v, "off") || !strcmp(v, "0")));
 }
 
+/* A test hook's count: the variable's integer value when positive, else 0. */
+static int positive_int(const char *name)
+{
+    const char *v = getenv(name);
+    int n = v ? atoi(v) : 0;
+    return n > 0 ? n : 0;
+}
+
 /* SCRIBODO_OBSERVER_SENTENCES's levels (experiments.h): "attributes", "subject", and "1" for the latest measured arm. */
 static ObserverSentencesArm observer_sentences_arm(void)
 {
@@ -46,6 +54,7 @@ static void read_environment(void)
         .memory_presentation_episode = flag_is("SCRIBODO_MEMORY_PRESENTATION", "episode"),
         .observer_conflict_gate = flag_is("SCRIBODO_OBSERVER_CONFLICT_GATE", "1"),
         .observer_sentences = observer_sentences_arm(),
+        .fake_extract_ms = positive_int("SCRIBODO_FAKE_EXTRACT_MS"),
     };
     g_experiments = e;
 }

@@ -52,6 +52,11 @@ typedef struct {
      *                step 9 adds a co-signer to step 8's mechanism; the subject check without sentence pairing is not an
      *                arm anyone measured, and one variable cannot name it. */
     ObserverSentencesArm observer_sentences;
+    /* Test hooks, not experiments: read once here like the flags so no module reads the environment per call
+     * (AUDIT-004 F12); never set for a measurement (tools/observer_replay_run.sh unsets them). */
+    int fake_extract_ms;          /* SCRIBODO_FAKE_EXTRACT_MS=N (N > 0): the fake observer backend holds each extraction N ms, so a
+                                     test can make chat active while a job runs (wait mode, test_llm observer_wait_mode,
+                                     2026-11-14); unset in the product */
 } Experiments;
 
 const Experiments *experiments(void);

@@ -2,6 +2,7 @@
   "novel": "pride-and-prejudice",
   "source": "build/manuscripts/pride-and-prejudice/parts",
   "written": "2026-11-13, before any scored run; never edited to match a result",
+  "amended": "2026-11-15 (commit 4c6ea3f): the anchors of P4, P5 and P8 were extended to the end of their sentence, because observer_plant.ends_sentence refused them (anchored at \"Mr.\" inside a sentence, so the insert landed inside a sentence); their inserts, canon and facts are unchanged and the other faults plant byte-identically. A harness defect found by a new check, not an edit to match a result: journal/observer-cycle2_quality.md, step 7. Recorded here 2026-11-15 (AUDIT-004 F12).",
   "faults": [
     {"id": "P1", "type": "kinship", "file": "part03.md",
      "anchor": "Between the two eldest and herself especially, there subsisted a very particular regard.",

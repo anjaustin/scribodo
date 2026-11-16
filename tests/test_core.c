@@ -182,6 +182,14 @@ static void test_observer_sentence_levels(void)
     unsetenv("SCRIBODO_OBSERVER_SENTENCES");
     experiments_reload();
     CHECK(!experiments()->observer_sentences);
+    /* the fake backend's hold is a test hook read once with the flags (AUDIT-004 F12); only a positive count holds */
+    const struct { const char *value; int ms; } hooks[] = { { "250", 250 }, { "-3", 0 }, { "soon", 0 }, { NULL, 0 } };
+    for (size_t i = 0; i < sizeof(hooks) / sizeof(hooks[0]); i++) {
+        if (hooks[i].value) setenv("SCRIBODO_FAKE_EXTRACT_MS", hooks[i].value, 1);
+        else unsetenv("SCRIBODO_FAKE_EXTRACT_MS");
+        experiments_reload();
+        CHECK(experiments()->fake_extract_ms == hooks[i].ms);
+    }
 }
 
 static void test_gap_buffer_random(void)

@@ -1516,6 +1516,13 @@ static size_t count_findings(const char *proj, const char *type, const char *sta
     return k;
 }
 
+/* A JSON string member, or "" when it is missing or not a string (the judge log is read defensively). */
+static const char *json_str(const cJSON *j, const char *key)
+{
+    const cJSON *v = j ? cJSON_GetObjectItem(j, key) : NULL;
+    return cJSON_IsString(v) && v->valuestring ? v->valuestring : "";
+}
+
 /* The judge log (observer_set_judge_log, for tools/observer_judge_score.py): one JSON line per judge call with the
  * statement's source span, the canon entry, the raw replies and the verdict (2026-11-14). */
 static void test_observer_judge_log(void)
@@ -1554,11 +1561,9 @@ static void test_observer_judge_log(void)
         cJSON *j = cJSON_Parse(line);
         cJSON *c = j ? cJSON_GetObjectItem(j, "conflict") : NULL, *r = j ? cJSON_GetObjectItem(j, "replies") : NULL;
         if (c && cJSON_IsTrue(c)) {
-            found = !strcmp(cJSON_GetObjectItem(j, "kind")->valuestring, "doc") &&
-                    !strcmp(cJSON_GetObjectItem(j, "doc")->valuestring, "ch1.md") &&
-                    cJSON_GetObjectItem(j, "len")->valuedouble > 0 &&
-                    !strcmp(cJSON_GetObjectItem(j, "canon")->valuestring, "Zo\xC3\xAB's eyes are green.") &&
-                    strstr(cJSON_GetObjectItem(j, "statement")->valuestring, "brown") != NULL &&
+            found = !strcmp(json_str(j, "kind"), "doc") && !strcmp(json_str(j, "doc"), "ch1.md") &&
+                    cJSON_GetNumberValue(cJSON_GetObjectItem(j, "len")) > 0 &&
+                    !strcmp(json_str(j, "canon"), "Zo\xC3\xAB's eyes are green.") && strstr(json_str(j, "statement"), "brown") != NULL &&
                     cJSON_GetArraySize(r) == 2 && cJSON_IsString(cJSON_GetArrayItem(r, 0)) &&
                     cJSON_IsString(cJSON_GetArrayItem(r, 1)); /* both votes ran */
         }
@@ -1624,8 +1629,8 @@ static void test_observer_sentence_pairs(void)
     bool brown_cosigned = false, green_unsigned = true;
     for (char *line = got ? strtok(logtext, "\n") : NULL; line; line = strtok(NULL, "\n")) {
         cJSON *j = cJSON_Parse(line);
-        const char *path = j ? cJSON_GetObjectItem(j, "path")->valuestring : "";
-        const char *stmt = j ? cJSON_GetObjectItem(j, "statement")->valuestring : "";
+        CHECK(j != NULL);
+        const char *path = json_str(j, "path"), *stmt = json_str(j, "statement"); /* "" when missing, never NULL */
         if (!strcmp(path, "sentence")) {
             sentence_calls++;
             bool attrs = cJSON_IsTrue(cJSON_GetObjectItem(j, "attributes"));
@@ -1641,13 +1646,6 @@ static void test_observer_sentence_pairs(void)
     unsetenv("SCRIBODO_OBSERVER_SENTENCES");
     experiments_reload();
     CHECK(!experiments()->observer_sentences);
-}
-
-/* A JSON string member, or "" when it is missing or not a string (the judge log is read defensively). */
-static const char *json_str(const cJSON *j, const char *key)
-{
-    const cJSON *v = j ? cJSON_GetObjectItem(j, key) : NULL;
-    return cJSON_IsString(v) && v->valuestring ? v->valuestring : "";
 }
 
 /* What one observer run over the arm fixture did: the conflicts recorded (and which), the judge calls by path, the
@@ -1907,7 +1905,8 @@ static bool has_finding(const char *proj, const char *needle, Record *out_copy_s
 }
 
 /* Wait mode (2026-11-14): chat cancelling a running job doubles the idleness the next job needs (1.5 s to 3 s), the
- * status says so, and a completed job resets it. The fake backend is held inside the job by SCRIBODO_FAKE_EXTRACT_MS. */
+ * status says so, and a completed job resets it. The fake backend is held inside the job by SCRIBODO_FAKE_EXTRACT_MS
+ * (a test hook in the experiments table, read at experiments_reload). */
 static void test_observer_wait_mode(void)
 {
     char proj[700], doc[800];
@@ -1918,9 +1917,10 @@ static void test_observer_wait_mode(void)
     fputs("The fog came in off the fjord.\n\nZo\xC3\xAB's eyes are brown. Dvo\xC5\x99\xC3\xA1k waited.\n", f);
     fclose(f);
     setenv("SCRIBODO_FAKE_EXTRACT_MS", "600", 1);
+    experiments_reload(); /* the hook is read once, with the flags */
     Observer *o = observer_create(g_store, NULL, NULL);
     CHECK(o != NULL);
-    if (!o) { unsetenv("SCRIBODO_FAKE_EXTRACT_MS"); return; }
+    if (!o) { unsetenv("SCRIBODO_FAKE_EXTRACT_MS"); experiments_reload(); return; }
     CHECK(observer_idle_required(o) == 1.5 && observer_chat_cancels(o) == 0);
     observer_set_project(o, proj);
     double tw = wall_s();
@@ -1937,6 +1937,7 @@ static void test_observer_wait_mode(void)
     observer_status(o, st, sizeof(st));
     CHECK(strstr(st, "Waiting for the chat to settle (3 s)") != NULL);
     unsetenv("SCRIBODO_FAKE_EXTRACT_MS");
+    experiments_reload();
     observer_set_chat_active(o, false);
     /* the job starts only after 3 s of idleness, then completes and the requirement resets */
     usleep(1500000);
