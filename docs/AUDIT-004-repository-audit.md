@@ -325,7 +325,19 @@ audit mutations failed on the stale control, were re-pointed (`4849092`) and rer
 - `dependency-report`, `servicestest` and `offlinetest` exited 0, as did both mutation suites after the re-point.
 
 **Still open:**
-- the full Docker migration rehearsal (needs Docker running);
+- ~~the full Docker migration rehearsal (needs Docker running)~~ **done 2026-11-16** (journal `audit004-services.md`, "With
+  Docker running" onward). Its first run found that the rehearsal had been failing on a stale volume since
+  2026-11-15, and behind that a product defect: a failed migration restarted the native services before stopping the
+  containers on the same ports, which would have left the author's store down. Red-team and verification rounds then
+  fixed four more defects:
+  - a failed load over an empty native store left the containers' tables behind;
+  - a native MariaDB that died mid-load was not reloaded;
+  - temporary restore accounts could survive;
+  - an unwritable stdout or a pipe that closed early could kill a migration before its rollback.
+
+  `SCRIBODO_SERVICESTEST_DOCKER=1 make servicestest` passes all ten steps (28 checks) twice in a row, and
+  `backuptest`'s shell-escape probe has run inside the container. The author's old Docker volumes and the old
+  migration dump were deleted at the author's request on 2026-11-16;
 - known misses pinned in the relation check's fixture: "Tardos Mors K. Lydia is not…", "…Mors van K. Lydia…" and
   "…Mors de la K. Lydia…" have the same shape as a name with an initial. No text rule bounds them without re-flagging
   questions like "Is Lydia's father James van K. Powell?". The first-token rule for multi-dot initials would now

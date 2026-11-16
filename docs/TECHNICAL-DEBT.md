@@ -250,7 +250,7 @@ become that C test's driver; a format version on both outputs.
 - MariaDB re-pinned, the native release a floor within its series;
 - a failed expansion exits 1.
 
-The one part still open is a full `migrate-from-docker` rehearsal, which needs Docker (`servicestest` step 10).
+The full `migrate-from-docker` rehearsal ran with Docker on 2026-11-16. It found that a failed migration restarted the native services before stopping the containers on the same ports. Red-team rounds found four more rollback defects. All five are fixed, and `SCRIBODO_SERVICESTEST_DOCKER=1 make servicestest` passes all ten steps twice in a row (`journal/audit004-services.md`). Nothing in this entry is open.
 
 - **Reasons discarded:** `service_supervisor.c:31-33,52` throws away the
   script's output and exit code, so every refusal reaches the author as "store
