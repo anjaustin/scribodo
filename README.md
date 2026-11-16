@@ -1,12 +1,20 @@
 # Scribodo
 
+[![CI](https://github.com/anjaustin/scribodo/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/anjaustin/scribodo/actions/workflows/ci.yml)
+[![Trusted acceptance](https://github.com/anjaustin/scribodo/actions/workflows/acceptance.yml/badge.svg?branch=main)](https://github.com/anjaustin/scribodo/actions/workflows/acceptance.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A local-first, AI-assisted workbench for writing books.
 
-Scribodo lets an author brainstorm in chat, develop prose in documents, and review narrative observations that are extracted automatically, without interrupting the creative conversation.
+Scribodo lets an author brainstorm in chat, develop prose in documents, and
+review narrative observations that are extracted automatically, without
+interrupting the creative conversation. Everything runs on your Mac: a local
+model, a local database, no account and no telemetry.
 
-> **Status:** Pre-alpha. We are working toward the MVP described in [`docs/SOW.md`](docs/SOW.md) (spec v0.2, originally titled "Story Workbench").
-
----
+> **Status: pre-alpha.** The MVP workflows are built and pass acceptance on
+> the development Mac ([ACCEPTANCE](docs/ACCEPTANCE.md)). There is no
+> installer yet: you build from source. See [Status](#status) for what is
+> still open.
 
 ## Principles
 
@@ -35,265 +43,146 @@ Scribodo lets an author brainstorm in chat, develop prose in documents, and revi
                          Model: LFM3-1.7B (local, BF16) ▾
 ```
 
-1. Create or open a local project.
+1. Create or open a local project: a folder of Markdown or plain-text files.
 2. Brainstorm with the creative assistant.
-3. Create, import, or attach Markdown or plain-text documents, then keep drafting in the same chat.
-4. Edit documents directly, or ask the assistant for changes. Proposed edits are reviewed before they're applied, and each accepted edit becomes a new revision.
+3. Create, import, or attach documents, then keep drafting in the same chat.
+4. Edit documents directly, or ask the assistant for changes. Proposed edits are reviewed as a diff before they're applied, and each accepted edit becomes a new revision.
 5. Watch observer findings appear in the sidebar as the work evolves. Each finding links to its exact source.
-6. Act on a finding:
-   - **Discuss** sends it to the chat. This is the only way a finding enters the assistant's context.
-   - **Save as note** keeps it as an editable, non-authoritative record.
-   - **Commit to canon** makes it an author-approved assertion with source and revision history.
-   - **Dismiss** removes it from the sidebar.
+6. Act on a finding: **Discuss** it in the chat, **Save as note**, **Commit to canon**, or **Dismiss** it.
 7. Close the project and come back later. Chats, documents, notes, canon, and findings are all preserved.
+8. Ask what the book says: **Recall** lists, with no model involved, every canon entry and source passage that matches, and conversations with memory on answer from verified excerpts of the manuscript.
 
-## Architecture
+The [user guide](docs/USER-GUIDE.md) covers each feature in detail.
 
-| Component | Choice | Notes |
-|---|---|---|
-| Native UI | **raylib + raygui + Clay** | VS Code-style desktop workbench with resizable panes. No browser, Tauri, or React. |
-| Document editor | Custom native text surface | UTF-8 input, selection, scrolling, undo/redo, and reviewable AI diffs. |
-| Structured store | **MariaDB** (local) | Source of truth for project records, chats, revisions, findings, notes, canon, entities and links, and job state. |
-| Semantic index | **Qdrant** (local) | Derived and rebuildable. Every point references MariaDB and source IDs. |
-| Embeddings | **Qwen3-Embedding-0.6B** (local, f16 GGUF) | Model, dimensions, and metric are pinned by hash. Vectors from different models are never mixed. |
-| Generative model | **[LiquidAI/LFM3-1.7B](https://huggingface.co/LiquidAI/LFM3-1.7B)** | Official post-trained checkpoint, **BF16 only**. |
-| Inference | Replaceable local adapter | Runtime is validated on each target platform. |
-| Observer | Independent worker and job queue | Shares the runtime through a separate queue and never starves interactive chat. |
-| Remote models | Optional adapter(s) | Off until configured. The API key is read from a private file named in `remote.json`, and a data-exit indicator is shown. |
+## Quick start
 
-**Target:** macOS on Apple Silicon. The MVP is built and validated on an Apple M4 (16 GB). Linux and Windows are out of scope for the MVP.
-
-### Model policy
-
-The local model must run with BF16 weights and BF16 compute. Quantized checkpoints (GGUF, FP8, NVFP4, 4-bit MLX, and so on) and lower-precision conversions are prohibited. BF16 weights alone take about 3.46 GB, before activations and KV cache, so context length and observer concurrency are sized from measured memory. Scribodo never falls back from local to remote automatically.
-
-**An optional remote model.** You can add one OpenAI-compatible chat-completions provider. It's off unless configured and selected:
-
-1. Put the API key in a private file: `chmod 600 ~/.config/scribodo-key`.
-2. Write `~/Library/Application Support/Scribodo/remote.json`:
-   ```json
-   { "name": "Frontier", "base_url": "https://api.example.com/v1",
-     "model": "model-name", "api_key_file": "/Users/you/.config/scribodo-key",
-     "context_tokens": 32000 }
-   ```
-3. Click the model in the toolbar and choose it.
-
-**How a remote model is kept in check:**
-- **Selection:** every launch starts local, and only your choice in the toolbar switches.
-- **Indicator:** while the remote model is selected, the toolbar (in amber) and the chat header say where chat messages, attached documents and edit passages go.
-- **No fallback:** if the remote fails, you get its error. Scribodo never switches between local and remote on its own.
-- **The observer** always runs locally.
-- **Transport:** HTTPS is required, and redirects aren't followed. The key is only read from a private file and is sent only to the configured host.
-
-### Data and provenance
-
-- Manuscripts stay as human-readable `.md` and `.txt` files in your project directory.
-- Every finding, note, and canon entry carries **source references**: a document revision or chat message, plus a text range, with stable IDs.
-- Retrieval distinguishes committed canon from draft or speculative material. Nothing becomes canon automatically.
-- A backup consists of the project files plus a transactionally consistent MariaDB export. The Qdrant index can be regenerated.
-- Backups accept only regular files and directories: symlinks and special files are refused explicitly, never silently followed. Every backup is checksum-verified before success is reported; failed copies are removed.
-- There is no telemetry, no account, no login, and no cloud sync. All services bind only to local interfaces.
-
-## Roadmap
-
-1. **Feasibility gate.** Validate raylib, raygui, and Clay text editing with UTF-8; LFM3-1.7B BF16 on this Mac ([done](docs/MODEL-001-lfm3-runtime.md)); and local MariaDB and Qdrant.
-2. **Foundation.** Workbench layout, projects, Markdown documents, MariaDB schema and migrations, revision history.
-3. **Creative workflow.** Persistent chat, the BF16 inference adapter, document context, reviewed AI edits.
-4. **Semantic and observer pipeline.** Embeddings, Qdrant indexing and retrieval, async extraction, provenance, the findings panel, and note and canon actions.
-5. **Connections and verification.** Entity and link navigation, canon conflict checks, the optional remote adapter, and backup and recovery (all done); offline integration tests and acceptance tests.
-
-A map of all the documentation, grouped by topic, is in [`docs/README.md`](docs/README.md).
-The full acceptance criteria are in [`docs/SOW.md` §8](docs/SOW.md#8-acceptance-criteria). The MVP acceptance run on this Mac is in [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md).
-Architectural and maintenance follow-up is tracked in [`docs/TECHNICAL-DEBT.md`](docs/TECHNICAL-DEBT.md).
-The items deferred after AUDIT-004, weighted by importance, are listed in [Deferred after AUDIT-004](docs/TECHNICAL-DEBT.md#deferred-after-audit-004-weighted-2026-11-16).
-The five remaining product-readiness gaps are tracked in [`docs/PRODUCT-GAPS.md`](docs/PRODUCT-GAPS.md).
-The one-table view of capabilities and gaps is [`docs/LANDSCAPE.md`](docs/LANDSCAPE.md).
-**Current P0:** memory. The goal is infinite *effective* memory for the local
-model, not a larger context window; the contract and ordered slices are in
-[`MEMORY-015`](docs/MEMORY-015-effective-memory-contract.md). The investigation
-began with [`MEMORY-001`](docs/MEMORY-001-long-lived-context.md), and the
-bounded-history foundation is tracked in
-[`MEMORY-003`](docs/MEMORY-003-implementation-progress.md).
-
-## Out of scope for the MVP
-
-- DOCX and PDF import or export, page layout, typesetting, publishing integrations
-- Cloud sync, web or mobile clients, collaborative editing, hosted accounts
-- Multiple simultaneous creative agents, autonomous story generation, automatic canon promotion
-- Advanced graph analytics, InfraNodus integration, timeline visualization, quality dashboards
-
-## Building
-
-Requirements: the Xcode command line tools (Apple clang, `make`), Homebrew's `openssl@3` and `cmake` (`brew install openssl@3 cmake`; the MariaDB connector is built from source with the static OpenSSL libraries), `python3`, and the store's two services, either native (`brew install mariadb@11.4` and `make qdrant`, recommended on a 16 GB Mac) or Docker Desktop (`make dbtest`, `make uitest-db` and `make crashtest` need one of them). Every other dependency is vendored as a pinned git submodule, and raylib is compiled from source. `make uitest` opens windows, so it needs an unlocked console.
+**Requirements:** a Mac with Apple Silicon (built and validated on an M4 with
+16 GB); the Xcode command line tools; Homebrew's `openssl@3` and `cmake`;
+`python3`; and the store's two services, natively (recommended) or in Docker
+Desktop.
 
 ```sh
+brew install openssl@3 cmake mariadb@11.4
 git clone --recursive https://github.com/anjaustin/scribodo.git
 cd scribodo
+make qdrant # fetch the pinned Qdrant release binary
 make llama  # build the pinned llama-server (third_party/llama.cpp; a few minutes)
 make model  # download LFM3-1.7B BF16 (3.5 GB, SHA-256 checked; reuses a Hugging Face cache copy)
 make run    # launch with assets/sample/sample.md
 ./build/scribodo path/to/chapter.md
 ```
 
-For a smaller first checkout, use shallow repository and submodule histories:
-`git clone --recurse-submodules --shallow-submodules --depth 1 https://github.com/anjaustin/scribodo.git`.
-Full dependency history is not needed to build; see the
-[measured clone comparison](docs/REDTEAM-017-repository-audit.md#clean-shallow-checkout).
+On first launch the app checks the model file against its pinned hash (once),
+then starts `llama-server` and the store's services in the background. The
+toolbar shows the model's status, which turns green when it's ready. The model
+server listens only on a private Unix socket, uses a fresh API key each launch,
+and stops when the app quits.
 
-On first launch the app checks the model file against its pinned hash (once), then starts `llama-server` in the background. The toolbar shows the model's status, which turns green when it's ready. The server listens only on a private Unix socket, uses a fresh API key each launch, and stops when the app quits.
+- **The other two models:** semantic memory needs the Qwen3-Embedding-0.6B f16 GGUF, and the verified-answer pipeline the Qwen3-Reranker-0.6B BF16 GGUF, both in `~/Library/Application Support/Scribodo/models/` and checked against pinned hashes. `make` does not fetch them yet (part of GAP-002); [MODEL-002](docs/MODEL-002-qwen3-reranker.md) gives the reranker's conversion and hash, and [CONFIGURATION](docs/CONFIGURATION.md#app-models-and-files) the paths. Without the reranker the app says so and answers plainly.
+- **Smaller checkout:** `git clone --recurse-submodules --shallow-submodules --depth 1 https://github.com/anjaustin/scribodo.git`. Full dependency history is not needed to build ([measured](docs/REDTEAM-017-repository-audit.md#clean-shallow-checkout)).
+- **Portable binary:** the build targets the host CPU (`-mcpu=native`); `make ARCH_FLAGS=` builds a portable one.
+- **Without the store:** `SCRIBODO_STORE=off` runs on per-project files only.
+- **Services:** native or Docker, versions, and moving a store between them are in [SERVICES](docs/SERVICES.md). Every override is in [CONFIGURATION](docs/CONFIGURATION.md).
 
-**The project store:** chats, notes, canon, findings, History and the observer's progress live in a local MariaDB (SOW §5) beside a Qdrant index. `tools/services.sh up` starts both (MariaDB 11.4 and Qdrant 1.20, localhost only, with generated credentials), and the app starts them too. They run one of two ways: **natively** on this Mac (MariaDB from Homebrew, `brew install mariadb@11.4`; Qdrant as the pinned release binary, `make qdrant`), the recommended default on a machine whose memory is for the model: on this 16 GB Mac the Docker virtual machine cost about 1.9 GB (the containers inside it showed 0.8 GB by `docker stats`, which counts their page cache; the same services natively use about 0.17 GB at rest), and with the reranker resident it was the difference between an 8K and a 24K chat context at launch (journal/store-cycle2_native_services.md); or in **Docker** (`docker/compose.yml`, images pinned by digest), an installation option for a machine with memory to spare. `SCRIBODO_SERVICES=native|docker` forces a mode for one call; otherwise the mode the last `up` remembered is used, then native if a native store exists, then Docker if credentials exist without one (so a store kept in the containers is never replaced by an empty native one), then native when its binaries are installed. `tools/services.sh migrate-from-docker` moves an existing store from the containers to the native services: it refuses while Scribodo runs and when a native store already exists (unless `SCRIBODO_MIGRATE_REPLACE=1`, which keeps a dump of it first), keeps the dump of the containers' store, and if anything fails puts both stores back as they were (rehearsed with a load that fails, `make servicestest`). The native services do not start at login; Scribodo starts them when it opens, and again, at most once a minute, if the database stops while it runs (a stopped Qdrant is restarted only with it, or by `tools/services.sh up`).
-- The first time a project is opened with the store up, its `.scribodo/` files are moved in. The old files are kept in `.scribodo/legacy-…`.
-- Documents stay plain files in the folder, and a rename keeps each document's id, so History and sources follow it.
-- Failed notes/history reads stop migration without switching authority. Making a copied folder its own project uses a private snapshot: retries do not duplicate chats or mix in later changes from the original.
-- If the store is down, documents stay editable; notes, canon, chats and History pause until it's back. A project not yet moved keeps using its files.
-- Set `SCRIBODO_STORE=off` to run without it.
+## Architecture
 
-**Local conversation memory** (on by default since 2026-11-14; `SCRIBODO_MEMORY_EXPERIMENT=off`
-runs without it): open a stored chat and right-click it to explicitly
-enable/disable/rebuild memory for that conversation. This retrieves older chat and currently attached
-saved local revision excerpts, never silently exports them to a remote provider,
-and shows read-only as-of **Sources**. Generated T1 briefs are a second opt-in
-behind `SCRIBODO_MEMORY_BRIEFS=1`: locally generated, source-linked and never
-canon. Memory is available on every launch but reads nothing into a request until the author turns it on for that
-conversation; briefs stay default-off; unsaved buffers are foreground-only. In a conversation with memory on, the
-verified-answer pipeline answers (`SCRIBODO_ANSWER_PIPELINE`, below).
-The current slice is [MEMORY-009](docs/MEMORY-009-resource-and-brief-experiment.md);
-the direction after the continuity experiments is
-[MEMORY-014](docs/MEMORY-014-canon-first-continuity.md).
-Local memory reserves room for recalled sources instead of filling the window
-with recent history and saved-document heads first. Messages removed from the
-actual request remain retrievable, even when they were in the bounded host
-snapshot. Unsaved buffers, reviewed edits and remote requests keep their
-foreground policy. Measured remediation and failed development variants are
-recorded in [MEMORY-022](docs/MEMORY-022-product-remediation.md); they are not a
-claim of complete manuscript recall or reliable model answers.
-The latest real-app check delivered the required sources for all six factual
-questions, but failed two answer-substring checks and full-reply review found
-additional factual errors and repetition. Source delivery is not answer accuracy.
-The follow-up [memory red-team report](docs/REDTEAM-018-memory-contracts.md)
-records verified failure-path fixes and the remaining answer-quality limits.
+| Component | Choice | Notes |
+|---|---|---|
+| Native UI | **raylib + raygui + Clay** | Desktop workbench with resizable panes. No browser, Tauri, or React. |
+| Document editor | Custom native text surface | UTF-8 input, selection, scrolling, undo/redo, and reviewable AI diffs. |
+| Structured store | **MariaDB** (local) | Source of truth for project records, chats, revisions, findings, notes, canon, entities and links, and job state. |
+| Semantic index | **Qdrant** (local) | Derived and rebuildable. Every point references MariaDB and source IDs. |
+| Embeddings | **Qwen3-Embedding-0.6B** (local, f16 GGUF) | Model, dimensions, and metric are pinned by hash. Vectors from different models are never mixed. |
+| Reranker | **Qwen3-Reranker-0.6B** (local) | Picks the passage the verified-answer pipeline checks ([MODEL-002](docs/MODEL-002-qwen3-reranker.md)). |
+| Generative model | **[LiquidAI/LFM3-1.7B](https://huggingface.co/LiquidAI/LFM3-1.7B)** | Official post-trained checkpoint, **BF16 only** ([MODEL-001](docs/MODEL-001-lfm3-runtime.md)). |
+| Observer | Independent worker and job queue | Shares the runtime through a separate queue and never starves interactive chat ([OBSERVER-001](docs/OBSERVER-001-design.md)). |
+| Remote models | Optional adapter | Off until configured; a data-exit indicator is shown while in use ([user guide](docs/USER-GUIDE.md#an-optional-remote-model)). |
 
-**Projects and documents:** a project is a folder of `.md` and `.txt` files.
-- On launch, Scribodo reopens the project and document you last had open. The first time, it shows a welcome screen: **Open folder…**, **New project…**, **Open the sample**, and your recent projects.
-- **⌘O** or **Open…** opens another folder. Dropping a folder onto the window works too.
-- **+ New document** (⌘N) and **Import…** (copies files in, never overwriting) are in the Explorer.
-- Right-click a document to **Rename** it or **Reveal it in Finder**. A rename keeps its History, and notes, canon and findings that quote it still open their source.
+**Model policy.** The local model runs with BF16 weights and BF16 compute.
+Quantized checkpoints (GGUF, FP8, NVFP4, 4-bit MLX, and so on) and
+lower-precision conversions are prohibited. BF16 weights alone take about
+3.46 GB, before activations and KV cache, so context length and observer
+concurrency are sized from measured memory. Scribodo never falls back from
+local to remote automatically.
 
-**Using it:**
-- **Chat:** click the chat box (or press ⌘L), type, and press Enter. Shift+Enter adds a new line, and Esc returns to the document.
-- **Attached documents:** the chips under the chat show which project documents the assistant sees. A new chat starts with the open document attached; **+ Attach** adds others, and × removes one. Documents are read when you send (the open one including unsaved edits), never copied. Each message remembers what it was sent with, and reopening a chat restores its attachments.
-- **Rename a chat:** right-click it in the Explorer.
-- **Copy:** under any reply, puts its text on the clipboard for pasting into the document.
-- **Saving chats:** each message is saved to the local MariaDB project store, and past chats reopen from the Explorer. Before a project is moved into the store—or when running explicitly with `SCRIBODO_STORE=off`—the file backend uses `.scribodo/chats/` instead.
+**Data and provenance.**
+- Manuscripts stay as human-readable `.md` and `.txt` files in your project directory.
+- Every finding, note, and canon entry carries **source references**: a document revision or chat message, plus a text range, with stable IDs.
+- Retrieval distinguishes committed canon from draft or speculative material. Nothing becomes canon automatically.
+- A backup is the project files plus a transactionally consistent MariaDB export, checksum-verified before success is reported. The Qdrant index can be regenerated.
+- There is no telemetry, no account, no login, and no cloud sync. All services bind only to local interfaces.
 
-**Reviewed AI edits** (the assistant never changes your document by itself):
-- **Ask for an edit:** select a passage and press ⌘K, then describe the change in the chat ("tighten this", "make Dvořák colder") and press Enter. Esc cancels.
-- **Review:** the proposal opens as a word-level diff at the bottom of the document, with deletions struck through in red and insertions in green, and the target passage is highlighted. Nothing changes until you choose.
-- **Accept** (or ⌘↩ in the document) applies it as one undoable step and records revisions from before and after. If the "before" revision can't be written, nothing is applied. **Reject** discards it. Saving the file is still ⌘S.
-- **Warnings:** the review warns when a proposal is much shorter or longer than the passage, or the reply was cut off. A reply you stop part-way is never proposed.
-- **Stale proposals:** the passage is tracked through your edits (and undo/redo). Text you add or remove around it moves it. If you change the passage itself, or type at an insertion point, Accept refuses rather than overwrite your newer text.
-- **Apply to document**, under any chat reply, proposes that reply for the current selection (or inserts it at the cursor), through the same review. A rewrite from ⌘K needs the passage selected.
-- **History** in the Explorer lists the document's 100 newest revisions (each save, AI edit and restore) from the project store; the Explorer scrolls. Clicking one restores it, undoably, after first recording the current text. The file backend keeps equivalent revisions under `.scribodo/revisions/`.
+**Target:** macOS on Apple Silicon. Linux and Windows are out of scope for the MVP.
 
-**Notes and canon** (kept in the local project store; the file backend uses `.scribodo/notes.jsonl` and `canon.jsonl`):
-- **Save as note:** select a passage and press ⌘⇧N, or click **Note** under a chat reply. It's saved at once with its source; edit it in the panel under the document (⌘S saves, and closing saves too). **+ New note** in the Explorer starts a blank one.
-- **Commit to canon:** select the passage that establishes a fact and press ⌘⇧C, click **Canon** under a reply, or press **To canon** on a note. It opens as a draft: state the fact, then press **Commit**. Nothing is canon until you do, and uncommitted text needs a second Close to discard.
-- **Revise, Retract, Recommit:** each stores a new version. Every earlier version stays listed under the entry, and clicking one loads its wording.
-- **Sources:** each entry records where it came from: the document, an immutable snapshot of its text in History, the range and the quote, or the chat reply. Clicking the source line selects the passage again, even if it has moved.
+## Status
 
-**Recall** (the **Recall** button): type a question or a few words and press Enter. The panel lists, exactly as stored, every committed canon entry whose current wording contains your terms, then verified excerpts of your original chat messages and saved document text, best match first. Above the rows it says what was searched: how many canon entries, how many conversations had memory on, off, or still indexing, and how many candidates were rejected because their source had changed. No model is involved: matching is plain text, retracted canon is excluded, other projects are never searched, and "nothing matched" means nothing matched in what was searched, not that the book never says it. Click a canon row to open the entry; click an excerpt to select its source passage. Memory excerpts need the project store and a conversation whose memory you enabled. See [`MEMORY-015`](docs/MEMORY-015-effective-memory-contract.md).
+The MVP specification is [SOW](docs/SOW.md) (v0.2, first titled "Story
+Workbench"); its acceptance criteria pass on the development Mac. The
+one-table view of every capability and gap, with evidence, is
+[LANDSCAPE](docs/LANDSCAPE.md).
 
-**The observer** (the **Observer** button; the count shows new findings):
-- It reads what you've **saved**: documents on ⌘S and chat messages as they finish. It lists characters, places and objects, events, relationships, open questions, and **possible conflicts** with committed canon. Each finding quotes its exact source.
-- It never writes into the chat, your documents, notes or canon. It pauses whenever chat is active, so replies stay fast.
-- Select a finding to act on it:
-  - **Discuss** puts it in the message box for you to edit and send.
-  - **Save as note** stores it as a note.
-  - **Commit to canon** opens a canon draft; nothing is canon until you press Commit.
-  - **Dismiss** hides it.
-  - **Source** selects the passage.
-- Findings are kept in the local project store. The file backend uses `.scribodo/findings.jsonl`. See [`docs/OBSERVER-001-design.md`](docs/OBSERVER-001-design.md).
+**Current priority: memory.** The goal is effective memory for a small local
+model over a whole manuscript, not a larger context window. The contract is
+[MEMORY-015](docs/MEMORY-015-effective-memory-contract.md): nothing the author
+wrote is forgotten, the record is never corrupted, and the model's errors are
+measured and disclosed.
+
+**Open product gaps** ([PRODUCT-GAPS](docs/PRODUCT-GAPS.md)):
+
+| Gap | Status |
+|---|---|
+| GAP-001 AI usefulness and accuracy, measured on held-out novels | Under way |
+| GAP-002 Turnkey installation and signed releases | Not started |
+| GAP-003 Whole-manuscript scale and sustained use | Under way |
+| GAP-004 Crash and interruption coverage | Done |
+| GAP-005 Real macOS input, accessibility and author usability | Not started |
+
+Engineering follow-up, including the items deferred after the last audit and
+their weighting, is in [TECHNICAL-DEBT](docs/TECHNICAL-DEBT.md).
+
+**Out of scope for the MVP:** DOCX and PDF import or export, page layout and
+publishing; cloud sync, web or mobile clients, collaborative editing and
+hosted accounts; multiple creative agents, autonomous story generation and
+automatic canon promotion; advanced graph analytics and timeline
+visualisation.
+
+## Testing
+
+`make test` runs the unit and regression suites; it needs no services. CI runs
+it with static analysis and both sanitizers on every push, and a self-hosted
+Mac runs the store, UI and crash suites as trusted acceptance.
 
 ```sh
-make sanitize  # run the same tests under AddressSanitizer + UBSan
+make test      # unit and regression suites, the evidence check and the observer yardstick
+make analyze   # clang static analysis
+make sanitize  # the tests under AddressSanitizer + UBSan
 make tsan      # the threaded code (chat, observer, supervisor) under ThreadSanitizer
-make dbtest    # the store against the local MariaDB (tools/services.sh up), in a throwaway database
-make historybench # bounded DB history workload: bytes/rows and diagnostic percentiles
-make historysoak  # 500 samples/case; short repeated workload, not hours-long soak/SLA
-make uitest-db # the app on the store: move a project in, resume after a restart, entities, a copied folder, database down
-make backuptest # back up, lose the folder, database and index, restore, resume
-make remotetest # the optional remote model, against a stand-in provider on 127.0.0.1
-make offlinetest # acceptance 8: the store suite and the real models in a sandbox with no network but this Mac
-make uitest    # scripted UI tests: the real app in a hidden window (needs an awake display)
-make llmtest   # end-to-end against the real model: supervisor, streaming, auth, crash recovery
+make dbtest    # the store against the local MariaDB, in a throwaway database
+make crashtest # the interruption matrix: a process death at every crash point, then recovery checked
+make uitest    # scripted UI tests: the real app in a hidden window (needs an unlocked console)
+make uitest-db # the app on the store: move a project in, resume after a restart, database down
+make backuptest   # back up, lose the folder, database and index, restore, resume
+make servicestest # the services script, including a migration that fails and rolls back
+make offlinetest  # the store suite and the real models in a sandbox with no network
+make llmtest   # end-to-end against the real model
 make uitest-real  # the real model through the real UI
+make remotetest   # the optional remote model, against a stand-in provider on 127.0.0.1
+make historybench # bounded DB history workload: bytes/rows and diagnostic percentiles
+make historysoak  # 500 samples/case; a short repeated workload, not an hours-long soak
 ```
 
-Every test runs under `tools/watchdog.sh`, so a hang is killed with its stack saved to `build/hangs/` instead of stalling the run.
+Every test runs under `tools/watchdog.sh`, so a hang is killed with its stack
+saved to `build/hangs/` instead of stalling the run. [TESTING](docs/TESTING.md)
+covers every target, how the UI tests work, and what they can't cover.
 
-See [`docs/TESTING.md`](docs/TESTING.md) for how the UI tests work and what they can't cover.
+## Documentation
 
-You can also drop a `.md` or `.txt` file onto the window to open it. Press ⌘S to save.
+- [User guide](docs/USER-GUIDE.md): every feature, and how saving protects your text
+- [Services](docs/SERVICES.md) and [configuration](docs/CONFIGURATION.md): the store, and every setting
+- [Documentation map](docs/README.md): designs, the memory investigation, audits and red-team reviews, by topic
+- [Contributing](CONTRIBUTING.md) and [security](SECURITY.md)
 
-**How saving protects your text:**
-- Saves are atomic, follow symlinks to the real file, and keep the file's permissions, BOM and line endings.
-- If another program changed the file since you opened it, Scribodo leaves that version in place and writes yours to a sibling `… (Scribodo conflict <date> <time>).md`. Saving again within 30 seconds, without further edits, overwrites the disk version.
-- Files that are write-protected or contain invalid UTF-8 open read-only.
-- While a document has unsaved edits, its whole text is written beside it every ten seconds (`<name>.scribodo-XXXXXX`, the same name a save's temp file has). If the app or the Mac dies before you save, the next open keeps that text beside the document as `<name> (Scribodo recovered <date> <time>).md` and opens it; nothing is overwritten. A clean save removes the draft.
-- The project store (chats, notes, canon, History) is a MariaDB. Its commits are durable against the app or the database dying, which the interruption matrix tests. Losing power is a different matter. MariaDB syncs each commit with `fsync`, which on macOS hands the data to the drive without forcing the drive's own cache to be written (that needs `F_FULLFSYNC`, which MariaDB does not use: measured 2026-11-14, 0.24 ms a commit against 4.0 ms for a full flush (`F_FULLFSYNC`) and 0.05 ms for a plain `fsync` on this disk, three runs, `build/observer/redteam023/durability/`; REDTEAM-023). So a commit made in the last moments before the Mac loses power can be lost, natively or in Docker (where the virtual disk adds its own layer). A MacBook on battery rarely loses power without warning; a desktop Mac on a power strip can. Documents are files on your disk either way. **Back up now** exports the whole store to files.
-
-See [`docs/REDTEAM-001-editor-spike.md`](docs/REDTEAM-001-editor-spike.md) and [`docs/REDTEAM-022-end-to-end.md`](docs/REDTEAM-022-end-to-end.md) for the reviews behind these behaviors.
-
-By default the build targets the host CPU (`-mcpu=native`, which includes NEON on Apple Silicon). For a portable binary, run `make ARCH_FLAGS=`.
-
-### Environment variables
-
-Every setting has a working default. These override where Scribodo finds its
-services, models and configuration files; the test-harness variables are listed
-in [`docs/TESTING.md`](docs/TESTING.md).
-
-| Variable | Default | Effect |
-|---|---|---|
-| `SCRIBODO_STORE` | on | `off` runs without the MariaDB project store, using the `.scribodo/` file backend only. |
-| `SCRIBODO_DB_PORT` | `33061` | MariaDB port on 127.0.0.1. |
-| `SCRIBODO_QDRANT_PORT` | `6333` | Qdrant port on 127.0.0.1. |
-| `SCRIBODO_SECRETS` | `~/Library/Application Support/Scribodo/services` | Folder holding the `db_password` and `qdrant_api_key` files that `tools/services.sh` generates. |
-| `SCRIBODO_LLAMA_SERVER` | `llama/bin/llama-server` beside the app binary | The pinned `llama-server` executable. |
-| `SCRIBODO_MODEL` | a Hugging Face cache copy, else `~/Library/Application Support/Scribodo/models/LFM3-1.7B-BF16.gguf` | Generative model file. The pinned BF16 hash is still enforced. |
-| `SCRIBODO_EMBED_MODEL` | `~/Library/Application Support/Scribodo/models/Qwen3-Embedding-0.6B-f16.gguf` | Embedding model file. The pinned hash is still enforced. |
-| `SCRIBODO_MEM_AVAILABLE_MB` | measured from the OS | Overrides available memory when sizing the model context window. |
-| `SCRIBODO_REMOTE_CONFIG` | `~/Library/Application Support/Scribodo/remote.json` | Optional remote provider configuration. |
-| `SCRIBODO_MODEL_SETTINGS` | `~/Library/Application Support/Scribodo/model-settings.json` | Sampling and context settings saved from the toolbar. |
-| `SCRIBODO_PROFILE` | `~/Library/Application Support/Scribodo/profile.json` | Author profile. |
-| `SCRIBODO_BACKUPS` | `~/Library/Application Support/Scribodo/backups` | Where **Back up now** writes. |
-| `SCRIBODO_PROSE_FONT` | system fonts | A font file tried first for prose text. |
-| `SCRIBODO_MEMORY_EXPERIMENT` | on | Local memory as described above is on since 2026-11-14 (`journal/answer-cycle4_default_path.md`); `off` or `0` runs without it. Consent is still given per conversation. |
-| `SCRIBODO_MEMORY_BRIEFS` | unset | `1` additionally enables generated T1 briefs. Requires the experiment flag. |
-| `SCRIBODO_MEMORY_PRESENTATION` | `legacy` | `compact` or `episode` selects an experimental source layout for memory requests. Diagnostic only; requires the experiment flag and never changes what is eligible. |
-| `SCRIBODO_MEMORY_TRACE` | unset | `1` logs local preparation timings and counts, not prompts or source text. |
-| `SCRIBODO_MEMORY_EXCERPTS` | unset | `1` selects the failed query-window development variant. Reproduction only; off by default. Requires local memory. |
-| `SCRIBODO_MEMORY_SMALL_UNITS` | unset | `1` tests 128-token saved-document units and a 16-unit candidate packet. Failed its 14/14 development reach target; off by default. Rebuild memory to change existing units. |
-| `SCRIBODO_ANSWER_PIPELINE` | on | The verified-answer pipeline answers in conversations with memory on, since 2026-11-14: the local Qwen3-Reranker picks one unit from 64 candidates, one extraction call copies the stating sentence, the span is byte-checked against the unit, and only that span reaches the model (0 fabrications shown in any recorded run; 10 to 15 s of reranking before the reply). `off` or `0` selects the plain composer. Needs the pinned reranker GGUF (`SCRIBODO_RERANK_MODEL`); without the file the app says so on stderr and answers plainly. See `docs/MODEL-002-qwen3-reranker.md`. |
-| `SCRIBODO_ANSWER_BLOCK` | unset | With the verified pipeline, `message` places the verified block at the top of the author's newest message (the pass 3a shape); the default places it in the system message after the composer instruction (pass 3b, measured as the better shape in journal `answer-cycle2_pipeline_live.md`). Kept for repeat measurement. |
-| `SCRIBODO_OBSERVER_CONFLICT_GATE` | unset | `1` turns on the observer's conflict-gate experiment: shared titles do not pair a statement with a canon entry (since 2026-11-15 this applies only where the observer picks canon entries to judge, not to note linking), and a conflict verdict must name the two disagreeing values, found in the texts. Measured on both planted novels 2026-11-14 and worse than the default (more off-fault conflicts, two faults lost); kept for repeat measurement, off by default (journal `observer-cycle2_quality.md`, step 5). Any other value runs off with a warning. |
-| `SCRIBODO_OBSERVER_SENTENCES` | unset | Pairs a document's own sentences, not the model's statements, with canon. `attributes` (or `1`): a conflict also needs a differing value of one kind (step 8; real model: Mars 6 true of 42 shown, *Pride and Prejudice* 5 of 18). `subject`: it also needs the same subject (step 9; scored offline on recorded replies: 4 of 5, 5 of 7). Off by default; any other value runs off with a warning (journal `observer-cycle2_quality.md`, steps 7 to 9; `journal/audit004-observer.md`). |
-| `SCRIBODO_SEM_DEBUG` | unset | Set: failed Qdrant calls are logged to stderr. Diagnostic only. |
-| `SCRIBODO_FAKE_EXTRACT_MS` | unset | Test hook: the fake observer backend waits this many milliseconds per extraction. Never set for a measurement. |
-| `SCRIBODO_TOOLS_DIR` | the bundle's `Resources/tools`, else `../tools` beside the app | Where the app finds `services.sh` and `backup.sh`. |
-| `SCRIBODO_SERVICES` | the remembered mode | `native` or `docker` for one `tools/services.sh` call; never remembered. |
-| `SCRIBODO_LOGS` | `~/Library/Logs/Scribodo` | Where the native MariaDB and Qdrant write their logs. |
-| `SCRIBODO_MARIADB_BIN` | `/opt/homebrew/opt/mariadb@11.4/bin` | Folder with `mariadbd` and its clients. |
-| `SCRIBODO_MARIADB_VERSION` | `11.4.13` | The pinned MariaDB release (`tools/services.defaults`). Native mode starts the pinned release silently, a newer 11.4 patch with a warning shown once in the app, and refuses another series or an older patch. |
-| `SCRIBODO_QDRANT_BIN` | `build/qdrant/qdrant` | The Qdrant executable (`make qdrant`). |
-| `SCRIBODO_COMPOSE_PROJECT` | `scribodo` | Docker mode's Compose project; throwaway stores use their own. |
-| `SCRIBODO_MARIADB_MEM_LIMIT` / `SCRIBODO_QDRANT_MEM_LIMIT` | `768m` / `1g` | Docker mode's memory caps. |
-| `SCRIBODO_NATIVE_FRESH` | unset | `1`: `up` starts an empty native store over credentials whose store is in the containers. |
-| `SCRIBODO_SERVICES_LOCK_WAIT` | `300` | Seconds `services.sh` waits for another run's store lock. |
-| `SCRIBODO_SERVICES_LOCKED` | set by the script | Internal: marks the re-run under the store's lock. Do not set. |
-| `SCRIBODO_ANSWER_PARTS` | unset | With the verified pipeline, `1` splits a multi-part question into its parts (each with the request's context sentence), retrieves and reranks one candidate pool per part and assigns the two verified spans as a maximum-score matching. Measured live and rejected (journal `answer-cycle3_relation.md`, pass 7): a part with no manuscript answer still gets a slot. Kept for repeat measurement; the default is one pool for the whole request. |
-
-### Dependencies
+## Dependencies
 
 | Library | Version | License | Used for |
 |---|---|---|---|
@@ -305,11 +194,13 @@ in [`docs/TESTING.md`](docs/TESTING.md).
 | [llama.cpp](https://github.com/ggml-org/llama.cpp) | b12111-5-g5851a8e50 | MIT | Local BF16 inference server (`llama-server`) |
 | [MariaDB Connector/C](https://github.com/mariadb-corporation/mariadb-connector-c) | 3.4.11 | LGPL-2.1 | MariaDB client, statically linked |
 
-The pinned inventory and container digests are verified by `make dependency-report`.
-The local services are MariaDB 11.4.13 (GPLv2) and Qdrant v1.20.0 (Apache-2.0),
-pinned by digest in `docker/compose.yml` (re-pinned 2026-11-15 to the same release rebuilt on a newer base,
-`journal/audit004-services.md`); the native MariaDB is checked against the same release (`tools/services.defaults`). The LFM3-1.7B weights are under the
-LFM Open License v1.0, including its $10M commercial-revenue threshold; see
+Every library is a pinned git submodule; raylib is compiled from source.
+`make dependency-report` verifies the pinned inventory and container digests.
+The local services are MariaDB 11.4.13 (GPLv2) and Qdrant v1.20.0
+(Apache-2.0), pinned by digest in `docker/compose.yml`; the native MariaDB is
+checked against the same release (`tools/services.defaults`). The LFM3-1.7B
+weights are under the LFM Open License v1.0, including its $10M
+commercial-revenue threshold; see
 [MODEL-001](docs/MODEL-001-lfm3-runtime.md#license-not-legal-advice). Because
 the MariaDB client is linked statically, a binary distribution must meet
 LGPL-2.1 relinking requirements (part of GAP-002).

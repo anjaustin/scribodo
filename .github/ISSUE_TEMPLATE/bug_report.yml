@@ -1,0 +1,52 @@
+name: Bug report
+description: Something in Scribodo behaves wrongly or fails
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. For a security issue, use **Report a vulnerability** on the Security tab instead (see SECURITY.md).
+        Please don't paste text from a manuscript you haven't published; a short made-up passage that shows the problem is best.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the sample project
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Commit
+      description: "`git rev-parse --short HEAD`"
+    validations:
+      required: true
+  - type: dropdown
+    id: services
+    attributes:
+      label: Project store
+      options:
+        - Native services
+        - Docker services
+        - "No store (SCRIBODO_STORE=off)"
+        - Not sure
+  - type: input
+    id: mac
+    attributes:
+      label: Mac and macOS version
+      placeholder: "M4, 16 GB, macOS 26.1"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: "The status-bar message, and anything relevant from ~/Library/Logs/Scribodo/ or build/hangs/. Check them for private text first."
+      render: text

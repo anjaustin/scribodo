@@ -10,7 +10,11 @@ replaced it.
 
 | Document | What it is |
 |---|---|
-| [`../README.md`](../README.md) | The product, how to build and run it, and its environment variables |
+| [`../README.md`](../README.md) | The product, quick start, architecture and status |
+| [USER-GUIDE](USER-GUIDE.md) | Every feature, and how saving protects your text |
+| [SERVICES](SERVICES.md) | The project store: native or Docker, versions, migration, durability |
+| [CONFIGURATION](CONFIGURATION.md) | Every setting the app reads, grouped |
+| [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | The gates, the working rules, and the docs and evidence conventions |
 | [LANDSCAPE](LANDSCAPE.md) | Every capability and gap in one table, with its evidence |
 | [SOW](SOW.md) | The MVP specification (v0.2, first titled "Story Workbench") |
 | [MEMORY-015](MEMORY-015-effective-memory-contract.md) | The memory contract: nothing written is forgotten, the record is never corrupted, model errors are measured and disclosed |

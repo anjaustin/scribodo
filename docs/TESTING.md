@@ -860,7 +860,7 @@ The experiment flags the product itself reads (`SCRIBODO_ANSWER_PARTS`,
 `SCRIBODO_MEMORY_SMALL_UNITS`, `SCRIBODO_SEM_DEBUG`) are one table read once
 from the environment, `src/core/experiments.h`; a test that sets one of them
 calls `experiments_reload()` afterwards, as `test_answer_pipeline`,
-`test_context_planner` and `test_memory_documents` do. The README's table
+`test_context_planner` and `test_memory_documents` do. [CONFIGURATION](CONFIGURATION.md)
 documents each flag's effect and record.
 
 A measurement never leaves an experiment flag to the product's default (AUDIT-004 F4): `SCRIBODO_ANSWER_PIPELINE`
@@ -877,7 +877,8 @@ the run; the memory reach, quality, native and operation evaluations, `answer_pr
 a flag without the pin. `tools/observer_replay_run.sh` belongs to the observer work and is not yet covered.
 
 These exist for the scripted suites and debugging. Operator-facing variables
-are listed in the README.
+are listed in [CONFIGURATION](CONFIGURATION.md). `tests/test_config_documented.py` (`make test`) fails when a
+`SCRIBODO_*` name in `src/` has no row in either table.
 
 | Variable | Effect |
 |---|---|

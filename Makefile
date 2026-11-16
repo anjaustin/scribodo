@@ -314,6 +314,7 @@ test: $(TESTS) $(CORE_OBJS) $(LLM_OBJS) $(APP_OBJS)
 	$(WATCHDOG) $(TEST_TIMEOUT) test_power_source python3 tests/test_power_source.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_env_writes python3 tests/test_env_writes.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_draft_call_sites python3 tests/test_draft_call_sites.py
+	$(WATCHDOG) $(TEST_TIMEOUT) test_config_documented python3 tests/test_config_documented.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_sysmem_sample python3 tests/test_sysmem_sample.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_observer_faults python3 tests/test_observer_faults.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_observer_judge_score python3 tests/test_observer_judge_score.py

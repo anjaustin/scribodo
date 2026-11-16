@@ -16,7 +16,7 @@
 #   rotate-root          a new MariaDB root password
 #   migrate-from-docker  move the containers' store to the native services (see the function for its guarantees)
 #
-# Variables (every one optional; defaults in tools/services.defaults and below; README.md, "Environment variables"):
+# Variables (every one optional; defaults in tools/services.defaults and below; docs/CONFIGURATION.md, "Services"):
 #   SCRIBODO_SERVICES          native|docker: the mode for this call only, never remembered
 #   SCRIBODO_SECRETS           the store's folder: credentials, the native data, the remembered mode
 #                              (~/ then SCRIBODO_DEFAULT_SECRETS_DIR in tools/services.defaults)
