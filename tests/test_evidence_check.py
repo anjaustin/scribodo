@@ -2,6 +2,7 @@
 import io
 import contextlib
 import re
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -218,12 +219,20 @@ class GateOwnedDirsTests(unittest.TestCase):
             text = (ROOT / "tools" / script).read_text()
             for m in re.findall(r"\$PWD/(build/ui/[a-z]+)", text):
                 paths.append(m)
-        return paths
+        text = (ROOT / "tools/cstest.sh").read_text()
+        paths += re.findall(r"=(build/[A-Za-z.]+)", text)
+        clean = subprocess.run(["make", "-n", "-C", str(ROOT), "clean"], capture_output=True, text=True)
+        self.assertEqual(clean.returncode, 0, clean.stderr)
+        removed = clean.stdout.split()
+        self.assertEqual(removed[:2], ["rm", "-rf"])
+        self.clean_removes = removed[2:]
+        return paths + [p for p in removed[2:] if not re.match(r"build/(scribodo|test_[a-z_]+)$", p)]
 
     def test_deletions_are_owned(self):
         owned = ec.gate_owned_dirs(ROOT)
         files = {"$(APP)", "$(TESTS)"}
-        stems = [s.stem for s in (ROOT / "tests/ui").glob("*.scribo")]
+        # The loops run UI_SCRIPTS and REAL_UI_SCRIPTS: every script but case_sensitive (cstest).
+        stems = [s.stem for s in (ROOT / "tests/ui").glob("*.scribo") if s.stem != "case_sensitive"]
         checked = 0
         for p in self.deleted_paths():
             if p in files or not p.startswith("build/"):
@@ -235,6 +244,11 @@ class GateOwnedDirsTests(unittest.TestCase):
                 self.assertTrue(any(q == d or q.startswith(d + "/") for d in owned),
                                 "%s is deleted by a gate but not in gate_owned_dirs" % q)
         self.assertGreater(checked, 3)
+        self.assertNotIn("build/ui", self.clean_removes)  # no gate deletes the whole of build/ui
+        # Every per-script directory the gates own, make clean also removes.
+        for d in owned:
+            if d.startswith("build/ui/"):
+                self.assertIn(d, self.clean_removes)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -828,6 +828,18 @@ CI) the check says it skipped and passes. `tools/evidence_check.py --unarchived`
 under a cited path that no archive holds (binaries, objects, debug symbols and sockets left out): the file
 list of the next archive pass.
 
+**A gate deletes only what it owns.** `make uitest` and `make uitest-real` delete `build/ui/<script>` for each
+script they run, `make uitest-db` `build/ui/store`, `make backuptest`, `offlinetest` and `remotetest`
+`build/ui/backup`, `build/ui/offline` and `build/ui/remote`, `make cstest` its volume (`build/csvol`,
+`build/cs.sparseimage`), and `make clean` those plus `build/src`, `build/tests`, `build/asan` and the binaries
+(`UI_OWNED` in the Makefile). Nothing deletes `build/ui` as a whole any more: before 2026-11-15 `make uitest`
+did, and took `build/ui/fit-on` and `build/ui/fit-native2` with it (AUDIT-004 F1). Write a measurement into its
+own directory under `build/` (`build/observer/...`, `build/gap003/...`), never into a gate-owned one:
+`evidence_check` fails on any cited path under a gate-owned directory unless it is archived, whatever the
+not-evidence list says (only an entry naming exactly that directory, the gate's own output named in prose,
+passes), and `tests/test_evidence_check.py` pins its list of gate-owned directories to the Makefile's recipes
+and `make clean`. `make distclean` removes all of `build/`; run it only after an archive pass.
+
 ## Test-harness environment variables
 
 The experiment flags the product itself reads (`SCRIBODO_ANSWER_PARTS`,

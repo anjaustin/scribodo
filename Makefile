@@ -364,15 +364,20 @@ dependency-report:
 
 # Scripted UI tests: each script drives the real app in a hidden window against
 # its own copy of tests/ui/fixtures in build/ui/<script>/work, where its
-# screenshots also land. build/ui is wiped (a fixed path) at the start.
+# screenshots also land. Each run deletes only build/ui/<script> for the scripts
+# it runs: a gate deletes only what it owns (UI_OWNED; docs/TESTING.md, "Where
+# cited evidence lives"), so evidence elsewhere under build/ui survives.
 UI_SCRIPTS := $(filter-out tests/ui/real-% tests/ui/case_sensitive.scribo,$(wildcard tests/ui/*.scribo))
 # tests/ui/real-*.scribo drive the real model through the UI (make uitest-real).
 REAL_UI_SCRIPTS := $(wildcard tests/ui/real-*.scribo)
+# Every directory under build/ui a gate deletes: one per script (uitest, uitest-real), the store, backup, offline
+# and remote suites'. tools/evidence_check.py's gate_owned_dirs is pinned to this (tests/test_evidence_check.py).
+UI_OWNED := $(patsubst tests/ui/%.scribo,build/ui/%,$(UI_SCRIPTS) $(REAL_UI_SCRIPTS)) build/ui/store build/ui/backup build/ui/offline build/ui/remote
 uitest: $(APP)
 	@test -n "$(UI_SCRIPTS)" || { echo "uitest: no scripts under tests/ui"; exit 1; }
-	@chmod -R u+w build/ui 2>/dev/null; rm -rf build/ui
 	@fail=0; for s in $(UI_SCRIPTS); do \
 	  name=$$(basename $$s .scribo); work=build/ui/$$name/work; \
+	  chmod -R u+w build/ui/$$name 2>/dev/null; rm -rf build/ui/$$name; \
 	  mkdir -p $$work && cp -R tests/ui/fixtures/. $$work/; \
 	  SCRIBODO_SCRIPT=$$s SCRIBODO_SCRIPT_DIR=$$PWD/$$work SCRIBODO_SHOT_DIR=$$PWD/build/ui/$$name \
 	    $(WATCHDOG) 120 ui-$$name ./$(APP) 2>build/ui/$$name/stderr.log || fail=1; \
@@ -655,7 +660,7 @@ $(BUILD)/raylib $(BUILD)/src/ui:
 	@mkdir -p $@
 
 clean:
-	rm -rf $(BUILD)/src $(BUILD)/tests $(APP) $(TESTS) build/asan build/ui
+	rm -rf $(BUILD)/src $(BUILD)/tests $(APP) $(TESTS) build/asan $(UI_OWNED)
 
 distclean:
 	rm -rf $(BUILD)
