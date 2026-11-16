@@ -1974,6 +1974,62 @@ static void test_chat_title_archive(void)
     system(cmd);
 }
 
+static long archive_rows(Db *db, const char *pid)
+{
+    DbRows r;
+    if (!db_query(db, "SELECT COUNT(*) FROM conversation_titles t JOIN conversations c ON c.id = t.conversation_id WHERE c.project_id = ?",
+                  (DbArg[1]){ DB_S(pid) }, 1, &r))
+        return -1;
+    long n = r.nrows == 1 && db_cell(&r, 0, 0) ? atol(db_cell(&r, 0, 0)) : -1;
+    db_rows_free(&r);
+    return n;
+}
+
+/* A title line whose time is out of range (AUDIT-004 F11 red team): the title is kept, its time is not (the import
+ * stamps it with the chat's last change, as a line with no time), so the archive imports and every later export,
+ * backup and fork still decodes it. Before, the time went into replaced_at and every export failed. */
+static void test_chat_title_bad_time(void)
+{
+    char why[256] = "", root[PATH_MAX], proj[PATH_MAX + 16], out[PATH_MAX + 16], path[PATH_MAX + 200];
+    CHECK(store_start(g_store, g_name, why, sizeof(why)));
+    snprintf(root, sizeof(root), "%sscribodo-title-time-XXXXXX", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp/");
+    CHECK(mkdtemp(root) != NULL);
+    snprintf(proj, sizeof(proj), "%s/p", root);
+    snprintf(out, sizeof(out), "%s/e", root);
+    CHECK(mkdir(proj, 0755) == 0);
+    const char *id = "20261115-110000-abcd";
+    ChatMessage u = { .role = CHAT_USER, .content = "hello" };
+    CHECK(chat_store_append(g_store, proj, id, "First", &u));
+    snprintf(path, sizeof(path), "%s/.scribodo/chats/%s.jsonl", proj, id);
+    FILE *f = fopen(path, "a");
+    CHECK(f != NULL);
+    if (f) {
+        fputs("{\"type\":\"title\",\"title\":\"Second\",\"ts\":1e300}\n", f);
+        fputs("{\"type\":\"title\",\"title\":\"Third\",\"ts\":-5}\n", f);
+        fputs("{\"type\":\"title\",\"title\":\"Fourth\",\"ts\":1700000000}\n", f);
+        fclose(f);
+    }
+    ChatTitle *t = NULL;
+    size_t n = 0;
+    CHECK(chat_store_titles_files(proj, id, &t, &n) && n == 4);
+    CHECK(n == 4 && !t[1].has_ts && !t[2].has_ts && t[3].has_ts && t[3].ts == 1700000000 && !strcmp(t[2].title, "Third"));
+    chat_store_titles_free(t, n);
+    CHECK(store_import(g_store, proj, why, sizeof(why)));
+    char pid[40] = "";
+    CHECK(store_mode(g_store, proj, pid, sizeof(pid), NULL) == STORE_DB);
+    CHECK(archive_rows(store_db(g_store), pid) == 3); /* First, Second, Third: every title kept */
+    bool exported = store_export_project(g_store, pid, out, why, sizeof(why));
+    CHECK(exported);
+    if (!exported) fprintf(stderr, "    export: %s\n", why);
+    t = NULL;
+    n = 0;
+    CHECK(chat_store_titles_files(out, id, &t, &n) && n == 4 && !strcmp(t[0].title, "First") && !strcmp(t[3].title, "Fourth"));
+    chat_store_titles_free(t, n);
+    char cmd[PATH_MAX + 20];
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root);
+    system(cmd);
+}
+
 int main(void)
 {
     g_store = store_manager_create();
@@ -1996,6 +2052,7 @@ int main(void)
                           { "fork_retry_snapshot", test_fork_retry_snapshot },
                           { "import_revision_identity", test_import_revision_identity },
                           { "chat_title_archive", test_chat_title_archive },
+                          { "chat_title_bad_time", test_chat_title_bad_time },
                          { "entities_redteam", test_entities_redteam }, { "semantic", test_semantic } };
     int rc = run_db_core_tests();
     if (run_tests(tests, sizeof(tests) / sizeof(tests[0])) != 0) rc = 1;

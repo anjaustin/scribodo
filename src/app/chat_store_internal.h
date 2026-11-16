@@ -16,7 +16,7 @@ bool chat_store_title_line_files(const char *project_dir, const char *id, const 
 typedef struct {
     char *title;
     double ts;
-    bool has_ts; /* the line carried a numeric ts */
+    bool has_ts; /* the line carried a ts in the message range: finite, 0 <= ts < 2^63 */
 } ChatTitle;
 bool chat_store_titles_files(const char *project_dir, const char *id, ChatTitle **titles, size_t *count);
 void chat_store_titles_free(ChatTitle *titles, size_t count);

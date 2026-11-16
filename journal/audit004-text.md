@@ -252,3 +252,19 @@ is not his daughter." both return the whole text as the first sentence, and the 
 That is not in dispute." and `"Proud," said I. "Proud people breed sad sorrows."` (`redteam/observer-probe.txt`,
 linked against `observer_text.o`). Adopting `text_abbreviation_before` there is a change to the observer's measured
 splitter and should be measured on its replay yardstick.
+
+### R2 (medium): an out-of-range title time broke every later export
+
+**Defect.** `chat_store_titles_files` took any finite `ts` on a title line. A line stamped 1e300 or -5 imported into
+`replaced_at`, and from then on `sdb_chat_archived_titles` (which decodes with the message range, 0 <= t < 2^63)
+refused the row, so every export, backup and fork of the project failed.
+
+**Change.** Title lines take the message lines' range (`chat_store_load_files`): a time outside it is refused and the
+title kept with no time, which the import stamps with the chat's last change, as it does a line with no time. Nothing
+is deleted: every title is archived, the out-of-range stamp stays on its line in the file (set aside under legacy-*
+by the import), and only the unusable time is not carried into the store. Clamping was rejected: a clamped time would
+be a made-up time presented as the record's.
+
+**Test.** `test_db` `chat_title_bad_time`: a chat with title lines stamped 1e300, -5 and 1700000000 reads as four
+titles, the first two timed lines without a time; it imports with three archived rows, and its export succeeds with
+all four titles in order. Before the fix the same test failed three checks (the export among them).

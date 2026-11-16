@@ -328,7 +328,11 @@ bool chat_store_titles_files(const char *project_dir, const char *id, ChatTitle 
                 char *copy = ok ? strdup(t->valuestring) : NULL;
                 if (!copy) ok = false;
                 else {
-                    bool timed = !first && cJSON_IsNumber(ts) && isfinite(ts->valuedouble);
+                    /* The message lines' range (chat_store_load_files): a time outside it is refused, the title kept
+                     * with no time, so an out-of-range stamp never reaches replaced_at, which every export, backup and
+                     * fork decodes with that range (AUDIT-004 F11 red team). The line itself stays in the file. */
+                    bool timed = !first && cJSON_IsNumber(ts) && isfinite(ts->valuedouble) && ts->valuedouble >= 0 &&
+                                 ts->valuedouble < 0x1p63;
                     list[n++] = (ChatTitle){ .title = copy, .ts = timed ? ts->valuedouble : 0, .has_ts = timed };
                 }
             }
