@@ -84,6 +84,11 @@ five such axes for at least 24 reachable combinations; live runs exercise two.
   table lacks `SCRIBODO_OBSERVER_SENTENCES` and `SCRIBODO_SEM_DEBUG`.
   **Rule added:** one flag (or one level of a flag) per measured arm; every
   measurement script pins every arm it depends on and records it in the run.
+  **Done the same day:** the observer arms are levels (`attributes` = `1` =
+  step 8, `subject` = step 9), and a value that names no level warns.
+  `tools/experiment_arms.py` pins every flag in the measurement scripts and
+  records it, and fails on a flag it cannot classify. All six observer flag
+  combinations are tested.
 
 ## Open — answer receipts and trace lines are an unversioned contract (P2)
 
@@ -199,7 +204,7 @@ and `build/ui/fit-native2` were written where `make uitest` deletes
 (`Makefile:330`). (The audit also named five `build/gap003/*/gates`
 directories as gone; they are file-name stems whose logs are archived.) The
 106 are in `scribodo-evidence-2026-11-15-audit004`.
-**Remaining:** a check that every cited path is archived or marked as not
+**Enforced 2026-11-15:** `tools/evidence_check.py` runs in `make test` against the archives' real contents, and gates delete only the directories they own (`journal/audit004-tooling.md`). The original remaining item was: a check that every cited path is archived or marked as not
 evidence, run by `make test`; and no evidence under a directory a gate deletes.
 
 ## Open — duplication that raises the cost of the next change (P2 and P3)
@@ -215,12 +220,12 @@ evidence, run by `make test`; and no evidence under a directory a gate deletes.
 | Layout and shell | All 31 `CLAY(` sites in `main.c`; `App` has 143 fields with four anonymous unions aliasing extracted controllers back to flat names; Escape handled at seven sites; the arm-then-confirm idiom copied three times; 76 colour literals in ten files, no theme header | Next new view: give it its own layout function and a theme header first |
 | Tools | 35 `tools/answer_*.py` (5,290 lines): `ROOT = Path(__file__).resolve().parents[1]` 43 times, 13 `sys.path.insert` sibling imports, four AST-identical helpers; 11 without tests, 7 referenced by one journal or doc only | A `tools/lib` module; retire scripts whose journal is closed |
 | Makefile | 44 per-binary link rules, 18 hand-written TSan compile lines, a 25-line Python test list; zero drift today | Pattern rules when the next test is added |
-| Text rules (AUDIT-004 F10) | Five sentence splitters (`answer_pipeline.c:896,1253`, `observer_text.c:293,375`, `observer_fake.c:88`), eight title lists in `src/llm` plus Python's, two kinship lists, three number-word lists, two identical word-character functions in `answer_pipeline.c` (`:845,1227`); the relation check's splitter cuts "Ms. Bennet" and "James K. Powell" (defect) | One `core/text_rules` module; the relation splitter fixed first |
+| Text rules (AUDIT-004 F10) | Five sentence splitters (`answer_pipeline.c:896,1253`, `observer_text.c:293,375`, `observer_fake.c:88`), eight title lists in `src/llm` plus Python's, two kinship lists, three number-word lists, two identical word-character functions in `answer_pipeline.c` (`:845,1227`); the relation check's splitter cuts "Ms. Bennet" and "James K. Powell" (defect) | **Done 2026-11-15:** `src/core/text_rules` serves the answer pipeline, the planner and the observer, with separately measured lists kept as named constants; the relation splitter keeps names whole and scopes a negation's reach (`journal/audit004-text.md`) |
 | Dead exports | `chat_set_canon_reference` has no caller (so `canon_reference.c` and `chat.c:1322-1335` are unreachable in the product); `revisions_list_files`, `import_job_running_for`, `renames_resolve` have none; `import_job.c` has no test | Remove or test |
 
-## Open — measured rules and tool output mirrored across languages without a shared fixture (P1)
+## Done — measured rules and tool output mirrored across languages without a shared fixture (P1)
 
-**Recorded:** 2026-11-15 (AUDIT-004 F2, F7). **Status:** Open.
+**Recorded:** 2026-11-15 (AUDIT-004 F2, F7). **Status:** Done 2026-11-15 (`journal/audit004-observer.md`). The C and the Python read one fixture of verdicts, `tests/fixtures/observer_rules/cases.json`. The C sets are unbounded and sorted. The Python reads the C's Unicode word table. The judge log and the finding lines carry a format version, and the C writes the fixtures that the Python reads.
 
 Three observer rules were measured in Python and shipped as C ports, under a
 flag: `obs_sentence_end`, `obs_attributes_differ` and `obs_same_subject`
@@ -234,9 +239,18 @@ read by a C test and a Python test (the shape of
 `tests/fixtures/answer_relation/replies.json`); `observer_overlap` modes
 become that C test's driver; a format version on both outputs.
 
-## Open — the services layer: reasons, defaults and the Docker path (P2)
+## Done — the services layer: reasons, defaults and the Docker path (P2)
 
-**Recorded:** 2026-11-15 (AUDIT-004 F6, F13). **Status:** Open.
+**Recorded:** 2026-11-15 (AUDIT-004 F6, F13). **Status:** Done 2026-11-15 (`journal/audit004-services.md`):
+- an exit-code contract, with the reason shown in the app;
+- `tools/services.defaults` as the one source of defaults, checked by a test;
+- the Docker functions written once and covered by a shim;
+- `tools_dir_resolve` for bundles and overrides;
+- every variable documented in the script and the README;
+- MariaDB re-pinned, the native release a floor within its series;
+- a failed expansion exits 1.
+
+The one part still open is a full `migrate-from-docker` rehearsal, which needs Docker (`servicestest` step 10).
 
 - **Reasons discarded:** `service_supervisor.c:31-33,52` throws away the
   script's output and exit code, so every refusal reaches the author as "store
@@ -257,9 +271,12 @@ become that C test's driver; a format version on both outputs.
 - a Docker lane, or Docker paths retired to the harness;
 - README rows for the variables.
 
-## Open — tools no gate compiles and a yardstick kept in prose (P2)
+## Done — tools no gate compiles and a yardstick kept in prose (P2)
 
-**Recorded:** 2026-11-15 (AUDIT-004 F9). **Status:** Open.
+**Recorded:** 2026-11-15 (AUDIT-004 F9). **Status:** Done 2026-11-15:
+- `make tools` builds every tool, the six former overlays included, and hosted CI builds them;
+- `make mutationtest` and `mutationtest-db` run in acceptance;
+- `make yardstick` (in `make test`) compares the flag-off replay with `tests/fixtures/observer_yardstick.json`.
 
 `make tools` is in no workflow. Six C tools build only through heredoc
 Makefile overlays. The observer yardstick reads untracked
@@ -307,7 +324,9 @@ process's physical footprint 342 MB at ready and after a scored pair. The
 high side); the comment in `server.c` carries the numbers
 (journal/answer-cycle4_default_path.md). **Entry closed.**
 
-## Open — spawned tools inherit the app's descriptors (P3)
+## Done — spawned tools inherit the app's descriptors (P3)
+
+**Done 2026-11-15 (AUDIT-004):** every spawn goes through `src/core/child_process.c` with `POSIX_SPAWN_CLOEXEC_DEFAULT`, and `server.c` reads arguments from the kernel instead of calling `popen`. `tests/test_spawn_hygiene.py` bans other spawn calls in `src/`, and `test_services` checks by identity that no held descriptor reaches a child at any of the three sites.
 
 **Recorded:** 2026-11-13 (GAP-003 restart finding). The model-server spawn in
 `src/llm/server.c` now closes every descriptor the file actions did not create
@@ -537,6 +556,13 @@ order, limiting parallel tests and future independent application instances.
   its scripted queue/private clipboard are test-harness state, reset by process
   lifetime. Supporting multiple windows in one process would require an owned
   input context before that product boundary changes.
+- `records_new_id` keeps a function-scope mutex, timestamp and counter so ids
+  drawn in one process within one second stay distinct
+  (`journal/observer-cycle1_replay.md`; listed by AUDIT-004).
+- The experiment table (`src/core/experiments.c`) is read once under
+  `pthread_once` and reloaded only by tests while no worker runs.
+- `startup_env` owns every environment write. It seals the environment before
+  the first thread, and a later write asserts (AUDIT-004; `tests/test_env_*`).
 
 ## P1 — CI omits high-value verification
 
@@ -624,7 +650,7 @@ enforced: direct pushes are permitted, and CI reports after the fact. See
 | Documentation drift | Done | Living guides no longer encode volatile source locations or assertion totals; dated red-team reports retain their point-in-time evidence. | Keep contracts current and reserve numeric evidence for dated reports. |
 | Weakly typed DB rows | Regressed (2026-11-11) | Repository decoders validate shape, nullability, type and domain, and checked record/revision list failures propagate through `ProjectStore`. One violator: `src/app/memory_gc.c:254-256` reads `db_cell(&r, 0, 4/5/6)` raw into `snprintf` with no column check (added 2026-11-07; harmless today because the columns are `NOT NULL`). The chat family keeps a count-returning `chat_list` in the ops table (`project_store.c:41`) and `project_store_chat_list_checked` bypasses the table with a backend ternary. No Makefile or CI check forbids `db_cell(` outside `db.c`. | Convert the three reads to `db_cell_text`; add a grep gate to `make analyze` allowing `db_cell(` only in `db.[ch]`; finish the chat checked-list routing when next touched. |
 | Manual dependency maintenance | Done | `make dependency-report` and a weekly workflow inventory submodules and images, verify immutable pins, and query OSV by vendored commit. | Review informational upstream updates and remediate any report failure. |
-| `main.c` composition-root size | Open (accepted for pre-alpha) | 2026-11-15 re-measure (AUDIT-004 F3): 4,703 lines, 11.2% of 41,904, 297 short of the trigger at about 37 lines a day. Two new workflow bodies were added (`draft_tick`/`draft_discard`, `resave_unsaved_chat`). `main()` itself is 947 lines (`:3757-4703`) and `build_layout` 247; neither was listed before. 2026-11-11 re-measure (AUDIT-003): `src/main.c` is 4,555 lines, 11.5% of `src/` (39,781 C/header lines); +22 since AUDIT-002 and +763 (20%) since the P1 entry closed on 2026-11-05. The P1 coordination split moved worker ownership out; what remains is the single-window composition root, layout builder (all 31 `CLAY(` sites), scripted-host adapters, and the workflow bodies `finish_prompt` (178 lines), `send_chat` (121), `open_source` (77), `host_element` (76), `draw_empty` (74), `attached_text` (74), `finding_action` (70) and `import_documents` (63). Adding the recall view cost the file 150 lines (`7407807`). | Split by pane/controller only when a feature next touches more than three ownership areas, or if the file exceeds 5,000 lines. Re-measure and update this row at each review; do not describe the P1 entry above as a size split. |
+| `main.c` composition-root size | Open (accepted for pre-alpha) | 2026-11-15 after the AUDIT-004 remediation: 1,836 lines. `main()` is 80 lines and `build_layout` 32; the workflows moved to `src/app/{chat,document,record}_workflow.c`, `app_lifecycle.c`, `script_host_app.c`, `draft_controller.c`, `local_models.c` and `src/ui/layout.c`. Before it, the AUDIT-004 F3 re-measure: 4,703 lines, 11.2% of 41,904, 297 short of the trigger at about 37 lines a day. Two new workflow bodies were added (`draft_tick`/`draft_discard`, `resave_unsaved_chat`). `main()` itself is 947 lines (`:3757-4703`) and `build_layout` 247; neither was listed before. 2026-11-11 re-measure (AUDIT-003): `src/main.c` is 4,555 lines, 11.5% of `src/` (39,781 C/header lines); +22 since AUDIT-002 and +763 (20%) since the P1 entry closed on 2026-11-05. The P1 coordination split moved worker ownership out; what remains is the single-window composition root, layout builder (all 31 `CLAY(` sites), scripted-host adapters, and the workflow bodies `finish_prompt` (178 lines), `send_chat` (121), `open_source` (77), `host_element` (76), `draw_empty` (74), `attached_text` (74), `finding_action` (70) and `import_documents` (63). Adding the recall view cost the file 150 lines (`7407807`). | Split by pane/controller only when a feature next touches more than three ownership areas, or if the file exceeds 5,000 lines. Re-measure and update this row at each review; do not describe the P1 entry above as a size split. |
 
 ## Intentional pre-alpha tradeoffs
 
@@ -1109,3 +1135,19 @@ UI/store paths and full-history compatibility consumers remain debt.
   - two test-side null dereferences.
 - Growth since AUDIT-003: 22,559 lines added, 15% product code; 1,311
   removed.
+
+### 2026-11-15 — AUDIT-004 remediated
+
+- Every finding was remediated the same day, at the author's direction (P0, 100 %), in five parallel worktree
+  streams: observer, services, `main.c`, data/text and tooling. The coordinator took the documents.
+- Each stream went through an independent red-team, came back for remediation, and then went to an independent
+  verifier, round after round until every item closed. About seventy defects in the remediations were found and
+  fixed this way.
+- The streams merged onto `main` after gates on the merged tree. The final matrix on `ac73f79` passed 21 of 22
+  targets; the one stale mutation control was re-pointed and rerun with exit 0.
+- Three of the audit's own claims were wrong and are corrected in place: the archive's contents, the tsan total, and
+  the "lost" stems.
+- The register entries above are closed or amended with their evidence. AUDIT-004's "Remediation" section has the
+  per-finding table, and `journal/audit004-*.md` has the detail.
+- Process lessons: the worktrees share one git stash; `pgrep -f` matches its own shell; two database gates running
+  at once on the one MariaDB hang; and a locked console fails every UI suite.

@@ -282,6 +282,54 @@ builds, and the report covers only the Docker one. Re-pinning means reviewing th
    correct the standing docs and the register.
 5. **F3, F6, F7, F9** as register entries with acceptance criteria; F12 as register rows.
 
+## Remediation (2026-11-15)
+
+The author made the remediation P0 and asked for every finding to be remediated in full, with each item red-teamed
+as it was finished, then remediated and verified, and finally committed. Five streams worked in parallel git
+worktrees: observer, services, `main.c`, data/text and tooling. The coordinator took the documents. Each stream's work
+went to an independent red-team, came back for remediation, and then went to an independent verifier. Rounds
+repeated until the verifier closed every item. Each stream merged onto `main` only after the coordinator had run the
+gates on the merged tree. The streams' journals hold the detail: `journal/audit004-{observer,services,main,text,tooling}.md`.
+
+| Finding | Status | Where |
+|---|---|---|
+| F1 evidence | **Done.** The 106 paths, then 75 and 33 more found by stricter checks, are archived (`audit004`, `audit004b`, `audit004c`, `audit004d`, `audit004e`, two tooling archives). `tools/evidence_check.py` runs in `make test` against real tarball contents, so the rule is enforced. Gates delete only the directories they own. | tooling journal; EVIDENCE |
+| F2 observer mirrors and arms | **Done.** `attributes` (step 8; `=1`) and `subject` (step 9) are separate levels. One fixture (`tests/fixtures/observer_rules/cases.json`) is read by both the C and the Python. The Python reads the C's Unicode word table, so the two agree on any interpreter. | observer journal |
+| F3 `main.c` | **Done.** It went from 4,703 lines to 1,836. `main()` went from 947 lines to 80, and `build_layout` from 247 to 32. The workflows moved into seven modules. Compile-time guards cover the App unions and `ScriptHost`. | main journal |
+| F4 arms unpinned | **Done.** `tools/experiment_arms.py` pins every flag in the measurement scripts and records it, and fails on any flag it cannot classify. All six combinations of the observer flags are tested, and the replay records the flags it ran with. | tooling, observer journals |
+| F5 UI figure | **Done.** The disclosure shows the active arm's measured figure, from a table with one row per arm. | observer journal |
+| F6 services | **Done.** <br>• The script's exit code and reason reach the author. <br>• The defaults are written once (`tools/services.defaults`). <br>• The Docker path is written once and covered by a shim, with no Docker needed. <br>• The scripts are found from a bundle or an override. <br>• Every variable is documented. <br>• A failed expansion exits non-zero. <br>Still open, for want of Docker: a full `migrate-from-docker` run (`servicestest` step 10). | services journal |
+| F7 C-to-Python formats | **Done.** The judge log and the finding lines are versioned. The C writes the fixtures and the Python reads them. | observer journal |
+| F8 documents | **Done.** LANDSCAPE, PRODUCT-GAPS, the README rows and the register are corrected. Three of this audit's own claims were wrong and are corrected in place. | this file; EVIDENCE |
+| F9 ungated tools | **Done.** <br>• `make tools` builds every tool, and hosted CI builds them. <br>• `make mutationtest` and `make mutationtest-db` run in acceptance; four stale controls were repaired, and one more was found by the final matrix. <br>• The observer yardstick is checked against a tracked record (`tests/fixtures/observer_yardstick.json`) in `make test`. | tooling journal |
+| F10 text rules | **Done.** One module, `src/core/text_rules`, serves the answer pipeline, the planner and the observer. Lists that were measured separately stay as separate named constants. The relation check no longer cuts names. A negation's reach is scoped by initials and name suffixes, with 0 changes across 670 recorded replies. | text journal |
+| F11 chat titles | **Done.** The title archive survives the file store in both directions (migration 019 adds `seq`). Chats imported earlier are backfilled on the import worker (migration 020, crash-matrix row). No title-line content can break an export. | text journal |
+| F12 smaller items | **Done.** <br>• Record ids are checked, and exhaustion is reported. <br>• Environment writes are confined before the first thread. <br>• Draft writes run off the frame thread (measured). <br>• The script host is split. <br>• The observer worker is split. <br>• The fixture provenance is amended. <br>• The home path is removed. <br>• The Memorilla probe is archived. <br>• `tools/answer_common.py` is shared. <br>• The git objects are packed. | streams' journals |
+| F13 moved tag | **Done.** It was a rebuild on a newer base with the same release (`bdfe641`, `11.4.13+maria~ubu2404`) and is re-pinned. Native mode now refuses a different series or an older patch, and warns on a newer patch. | services journal |
+| Descriptor entry | **Done.** Every spawn goes through `child_process` with `POSIX_SPAWN_CLOEXEC_DEFAULT`. `server.c` no longer calls `popen`. A static check bans the other spawn calls. The descriptor test checks descriptors by identity. | services journal |
+
+Found and fixed along the way:
+- The red-teams and verifiers found about seventy defects in the remediations themselves. Examples: a draft write caught half-written by stray recovery, a relation splitter that hid negations, a version pin that would have kept the author's store from starting after a routine `brew upgrade`, `services.sh` exiting 0 on an unset variable, evidence checks that passed on a parent directory, and Unicode word classes that differed between interpreters.
+- The final matrix caught one integration break: an audit mutation pointing at a line F11 had rewritten.
+- Hosted CI caught one break: a descriptor test that counted the sanitizer runtime's own descriptor.
+
+**Final matrix** on `ac73f79` (`build/audit004-final/results.tsv`): 21 of 22 targets exited 0. `make mutationtest` and the
+audit mutations failed on the stale control, were re-pointed (`4849092`) and rerun with exit 0, and 0 mutants survived.
+- `test`: 97,610 C checks and 293 Python tests, 0 failures.
+- `sanitize`: 97,610 checks, 0 failures.
+- `tsan`: 48,947 checks, 0 failures.
+- `dbtest`: 18,230 checks, 0 failures.
+- `crashtest`: 141 rows, 1,583 checks, 0 failures.
+- `analyze`: 0 warnings across 102 files.
+- `uitest`: 409 passed. `uitest-db`: 304 passed. `uitest-real`: 35 passed.
+- `dependency-report`, `servicestest` and `offlinetest` exited 0, as did both mutation suites after the re-point.
+
+**Still open:**
+- the full Docker migration rehearsal (needs Docker running);
+- the data/text stream's last verification round (relation-check name runs with non-ASCII, apostrophe and particle
+  words; the backfill while another project's import is pending; atomic record ids), which is in progress at this
+  writing.
+
 ## Register changes made by this audit
 
 See the 2026-11-15 session log in [TECHNICAL-DEBT](TECHNICAL-DEBT.md).
