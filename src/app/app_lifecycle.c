@@ -4,6 +4,7 @@
 
 #include <mach-o/dyld.h>
 
+#include "ui/mac_window.h"
 #include "ui/motion.h"
 #include "ui/widgets.h"
 
@@ -235,6 +236,8 @@ int app_open_window(App *app, const char *script_path)
         return 3;
     }
     app->window_ready = true;
+    /* The toolbar runs to the top edge, the traffic lights inside it (ui/mac_window.h). */
+    app->unified_titlebar = mac_window_unify(GetWindowHandle(), TOOLBAR_H);
     SetWindowMinSize(900, 480);
     SetExitKey(KEY_NULL); /* Esc must never quit a writing app */
     app->scripted = script_path != NULL;

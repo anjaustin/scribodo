@@ -15,6 +15,7 @@
 
 #include "app/app_internal.h"
 #include "ui/widgets.h"
+#include "ui/mac_window.h"
 #include "ui/motion.h"
 #include "app/tools_dir.h"
 
@@ -1149,8 +1150,31 @@ static void frame_take_dropped(App *app)
     }
 }
 
+/* The toolbar where nothing answers a click: with the title bar gone, these parts move the window. */
+static bool toolbar_empty(void)
+{
+    static const char *const controls[] = { "AppMenu", "OpenButton", "SaveButton", "ModelPicker", "RecallToggle", "ObserverToggle" };
+    if (!Clay_PointerOver(CLAY_ID("Toolbar"))) return false;
+    for (size_t i = 0; i < sizeof(controls) / sizeof(controls[0]); i++)
+        if (Clay_PointerOver(Clay_GetElementId((Clay_String){ .length = (int32_t)strlen(controls[i]), .chars = controls[i] }))) return false;
+    return true;
+}
+
 static void frame_left_click(App *app, Vector2 mouse, bool modal, bool trace)
 {
+    /* An empty part of the toolbar: the window's title bar (ui/mac_window.h). A double-click does what the author's
+     * system setting says; a press starts the system's own window drag. */
+    if (!modal && app->unified_titlebar && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && toolbar_empty()) {
+        double now = GetTime();
+        if (now - app->toolbar_click_t < 0.4) {
+            app->toolbar_click_t = 0;
+            mac_window_title_double_click(GetWindowHandle());
+        } else {
+            app->toolbar_click_t = now;
+            mac_window_begin_drag(GetWindowHandle());
+        }
+        return;
+    }
     /* Clicks (pointer state reflects last frame's layout). */
     if (!modal && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
         if (trace) fprintf(stderr, "trace: click (%.0f, %.0f) focus=%d\n", mouse.x, mouse.y, app->focus);
@@ -1744,6 +1768,7 @@ static bool frame_end(App *app, MainLoop *loop)
 /* One frame after the worker polls in main(). False to leave the loop. */
 static bool frame_step(App *app, MainLoop *loop)
 {
+    if (app->unified_titlebar) mac_window_place_buttons(GetWindowHandle(), TOOLBAR_H); /* AppKit re-lays them out */
     static double refresh_checked;
     if (GetTime() - refresh_checked > 3.0) { /* the window may have moved to another display */
         refresh_checked = GetTime();

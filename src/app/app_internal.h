@@ -109,6 +109,7 @@ enum { MT_DOC = 1, MT_CHAT, MT_ATTACH, MT_MODEL, MT_APP };  /* what a context me
 #define COL_ERR THEME_CLAY(THEME_ERR)
 
 #define SPLITTER_W 5
+#define TOOLBAR_H 40.0f
 #define MAX_DOCS EXPLORER_MAX_DOCS
 
 /* Revisions listed in History (newest first). */
@@ -134,6 +135,8 @@ typedef struct {
     bool side_gliding; /* opening or shutting */
     bool focus_mode;  /* the page alone (⌘\\); for the session, not saved */
     bool scripted;    /* a UI test run */
+    bool unified_titlebar; /* the toolbar holds the traffic lights (ui/mac_window.h) */
+    double toolbar_click_t; /* the last press on an empty part of the toolbar, for a double-click */
     int target_fps;   /* the display's refresh rate (app_match_refresh_rate) */
     bool observer_open;
     int dragging;
