@@ -21,7 +21,11 @@ if [ -d "$SCRIBODO_SECRETS" ]; then SCRIBODO_SECRETS="$(cd "$SCRIBODO_SECRETS" &
 export SCRIBODO_DB_PORT="${SCRIBODO_DB_PORT:-$SCRIBODO_DEFAULT_DB_PORT}"
 export SCRIBODO_QDRANT_PORT="${SCRIBODO_QDRANT_PORT:-$SCRIBODO_DEFAULT_QDRANT_PORT}"
 MARIADB_BIN="${SCRIBODO_MARIADB_BIN:-/opt/homebrew/opt/mariadb@11.4/bin}"
-QDRANT_BIN="${SCRIBODO_QDRANT_BIN:-$here/build/qdrant/qdrant}"
+# The pinned Qdrant: a bundle's Contents/Resources/bin/qdrant (src/app/tools_dir.h lists what a bundle holds), else the
+# source tree's build/qdrant/qdrant (make qdrant).
+if [ -n "${SCRIBODO_QDRANT_BIN:-}" ]; then QDRANT_BIN="$SCRIBODO_QDRANT_BIN"
+elif [ -x "$here/bin/qdrant" ]; then QDRANT_BIN="$here/bin/qdrant"
+else QDRANT_BIN="$here/build/qdrant/qdrant"; fi
 SCRIBODO_LOGS="${SCRIBODO_LOGS:-$HOME/Library/Logs/Scribodo}"
 
 # mariadb_version_check MARIADBD: 0 when the server is the pinned release (SCRIBODO_MARIADB_VERSION) or a newer patch

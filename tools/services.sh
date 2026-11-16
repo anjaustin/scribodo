@@ -24,7 +24,7 @@
 #   SCRIBODO_QDRANT_PORT       Qdrant's port on 127.0.0.1 (SCRIBODO_DEFAULT_QDRANT_PORT)
 #   SCRIBODO_LOGS              the native daemons' logs (~/Library/Logs/Scribodo)
 #   SCRIBODO_MARIADB_BIN       the folder with mariadbd and its clients (/opt/homebrew/opt/mariadb@11.4/bin)
-#   SCRIBODO_QDRANT_BIN        the Qdrant executable (build/qdrant/qdrant, from make qdrant)
+#   SCRIBODO_QDRANT_BIN        the Qdrant executable (a bundle's Resources/bin/qdrant, else build/qdrant/qdrant)
 #   SCRIBODO_COMPOSE_PROJECT   docker mode's Compose project name (scribodo); a throwaway store uses its own
 #   SCRIBODO_MARIADB_MEM_LIMIT docker mode's memory cap for MariaDB (768m)
 #   SCRIBODO_QDRANT_MEM_LIMIT  docker mode's memory cap for Qdrant (1g)

@@ -331,3 +331,39 @@ followed by `git stash pop`, intending to check the old scripts. Afterwards:
 Nothing odd found. No stash has been used since; old file versions are read with `git show <sha>:<path>`.
 
 **Gates (RT4):** `make test` exit 0; `make sanitize` exit 0; `make analyze` skipped (another stream's analyze was running). RT4 changes tests only, no C source.
+
+## RT5 — tools_dir_resolve's partial path, ignored results, the bundle layout (low)
+
+`tools_dir_resolve` now returns true only when `services.sh` is in the folder it writes. On every failure `out` is
+empty, including when the buffer is too small, which used to leave a truncated path that could name another folder.
+`main.c` checks the result at all three uses:
+- the store start: no script → a status message once ("Scribodo's scripts weren't found beside the app …; set
+  SCRIBODO_TOOLS_DIR"), the badge sentence "the services script isn't installed", and a probe only, so services
+  started by hand are still used;
+- backup and restore: a clear status, and nothing is spawned.
+
+**Bundle layout:** `src/app/tools_dir.h` lists what a bundle must hold, beside the binary in `Contents/MacOS`:
+- `Contents/Resources/tools/{services.sh, services_lib.sh, services.defaults, backup.sh, restore.sh}`;
+- `Contents/Resources/docker/compose.yml`;
+- `Contents/Resources/bin/qdrant`;
+- MariaDB stays Homebrew's.
+
+The library resolves `here` to `Resources`, so the Compose file is found there. It now looks for Qdrant at
+`$here/bin/qdrant` before the source tree's `build/qdrant/qdrant` (`SCRIBODO_QDRANT_BIN` still wins). That makes
+the layout consistent rather than only documented.
+
+**Tests:**
+- `tests/test_services.c`: an empty layout and a script-less override give false with empty `out`; a buffer one
+  byte short gives false and empty, and the exact size succeeds.
+- `tests/test_services_docker.sh` builds the documented bundle from the tracked files and checks: the header's list
+  matches; the bundle's library resolves `here` to `Resources` and Qdrant to `Resources/bin/qdrant`; its `services.sh
+  up` in docker mode runs on the bundle's own `compose.yml`; and in native mode it finds its Qdrant and the given
+  MariaDB, then stops at the credentials guard (2) before starting anything. No daemon was left running (checked with
+  pgrep).
+
+**Gates (RT5):** `make test` exit 0; `make sanitize` exit 0; `make analyze` exit 0 (0 warnings, 89 files).
+
+Correction to the RT3 and RT4 skips: `pgrep -fl "clang --analyze"` also matched other streams' *shell command lines*
+that merely contain that text, so "another analyze is running" may have been false both times. My gate now matches
+only a process whose executable is clang (`pgrep -fl '^[^ ]*clang(-[0-9]+)? --analyze'`). This analyze run, on a
+tree that includes RT3 and RT4, is their analyze result too.

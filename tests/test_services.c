@@ -275,11 +275,10 @@ static void test_tools_dir(void)
     snprintf(want, sizeof(want), "%s/../tools", app);
     CHECK(!strcmp(out, want));
 
-    /* Nothing there: false, and the source-tree path named for the failure message. */
+    /* Nothing there: false, and nothing in `out`. */
     snprintf(app, sizeof(app), "%s/empty/build/", root);
-    CHECK(!tools_dir_resolve(app, out, sizeof(out)));
-    snprintf(want, sizeof(want), "%s../tools", app);
-    CHECK(!strcmp(out, want));
+    out[0] = 'x';
+    CHECK(!tools_dir_resolve(app, out, sizeof(out)) && !out[0]);
 
     /* The override wins, as given, even over a bundle. */
     snprintf(want, sizeof(want), "%s/tree/tools", root);
@@ -287,13 +286,19 @@ static void test_tools_dir(void)
     snprintf(app, sizeof(app), "%s/Scribodo.app/Contents/MacOS/", root);
     CHECK(tools_dir_resolve(app, out, sizeof(out)) && !strcmp(out, want));
     setenv("SCRIBODO_TOOLS_DIR", root, 1);
-    CHECK(!tools_dir_resolve(app, out, sizeof(out)) && !strcmp(out, root));
+    CHECK(!tools_dir_resolve(app, out, sizeof(out)) && !out[0]);
     setenv("SCRIBODO_TOOLS_DIR", "", 1); /* empty: not set */
     CHECK(tools_dir_resolve(app, out, sizeof(out)) && strstr(out, "Resources/tools"));
     unsetenv("SCRIBODO_TOOLS_DIR");
 
-    char tiny[8];
-    CHECK(!tools_dir_resolve(app, tiny, sizeof(tiny)));
+    /* A buffer too small for the path: false and empty, never a truncated path that names another folder. */
+    char tiny[8] = "x";
+    CHECK(!tools_dir_resolve(app, tiny, sizeof(tiny)) && !tiny[0]);
+    char shorter[PATH_MAX];
+    snprintf(app, sizeof(app), "%s/tree/build/", root);
+    size_t need = strlen(app) + strlen("../tools") + 1;
+    CHECK(need < sizeof(shorter) && !tools_dir_resolve(app, shorter, need - 1) && !shorter[0]);
+    CHECK(tools_dir_resolve(app, shorter, need));
 }
 
 /* --list-fds: this binary as the child, printing its open descriptors on one line ("fds 0 1 2"). */

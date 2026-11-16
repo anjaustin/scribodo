@@ -237,10 +237,17 @@ static void store_try_later(App *app)
 {
     if (service_supervisor_busy(&app->services)) return;
     char tools[PATH_MAX];
-    (void)tools_dir_resolve(GetApplicationDirectory(), tools, sizeof(tools));
+    bool have_tools = tools_dir_resolve(GetApplicationDirectory(), tools, sizeof(tools));
     /* Native services have no container runtime to restart them: a store that drops after a successful start (a
      * daemon that died) is started again, at most once a minute (REDTEAM-023; `up` keeps running daemons as they are). */
     bool start = !getenv("SCRIBODO_SCRIPT") && (!app->services_started || GetTime() - app->services_started_at >= 60.0);
+    if (start && !have_tools) { /* still probe: services started by hand are used */
+        static const char why[] = "Scribodo's scripts weren't found beside the app (tools/services.sh); set SCRIBODO_TOOLS_DIR";
+        if (strcmp(app->store_why, why)) set_status(app, why);
+        snprintf(app->store_why, sizeof(app->store_why), "%s", why);
+        app->services_headline = "the services script isn't installed";
+        start = false;
+    }
     (void)service_supervisor_start(&app->services, tools, start);
 }
 
@@ -321,7 +328,12 @@ static void store_resolve_problem(App *app)
 
 /* ---- backups (SOW §7) ------------------------------------------------------------ */
 
-static void tools_dir(char *out, size_t outlen) { (void)tools_dir_resolve(GetApplicationDirectory(), out, outlen); }
+static bool tools_dir(App *app, char *out, size_t outlen)
+{
+    if (tools_dir_resolve(GetApplicationDirectory(), out, outlen)) return true;
+    set_status(app, "Backups need Scribodo's scripts, which weren't found beside the app (tools/backup.sh); set SCRIBODO_TOOLS_DIR");
+    return false;
+}
 
 static void begin_backup(App *app)
 {
@@ -338,7 +350,7 @@ static void begin_backup(App *app)
         return;
     }
     char tools[PATH_MAX];
-    tools_dir(tools, sizeof(tools));
+    if (!tools_dir(app, tools, sizeof(tools))) return;
     if (!backup_job_start(&app->backup, tools, app->project_dir)) {
         set_status(app, "Couldn't start the backup");
         return;
@@ -384,7 +396,7 @@ static void begin_restore(App *app)
         snprintf(parent, sizeof(parent), "%s", def);
     }
     char tools[PATH_MAX], restored[PATH_MAX + 400], why[400];
-    tools_dir(tools, sizeof(tools));
+    if (!tools_dir(app, tools, sizeof(tools))) return;
     set_status(app, "Restoring\xE2\x80\xA6");
     if (!backup_restore_copy(tools, chosen, parent, restored, sizeof(restored), why, sizeof(why))) {
         set_status(app, why);

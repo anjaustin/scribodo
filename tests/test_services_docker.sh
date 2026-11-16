@@ -222,6 +222,27 @@ kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
 [ "$r" = 75 ]
 check "a store locked by another run: lockf's own 75 (EX_TEMPFAIL), from the outer process" $?
 
+# ---- a bundle: the layout src/app/tools_dir.h lists, and nothing more ------------------------------------------------
+B="$T/Scribodo.app/Contents/Resources"
+mkdir -p "$B/tools" "$B/docker" "$B/bin" "$T/Scribodo.app/Contents/MacOS"
+cp tools/services.sh tools/services_lib.sh tools/services.defaults tools/backup.sh tools/restore.sh "$B/tools/"
+cp docker/compose.yml "$B/docker/"
+printf '#!/bin/sh\nexit 1\n' > "$B/bin/qdrant"; chmod 755 "$B/bin/qdrant"
+listed="$(sed -n 's/^ \*   Contents\/Resources\/\([^ ]*\).*/\1/p' src/app/tools_dir.h | tr '\n' ' ')"
+[ "$listed" = "tools/services.sh, docker/compose.yml bin/qdrant " ]
+check "tools_dir.h lists the bundle's scripts, Compose file and Qdrant" $?
+paths="$(cd "$T" && bash -c 'unset SCRIBODO_QDRANT_BIN; . Scribodo.app/Contents/Resources/tools/services_lib.sh; printf "%s|%s" "$here" "$QDRANT_BIN"')"
+[ "$paths" = "$B|$B/bin/qdrant" ]
+check "in a bundle the library resolves from Resources and finds the bundled Qdrant" $?
+reset
+SCRIBODO_SERVICES=docker "$B/tools/services.sh" up >/dev/null 2>&1; r=$?
+[ "$r" = 0 ] && grep -qF "docker [compose] [-p] [scribodo-test-shim] [-f] [$B/docker/compose.yml] [up]" "$SHIM_LOG"
+check "the bundle's services.sh runs on the bundle's own Compose file" $?
+r=0; SCRIBODO_SERVICES=native SCRIBODO_MARIADB_BIN="$T/clients" "$B/tools/services.sh" up >/dev/null 2>"$T/bundle.err" || r=$?
+[ "$r" = 2 ] && grep -q "migrate-from-docker" "$T/bundle.err" && ! grep -q "Qdrant isn't built" "$T/bundle.err"
+check "the bundle's native mode finds its Qdrant and MariaDB, then stops at the credentials guard (2), starting nothing" $?
+rm -rf "$T/Scribodo.app"
+
 # ---- Compose is called only through the library ------------------------------------------------------------------
 # docker/compose.yml requires variables only services_lib.sh exports: a direct `docker compose` elsewhere fails at parse
 # time, and a check reading its (empty) output passes vacuously (the red-team finding on servicestest and backuptest).
