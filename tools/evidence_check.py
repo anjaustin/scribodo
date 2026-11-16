@@ -285,9 +285,12 @@ def entry_regex(pattern):
     return re.compile("".join(out) + (r"(/.*)?" if subtree else "") + r"\Z")
 
 
-def listed(path, entries):
+def listed(path, entries, walked=False):
     """The entry naming exactly this path (a citation's own text, globs included), else the first whose pattern
-    matches it under entry_regex. A plain directory entry does not cover what is under it; "DIR/**" does."""
+    matches it under entry_regex. A plain directory entry does not cover what is under it; "DIR/**" does. An entry
+    whose third column is "walk" applies only to a file found by walking a cited directory (walked=True), never to
+    a citation: build/hangs/*-*.txt excuses a new watchdog dump in the cited build/hangs, not a dump cited by name."""
+    entries = [e for e in entries if walked or len(e) < 3 or e[2] != "walk"]
     for e in entries:
         if e[0].rstrip("/") == path:
             return e
@@ -304,8 +307,10 @@ def under(path, dirs):
     return next((d for d in dirs if prefix == d or prefix.startswith(d + "/")), None)
 
 
-def file_archived(name, idx, allow):
-    return name in idx.exact or bool(listed(name, allow)) or any(name.startswith(p + "/") for p in idx.prefixes)
+def file_archived(name, idx, allow, cited=None):
+    """Archived, or excused; a "walk" entry excuses only a file found under the citation, not the cited file."""
+    return name in idx.exact or bool(listed(name, allow, walked=name != cited)) or \
+        any(name.startswith(p + "/") for p in idx.prefixes)
 
 
 def check(root, evidence, build=None):
@@ -335,7 +340,7 @@ def check(root, evidence, build=None):
         # Only an entry naming exactly this citation skips the walk; a glob entry's matches are still looked at.
         files = [] if exact_excuse else denoted_files(path, build)
         missing = ["build/" + str(f.relative_to(build)) for f in files]
-        missing = [n for n in missing if not file_archived(n, idx, allow)]
+        missing = [n for n in missing if not file_archived(n, idx, allow, path)]
         archived = (bool(files) or idx.covers(path)) and not missing
         if gone and files:
             # A path recorded as lost that exists again, archived or not, is a fault: the record says it is gone.
@@ -400,7 +405,7 @@ def unarchived_files(root, evidence, build=None):
             continue
         for f in denoted_files(path, build):
             name = "build/" + str(f.relative_to(build))
-            if not file_archived(name, idx, allow):
+            if not file_archived(name, idx, allow, path):
                 out.add(name)
     return sorted(out)
 

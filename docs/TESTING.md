@@ -824,7 +824,9 @@ path cited in `docs/*.md`, `journal/*.md` and the README (braces and `1..3` rang
 archive (the tarball's own listing; a manifest only where its tarball is missing; a cited directory or glob that
 exists counts only when every file it denotes is archived, so one archived file never covers its directory), named in
 `tests/fixtures/evidence_not_archived.txt` with the reason it is not evidence (an entry names one path; `*` stays
-within a path component and only a trailing `/**` covers a directory's contents; the lost list matches the same way) (binaries, environments, make's
+within a path component and only a trailing `/**` covers a directory's contents; the lost list matches the same way; a placeholder entry such as `build/ui/<script>` matches only placeholder citations; an entry marked `walk`, such as
+`build/hangs/*-*.txt` for the watchdog's live dumps, excuses only files found under a cited directory, never a
+citation) (binaries, environments, make's
 directories named in prose), or recorded in `tests/fixtures/evidence_lost.txt` (cited paths that existed
 nowhere at AUDIT-004, with the citing document; the list only shrinks). A dated report whose evidence is not
 yet archived therefore fails `make test` until the archive pass. Where the archive folder is absent the check

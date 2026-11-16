@@ -251,6 +251,23 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn("build/live-1/run: 1 existing file(s)", out)
 
+    def test_walk_entries_excuse_new_dumps_but_not_a_dump_cited_by_name(self):
+        # Verification hole B: a watchdog dump written before make test failed every citation of build/hangs.
+        allow = "build/hangs/*-*.txt\tlive watchdog dumps\twalk\n"
+        t = self.tree(docs="`build/hangs`\n", allow=allow, tarballs={"scribodo-evidence-a": ["build/hangs/old-1.txt"]})
+        write(t.build / "hangs/old-1.txt", "archived")
+        write(t.build / "hangs/crash-points-191552.txt", "new dump")
+        self.assertEqual(t.run()[0], 0)
+        write(t.build / "hangs/sub/deep-1.txt", "a directory is not a dump")  # * stays in one segment
+        code, out = t.run()
+        self.assertEqual(code, 1, out)
+        self.assertIn("build/hangs/sub/deep-1.txt", out)
+        t2 = self.tree(docs="`build/hangs/app-deadlock-093626.txt`\n", allow=allow)
+        write(t2.build / "hangs/app-deadlock-093626.txt", "cited evidence")
+        code, out = t2.run()
+        self.assertEqual(code, 1, out)
+        self.assertIn("build/hangs/app-deadlock-093626.txt", out)
+
     def test_a_star_stays_in_one_component(self):
         self.assertTrue(ec.entry_regex("build/memory-continuity-*").match("build/memory-continuity-ui.log"))
         self.assertFalse(ec.entry_regex("build/memory-continuity-*").match("build/memory-continuity-x/run/a.log"))

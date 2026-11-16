@@ -3,6 +3,7 @@
 # trailing /** covers what is under a directory. Evidence never goes here: a cited
 # run, log or result that exists is archived (docs/EVIDENCE.md); one that exists nowhere goes in evidence_lost.txt.
 # A path under a directory a gate deletes is excused only by an entry naming exactly that path.
+# A third column "walk" limits an entry to files found under a cited directory: it never excuses a citation.
 #
 # make's own outputs and directories named in prose
 build/scribodo	the app binary make builds
@@ -32,6 +33,7 @@ build/unit/database	prose for make's unit and database suites ("build/unit/datab
 build/headless/sanitizer	prose for the headless and sanitizer jobs, not a directory
 build/headless	prose for the headless suites ("build/headless/sanitizer jobs"), not a directory
 build/test/DB	prose for make all/test/dbtest ("build/test/DB"), not a directory
+build/hangs/*-*.txt	live watchdog dumps (tools/watchdog.sh, NAME-HHMMSS.txt) any run writes into the cited build/hangs; a dump a document cites by name is still checked	walk
 build/hangs/NAME-<time>.txt	the watchdog's file-name format (docs/TESTING.md)
 build/hangs/app-deadlock-093626.txt	an example of the watchdog's message (docs/TESTING.md)
 build/audit002-hosted-278259c-attempt1.log/.json	prose for attempt1.log and attempt1.json, both in scribodo-evidence-2026-11-09-audit002
