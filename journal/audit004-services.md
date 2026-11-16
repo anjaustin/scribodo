@@ -223,3 +223,16 @@ new pid check end to end and pass.
 The coordinator warned that an outside `pkill -f "clang --analyze"` around 16:50 may have killed analyze runs. Every
 analyze recorded here exited 0 and printed its "0 warnings across N files" line; a clang killed by a signal exits
 nonzero, which this rule turns into a failure, so none of them was cut short.
+
+## End-of-stream gates (tree `29cfc1a`)
+
+- `make dbtest`: exit 0 (twelve suites, every one "0 failures").
+- `make servicestest`: exit 0, run once after `pgrep -f servicestest` found no other run, with the main checkout's
+  pinned Qdrant (`qdrant 1.20.0`, `QDRANT_BIN`/`SCRIBODO_QDRANT_BIN` pointed at it so the worktree downloaded
+  nothing). Steps 1-9 ok; step 10 skipped, Docker not running. Step 1 now waits for Qdrant through `qdrant_curl`, so it
+  is the live evidence that Qdrant 1.20 accepts `Authorization: Bearer` with the plain API key.
+
+**For the coordinator, after merge:** this stream changed the native `rootsql`/`dump_db`/`load_dump` transport (item
+3). The shim test covers both modes' commands, but a real MariaDB runs them only in `backuptest`, `uitest-db`
+(`testdb create`/`drop`) and the restore path, which this stream was told not to run. Those are the gates that
+confirm item 3 against the real server.
