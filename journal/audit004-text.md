@@ -792,3 +792,14 @@ decision they make is `import_job_next` (`src/app/import_job.c`), which `test_db
 with a real `ImportJob` (deferred while busy, the import after the poll, the backfill when free). The glue itself is
 exercised only by the UI scripts (`make uitest`, `uitest-db`), which this stream does not run; moving the two functions
 to a workflow module with an App-free interface would make them testable, and is the main.c stream's call.
+
+### Evidence and gates (second pass)
+
+Evidence: `build/audit004-text/g1` (item 1's re-measurement) is in `scribodo-evidence-2026-11-15-audit004h.tar.gz`;
+`build/audit004-text/g-gates` (the gate logs) is in `scribodo-evidence-2026-11-15-audit004i.tar.gz`; each with its
+manifest and `SHA256SUMS` entry.
+
+Gates on `45b001f` (`build/audit004-text/g-gates`): `make test` 0 (evidence check 0 violations, yardstick
+byte-identical); `make sanitize` 0; `make dbtest` 0; `make analyze` 0 (102 files; no `clang` process running);
+`make crashtest` 0 (145 rows, 1,657 checks, 0 failures, 557 s; `titles.statement` 8 points, every one recovered;
+started with no other crash test or `test_db` running).
