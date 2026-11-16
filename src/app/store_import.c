@@ -364,10 +364,13 @@ static bool import_chats(Db *db, const char *project_dir, const char *pid, IdMap
         ChatMessage *msgs = NULL;
         size_t n = 0;
         if (!chat_store_load_files(project_dir, list[i].id, &msgs, &n)) { ok = false; break; }
-        double t0 = n && msgs[0].ts ? msgs[0].ts : (double)list[i].updated;
+        /* A file last changed before 1970 has a negative time, which the store could not read back (every export failed):
+         * the chat's time is then 0, the store's "unknown" (AUDIT-004 verification round 2). */
+        double updated = list[i].updated > 0 ? (double)list[i].updated : 0;
+        double t0 = n && msgs[0].ts ? msgs[0].ts : updated;
         char cid[40];
         snprintf(cid, sizeof(cid), "%s", list[i].id);
-        DbArg c[5] = { DB_S(cid), DB_S(pid), DB_S(list[i].title), DB_D(t0), DB_D((double)list[i].updated) };
+        DbArg c[5] = { DB_S(cid), DB_S(pid), DB_S(list[i].title), DB_D(t0), DB_D(updated) };
         ok = db_run(db, "INSERT IGNORE INTO conversations (id, project_id, title, created_at, updated_at) VALUES (?,?,?,?,?)", c,
                     5, NULL);
         /* another project's chat id: this one gets its own */
@@ -377,12 +380,12 @@ static bool import_chats(Db *db, const char *project_dir, const char *pid, IdMap
                 break;
             }
             rebased_id(pid, list[i].id, salt, cid, sizeof(cid));
-            DbArg c2[5] = { DB_S(cid), DB_S(pid), DB_S(list[i].title), DB_D(t0), DB_D((double)list[i].updated) };
+            DbArg c2[5] = { DB_S(cid), DB_S(pid), DB_S(list[i].title), DB_D(t0), DB_D(updated) };
             ok = db_run(db, "INSERT IGNORE INTO conversations (id, project_id, title, created_at, updated_at) VALUES (?,?,?,?,?)",
                         c2, 5, NULL);
         }
         if (ok && strcmp(cid, list[i].id)) ok = map_add(chats_map, list[i].id, cid);
-        if (ok) ok = import_chat_titles(db, project_dir, list[i].id, cid, (double)list[i].updated);
+        if (ok) ok = import_chat_titles(db, project_dir, list[i].id, cid, updated);
         if (ok && list[i].observer_ignore) ok = sdb_chat_set_observer(db, pid, cid, false);
         for (size_t k = 0; ok && k < n; k++) {
             uint64_t added = 0;
@@ -1573,7 +1576,7 @@ bool store_backfill_chat_titles_db(Db *db, const char *pid, const char *project_
                 detail_add(detail, detaillen, "%s/%s: unreadable; ", dirs[d], names[f]);
                 continue;
             }
-            c.updated = (double)st.st_mtimespec.tv_sec;
+            c.updated = st.st_mtimespec.tv_sec > 0 ? (double)st.st_mtimespec.tv_sec : 0; /* before 1970: unknown */
             if (c.n < 2) { chat_store_titles_free(c.titles, c.n); continue; } /* never renamed: nothing to archive */
             ChatMessage *msgs = NULL;
             size_t nm = 0;

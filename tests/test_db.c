@@ -8,6 +8,7 @@
 #include <string.h>
 #include <limits.h>
 #include <time.h>
+#include <sys/time.h>
 #include <unistd.h>
 #include <mysql.h>
 
@@ -2250,6 +2251,128 @@ static void test_chat_title_backfill(void)
     system(cmd);
 }
 
+/* AUDIT-004 verification round 2, R2: no title line's content may make an import or a later export fail. One chat per
+ * case: its title lines appended raw, the project imported, then exported; both must succeed, the export keeping one
+ * title per readable title line. `mtime_before_1970` sets the chat file's time before the epoch (the fallback stamp). */
+static bool title_case(const char *root, int k, const char *lines, size_t len, bool mtime_before_1970, char *why, size_t whylen)
+{
+    char proj[PATH_MAX + 32], out[PATH_MAX + 32], path[PATH_MAX + 200], id[40], pid[40] = "";
+    snprintf(proj, sizeof(proj), "%s/t%d", root, k);
+    snprintf(out, sizeof(out), "%s/t%d-export", root, k);
+    snprintf(id, sizeof(id), "20261115-14%04d-abcd", k % 10000);
+    if (mkdir(proj, 0755) != 0) { snprintf(why, whylen, "mkdir"); return false; }
+    ChatMessage u = { .role = CHAT_USER, .content = "hello" };
+    if (!chat_store_append(g_store, proj, id, "First", &u)) { snprintf(why, whylen, "append"); return false; }
+    snprintf(path, sizeof(path), "%s/.scribodo/chats/%s.jsonl", proj, id);
+    FILE *f = fopen(path, "ab");
+    if (!f) { snprintf(why, whylen, "open"); return false; }
+    fwrite(lines, 1, len, f);
+    fclose(f);
+    if (mtime_before_1970) {
+        struct timeval tv[2] = { { -100000, 0 }, { -100000, 0 } };
+        utimes(path, tv);
+    }
+    if (!store_import(g_store, proj, why, whylen)) return false;
+    if (store_mode(g_store, proj, pid, sizeof(pid), NULL) != STORE_DB) { snprintf(why, whylen, "mode"); return false; }
+    if (!store_export_project(g_store, pid, out, why, whylen)) return false;
+    ChatTitle *t = NULL;
+    size_t n = 0;
+    bool ok = chat_store_titles_files(out, id, &t, &n) && n >= 1;
+    chat_store_titles_free(t, n);
+    if (!ok) snprintf(why, whylen, "exported titles unreadable");
+    return ok;
+}
+
+static void test_chat_title_contents(void)
+{
+    char why[256] = "", root[PATH_MAX];
+    CHECK(store_start(g_store, g_name, why, sizeof(why)));
+    snprintf(root, sizeof(root), "%sscribodo-title-contents-XXXXXX", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp/");
+    CHECK(mkdtemp(root) != NULL);
+    static char big[70000];
+    memset(big, 'x', sizeof(big));
+    memcpy(big, "{\"type\":\"title\",\"title\":\"", 25);
+    snprintf(big + sizeof(big) - 40, 40, "\",\"ts\":1700000000}\n");
+    struct { const char *label; const char *lines; size_t len; bool neg; } cases[] = {
+#define L(s) s, sizeof(s) - 1
+        { "subnormal", L("{\"type\":\"title\",\"title\":\"Second\",\"ts\":5e-324}\n{\"type\":\"title\",\"title\":\"Third\",\"ts\":1700000001}\n"), false },
+        { "tiny", L("{\"type\":\"title\",\"title\":\"Second\",\"ts\":1e-300}\n{\"type\":\"title\",\"title\":\"Third\",\"ts\":1700000001}\n"), false },
+        { "zero", L("{\"type\":\"title\",\"title\":\"Second\",\"ts\":0}\n{\"type\":\"title\",\"title\":\"Third\",\"ts\":0}\n"), false },
+        { "nul", L("{\"type\":\"title\",\"title\":\"Sec\\u0000ond\",\"ts\":1700000000}\n{\"type\":\"title\",\"title\":\"\\u0000Third\",\"ts\":1700000001}\n"), false },
+        { "empty", L("{\"type\":\"title\",\"title\":\"\",\"ts\":1700000000}\n{\"type\":\"title\",\"title\":\"Third\",\"ts\":1700000001}\n"), false },
+        { "emptylast", L("{\"type\":\"title\",\"title\":\"Second\",\"ts\":1700000000}\n{\"type\":\"title\",\"title\":\"\",\"ts\":1700000001}\n"), false },
+        { "badutf8", L("{\"type\":\"title\",\"title\":\"Se\xff\xfe\",\"ts\":1700000000}\n{\"type\":\"title\",\"title\":\"Th\xc3\",\"ts\":1700000001}\n"), false },
+        { "surrogate", L("{\"type\":\"title\",\"title\":\"\\ud800x\",\"ts\":1700000000}\n{\"type\":\"title\",\"title\":\"Third\",\"ts\":1700000001}\n"), false },
+        { "missing-before-1970", L("{\"type\":\"title\",\"title\":\"Second\"}\n{\"type\":\"title\",\"title\":\"Third\",\"ts\":1700000001}\n"), true },
+        { "timed-before-1970", L("{\"type\":\"title\",\"title\":\"Second\",\"ts\":1700000000}\n{\"type\":\"title\",\"title\":\"Third\",\"ts\":1700000001}\n"), true },
+#undef L
+        { "big", big, sizeof(big) - 40 + strlen(big + sizeof(big) - 40), false },
+    };
+    int k = 0;
+    for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); c++, k++) {
+        bool ok = title_case(root, k, cases[c].lines, cases[c].len, cases[c].neg, why, sizeof(why));
+        if (!ok) fprintf(stderr, "    title case %s: %s\n", cases[c].label, why);
+        CHECK(ok);
+    }
+    /* What was kept: the NUL marked, the rest of the title kept; the empty title kept; the long one cut to 159 bytes. */
+    {
+        char out[PATH_MAX + 32], id[40];
+        ChatTitle *t = NULL;
+        size_t n = 0;
+        snprintf(out, sizeof(out), "%s/t3-export", root);
+        snprintf(id, sizeof(id), "20261115-14%04d-abcd", 3);
+        CHECK(chat_store_titles_files(out, id, &t, &n) && n == 3 && !strcmp(t[1].title, "Sec\xEF\xBF\xBDond") &&
+              !strcmp(t[2].title, "\xEF\xBF\xBDThird"));
+        chat_store_titles_free(t, n);
+        snprintf(out, sizeof(out), "%s/t4-export", root);
+        snprintf(id, sizeof(id), "20261115-14%04d-abcd", 4);
+        CHECK(chat_store_titles_files(out, id, &t, &n) && n == 3 && t[1].title[0] == '\0' && !strcmp(t[2].title, "Third"));
+        chat_store_titles_free(t, n);
+        snprintf(out, sizeof(out), "%s/t10-export", root);
+        snprintf(id, sizeof(id), "20261115-14%04d-abcd", 10);
+        CHECK(chat_store_titles_files(out, id, &t, &n) && n == 2 && strlen(t[1].title) == 159);
+        chat_store_titles_free(t, n);
+        /* An escaped NUL in a message is still refused: the author's text is never cut. */
+        char proj[PATH_MAX + 32], path[PATH_MAX + 200];
+        snprintf(proj, sizeof(proj), "%s/nulmsg", root);
+        CHECK(mkdir(proj, 0755) == 0);
+        ChatMessage u = { .role = CHAT_USER, .content = "hello" };
+        CHECK(chat_store_append(g_store, proj, "20261115-150000-abcd", "First", &u));
+        snprintf(path, sizeof(path), "%s/.scribodo/chats/20261115-150000-abcd.jsonl", proj);
+        FILE *f = fopen(path, "a");
+        if (f) { fputs("{\"type\":\"message\",\"role\":\"user\",\"content\":\"cut\\u0000here\",\"ts\":1}\n", f); fclose(f); }
+        ChatMessage *m = NULL;
+        size_t nm = 0;
+        CHECK(!chat_store_load_files(proj, "20261115-150000-abcd", &m, &nm));
+        chat_store_free_messages(m, nm);
+    }
+    /* Fuzz: random title lines (ts from a set of edge values, titles of random bytes, escapes, lengths). */
+    static const char *const tss[] = { "0", "1", "-1", "5e-324", "1e-300", "2.2250738585072014e-308", "1e300", "9.3e18", "1700000000.5",
+                                       "\"x\"", "null", "true", "1e999", "-0", "0.000001" };
+    static const char *const pieces[] = { "a", "\xc3\xa9", "\xff", "\xc3", "\xe2\x80", "\\u0000", "\\ud800", "\\udc00", "\\n", "\\\"",
+                                          "\\\\", "\xf0\x9f\x90\x8b", "\xed\xa0\x80", "\x01", "\\t", " " };
+    srand(1115);
+    int failures = 0;
+    for (int r = 0; r < 60; r++, k++) {
+        char lines[8192];
+        size_t o = 0;
+        int nl = 1 + rand() % 4;
+        for (int l = 0; l < nl && o < sizeof(lines) - 600; l++) {
+            o += (size_t)snprintf(lines + o, sizeof(lines) - o, "{\"type\":\"title\",\"title\":\"");
+            int np = rand() % (rand() % 8 == 0 ? 120 : 12);
+            for (int q = 0; q < np && o < sizeof(lines) - 100; q++) o += (size_t)snprintf(lines + o, sizeof(lines) - o, "%s", pieces[rand() % 16]);
+            if (rand() % 6) o += (size_t)snprintf(lines + o, sizeof(lines) - o, "\",\"ts\":%s}\n", tss[rand() % 15]);
+            else o += (size_t)snprintf(lines + o, sizeof(lines) - o, "\"}\n");
+        }
+        bool ok = title_case(root, k, lines, o, rand() % 5 == 0, why, sizeof(why));
+        if (!ok && failures++ < 5) fprintf(stderr, "    title fuzz %d: %s\n", r, why);
+        CHECK(ok);
+    }
+    char cmd[PATH_MAX + 20];
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root);
+    system(cmd);
+}
+
 int main(void)
 {
     g_store = store_manager_create();
@@ -2275,6 +2398,7 @@ int main(void)
                           { "chat_title_bad_time", test_chat_title_bad_time },
                           { "chat_title_reimport", test_chat_title_reimport },
                           { "chat_title_backfill", test_chat_title_backfill },
+                          { "chat_title_contents", test_chat_title_contents },
                          { "entities_redteam", test_entities_redteam }, { "semantic", test_semantic } };
     int rc = run_db_core_tests();
     if (run_tests(tests, sizeof(tests) / sizeof(tests[0])) != 0) rc = 1;

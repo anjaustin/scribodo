@@ -224,6 +224,16 @@ static void test_migration_019_order(void)
         CHECK(db_query(db, "SELECT GROUP_CONCAT(title ORDER BY seq SEPARATOR '') FROM conversation_titles WHERE conversation_id = 'c-1'",
                        NULL, 0, &r) && r.nrows == 1 && db_cell(&r, 0, 0) && !strcmp(db_cell(&r, 0, 0), "ABCD"));
         db_rows_free(&r);
+        /* A second db_migrate changes nothing: the same rows under the same keys. */
+        CHECK(db_query(db, "SELECT GROUP_CONCAT(CONCAT(seq, title) ORDER BY seq SEPARATOR ',') FROM conversation_titles", NULL, 0, &r) &&
+              r.nrows == 1 && db_cell(&r, 0, 0));
+        char keys[200] = "";
+        if (r.nrows == 1 && db_cell(&r, 0, 0)) snprintf(keys, sizeof(keys), "%s", db_cell(&r, 0, 0));
+        db_rows_free(&r);
+        CHECK(db_migrate(db, err, sizeof(err)) && db_schema_version(db) == 20);
+        CHECK(db_query(db, "SELECT GROUP_CONCAT(CONCAT(seq, title) ORDER BY seq SEPARATOR ',') FROM conversation_titles", NULL, 0, &r) &&
+              r.nrows == 1 && db_cell(&r, 0, 0) && !strcmp(db_cell(&r, 0, 0), keys) && keys[0]);
+        db_rows_free(&r);
         /* A row added after the migration is numbered after every kept one. */
         CHECK(db_run(db, "INSERT INTO conversation_titles (conversation_id, title, replaced_at) VALUES ('c-1','E',0)", NULL, 0, NULL));
         CHECK(db_query(db, "SELECT title FROM conversation_titles ORDER BY seq DESC LIMIT 1", NULL, 0, &r) && r.nrows == 1 &&

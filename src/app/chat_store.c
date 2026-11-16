@@ -13,6 +13,8 @@
 
 #include "core/json.h"
 #include "core/file_text.h"
+#include "core/utf8.h"
+#include <float.h>
 #include <limits.h>
 #include "app/chat_store_internal.h"
 #include "app/project_store.h"
@@ -131,13 +133,15 @@ bool chat_store_append_files(StoreManager *manager, const char *project_dir, con
 
 bool chat_store_rename_files(const char *project_dir, const char *id, const char *title)
 {
+    if (!title || !title[0]) return false; /* a rename names something */
     return chat_store_title_line_files(project_dir, id, title, (double)time(NULL));
 }
 
 bool chat_store_title_line_files(const char *project_dir, const char *id, const char *title, double ts)
 {
     char path[1200];
-    if (!path_for(project_dir, id, path, sizeof(path)) || !title || !title[0]) return false;
+    /* An empty title is a title (an archived one, or a current one the export writes back); only a rename refuses it. */
+    if (!path_for(project_dir, id, path, sizeof(path)) || !title) return false;
     struct stat st;
     if (stat(path, &st) != 0) return false; /* only stored chats */
     int fd = open(path, O_RDWR | O_APPEND);
@@ -187,14 +191,56 @@ static FILE *open_regular(const char *path, struct stat *st)
     return f;
 }
 
-/* Read a whole file (chat logs are small). */
+/* Read a whole file (chat logs are small). An escaped NUL is refused line by line by the reader: in a message it would
+ * truncate the author's text, so the message (and the chat) is refused; elsewhere it is marked (nul_escapes_marked). */
 static char *slurp(const char *path)
 {
     char *text = NULL;
     if (file_text_read(path, &text) != FILE_TEXT_OK) return NULL;
-    if (json_has_nul_escape(text, strlen(text))) { free(text); return NULL; }
     return text;
 }
+
+/* Every escaped NUL ("\u0000") in a JSON line becomes U+FFFD ("\uFFFD", the same length): cJSON would end the string
+ * at the NUL and drop the rest. Escapes are skipped whole, so an escaped backslash before "u0000" is not one. True if
+ * any was marked. */
+static bool nul_escapes_marked(char *line)
+{
+    bool marked = false;
+    for (char *p = line; *p; p++) {
+        if (*p != '\\' || !p[1]) continue;
+        if (!strncmp(p + 1, "u0000", 5)) {
+            memcpy(p + 2, "FFFD", 4);
+            marked = true;
+        }
+        p++;
+    }
+    return marked;
+}
+
+/* A title as the store keeps it (AUDIT-004 verification round 2): valid UTF-8, each invalid sequence or surrogate a
+ * U+FFFD, at most 159 bytes, cut between characters. The current title (ChatSummary) and every archived one get the
+ * same, so no title line can make an import or an export fail; the original stays on its line in the file. */
+static void title_clean(char *dst, size_t dstlen, const char *src)
+{
+    size_t o = 0, n = strlen(src);
+    for (size_t i = 0; i < n;) {
+        uint32_t cp;
+        int used = utf8_decode_one((const uint8_t *)src + i, n - i, &cp);
+        if (used <= 0) break;
+        if (cp >= 0xD800 && cp <= 0xDFFF) cp = 0xFFFD;
+        uint8_t enc[4];
+        int len = utf8_encode_one(cp, enc);
+        if (o + (size_t)len + 1 > dstlen) break;
+        memcpy(dst + o, enc, (size_t)len);
+        o += (size_t)len;
+        i += (size_t)used;
+    }
+    dst[o] = '\0';
+}
+
+/* A title line's time, in the range the store can keep and read back: finite, 0 or normal (a subnormal is written but
+ * not read back by db_cell_double), below 2^63. */
+static bool title_time_ok(double ts) { return isfinite(ts) && ts >= 0 && ts < 0x1p63 && (ts == 0 || ts >= DBL_MIN); }
 
 static int by_updated_desc(const void *a, const void *b)
 {
@@ -254,10 +300,11 @@ bool chat_store_list_files_checked(const char *project_dir, ChatSummary **out, s
             while (getline(&line, &cap_l, f) > 0) { /* lines of any length */
                 if (first || strstr(line, "\"type\":\"title\"")) {
                     bool allocation_error;
+                    nul_escapes_marked(line);
                     cJSON *j = json_parse_checked(line, &allocation_error);
                     if (allocation_error) { cJSON_Delete(j); lines_ok = false; break; }
                     cJSON *t = j ? cJSON_GetObjectItem(j, "title") : NULL;
-                    if (t && cJSON_IsString(t)) snprintf(c->title, sizeof(c->title), "%s", t->valuestring);
+                    if (t && cJSON_IsString(t)) title_clean(c->title, sizeof(c->title), t->valuestring);
                     cJSON_Delete(j);
                 } else if (strstr(line, "\"type\":\"observer\"")) { /* the latest one counts */
                     bool allocation_error;
@@ -319,6 +366,7 @@ bool chat_store_titles_path(const char *path, ChatTitle **titles, size_t *count)
     while (ok && getline(&line, &cap_l, f) > 0) {
         if (first || strstr(line, "\"type\":\"title\"")) {
             bool allocation_error;
+            nul_escapes_marked(line);
             cJSON *j = json_parse_checked(line, &allocation_error);
             if (allocation_error) ok = false;
             cJSON *t = j ? cJSON_GetObjectItem(j, "title") : NULL, *ts = j ? cJSON_GetObjectItem(j, "ts") : NULL;
@@ -332,14 +380,14 @@ bool chat_store_titles_path(const char *path, ChatTitle **titles, size_t *count)
                         cap = next;
                     }
                 }
-                char *copy = ok ? strdup(t->valuestring) : NULL;
+                char *copy = ok ? malloc(sizeof(((ChatSummary *)0)->title)) : NULL;
+                if (copy) title_clean(copy, sizeof(((ChatSummary *)0)->title), t->valuestring);
                 if (!copy) ok = false;
                 else {
                     /* The message lines' range (chat_store_load_files): a time outside it is refused, the title kept
                      * with no time, so an out-of-range stamp never reaches replaced_at, which every export, backup and
                      * fork decodes with that range (AUDIT-004 F11 red team). The line itself stays in the file. */
-                    bool timed = !first && cJSON_IsNumber(ts) && isfinite(ts->valuedouble) && ts->valuedouble >= 0 &&
-                                 ts->valuedouble < 0x1p63;
+                    bool timed = !first && cJSON_IsNumber(ts) && title_time_ok(ts->valuedouble);
                     list[n++] = (ChatTitle){ .title = copy, .ts = timed ? ts->valuedouble : 0, .has_ts = timed };
                 }
             }
@@ -385,7 +433,7 @@ bool chat_store_load_path(const char *path, ChatMessage **msgs, size_t *n)
     bool ok = true;
     char *save = NULL;
     for (char *line = strtok_r(text, "\n", &save); line && ok; line = strtok_r(NULL, "\n", &save)) {
-        bool allocation_error;
+        bool allocation_error, nul = nul_escapes_marked(line);
         cJSON *j = json_parse_checked(line, &allocation_error);
         if (allocation_error) { cJSON_Delete(j); ok = false; break; }
         if (!j) {
@@ -402,7 +450,8 @@ bool chat_store_load_path(const char *path, ChatMessage **msgs, size_t *n)
             if (!j) continue;
         }
         cJSON *type = cJSON_GetObjectItem(j, "type");
-        if (cJSON_IsString(type) && !strcmp(type->valuestring, "message")) {
+        if (nul && cJSON_IsString(type) && !strcmp(type->valuestring, "message")) ok = false; /* the author's text: never cut */
+        else if (cJSON_IsString(type) && !strcmp(type->valuestring, "message")) {
             cJSON *role = cJSON_GetObjectItem(j, "role"), *content = cJSON_GetObjectItem(j, "content");
             if (cJSON_IsString(role) && cJSON_IsString(content) &&
                 (!strcmp(role->valuestring, "user") || !strcmp(role->valuestring, "assistant"))) {

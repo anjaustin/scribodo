@@ -416,3 +416,45 @@ relation output over all 4,550 manuscript paragraphs is identical to R1's.
 The observer's `obs_sentence_end` / `obs_first_sentence` still join at any capital (`redteam/observer-probe.txt`);
 for the observer the join itself is the issue (a first sentence or a pairing unit spans two statements), so the scope
 rule does not transfer as is: routing note for the observer stream.
+
+## Verification round 2: R2 again, title-line content (2026-11-15)
+
+**Findings** (the verifier's `scratchpad/r2` probes): an export broken by a title line's content in five ways. (a) A
+subnormal `ts` (5e-324) passed the range check and was stored, and `db_cell_double` refuses it on the way back. (b)
+An empty title, archived or current, made `chat_store_title_line_files` refuse the export's title line (a regression
+of this branch). (c) An archived title with invalid UTF-8, or over 64 KB, failed the import's INSERT (a regression:
+the old importer never inserted them). (d) A chat file last changed before 1970 gave a negative time to the
+conversation and to R2's fallback stamp, which the store cannot read back (both versions). (e) An escaped NUL
+anywhere in a chat file made the whole file unreadable and the import fail (both versions).
+
+**Changes** (`src/app/chat_store.c`, `src/app/store_import.c`).
+
+- (a) A title line's time counts only if finite, 0 or normal (>= DBL_MIN, the decode boundary) and below 2^63
+  (`title_time_ok`); otherwise the title is kept with no time.
+- (b) `chat_store_title_line_files` writes an empty title; only `chat_store_rename_files` (an author's rename)
+  refuses one.
+- (c) Every title read from a chat file, current (`ChatSummary`) or archived (`ChatTitle`), gets one cleaning
+  (`title_clean`): valid UTF-8 with each invalid sequence or surrogate a U+FFFD, at most 159 bytes cut between
+  characters. The current title used to be cut at byte 159 by `snprintf`, possibly inside a character. The original
+  stays on its line in the file (set aside under legacy-* by the import), so nothing is deleted.
+- (d) A file time before 1970 is 0, the store's "unknown", for the conversation's times and the fallback stamp, in
+  the import and in the backfill.
+- (e) An escaped NUL in a title or meta line becomes U+FFFD before parsing (`nul_escapes_marked`, escape-aware, the
+  same length), so the rest of the title is kept rather than cut at the NUL; in a message line it is still refused, as
+  before, because cutting the author's text silently is worse than refusing the chat.
+
+**Tests.** `test_db` `chat_title_contents`: eleven named cases (subnormal, 1e-300, zero, NUL in two titles, empty
+archived, empty current, invalid UTF-8 and a truncated sequence, a lone surrogate escape, a 70 KB title, an untimed
+and a timed title in a file dated before 1970) and 60 random chats of 1 to 4 title lines (titles of random bytes,
+escapes and lengths up to ~1 KB, times from 15 edge values including strings, null, 1e999 and -0, some untimed, every
+fifth file before 1970): each must import and then export with its titles readable. Before the fix 58 checks failed.
+What is kept is checked too: "Sec�ond", an empty title, a 159-byte cut; and a NUL in a message still refuses
+the chat. `test_db_core` `migration_019_order` now also runs `db_migrate` a second time and checks every key and title
+unchanged.
+
+**Round-2 gates.** R1 round 2 (`55855ff`): `make test` 0, `make sanitize` 0, `make dbtest` 0, `make analyze` 0 (0
+warnings, 88 files; no other analyzer running). R2 round 2 (this commit, the whole branch): `make test` 0, `make
+sanitize` 0, `make dbtest` 0, `make analyze` 0 (88 files), `make crashtest` 0 (141 rows, 1,583 checks, 0 failures,
+516 s). Its first crashtest was killed by the 900 s watchdog while the shared MariaDB was loaded (`r2b/crashtest-
+timeout1.log`, at the migration rows); the rerun of the same tree passed. Logs: `build/audit004-text/{backfill,r1b,r2b}/`.
+No `git stash` was used in this round; each commit was gated with nothing else in the tree.
