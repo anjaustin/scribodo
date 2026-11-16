@@ -165,7 +165,7 @@ $(BUILD)/observer_replay: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tools/observer_repla
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS) -lpthread
 
 # Diagnostic: the observer's canon candidate score over tab-separated pairs (tools/observer_sentence_pairs.py).
-$(BUILD)/observer_overlap: $(BUILD)/src/llm/observer_text.o $(BUILD)/src/core/experiments.o $(BUILD)/src/core/utf8.o $(BUILD)/tools/observer_overlap.o
+$(BUILD)/observer_overlap: $(BUILD)/src/llm/observer_text.o $(BUILD)/src/core/text_rules.o $(BUILD)/src/core/experiments.o $(BUILD)/src/core/utf8.o $(BUILD)/tools/observer_overlap.o
 	$(CC) $(CFLAGS) $^ -o $@
 
 # Diagnostic: the observer's judge alone over canon/statement pairs, with the real model (GAP-001).
@@ -182,11 +182,11 @@ $(BUILD)/test_components: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_state_fix
 $(BUILD)/test_db_rows: $(BUILD)/src/app/db.o $(BUILD)/tests/test_db_rows.o
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS)
 
-$(BUILD)/test_observer_text: $(BUILD)/src/llm/observer_text.o $(BUILD)/src/llm/observer_arms.o $(BUILD)/src/core/experiments.o $(BUILD)/src/core/utf8.o $(BUILD)/third_party/cJSON/cJSON.o $(BUILD)/tests/test_observer_text.o
+$(BUILD)/test_observer_text: $(BUILD)/src/llm/observer_text.o $(BUILD)/src/llm/observer_arms.o $(BUILD)/src/core/text_rules.o $(BUILD)/src/core/experiments.o $(BUILD)/src/core/utf8.o $(BUILD)/third_party/cJSON/cJSON.o $(BUILD)/tests/test_observer_text.o
 	$(CC) $(CFLAGS) $^ -o $@
 
 # The observer's C-to-Python formats (llm/observer_formats.h): writes or checks tests/fixtures/observer_formats/.
-$(BUILD)/test_observer_formats: $(BUILD)/src/llm/observer_formats.o $(BUILD)/src/llm/observer_text.o $(BUILD)/src/core/experiments.o $(BUILD)/src/core/utf8.o $(BUILD)/third_party/cJSON/cJSON.o $(BUILD)/tests/test_observer_formats.o
+$(BUILD)/test_observer_formats: $(BUILD)/src/llm/observer_formats.o $(BUILD)/src/llm/observer_text.o $(BUILD)/src/core/text_rules.o $(BUILD)/src/core/experiments.o $(BUILD)/src/core/utf8.o $(BUILD)/third_party/cJSON/cJSON.o $(BUILD)/tests/test_observer_formats.o
 	$(CC) $(CFLAGS) $^ -o $@
 
 $(BUILD)/test_chat_history: $(BUILD)/src/llm/chat_history.o $(BUILD)/tests/test_chat_history.o
@@ -272,7 +272,7 @@ CHAT_VIEW_FAULT_SRCS := $(CORE_SRCS) $(LLM_SRCS) src/core/json_vendor.c src/app/
 $(BUILD)/test_chat_view_faults: $(CHAT_VIEW_FAULT_SRCS) $(wildcard src/core/*.h src/app/*.h src/llm/*.h src/ui/*.h) tests/fault_alloc.h $(BUILD)/tests/fault_alloc.o | $(MARIADB_LIB)
 	$(CC) $(CFLAGS) $(INCLUDES) -DCHAT_VIEW_FAULT_TEST -include tests/fault_alloc.h $(CHAT_VIEW_FAULT_SRCS) $(BUILD)/tests/fault_alloc.o -o $@ $(MARIADB_LIBS) -lpthread -lm
 
-$(BUILD)/test_observer_fake: $(BUILD)/src/llm/observer_text.o $(BUILD)/src/core/experiments.o $(BUILD)/src/core/utf8.o $(BUILD)/src/llm/observer_fake.o $(BUILD)/third_party/cJSON/cJSON.o $(BUILD)/tests/test_observer_fake.o
+$(BUILD)/test_observer_fake: $(BUILD)/src/llm/observer_text.o $(BUILD)/src/core/text_rules.o $(BUILD)/src/core/experiments.o $(BUILD)/src/core/utf8.o $(BUILD)/src/llm/observer_fake.o $(BUILD)/third_party/cJSON/cJSON.o $(BUILD)/tests/test_observer_fake.o
 	$(CC) $(CFLAGS) $^ -o $@
 
 # The real editor, linked against headless raylib stubs.

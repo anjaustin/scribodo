@@ -546,3 +546,34 @@ through the worker's call). A first crashtest was killed by its 900 s watchdog w
 on the shared MariaDB (`r3-3/crashtest-timeout1.log`); the gate script now waits on process names (`pgrep -x
 test_crash_points`, `pgrep -x test_db`), since `pgrep -f` matched this stream's own shell; the rerun passed. Logs:
 `build/audit004-text/r3-3/`.
+
+## Final items after the rebase onto main (`2ca47fc`, 2026-11-15)
+
+**Rebase.** `remed/text` was rebased onto `2ca47fc` (the other four streams). One conflict, the Makefile's
+`CORE_SRCS` (main added `tools_dir.c` and `child_process.c` beside `experiments.c`; this branch added
+`text_rules.c`), resolved by keeping all three. The two `main.c` edits of round 3, item 3 applied where the code still
+is: `store_adopt_project` and `import_poll` stayed in `src/main.c`.
+
+### A. F10 wave 2: the observer's lists in one home
+
+`observer_text.c` (merged from the observer stream) carried its own copies: the label and sentence-starter lists and
+the in-context initial rule (copied from this branch's retired `text_name_initial_before`), the fifteen titles twice
+(case-sensitive in `obs_first_sentence`, lower case in `abbreviation`), the 42 titles and honorifics of `obs_title`,
+and the frozen scorer vocabularies (number, kin, colour, time, place titles). They now live once in
+`src/core/text_rules.{h,c}`: `TEXT_LABEL_WORDS`, `TEXT_SENTENCE_STARTERS`, `text_name_initial_in_context` (the
+observer's rule, moved unchanged but for its helpers' names: `text_ascii_letter`, `text_ascii_space`,
+`text_word_char`), `TEXT_OBSERVER_TITLE_WORDS`, and `TEXT_OBSERVER_{NUMBER,KIN,COLOR,TIME}_WORDS` and
+`TEXT_OBSERVER_PLACE_TITLES` (NULL-terminated as the observer iterates them). The fifteen titles are `TEXT_TITLES` in
+both observer splitters (compared case-folded in `abbreviation`, as its lower-case copy was). Lists measured
+differently stay separate: the relation check's scope rule is not the observer's in-context rule, and
+`TEXT_RELATION_WORDS` is not `TEXT_OBSERVER_KIN_WORDS`. The observer's stop words and prepositions are structural
+and stay where they are used. Every moved list was compared with its old copy element for element (all equal).
+
+**Byte-identical.** `tests/fixtures/observer_rules/cases.json` passes in C (`test_observer_text`) and Python
+(`test_observer_rules`). The fake yardstick (`tools/observer_replay_run.sh`) was run on the tree before the change
+(`pre`) and after (`post`) for flag off and every arm (`SCRIBODO_OBSERVER_SENTENCES=attributes`, `=subject`,
+`SCRIBODO_OBSERVER_CONFLICT_GATE=1`, gate with `subject`): all fifteen outputs byte-identical before and after.
+Flag off is 717 / 348 / 948 lines, byte-identical with `build/observer/judgelog-{pp,mars,heights}.txt` in the main
+checkout; `=attributes` is identical with step 8's `build/observer/senton-*`, `=subject` with
+`build/wt-observer/build/observer/base-sent-*`, the gate with `base-gate-*` and gate with `subject` with
+`base-both-*`, as `journal/audit004-observer.md` pairs them. Runs: `build/audit004-text/r4-a/`.

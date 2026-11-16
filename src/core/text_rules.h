@@ -53,10 +53,9 @@ bool text_title_before(const char *s, size_t dot, const char *const *titles, siz
  * word boundary), so "Ms. Bennet" and "James K. Powell" are not cut. Mirrored by tools/answer_relation_arm.py
  * (abbreviation_at). A sentence joined at an initial must not let one statement's negation reach another: the relation
  * check bounds a negation's reach by every initial's period (text_initial_period; answer_pipeline.c rel_scope).
- * Archive (AUDIT-004 red team R1, 2026-11-15, retired the same day): an initial was briefly allowed only between a
- * capitalised word that was not a label (Chapter, Ch, Part, Book, Volume, Vol, Act, Scene, Section, Sec, Source,
- * Appendix, Figure, Fig, Table, Plate, Page, Item, Note, Step, Letter, Line, Option, Plan, Type, Class, Group, Exhibit,
- * Article, Clause) and a capitalised word that did not start a sentence (The, This, That, ... 47 words), and never "I".
+ * Archive (AUDIT-004 red team R1, 2026-11-15, retired the same day for the relation check): an initial was briefly
+ * allowed only between a capitalised word that was not one of TEXT_LABEL_WORDS and a capitalised word that was not one
+ * of TEXT_SENTENCE_STARTERS, and never "I" (the observer still measures that rule: text_name_initial_in_context).
  * The verifier found 23 of 59 adversarial replies those lists missed ("Room B.", "Canto X.", "says Mrs. B.",
  * "Neither ...", a joined "?"); no list names every label, so the scope rule replaced them (journal/audit004-text.md). */
 bool text_abbreviation_before(const char *s, size_t n, size_t dot);
@@ -64,6 +63,21 @@ bool text_abbreviation_before(const char *s, size_t n, size_t dot);
 bool text_initial_period(const char *s, size_t n, size_t p);
 /* w[0..n) equals one of the lower-case `words` with ASCII letters folded to lower case. */
 bool text_word_in_folded(const char *w, size_t n, const char *const *words, size_t nwords);
+/* An ASCII letter. */
+bool text_ascii_letter(char c);
+
+/* The observer's initial rule (observer_text.c obs_sentence_end and obs_first_sentence; tools/observer_plant.py
+ * name_initial; pinned with the Python by tests/fixtures/observer_rules/cases.json): a single capital before the period
+ * at s[dot] is a name's initial only when it is not "I", no word character comes right before it, the word after it is
+ * capitalised and not one of TEXT_SENTENCE_STARTERS, and the word before it (if any) is not one of TEXT_LABEL_WORDS.
+ * The relation check measured the scope rule instead (text_abbreviation_before above), so the observer keeps this rule
+ * and these lists as measured; they live here once (AUDIT-004 F10, wave 2). */
+extern const char *const TEXT_LABEL_WORDS[30];
+extern const char *const TEXT_SENTENCE_STARTERS[47];
+bool text_name_initial_in_context(const char *s, size_t n, size_t dot);
+/* The observer's titles and honorifics that are not a name two texts share ("Mr" in "Mr. Darcy" and "Mr. Wickham";
+ * observer_text.c obs_title), lower case, compared case-folded. */
+extern const char *const TEXT_OBSERVER_TITLE_WORDS[42];
 
 /* ---- relation and kinship words ----------------------------------------------------------------------------------- */
 
@@ -83,5 +97,12 @@ extern const char *const TEXT_TENS_WORDS[8];
 /* The observer's number vocabulary, frozen 2026-11-14 with tools/observer_judge_score.py (observer_text.c
  * k_number_words: cardinals, scale words, ordinals, "twice", "once"), NULL-terminated as there. */
 extern const char *const TEXT_OBSERVER_NUMBER_WORDS[39];
+
+/* ---- the observer's other frozen vocabularies (tools/observer_judge_score.py, 2026-11-14 step 6), NULL-terminated -- */
+
+extern const char *const TEXT_OBSERVER_COLOR_WORDS[22];
+extern const char *const TEXT_OBSERVER_TIME_WORDS[28];
+/* The words a place or household name may not start with (observer_text.c place_set). */
+extern const char *const TEXT_OBSERVER_PLACE_TITLES[26];
 
 #endif

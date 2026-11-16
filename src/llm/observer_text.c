@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include "core/utf8.h"
+#include "core/text_rules.h"
 #include "observer_unicode_word.h"
 
 #include <stdbool.h>
@@ -227,14 +228,8 @@ bool obs_stopword(const char *w, size_t n)
  * off-fault conflicts rose and a Mars place fault whose only shared word was "Princess" was lost. */
 bool obs_title(const char *w, size_t n)
 {
-    static const char *const titles[] = {
-        "mr", "mrs", "ms", "miss", "mister", "master", "lady", "lord", "sir", "dame", "madam", "madame", "dr",
-        "doctor", "captain", "capt", "colonel", "col", "major", "general", "gen", "lieutenant", "lt", "sergeant",
-        "sgt", "reverend", "rev", "professor", "prof", "king", "queen", "prince", "princess", "duke", "duchess",
-        "count", "countess", "baron", "baroness", "earl", "saint", "st",
-    };
-    for (size_t i = 0; i < sizeof(titles) / sizeof(titles[0]); i++)
-        if (strlen(titles[i]) == n && !strncasecmp(titles[i], w, n)) return true;
+    for (size_t i = 0; i < TEXT_COUNT(TEXT_OBSERVER_TITLE_WORDS); i++)
+        if (strlen(TEXT_OBSERVER_TITLE_WORDS[i]) == n && !strncasecmp(TEXT_OBSERVER_TITLE_WORDS[i], w, n)) return true;
     return false;
 }
 
@@ -287,70 +282,26 @@ int obs_overlap(const char *a, const char *b, bool ignore_titles)
 }
 
 /* A single capital before a period is a name's initial ("James K. Powell", "J. R. R. Tolkien", "T. S. Eliot",
- * "signed E. Bennet", "\u201cE. GARDINER.\u201d") only when it is not "I", no word character comes right before it,
- * the word after it is capitalised and not a usual sentence starter, and the word before it (if any) is not a label
- * (Chapter, Part, Book, Act, Source...). Without the context every such capital was an initial, so "in Chapter V. Lydia
- * is", "in Part I. That is" and "said I. \"Proud" were each one sentence (red-team 2026-11-15). A first version also
- * required the word before to be capitalised and spaced, which cut "J. R. R. Tolkien", "T. S. Eliot" at the start of
- * a text and "names E. Bennet" (the step 3/4 truncation, back on the default path through obs_first_sentence); this
- * is the verifier's rule. The lists are the data/text stream's (src/core/text_rules.c on remed/text), copied rather
- * than depended on so the two can be unified at merge; tools/observer_plant.py name_initial is the Python mirror, and
- * tests/fixtures/observer_rules/cases.json holds them to the same sentences. s[dot] is the period. */
-static const char *const k_label_words[] = { "Chapter", "Ch", "Part", "Book", "Volume", "Vol", "Act", "Scene", "Section",
-    "Sec", "Source", "Appendix", "Figure", "Fig", "Table", "Plate", "Page", "Item", "Note", "Step", "Letter", "Line",
-    "Option", "Plan", "Type", "Class", "Group", "Exhibit", "Article", "Clause", NULL };
-static const char *const k_sentence_starters[] = { "The", "This", "That", "These", "Those", "It", "Its", "He", "She", "They",
-    "We", "You", "I", "His", "Her", "Their", "My", "Our", "There", "Here", "Then", "Thus", "So", "But", "And", "Or", "If",
-    "When", "While", "As", "In", "On", "At", "For", "With", "From", "According", "However", "Also", "Yes", "No", "Now",
-    "Who", "What", "Which", "Where", "A", NULL };
-
-static bool exact_in(const char *const *list, const char *w, size_t n)
-{
-    for (size_t i = 0; list[i]; i++)
-        if (strlen(list[i]) == n && !strncmp(list[i], w, n)) return true;
-    return false;
-}
-
-static bool text_letter(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
-static bool text_space(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
-static bool text_word(char c) { return text_letter(c) || (c >= '0' && c <= '9') || c == '_'; }
-
-static bool name_initial(const char *s, size_t n, size_t dot)
-{
-    if (dot < 1 || dot >= n || s[dot - 1] < 'A' || s[dot - 1] > 'Z' || s[dot - 1] == 'I') return false;
-    if (dot >= 2 && text_word(s[dot - 2])) return false;
-    size_t j = dot + 1; /* after: whitespace, then a capitalised word that does not start a sentence */
-    while (j < n && text_space(s[j])) j++;
-    if (j >= n || s[j] < 'A' || s[j] > 'Z') return false;
-    size_t je = j;
-    while (je < n && text_letter(s[je])) je++;
-    if (exact_in(k_sentence_starters, s + j, je - j)) return false;
-    size_t e = dot - 1; /* before: past what is attached to the capital (an opening quote), spaces, then a word */
-    while (e > 0 && !text_space(s[e - 1])) e--;
-    while (e > 0 && text_space(s[e - 1])) e--;
-    size_t b = e;
-    while (b > 0 && !text_space(s[b - 1])) b--;
-    while (b < e && !text_letter(s[b])) b++;
-    while (e > b && !text_letter(s[e - 1])) e--;
-    return e <= b || !exact_in(k_label_words, s + b, e - b);
-}
-
+ * "signed E. Bennet", "\u201cE. GARDINER.\u201d") only in context: text_name_initial_in_context (src/core/text_rules.c,
+ * with its label and sentence-starter lists; AUDIT-004 F10 wave 2 moved them there unchanged). Without the context every
+ * such capital was an initial, so "in Chapter V. Lydia is", "in Part I. That is" and "said I. \"Proud" were each one
+ * sentence (red-team 2026-11-15); tools/observer_plant.py name_initial is the Python mirror, and
+ * tests/fixtures/observer_rules/cases.json holds them to the same sentences. */
 /* Cuts s at the end of its first sentence: a period that ends the text or is followed by a space and a capital,
  * unless the period closes an initial ("James K. Powell") or a title ("Mr. Bennet"), which the real model's
  * explanations carry: a conflict's content read "Canon states Captain James K." before this, and "the new text
  * introduces 'Mrs." when the title opened a quotation (journal/observer-cycle2_quality.md, steps 3 and 4). */
 void obs_first_sentence(char *s)
 {
-    static const char *const titles[] = { "Mr", "Mrs", "Ms", "Dr", "St", "Capt", "Col", "Lt", "Gen", "Prof", "Sgt",
-                                          "Jr", "Sr", "Rev", "Hon" };
+    const char *const *titles = TEXT_TITLES; /* src/core/text_rules.c: the same fifteen, case-sensitive */
     for (char *end = s; (end = strchr(end, '.')) != NULL; end++) {
         if (!(end[1] == '\0' || (end[1] == ' ' && end[2] >= 'A' && end[2] <= 'Z'))) continue;
         const char *w = end; /* the word before the period, without an opening quote, bracket or asterisk */
         while (w > s && w[-1] != ' ') w--;
         while (w < end && !((*w >= 'A' && *w <= 'Z') || (*w >= 'a' && *w <= 'z') || (*w >= '0' && *w <= '9'))) w++;
         size_t wl = (size_t)(end - w);
-        bool abbrev = wl == 1 && name_initial(s, strlen(s), (size_t)(end - s));
-        for (size_t i = 0; !abbrev && i < sizeof(titles) / sizeof(titles[0]); i++)
+        bool abbrev = wl == 1 && text_name_initial_in_context(s, strlen(s), (size_t)(end - s));
+        for (size_t i = 0; !abbrev && i < TEXT_COUNT(TEXT_TITLES); i++)
             abbrev = wl == strlen(titles[i]) && !strncmp(w, titles[i], wl);
         if (abbrev && end[1] != '\0') continue;
         end[1] = '\0';
@@ -410,13 +361,11 @@ static bool is_opening_quote(const unsigned char *u, size_t n, size_t *w)
 }
 
 /* tools/observer_plant.py ABBREVIATIONS: a period after one of these ends no sentence (a single capital is an initial
- * only in context: name_initial). */
+ * only in context: text_name_initial_in_context). */
 static bool abbreviation(const char *w, size_t n)
 {
-    static const char *const ab[] = { "mr", "mrs", "ms", "dr", "st", "capt", "col", "lt", "gen", "prof", "sgt", "jr", "sr",
-                                      "rev", "hon" };
-    for (size_t i = 0; i < sizeof(ab) / sizeof(ab[0]); i++)
-        if (strlen(ab[i]) == n && !strncasecmp(ab[i], w, n)) return true;
+    for (size_t i = 0; i < TEXT_COUNT(TEXT_TITLES); i++) /* TEXT_TITLES, case-folded */
+        if (strlen(TEXT_TITLES[i]) == n && !strncasecmp(TEXT_TITLES[i], w, n)) return true;
     return false;
 }
 
@@ -436,7 +385,7 @@ size_t obs_sentence_end(const char *s, size_t n)
         if (u[i] == '.') {
             size_t a = i;
             while (a > 0 && ((u[a - 1] >= 'A' && u[a - 1] <= 'Z') || (u[a - 1] >= 'a' && u[a - 1] <= 'z'))) a--;
-            if (a < i && (i - a == 1 ? name_initial(s, n, i) : abbreviation(s + a, i - a))) continue;
+            if (a < i && (i - a == 1 ? text_name_initial_in_context(s, n, i) : abbreviation(s + a, i - a))) continue;
         }
         return j;
     }
@@ -460,21 +409,9 @@ bool obs_next_sentence(const char *s, size_t n, size_t *pos, size_t *start, size
     return false;
 }
 
-/* The attribute vocabularies of tools/observer_judge_score.py (frozen 2026-11-14 in step 6), word for word. */
-static const char *const k_number_words[] = { "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
-    "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty", "thirty",
-    "forty", "fifty", "sixty", "seventy", "eighty", "ninety", "hundred", "thousand", "first", "second", "third", "fourth",
-    "fifth", "eldest", "youngest", "twice", "once", NULL };
-static const char *const k_kin_words[] = { "father", "mother", "son", "daughter", "brother", "sister", "aunt", "uncle", "niece",
-    "nephew", "cousin", "grandfather", "grandmother", "granddaughter", "grandson", "wife", "husband", "widow", "widower",
-    "parent", "parents", "child", "children", "sons", "daughters", "brothers", "sisters", "grandparent", NULL };
-static const char *const k_color_words[] = { "black", "white", "red", "blue", "green", "brown", "golden", "gold", "grey",
-    "gray", "yellow", "crimson", "scarlet", "silver", "dark", "fair", "pale", "auburn", "copper", "purple", "violet", NULL };
-static const char *const k_time_words[] = { "january", "february", "march", "april", "may", "june", "july", "august",
-    "september", "october", "november", "december", "before", "after", "earlier", "later", "years", "year", "days", "day",
-    "months", "month", "weeks", "week", "age", "aged", "old", NULL };
-static const char *const k_place_titles[] = { "mr", "mrs", "ms", "miss", "lady", "lord", "sir", "dr", "captain", "colonel",
-    "prince", "princess", "king", "queen", "the", "a", "an", "he", "she", "it", "they", "his", "her", "canon", "new", NULL };
+/* The attribute vocabularies of tools/observer_judge_score.py (frozen 2026-11-14 in step 6), word for word, now in
+ * src/core/text_rules.c (AUDIT-004 F10 wave 2), NULL-terminated as they were here: TEXT_OBSERVER_NUMBER_WORDS,
+ * TEXT_OBSERVER_KIN_WORDS, TEXT_OBSERVER_COLOR_WORDS, TEXT_OBSERVER_TIME_WORDS, TEXT_OBSERVER_PLACE_TITLES. */
 
 /* A set of words, as Python's set of str: unbounded. A fixed table of 64 words of under 64 bytes each kept the first
  * 64 and dropped any longer word, where the Python keeps every one (AUDIT-004 F2; tests/fixtures/observer_rules).
@@ -561,7 +498,7 @@ static void vocab_set(const char *text, const char *const *list, bool numbers, W
             continue;
         }
         const char *entry = list ? list_entry(list, text + a, n) : NULL;
-        if (!entry && numbers) entry = list_entry(k_number_words, text + a, n);
+        if (!entry && numbers) entry = list_entry(TEXT_OBSERVER_NUMBER_WORDS, text + a, n);
         if (entry) set_add(out, entry, n);
     }
 }
@@ -650,7 +587,7 @@ static void place_set(const char *text, WordSet *out)
                     if (!w2) break;
                     end = at + w2;
                 }
-                if (!in_list(k_place_titles, text + name, w)) set_add(out, text + name, end - name);
+                if (!in_list(TEXT_OBSERVER_PLACE_TITLES, text + name, w)) set_add(out, text + name, end - name);
                 matched = end - i;
             }
         i += matched ? matched : 1;
@@ -681,7 +618,7 @@ static bool sets_differ_free(WordSet *a, WordSet *b)
 
 bool obs_attributes_differ(const char *canon, const char *text)
 {
-    static const char *const *const lists[] = { NULL, k_kin_words, k_color_words, k_time_words };
+    static const char *const *const lists[] = { NULL, TEXT_OBSERVER_KIN_WORDS, TEXT_OBSERVER_COLOR_WORDS, TEXT_OBSERVER_TIME_WORDS };
     for (int k = 0; k < 4; k++) {
         WordSet a = { 0 }, b = { 0 };
         vocab_set(canon, lists[k], k == 0 || k == 3, &a);
@@ -706,7 +643,7 @@ static void subject_set(const char *text, WordSet *out)
         size_t w = cap_word(u + i);
         if (w && i + w > head) w = head - i; /* the regex sees only the head */
         if (w >= 2) {
-            if (w > 2 && !in_list(k_place_titles, text + i, w)) set_add(out, text + i, w);
+            if (w > 2 && !in_list(TEXT_OBSERVER_PLACE_TITLES, text + i, w)) set_add(out, text + i, w);
             i += w;
         } else if (u[i] >= 'A' && u[i] <= 'Z' && i + 1 < head && u[i + 1] == '.') {
             i += 2; /* an initial: part of the run, never a subject */
