@@ -139,6 +139,20 @@ class CheckTests(unittest.TestCase):
         code, out = t.run()
         self.assertIn("files looked for under %s" % t.build, out)
 
+    def test_a_file_stem_is_archived_through_its_files(self):
+        t = self.tree(docs="`build/relation/rel4-before` `build/recover/gates2` `build/gap003/*/gates` `build/x/none`\n",
+                      tarballs={"scribodo-evidence-a": ["build/relation/rel4-before.json", "build/relation/rel4-before.txt",
+                                                        "build/recover/gates2-test.log", "build/gap003/reap/gates-tsan.log",
+                                                        "build/x/none2.txt"]})
+        code, out = t.run()
+        self.assertEqual(code, 1, out)
+        self.assertIn("build/x/none is in no archive", out)  # none2.txt is another stem
+        self.assertIn("3 archived", out)
+        # An existing stem file that is not archived fails the stem citation.
+        write(t.build / "recover/gates2-tsan.log", "x")
+        code, out = t.run()
+        self.assertIn("build/recover/gates2: 1 existing file(s)", out)
+
     def test_tarball_listing_is_exact(self):
         # The manifest says the whole directory; the tarball holds one file. The tarball wins.
         t = self.tree(docs="`build/run/a.json` `build/run/b.json` `build/run`\n",

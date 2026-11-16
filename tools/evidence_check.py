@@ -169,6 +169,11 @@ def denoted_files(path, build):
     a glob or placeholder matches. Binaries, objects, debug symbols and sockets are left out."""
     rel = path[len("build/"):]
     tops = [build / rel] if not is_pattern(path) else sorted(build.glob(re.sub(r"<[^>]*>", "*", rel)))
+    if not is_pattern(path) and not tops[0].exists() and tops[0].parent.is_dir():
+        # A file stem: the files it names in its directory (stem.ext, stem-part.ext).
+        stem = tops[0].name
+        tops = sorted(p for p in tops[0].parent.iterdir()
+                      if p.is_file() and (p.name.startswith(stem + ".") or p.name.startswith(stem + "-")))
     out = []
     for top in tops:
         files = [top] if top.is_file() else (sorted(top.rglob("*")) if top.is_dir() else [])
@@ -219,11 +224,21 @@ class Index:
             for k in range(2, len(parts)):
                 self.dirs.add("/".join(parts[:k]))
 
+    def stem_members(self, path):
+        """Members a file stem names: build/relation/rel4-before is rel4-before.json and .txt; build/recover/gates2 is
+        gates2-test.log, gates2-tsan.log, ... (journals cite a run's files by their shared stem)."""
+        parent = path.rsplit("/", 1)[0] + "/"
+        return [m for m in self.exact if m.startswith(parent) and "/" not in m[len(parent):]
+                and (m.startswith(path + ".") or m.startswith(path + "-"))]
+
     def covers(self, path):
         if is_pattern(path):
             rx = pattern_regex(path)
-            return any(rx.match(m) for m in self.exact)
+            stem = re.compile(rx.pattern[:-len(r"(/.*)?$")] + r"[.-][^/]*\Z")  # a stem family, as stem_members
+            return any(rx.match(m) or stem.match(m) for m in self.exact)
         if path in self.exact or path in self.dirs:
+            return True
+        if self.stem_members(path):
             return True
         parts = path.split("/")
         return any("/".join(parts[:k]) in self.prefixes for k in range(2, len(parts)))
