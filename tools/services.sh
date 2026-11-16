@@ -36,6 +36,7 @@
 # Set by the scripts themselves, not by hand:
 #   SCRIBODO_SERVICES_LOCKED   marks the re-run under the store's lock (lockf), so it does not lock again
 #   SCRIBODO_SERVICES_LOCK_WAIT  seconds to wait for the store's lock (300); tests shorten it
+#   SCRIBODO_MIGRATE_ASSUME_FREE_KB  the free space the migration's check assumes (tests; the real check uses df)
 #   SCRIBODO_MARIADB_SERVER_FLAGS  the MariaDB server's settings from tools/services.defaults, exported for Compose
 #
 # Exit codes: the contract the app reads (src/app/service_supervisor.h, SERVICES_EXIT_*; tests/test_services.c pins
@@ -52,6 +53,18 @@
 # On success, a last stderr line beginning `warning: ` is for the author (the app shows it once): today, a newer MariaDB
 # patch than the pin.
 set -euo pipefail
+# Output that cannot be written never stops the script half-way through a migration: a stdout or stderr the caller
+# closed is reopened on /dev/null (otherwise the next file opened would become descriptor 1 and receive the progress
+# lines), and a pipe whose reader has gone makes a write fail (EPIPE, which the progress lines ignore) instead of
+# killing the script with SIGPIPE before it can roll back (verification of AUDIT-004, 2026-11-16).
+{ exec 9>&1; } 2>/dev/null || exec 1>/dev/null   # duplicating a closed descriptor fails; `true >&1` would not
+{ exec 9>&2; } 2>/dev/null || exec 2>/dev/null
+exec 9>&-
+trap '' PIPE
+# say TEXT: a progress line that may fail to print without consequence. Printed from a subshell: a builtin echo that
+# fails keeps its unwritten text in bash's buffer, and the next subshell forked (a command substitution) would flush
+# it into its own output (seen 2026-11-16: the line landed inside the MariaDB version check).
+say() { ( printf '%s\n' "$*" ) 2>/dev/null || true; }
 . "$(dirname "$0")/services_lib.sh"
 
 # One mutating command at a time per store: the app's supervisor and a terminal can both run `up` (REDTEAM-023).
@@ -97,7 +110,13 @@ secrets() {
 
 # The remembered mode changes only when no mode was forced for this call (REDTEAM-023: a one-off
 # `SCRIBODO_SERVICES=docker up` used to switch the app back to the stale containers).
-remember_mode() { [ -n "${SCRIBODO_SERVICES:-}" ] || printf '%s\n' "$1" > "$SCRIBODO_SECRETS/mode"; }
+remember_mode() { [ -n "${SCRIBODO_SERVICES:-}" ] || write_mode "$1"; }
+# write_mode MODE: the mode file replaced whole (a temporary file renamed over it), 0600 like the secrets beside it.
+write_mode() {
+    local t
+    t="$(umask 077; mktemp "$SCRIBODO_SECRETS/.mode.XXXXXX")" || return 1
+    { printf '%s\n' "$1" > "$t" && mv -f "$t" "$SCRIBODO_SECRETS/mode"; } || { rm -f "$t"; return 1; }
+}
 
 # ---- native --------------------------------------------------------------------------------------------------------
 mdata="$SCRIBODO_SECRETS/mariadb"
@@ -242,13 +261,17 @@ native_up() {
     root_env mdb mariadb-admin -uroot --socket="$sock" ping >/dev/null 2>&1 || { echo "MariaDB is up but refuses the root password; see $SCRIBODO_LOGS/mariadb.log" >&2; return 1; }
     # What mariadb-install-db creates beyond what the container has, removed on every up so an older data directory
     # is hardened too (REDTEAM-023): anonymous accounts, root at the machine's host name (no password), the test
-    # database and the PUBLIC grants on test databases; and the grants of dropped test databases.
+    # database and the PUBLIC grants on test databases; and the grants of dropped test databases. Also any one-time
+    # restore account (scribodo_restore_<pid>, full rights on its database, a password nobody kept) that a load left
+    # behind when the server died under it (verification of AUDIT-004, 2026-11-16).
     root_env mdb mariadb -uroot --socket="$sock" --skip-ssl-verify-server-cert <<'SQL' || { echo "hardening the accounts failed" >&2; return 1; }
 DELETE FROM mysql.global_priv WHERE User = '' OR (User = 'root' AND Host NOT IN ('localhost', '127.0.0.1', '::1'));
 DELETE FROM mysql.db WHERE Db LIKE 'test%';
 DROP DATABASE IF EXISTS test;
 DELETE FROM mysql.db WHERE (Db LIKE 'scribodo\_test\_%' OR Db LIKE 'scribodo\_crash\_%')
     AND Db NOT IN (SELECT SCHEMA_NAME FROM information_schema.SCHEMATA);
+DELETE FROM mysql.global_priv WHERE User LIKE 'scribodo\_restore\_%';
+DELETE FROM mysql.db WHERE User LIKE 'scribodo\_restore\_%';
 FLUSH PRIVILEGES;
 SQL
     # Qdrant: loopback, HTTP only, the API key by environment, telemetry off, storage and working directory beside the
@@ -340,7 +363,7 @@ migrate_from_docker() {
     mkdir -p "$SCRIBODO_SECRETS" && chmod 700 "$SCRIBODO_SECRETS"
     # The choice is written down now, so a native data directory a failed migration leaves can never become the
     # store by default.
-    [ -s "$SCRIBODO_SECRETS/mode" ] || printf '%s\n' "$prior" > "$SCRIBODO_SECRETS/mode"
+    [ -s "$SCRIBODO_SECRETS/mode" ] || write_mode "$prior" || { echo "the mode could not be written; nothing was changed" >&2; leave 1; }
     export SCRIBODO_SERVICES=docker
     containers_were_up=0; [ -n "$(compose ps -q 2>/dev/null)" ] && containers_were_up=1
     keepn=""
@@ -361,10 +384,11 @@ migrate_from_docker() {
     stamp="$(date +%Y%m%d-%H%M%S)"
     keep="$SCRIBODO_SECRETS/migration-$stamp.sql.gz"
     umask 077
+    room_for_dump "the containers' dump" || migration_rollback
     dump_db scribodo | gzip -9 > "$keep.part" || { rm -f "$keep.part"; migration_rollback; }
     gzip -dc "$keep.part" | tail -1 | grep -q '^-- Dump completed' || { echo "the dump is incomplete; nothing moved" >&2; rm -f "$keep.part"; migration_rollback; }
     mv "$keep.part" "$keep" || migration_rollback
-    echo "dumped the containers' scribodo database to $keep"
+    say "dumped the containers' scribodo database to $keep"
     compose down || migration_rollback
     export SCRIBODO_SERVICES=native
     SCRIBODO_NATIVE_FRESH=1 native_up >/dev/null || migration_rollback
@@ -381,18 +405,39 @@ migrate_from_docker() {
         # The dump is trusted for a reload only once it is complete (REDTEAM-023: a part-written one would have been
         # loaded over the intact native store).
         native_dump="$SCRIBODO_SECRETS/migration-native-$stamp.sql.gz"
+        room_for_dump "the native store's dump" || migration_rollback
         { dump_db scribodo | gzip -9 > "$native_dump.part"; } || { rm -f "$native_dump.part"; migration_rollback; }
-        gzip -dc "$native_dump.part" | tail -1 | grep -q '^-- Dump completed' || { rm -f "$native_dump.part"; migration_rollback; }
+        gzip -dc "$native_dump.part" | tail -1 | grep -q '^-- Dump completed' || { echo "the native store's dump is incomplete; nothing moved" >&2; rm -f "$native_dump.part"; migration_rollback; }
         mv "$native_dump.part" "$native_dump" || migration_rollback
         keepn="$native_dump"
-        echo "kept the native store's previous contents in $keepn"
+        say "kept the native store's previous contents in $keepn"
     fi
     gzip -dc "$keep" | load_dump scribodo || migration_rollback
     v="$(rootsql -N -e 'SELECT MAX(version) FROM schema_migrations' scribodo)" || migration_rollback
     [ -n "$v" ] && [ "$v" != NULL ] || migration_rollback
-    printf 'native\n' > "$SCRIBODO_SECRETS/mode"
-    echo "loaded into the native MariaDB: schema version $v; the semantic index is rebuilt by the app (Rebuild memory, the observer's index); the containers' volume is kept"
-    native_status
+    write_mode native || migration_rollback
+    # From here the migration has happened: what follows only reports it, and a closed stdout must not undo it.
+    say "loaded into the native MariaDB: schema version $v; the semantic index is rebuilt by the app (Rebuild memory, the observer's index); the containers' volume is kept"
+    # The dumps accumulate (one per attempt, two with SCRIBODO_MIGRATE_REPLACE=1): say where they are.
+    local dumps
+    dumps="$(find "$SCRIBODO_SECRETS" -maxdepth 1 -name 'migration-*.sql.gz' 2>/dev/null | wc -l | tr -d ' ')" || dumps="?"
+    say "the migration dumps are kept in $SCRIBODO_SECRETS ($dumps migration-*.sql.gz files, $(du -ch "$SCRIBODO_SECRETS"/migration-*.sql.gz 2>/dev/null | tail -1 | cut -f1)); remove the ones no longer needed"
+    ( native_status ) 2>/dev/null || true
+}
+
+# room_for_dump WHAT: true when the secrets folder's volume has room for a dump of the store the current mode reaches;
+# otherwise says so. The bound is the database's size uncompressed (the dump is gzip'd, so smaller). A test may state
+# the free space (SCRIBODO_MIGRATE_ASSUME_FREE_KB) instead of filling a disk.
+room_for_dump() {
+    local need free
+    need="$(rootsql -N -e "SELECT COALESCE(SUM(data_length + index_length), 0) DIV 1024 + 1024 FROM information_schema.tables WHERE table_schema = 'scribodo'")" || return 1
+    free="${SCRIBODO_MIGRATE_ASSUME_FREE_KB:-$(df -Pk "$SCRIBODO_SECRETS" | awk 'NR == 2 { print $4 }')}"
+    [[ "$need" =~ ^[0-9]+$ ]] || { echo "the size of the store could not be read before $1; nothing moved" >&2; return 1; }
+    [[ "$free" =~ ^[0-9]+$ ]] || free=0
+    if [ "$free" -lt "$need" ]; then
+        echo "not enough free space beside the secrets for $1 (about $((need / 1024)) MB needed, $((free / 1024)) MB free in $SCRIBODO_SECRETS); nothing moved" >&2
+        return 1
+    fi
 }
 
 # migration_restore: true when both stores are back as they were. Every step is guarded: it runs under `set -e`. The two
@@ -415,6 +460,11 @@ migration_restore() {
              gzip -dc "$keepn" | load_dump scribodo; then :
         else
             echo "the native store's previous contents could not be reloaded; they are kept in $keepn" >&2; clean=1
+        fi
+        # A load the server died under leaves its one-time account (full rights, a password nobody kept).
+        if m_alive; then
+            printf "DELETE FROM mysql.global_priv WHERE User LIKE 'scribodo\\_restore\\_%%';\nDELETE FROM mysql.db WHERE User LIKE 'scribodo\\_restore\\_%%';\nFLUSH PRIVILEGES;\n" |
+                rootsql || { echo "a one-time restore account could not be removed; tools/services.sh up removes it" >&2; clean=1; }
         fi
     fi
     if native_down; then

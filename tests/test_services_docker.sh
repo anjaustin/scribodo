@@ -245,6 +245,15 @@ r=0; SCRIBODO_SERVICES=native SCRIBODO_MARIADB_BIN="$T/clients" "$B/tools/servic
 check "the bundle's native mode finds its Qdrant and MariaDB, then stops at the credentials guard (2), starting nothing" $?
 rm -rf "$T/Scribodo.app"
 
+# ---- output that cannot be written does not change the outcome ----------------------------------------------------
+reset
+r=0; SCRIBODO_SERVICES=docker tools/services.sh mode >&- 2>"$T/closed.err" || r=$?
+[ "$r" = 0 ] && [ ! -s "$T/closed.err" ]
+check "a closed stdout is reopened on /dev/null: the command still succeeds" $?
+r=0; SCRIBODO_SERVICES=docker tools/services.sh mode 2>&- >/dev/null || r=$?
+[ "$r" = 0 ]
+check "a closed stderr likewise" $?
+
 # ---- every way out is meant: usage errors are 2, an unset variable is 1 (never 0) ----------------------------------
 export SCRIBODO_SERVICES=docker
 for args in "testdb create" "testdb drop" "testdb" "testdb bogus scribodo_test_x" "dump" "no-such-command"; do

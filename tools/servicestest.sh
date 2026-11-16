@@ -18,7 +18,8 @@
 #      both stores back as they were, and a replacing one leaves the native store exactly as it was; a migration over a
 #      volume made under other credentials is refused by name and leaves the running native store running; a failed
 #      load over an existing but empty native store leaves it exactly as it was (no table of the containers' left); a
-#      MariaDB killed during the load is restarted and the store reloaded; a restart that brings back only MariaDB says so
+#      MariaDB killed during the load is restarted and the store reloaded; a restart that brings back only MariaDB says so;
+#      too little free space is refused before anything moves; a closed stdout cannot undo a finished migration
 # Logs of every store are kept in build/servicestest-logs (uploaded by CI on failure).
 set -u
 cd "$(dirname "$0")/.."
@@ -74,7 +75,7 @@ cleanup() {
     done < <(find "$root" -type d -path '*/mariadb/data' 2>/dev/null)
     [ -n "${sleeper:-}" ] && kill "$sleeper" 2>/dev/null
     if docker info >/dev/null 2>&1; then   # step 10's containers and volumes, whether or not its secrets folder exists
-        for p in e g h i j k l n; do fresh_project "$p" || echo "cleanup: scribodo-st-$p could not be removed" >&2; done
+        for p in e g h i j k l m n o; do fresh_project "$p" || echo "cleanup: scribodo-st-$p could not be removed" >&2; done
     fi
     rm -rf "$keep_logs"; mkdir -p "$keep_logs"
     find "$root" -maxdepth 1 -type d -name 'logs-*' -exec cp -R {} "$keep_logs/" \; 2>/dev/null
@@ -99,6 +100,16 @@ step "   Qdrant refuses a request without the key; neither answers on the networ
 lan="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)"
 [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:6341/collections)" = 401 ] &&
     { [ -z "$lan" ] || { ! nc -z -G 2 "$lan" 33071 2>/dev/null && ! nc -z -G 2 "$lan" 6341 2>/dev/null; }; }; ok $?
+
+step "   a one-time restore account left behind is removed by the next \`up\`"
+# What a load leaves when the server dies under it: scribodo_restore_<pid>, full rights on the database, a password
+# nobody kept (verification of AUDIT-004, 2026-11-16).
+printf "CREATE USER 'scribodo_restore_999'@'127.0.0.1' IDENTIFIED BY 'left-behind';\nGRANT ALL ON scribodo.* TO 'scribodo_restore_999'@'127.0.0.1';\n" |
+    mdb "$rp" -uroot -h127.0.0.1 -P33071 >/dev/null 2>&1; planted=$?
+n_before="$(mdb "$rp" -uroot -h127.0.0.1 -P33071 -e "SELECT COUNT(*) FROM mysql.global_priv WHERE User LIKE 'scribodo\_restore\_%'")"
+svc up >/dev/null 2>&1; r=$?
+n_after="$(mdb "$rp" -uroot -h127.0.0.1 -P33071 -e "SELECT (SELECT COUNT(*) FROM mysql.global_priv WHERE User LIKE 'scribodo\_restore\_%') + (SELECT COUNT(*) FROM mysql.db WHERE User LIKE 'scribodo\_restore\_%')")"
+[ "$planted" = 0 ] && [ "$n_before" = 1 ] && [ "$r" = 0 ] && [ "$n_after" = 0 ]; ok $?
 
 step "5. the daemons hold none of the caller's descriptors and lead their own groups"
 svc down >/dev/null 2>&1
@@ -221,6 +232,7 @@ SQL
     out="$(svc migrate-from-docker 2>&1)"; r=$?
     got="$(SCRIBODO_SERVICES=native svc rootsql -N scribodo -e "SELECT t FROM probe" 2>/dev/null)"
     [ "$setup" = 0 ] && [ "$r" = 0 ] && [ "$got" = "the author's words" ] && [ "$(cat "$SCRIBODO_SECRETS/mode")" = native ] &&
+        [ "$(stat -f %Lp "$SCRIBODO_SECRETS/mode")" = 600 ] && echo "$out" | grep -q "the migration dumps are kept in $SCRIBODO_SECRETS (1 migration-" &&
         ls "$SCRIBODO_SECRETS"/migration-*.sql.gz >/dev/null 2>&1 &&
         containers_down scribodo-st-e; ok $?
     [ "$r" = 0 ] && [ "$got" = "the author's words" ] || { echo "      exit $r, read back [$got]"; echo "$out" | tail -5 | sed 's/^/      /'; }
@@ -377,7 +389,8 @@ SQL
     others="$(SCRIBODO_SERVICES=native svc rootsql -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='scribodo' AND table_name <> 'probe'" 2>/dev/null)"
     running="$(SCRIBODO_SERVICES=native svc status 2>/dev/null | grep -c running)"
     [ "$setup" = 0 ] && [ "$acted" = 1 ] && [ "$r" = 1 ] && echo "$out" | grep -q "both stores are as they were" &&
-        [ "$got" = "native original" ] && [ "$others" = 0 ] && [ "$running" = 2 ] && containers_down scribodo-st-k; ok $?
+        [ "$got" = "native original" ] && [ "$others" = 0 ] && [ "$running" = 2 ] && containers_down scribodo-st-k &&
+        [ "$(SCRIBODO_SERVICES=native svc rootsql -N -e "SELECT COUNT(*) FROM mysql.global_priv WHERE User LIKE 'scribodo\_restore\_%'" 2>/dev/null)" = 0 ]; ok $?
     [ "$acted" = 1 ] && [ "$r" = 1 ] && [ "$got" = "native original" ] && [ "$others" = 0 ] ||
         { echo "      killed during the load $acted, exit $r, probe [$got], other tables [$others], running $running"; echo "$out" | tail -6 | sed 's/^/      /'; }
     SCRIBODO_SERVICES=native svc down >/dev/null 2>&1
@@ -402,6 +415,43 @@ SQL
     echo "$out" | grep -q "came back only in part" || { echo "      exit $r, MariaDB running $mstate, port held by [$holder_cmd]"; echo "$out" | tail -6 | sed 's/^/      /'; }
     # The stand-in holder is this rehearsal's own python3 (by its pid, never by pattern).
     case "${holder_cmd##*/}" in python3*|Python*) { kill "$holder"; wait "$watcher"; } 2>/dev/null ;; esac
+    SCRIBODO_SERVICES=native svc down >/dev/null 2>&1
+    SCRIBODO_SERVICES=docker SCRIBODO_PURGE_CONFIRM=1 svc purge >/dev/null 2>&1
+
+    # A store in the containers only (native never made), for the two cases below.
+    containers_only() {
+        setup=0; fresh_project "${SCRIBODO_COMPOSE_PROJECT#scribodo-st-}" || setup=1
+        SCRIBODO_SERVICES=docker svc up >/dev/null 2>&1 || SCRIBODO_SERVICES=docker svc up >/dev/null 2>&1 || setup=1
+        printf "CREATE TABLE schema_migrations (version INT PRIMARY KEY); INSERT INTO schema_migrations VALUES (18);\nCREATE TABLE probe (t TEXT); INSERT INTO probe VALUES ('moved');\n" |
+            SCRIBODO_SERVICES=docker svc rootsql scribodo >/dev/null 2>&1 || setup=1
+        SCRIBODO_SERVICES=docker svc down >/dev/null 2>&1 || setup=1
+        [ "$setup" = 0 ] || echo "      (setup failed: the case below is not what it claims)"
+    }
+
+    store m 33084 6354
+    unset SCRIBODO_SERVICES
+    step "    too little free space for the dump: refused by name before anything moves"
+    containers_only
+    r=0; out="$(SCRIBODO_MIGRATE_ASSUME_FREE_KB=1 svc migrate-from-docker 2>&1)" || r=$?
+    [ "$setup" = 0 ] && [ "$r" = 1 ] && echo "$out" | grep -q "not enough free space beside the secrets for the containers' dump" &&
+        echo "$out" | grep -q "both stores are as they were" && [ "$(cat "$SCRIBODO_SECRETS/mode")" = docker ] &&
+        [ ! -d "$SCRIBODO_SECRETS/mariadb" ] && ! ls "$SCRIBODO_SECRETS"/migration-*.sql.gz* >/dev/null 2>&1 &&
+        containers_down scribodo-st-m; ok $?
+    [ "$r" = 1 ] || echo "$out" | tail -4 | sed 's/^/      /'
+    SCRIBODO_SERVICES=docker SCRIBODO_PURGE_CONFIRM=1 svc purge >/dev/null 2>&1
+
+    store o 33085 6355
+    unset SCRIBODO_SERVICES
+    step "    a migration whose output cannot be written still completes, and writes the mode atomically"
+    # stdout a pipe whose reader has gone (as with \`| head\`): the progress lines fail to print, which used to stop the
+    # script (set -e, or SIGPIPE) after the load and before or after the mode was written (verification of AUDIT-004).
+    containers_only
+    svc migrate-from-docker 2>"$root/o.err" | true; r=${PIPESTATUS[0]}; err="$(cat "$root/o.err")"
+    got="$(SCRIBODO_SERVICES=native svc rootsql -N scribodo -e "SELECT t FROM probe" 2>/dev/null)"
+    [ "$setup" = 0 ] && [ "$r" = 0 ] && [ "$got" = moved ] && [ "$(cat "$SCRIBODO_SECRETS/mode")" = native ] &&
+        [ "$(stat -f %Lp "$SCRIBODO_SECRETS/mode")" = 600 ] && ! ls "$SCRIBODO_SECRETS"/.mode.* >/dev/null 2>&1 &&
+        [ "$(SCRIBODO_SERVICES=native svc status 2>/dev/null | grep -c running)" = 2 ] && containers_down scribodo-st-o; ok $?
+    [ "$r" = 0 ] || { echo "      exit $r, read back [$got]"; echo "$err" | tail -4 | sed 's/^/      /'; }
     SCRIBODO_SERVICES=native svc down >/dev/null 2>&1
     SCRIBODO_SERVICES=docker SCRIBODO_PURGE_CONFIRM=1 svc purge >/dev/null 2>&1
 else

@@ -650,3 +650,61 @@ files of this round list only rehearsal leftovers.
 - `make sanitize`: exit 0;
 - `make analyze`: exit 0 (0 warnings, 102 files);
 - `make dbtest`: exit 0 (12 suites, 0 failures; no `test_db` or `test_crash_points` process was running).
+
+# Final verification items (2026-11-16)
+
+The final verification closed R1–R4 (rehearsal exit 0, 25 checks) and left four items, closed here in one commit.
+The author's old Docker volumes and their old migration dump were deleted at their request; that was expected and
+was not done by these runs.
+
+**F1 — one-time restore accounts left behind.** When MariaDB dies during a load, `scribodo_restore_<pid>` survives,
+with full rights on `scribodo` and a password nobody kept; the reload then makes a second one. Now:
+- native `up`'s hardening deletes every `scribodo\_restore\_%` account and its database grants;
+- the restore deletes them too, after its reload, when MariaDB is running, and reports if it cannot.
+
+A live load's own session is not affected: deleting the account does not end a connection already made.
+
+**F2 — an incomplete native dump was silent.** It now says "the native store's dump is incomplete; nothing moved", as
+the containers' dump already did.
+
+**F3 — free space.** Before each dump (the containers', then the native store's), `room_for_dump` compares the free
+space in the secrets folder's volume (`df -Pk`) with the database's size uncompressed plus 1 MB. If there is not
+enough room it refuses by name ("not enough free space beside the secrets for …; nothing moved") and rolls back, so
+nothing is moved. A test may state the free space (`SCRIBODO_MIGRATE_ASSUME_FREE_KB`, listed in the header) rather
+than filling a disk. After a successful migration the script says where the dumps accumulate ("the migration dumps
+are kept in … (N migration-*.sql.gz files, SIZE); remove the ones no longer needed").
+
+**F4 — output that cannot be written.** The mode file is now written atomically (a 0600 temporary file renamed over
+it, `write_mode`) everywhere, and the final write is guarded `|| migration_rollback`. Making the progress echoes
+non-fatal (`|| true`) was not enough; the rehearsal found two worse problems behind it:
+- *A closed stdout.* The next file the script opened became descriptor 1 and received the progress lines.
+- *A pipe whose reader has gone (`| head`).* SIGPIPE killed the script outright, with no rollback. And a builtin
+  `echo` that fails keeps its unwritten text in bash's buffer, which the next forked command substitution flushes into
+  its own output. The first fixed rehearsal showed the progress line landing inside the MariaDB version check
+  ("is 11.4.13\ndumped the containers' …"), failing a migration that should have completed. A five-line bash
+  reproduction confirms it.
+
+So `services.sh` now:
+- reopens a closed stdout or stderr on `/dev/null` (duplicating a closed descriptor fails, where `true >&1` does not);
+- ignores SIGPIPE, so a write fails with EPIPE instead of killing the script;
+- prints its progress lines through `say`, which writes from a subshell whose buffer dies with it;
+- prints the final status from a subshell too.
+
+**Tests** (`tools/servicestest.sh`, `tests/test_services_docker.sh`):
+- step 1: a `scribodo_restore_999` account planted on a throwaway store is gone after the next `up` (global_priv and
+  db both 0);
+- case k: no `scribodo_restore_%` account is left after the mid-load kill;
+- case e: the mode file is 0600 and the kept-dumps line names one dump;
+- new case m (33084/6354): `SCRIBODO_MIGRATE_ASSUME_FREE_KB=1` is refused by name, "as they were", mode docker, no
+  native directory, no dump, containers removed;
+- new case o (33085/6355): a migration whose stdout pipe's reader has gone completes (exit 0, data loaded, mode
+  native, 0600, no temporary mode file, both native services running, containers removed);
+- shim test: `mode` with stdout closed and with stderr closed both exit 0.
+
+**Runs** (logs in `build/audit004-services-docker-f/`):
+- `before-fix-servicestest.log`, the previous script (`ac2e343`) with the new tests: step 1's account, case e, case k,
+  case m and case o FAIL.
+- `intermediate-run{1,2}` (`|| true` only, stdout closed in case o) and `intermediate2-run{1,2}` (with the stdio
+  reopening and SIGPIPE ignored, stdout a closed pipe): case o FAILS in both pairs, the progress line ending up in the
+  version check.
+- `after-fix-run{1,2}`, the final script, back to back: both exit 0, 28 checks, no `scribodo-st-*` left.
