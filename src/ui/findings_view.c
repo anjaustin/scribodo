@@ -6,6 +6,8 @@
 
 #include "raygui.h"
 #include "ui/input.h"
+#include "core/experiments.h"
+#include "llm/observer_arms.h"
 
 #define PAD 8.0f
 #define GAP 6.0f
@@ -177,14 +179,16 @@ static int wrap(const SFont *f, const char *s, float w, int max_lines,
 
 static bool is_selected(const FindingsView *v, size_t i) { return !strcmp(v->selected, v->items[i].id); }
 
-static const char k_disclosure[] = "Possible conflicts are suggestions: about 1 in 13 was real on the test novels. Each links to its source.";
+/* The measured figure of the observer's active arm (llm/observer_arms.h, AUDIT-004 F5): on the default path, "about 1 in
+ * 13 was real on the test novels" (journal/observer-cycle2_quality.md step 4); under an experiment flag, that arm's. */
+static const char *disclosure(void) { return observer_arm(experiments())->disclosure; }
 
 /* The disclosure's height (wrapped to the pane's width) when the list holds a conflict, else 0. */
 static float disclosure_height(FindingsView *v, float w)
 {
     for (size_t i = 0; i < v->n; i++)
         if (!strcmp(v->items[i].type, "conflict"))
-            return (float)wrap(v->label, k_disclosure, w - 2 * PAD, 4, NULL, NULL) * v->label->line_height + 6.0f;
+            return (float)wrap(v->label, disclosure(), w - 2 * PAD, 4, NULL, NULL) * v->label->line_height + 6.0f;
     return 0.0f;
 }
 
@@ -272,7 +276,7 @@ FindingAction findings_view_draw(FindingsView *v, Rectangle r, char *id_out, siz
         /* Measured and disclosed where the author decides (MEMORY-015 §4): the conflict path's precision on the test
          * novels, journal/observer-cycle2_quality.md step 4 (7 true in 92 shown), is 1 in 13. */
         LineCtx dc = { v->label, r.x + PAD, y, v->label->line_height, MUTED };
-        wrap(v->label, k_disclosure, r.width - 2 * PAD, 4, draw_line, &dc);
+        wrap(v->label, disclosure(), r.width - 2 * PAD, 4, draw_line, &dc);
         y += dh;
     }
     for (size_t i = 0; i < v->n; i++) {

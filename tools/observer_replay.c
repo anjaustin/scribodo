@@ -17,7 +17,8 @@
  *         so a finding is always one line of twelve fields; the real model writes subjects and contents across lines;
  *         the format is llm/observer_formats.h's, version OBSERVER_FINDING_LINES_FORMAT)
  *         stderr: the format marker OBSERVER_FINDING_LINES_MARKER first, then the observer flags in force
- *         ("# observer flags: ..."), then "# N findings, J jobs, status: S, T s". [seconds] is wall time; exit 0 when the observer
+ *         ("# observer flags: ...") and their arm with its measured figure (llm/observer_arms.h), then
+ *         "# N findings, J jobs, status: S, T s". [seconds] is wall time; exit 0 when the observer
  *         finished, 2 when it did not within the limit. */
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,6 +32,7 @@
 #include "llm/observer.h"
 #include "llm/observer_formats.h"
 #include "core/experiments.h"
+#include "llm/observer_arms.h"
 #include "llm/server.h"
 #include <sys/stat.h>
 #include <limits.h>
@@ -46,6 +48,7 @@ int main(int argc, char **argv)
     static const char *const sentence_levels[] = { "off", "attributes", "subject" };
     fprintf(stderr, "# observer flags: SCRIBODO_OBSERVER_CONFLICT_GATE=%s SCRIBODO_OBSERVER_SENTENCES=%s\n",
             ex->observer_conflict_gate ? "1" : "off", sentence_levels[ex->observer_sentences]);
+    fprintf(stderr, "# observer arm: %s; measured: %s\n", observer_arm(ex)->name, observer_arm(ex)->measured);
     const char *project = argv[1];
     double limit = argc > 2 && argv[2][0] != '-' ? atof(argv[2]) : 600.0;
     StoreManager *store = store_manager_create();

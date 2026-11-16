@@ -5,6 +5,7 @@
 #include "core/utf8.h"
 #include <stdint.h>
 #include "llm/observer.h"
+#include "llm/observer_arms.h"
 #include "test_util.h"
 #include "cJSON.h"
 
@@ -265,6 +266,45 @@ static void test_shared_rule_fixture(void)
     cJSON_Delete(root);
 }
 
+/* Every arm of the observer's flags has its measured figure (AUDIT-004 F5): each combination of the conflict gate and
+ * the sentence levels has exactly one row, with a disclosure and a stated source; the default row's text is the one
+ * shown since step 4; and the row the view reads follows the flags. */
+static void test_observer_arm_table(void)
+{
+    size_t n = 0;
+    const ObserverArm *arms = observer_arms(&n);
+    const ObserverSentencesArm levels[] = { OBSERVER_SENTENCES_OFF, OBSERVER_SENTENCES_ATTRIBUTES, OBSERVER_SENTENCES_SUBJECT };
+    CHECK(n == 2 * sizeof(levels) / sizeof(levels[0]));
+    for (int gate = 0; gate < 2; gate++)
+        for (size_t l = 0; l < sizeof(levels) / sizeof(levels[0]); l++) {
+            size_t rows = 0;
+            for (size_t i = 0; i < n; i++)
+                if (arms[i].conflict_gate == (gate == 1) && arms[i].sentences == levels[l]) {
+                    rows++;
+                    CHECK(arms[i].name && arms[i].name[0] && arms[i].measured && arms[i].measured[0]);
+                    CHECK(arms[i].disclosure && !strncmp(arms[i].disclosure, "Possible conflicts are suggestions", 34) &&
+                          strstr(arms[i].disclosure, "Each links to its source."));
+                    CHECK(!!strstr(arms[i].measured, "step") != !strcmp(arms[i].measured, "not measured"));
+                }
+            CHECK(rows == 1);
+        }
+    unsetenv("SCRIBODO_OBSERVER_CONFLICT_GATE");
+    unsetenv("SCRIBODO_OBSERVER_SENTENCES");
+    experiments_reload();
+    CHECK(!strcmp(observer_arm(experiments())->disclosure,
+                  "Possible conflicts are suggestions: about 1 in 13 was real on the test novels. Each links to its source."));
+    setenv("SCRIBODO_OBSERVER_SENTENCES", "attributes", 1);
+    experiments_reload();
+    CHECK(strstr(observer_arm(experiments())->measured, "step 8") != NULL);
+    setenv("SCRIBODO_OBSERVER_SENTENCES", "1", 1);
+    setenv("SCRIBODO_OBSERVER_CONFLICT_GATE", "1", 1);
+    experiments_reload();
+    CHECK(!strcmp(observer_arm(experiments())->measured, "not measured"));
+    unsetenv("SCRIBODO_OBSERVER_CONFLICT_GATE");
+    unsetenv("SCRIBODO_OBSERVER_SENTENCES");
+    experiments_reload();
+}
+
 int main(void)
 {
     const TestCase tests[] = {
@@ -277,6 +317,7 @@ int main(void)
         { "attributes_differ", test_attributes_differ },
         { "same_subject", test_same_subject },
         { "shared_rule_fixture", test_shared_rule_fixture },
+        { "observer_arm_table", test_observer_arm_table },
     };
     return run_tests(tests, sizeof(tests) / sizeof(tests[0]));
 }

@@ -71,7 +71,7 @@ STORE_SRCS += src/app/memory_documents.c src/app/memory_document_store.c
 STORE_SRCS += src/app/memory_gc.c src/app/memory_brief_store.c
 STORE_SRCS += src/app/recall.c src/app/recall_job.c
 STORE_SRCS += src/app/import_job.c
-LLM_SRCS  := src/core/json.c src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/llm/chat_history.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/app/recent.c src/app/renames.c src/llm/observer.c src/llm/observer_text.c src/llm/observer_formats.c src/llm/observer_fake.c src/llm/observer_model.c src/llm/observer_job.c src/llm/semantic.c src/llm/remote.c src/llm/names.c src/llm/memfit.c $(STORE_SRCS)
+LLM_SRCS  := src/core/json.c src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/llm/chat_history.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/app/recent.c src/app/renames.c src/llm/observer.c src/llm/observer_text.c src/llm/observer_formats.c src/llm/observer_arms.c src/llm/observer_fake.c src/llm/observer_model.c src/llm/observer_job.c src/llm/semantic.c src/llm/remote.c src/llm/names.c src/llm/memfit.c $(STORE_SRCS)
 LLM_SRCS += src/llm/context_planner.c src/llm/memory_tokens.c
 LLM_SRCS += src/llm/memory_budget.c src/llm/generative_gate.c src/llm/memory_brief.c
 LLM_SRCS += src/llm/canon_reference.c
@@ -182,7 +182,7 @@ $(BUILD)/test_components: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_state_fix
 $(BUILD)/test_db_rows: $(BUILD)/src/app/db.o $(BUILD)/tests/test_db_rows.o
 	$(CC) $(CFLAGS) $^ -o $@ $(MARIADB_LIBS)
 
-$(BUILD)/test_observer_text: $(BUILD)/src/llm/observer_text.o $(BUILD)/src/core/experiments.o $(BUILD)/src/core/utf8.o $(BUILD)/third_party/cJSON/cJSON.o $(BUILD)/tests/test_observer_text.o
+$(BUILD)/test_observer_text: $(BUILD)/src/llm/observer_text.o $(BUILD)/src/llm/observer_arms.o $(BUILD)/src/core/experiments.o $(BUILD)/src/core/utf8.o $(BUILD)/third_party/cJSON/cJSON.o $(BUILD)/tests/test_observer_text.o
 	$(CC) $(CFLAGS) $^ -o $@
 
 # The observer's C-to-Python formats (llm/observer_formats.h): writes or checks tests/fixtures/observer_formats/.
