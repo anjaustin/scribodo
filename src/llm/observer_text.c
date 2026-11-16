@@ -429,7 +429,10 @@ static const char *const k_place_titles[] = { "mr", "mrs", "ms", "miss", "lady",
 
 /* A set of words, as Python's set of str: unbounded. A fixed table of 64 words of under 64 bytes each kept the first
  * 64 and dropped any longer word, where the Python keeps every one (AUDIT-004 F2; tests/fixtures/observer_rules).
- * failed marks an allocation failure: the caller cannot check and lets the other evidence stand. */
+ * Words are appended as found and made a set once, by set_finish (sort and drop repeats), so building and comparing
+ * two sets is O(n log n): checking each word against the set as it was added was quadratic, 3.7 s for 40,000 numbers
+ * a side (red-team 2026-11-15). failed marks an allocation failure: the caller cannot check and lets the other
+ * evidence stand. */
 typedef struct {
     char **w;
     size_t n, cap;
@@ -439,8 +442,6 @@ typedef struct {
 static void set_add(WordSet *s, const char *w, size_t n)
 {
     if (s->failed) return;
-    for (size_t i = 0; i < s->n; i++)
-        if (strlen(s->w[i]) == n && !memcmp(s->w[i], w, n)) return;
     if (s->n == s->cap) {
         size_t cap = s->cap ? s->cap * 2 : 16;
         char **grown = realloc(s->w, cap * sizeof(char *));
@@ -453,6 +454,21 @@ static void set_add(WordSet *s, const char *w, size_t n)
     memcpy(copy, w, n);
     copy[n] = '\0';
     s->w[s->n++] = copy;
+}
+
+static int cmp_word(const void *a, const void *b) { return strcmp(*(char *const *)a, *(char *const *)b); }
+
+/* Sorted, each word once. */
+static void set_finish(WordSet *s)
+{
+    if (s->failed || s->n < 2) return;
+    qsort(s->w, s->n, sizeof(char *), cmp_word);
+    size_t k = 1;
+    for (size_t i = 1; i < s->n; i++) {
+        if (!strcmp(s->w[i], s->w[k - 1])) free(s->w[i]);
+        else s->w[k++] = s->w[i];
+    }
+    s->n = k;
 }
 
 static void set_free(WordSet *s)
@@ -575,15 +591,13 @@ static void place_set(const char *text, WordSet *out)
     }
 }
 
+/* Two finished sets differ when both are non-empty and they are not equal. */
 static bool sets_differ(const WordSet *a, const WordSet *b)
 {
     if (!a->n || !b->n) return false;
     if (a->n != b->n) return true;
-    for (size_t i = 0; i < a->n; i++) {
-        bool found = false;
-        for (size_t j = 0; j < b->n && !found; j++) found = !strcmp(a->w[i], b->w[j]);
-        if (!found) return true;
-    }
+    for (size_t i = 0; i < a->n; i++)
+        if (strcmp(a->w[i], b->w[i])) return true;
     return false;
 }
 
@@ -591,6 +605,8 @@ static bool sets_differ(const WordSet *a, const WordSet *b)
  * alone, as before). */
 static bool sets_differ_free(WordSet *a, WordSet *b)
 {
+    set_finish(a);
+    set_finish(b);
     bool d = a->failed || b->failed || sets_differ(a, b);
     set_free(a);
     set_free(b);
@@ -647,9 +663,15 @@ bool obs_same_subject(const char *canon, const char *text)
     WordSet a = { 0 }, b = { 0 };
     subject_set(canon, &a);
     subject_set(text, &b);
+    set_finish(&a);
+    set_finish(&b);
     bool shared = a.failed || b.failed; /* cannot check: the other co-signers stand */
-    for (size_t i = 0; i < a.n && !shared; i++)
-        for (size_t j = 0; j < b.n && !shared; j++) shared = !strcmp(a.w[i], b.w[j]);
+    for (size_t i = 0, j = 0; !shared && i < a.n && j < b.n;) { /* a merge of two sorted sets */
+        int c = strcmp(a.w[i], b.w[j]);
+        if (c == 0) shared = true;
+        else if (c < 0) i++;
+        else j++;
+    }
     set_free(&a);
     set_free(&b);
     return shared;

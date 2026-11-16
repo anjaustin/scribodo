@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <time.h>
 #include <string.h>
 
 #include "core/experiments.h"
@@ -266,6 +267,41 @@ static void test_shared_rule_fixture(void)
     cJSON_Delete(root);
 }
 
+/* The co-signers' word sets are built in O(n log n): 100,000 distinct numbers and 100,000 possessive names a side take
+ * milliseconds; the quadratic sets took 3.7 s for 40,000 numbers and would take tens of seconds here (red-team
+ * 2026-11-15). The bound is generous for the sanitizer build and a loaded machine. */
+static double secs(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+}
+
+static void test_word_sets_bounded_time(void)
+{
+    const int n = 100000;
+    char *a = malloc((size_t)n * 16 + 1), *b = malloc((size_t)n * 16 + 1), *c = malloc((size_t)n * 16 + 1), *d = malloc((size_t)n * 16 + 1);
+    CHECK(a && b && c && d);
+    if (!a || !b || !c || !d) { free(a); free(b); free(c); free(d); return; }
+    char *pa = a, *pb = b, *pc = c, *pd = d;
+    for (int i = 0; i < n; i++) {
+        pa += sprintf(pa, "%d ", i);
+        pb += sprintf(pb, "%d ", i + 1);
+        int u = i, v = i + n;
+        pc += sprintf(pc, "X%c%c%c%c's ", 'a' + u % 26, 'a' + u / 26 % 26, 'a' + u / 676 % 26, 'a' + u / 17576 % 26);
+        pd += sprintf(pd, "X%c%c%c%c's ", 'a' + v % 26, 'a' + v / 26 % 26, 'a' + v / 676 % 26, 'a' + v / 17576 % 26);
+    }
+    double t0 = secs();
+    CHECK(obs_attributes_differ(a, b));      /* 0..99999 against 1..100000 */
+    CHECK(!obs_attributes_differ(a, a));
+    CHECK(!obs_same_subject(c, d));          /* no name shared */
+    CHECK(obs_same_subject(c, c));
+    double took = secs() - t0;
+    if (took >= 2.0) fprintf(stderr, "    word sets took %.2f s\n", took);
+    CHECK(took < 2.0);
+    free(a); free(b); free(c); free(d);
+}
+
 /* Every arm of the observer's flags has its measured figure (AUDIT-004 F5): each combination of the conflict gate and
  * the sentence levels has exactly one row, with a disclosure and a stated source; the default row's text is the one
  * shown since step 4; and the row the view reads follows the flags. */
@@ -318,6 +354,7 @@ int main(void)
         { "same_subject", test_same_subject },
         { "shared_rule_fixture", test_shared_rule_fixture },
         { "observer_arm_table", test_observer_arm_table },
+        { "word_sets_bounded_time", test_word_sets_bounded_time },
     };
     return run_tests(tests, sizeof(tests) / sizeof(tests[0]));
 }
