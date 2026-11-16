@@ -708,3 +708,14 @@ So `services.sh` now:
   reopening and SIGPIPE ignored, stdout a closed pipe): case o FAILS in both pairs, the progress line ending up in the
   version check.
 - `after-fix-run{1,2}`, the final script, back to back: both exit 0, 28 checks, no `scribodo-st-*` left.
+
+**Gates on the final tree (`e854f3c` plus this journal and EVIDENCE.md):**
+- the two Docker rehearsals: exit 0 and 0, 28 checks each (above);
+- `make test`: exit 0, including the evidence check with this round archived;
+- `make sanitize`: exit 0;
+- `make analyze`: exit 0 (0 warnings, 102 files);
+- `make dbtest`: exit 0 (12 suites, 0 failures).
+
+Archive `scribodo-evidence-2026-11-16-docker-f.tar.gz`: 20 files, SHA-256 verified against `SHA256SUMS`. The first
+draft of its EVIDENCE.md entry carried a placeholder count and hash, written before the archive's output was read; it
+was corrected before this commit.

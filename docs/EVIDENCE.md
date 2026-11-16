@@ -266,6 +266,16 @@ The red-team round on that work (journal `audit004-services.md`, "Red team of re
 
 Archive SHA-256: `39dc390101d8e0830ad656c165e74615868f945c415ce45bcaf448c13949f028`.
 
+The final verification items on that work (journal `audit004-services.md`, "Final verification items") are in
+`scribodo-evidence-2026-11-16-docker-f.tar.gz` (20 files, `build/audit004-services-docker-f`), with
+`manifest-scribodo-evidence-2026-11-16-docker-f.txt` and an entry in `SHA256SUMS`:
+- the Docker rehearsal with the previous `services.sh` and the new tests (`before-fix-*`);
+- the two intermediate pairs in which the unwritable-output case still failed, the progress line leaking into the
+  MariaDB version check (`intermediate-run{1,2}.*`, `intermediate2-run{1,2}.*`);
+- the two back-to-back rehearsals with the final script and the leftovers after each (`after-fix-run{1,2}.*`).
+
+Archive SHA-256: `0ef506e2d2e19ae5b0643987ad7ffbafc1e409274d1c9594c6d2f4bdec805de9`.
+
 Since 2026-11-15 `make test` runs `tools/evidence_check.py`. Every cited `build/` path must be one of:
 - archived: checked against each tarball's real file list, so a cited directory counts only when every file under
   it is archived, and a file stem (`build/recover/gates2`) resolves to its files;
