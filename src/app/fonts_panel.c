@@ -3,6 +3,7 @@
 #include "app/app_internal.h"
 #include "ui/input.h"
 #include "ui/theme.h"
+#include "ui/backdrop.h"
 #include "ui/widgets.h"
 
 _Static_assert(THEME_COUNT == sizeof(((FontsPanel *)0)->theme) / sizeof(Rectangle), "a theme slot per palette");
@@ -68,6 +69,9 @@ static void show(App *app, const Appearance *next)
 {
     Appearance before = app->appearance;
     unsigned roles = changed_roles(&before, next);
+    if (roles || before.theme != next->theme || before.typewriter != next->typewriter ||
+        before.dim_paragraphs != next->dim_paragraphs)
+        backdrop_release(); /* the window behind changed: the frosted snapshot is taken again next frame */
     app->appearance = *next;
     app_apply_look(app); /* the palette and writing aids show at once */
     if (!roles) return;
@@ -351,7 +355,7 @@ void fonts_panel_draw(App *app, Rectangle screen)
 {
     FontsPanel *p = &app->fonts_panel;
     if (!p->open) return;
-    DrawRectangleRec(screen, THEME_SCRIM);
+    backdrop_draw(screen);
     float w = 720;
     /* A short window drops the preview lines rather than let rows run under the buttons. */
     bool previews = roles_height(app, true) <= screen.height - 40;

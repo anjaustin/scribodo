@@ -1,5 +1,6 @@
 #include "prompt_view.h"
 #include "ui/theme.h"
+#include "ui/backdrop.h"
 #include "ui/widgets.h"
 
 #include <stdio.h>
@@ -107,7 +108,7 @@ PromptResult prompt_draw(PromptView *v, Rectangle screen)
 {
     if (!v->active) return PR_NONE;
     layout(v, screen);
-    DrawRectangleRec(screen, THEME_SCRIM); /* dim everything behind */
+    backdrop_draw(screen); /* the window behind, frosted */
     widget_shadow(v->box, RADIUS_M, 16);
     widget_round_rect(v->box, RADIUS_M, THEME_SURFACE);
     widget_round_outline(v->box, RADIUS_M, 1.0f, THEME_ACCENT_EDGE);

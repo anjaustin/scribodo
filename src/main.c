@@ -17,6 +17,7 @@
 #include "ui/widgets.h"
 #include "ui/mac_window.h"
 #include "ui/motion.h"
+#include "ui/backdrop.h"
 #include "app/tools_dir.h"
 
 static bool store_adopt_project(App *app);
@@ -199,6 +200,7 @@ static void draw_memory_sources(App *app)
 {
     float width = fminf(900, GetScreenWidth() - 60.0f), height = fminf(700, GetScreenHeight() - 60.0f);
     Rectangle box = { (GetScreenWidth() - width) / 2, (GetScreenHeight() - height) / 2, width, height };
+    backdrop_draw((Rectangle){ 0, 0, (float)GetScreenWidth(), (float)GetScreenHeight() });
     widget_shadow(box, RADIUS_M, 16);
     widget_round_rect(box, RADIUS_M, THEME_SURFACE);
     widget_round_outline(box, RADIUS_M, 1.0f, THEME_BORDER_STRONG);
@@ -743,7 +745,7 @@ static void open_model_settings(App *app)
 /* The panel (drawn over everything). */
 static void draw_model_settings(App *app, Rectangle screen)
 {
-    DrawRectangleRec(screen, THEME_SCRIM);
+    backdrop_draw(screen);
     float w = 620, rowh = 44, h = 110 + rowh * MODEL_SETTING_COUNT + 56 + (app->llm ? 26 : 0);
     Rectangle p = { (screen.width - w) / 2, (screen.height - h) / 2, w, h };
     widget_shadow(p, RADIUS_M, 16);
@@ -1727,6 +1729,9 @@ static void frame_draw_overlays(App *app, MainLoop *loop, int empty_act, bool mo
             else if (pick == 0) begin_rename(app, app->menu_doc); /* a dirty open document is refused on OK */
             else reveal_document(app, app->menu_doc);
         }
+        /* Frosted glass behind a dialog (ui/backdrop.h): its snapshot goes when the last dialog closes. */
+        if (!app->settings_open && !app->fonts_panel.open && !prompt_active(app->prompt) && !app->memory_sources_open)
+            backdrop_release();
         if (app->settings_open) draw_model_settings(app, screen);
         if (app->fonts_panel.open) fonts_panel_draw(app, screen);
         if (app->memory_sources_open) draw_memory_sources(app);

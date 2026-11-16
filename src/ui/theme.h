@@ -127,6 +127,9 @@ int theme_by_name(const char *name);          /* -1 when unknown */
 #define RADIUS_S 4.0f
 #define RADIUS_M 8.0f
 
+/* A texture drawn as it is (no tint): not a colour role. */
+#define THEME_NO_TINT ((Color){ 0xFF, 0xFF, 0xFF, 0xFF })
+
 #define THEME_CLAY(c) ((Clay_Color){ (float)(c).r, (float)(c).g, (float)(c).b, (float)(c).a })
 
 #endif
