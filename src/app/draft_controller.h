@@ -31,6 +31,9 @@ typedef struct {
     char out[PATH_MAX];
 } DraftWrite;
 
+/* Test hook: runs on the writing thread just before each write (tests block it to hold a write in flight). */
+typedef void (*DraftWriteHook)(void *ctx);
+
 typedef struct {
     char path[PATH_MAX]; /* the unsaved document's draft beside it, empty when none */
     char doc[PATH_MAX];  /* the document the draft (or the write in flight) belongs to */
@@ -42,6 +45,8 @@ typedef struct {
     pthread_t thread;
     atomic_bool done;
     DraftWrite write;
+    DraftWriteHook write_hook;
+    void *write_hook_ctx;
 } DraftController;
 
 /* The whole buffer as UTF-8 (malloc'd, the caller frees), or NULL when it cannot be had. */
@@ -61,6 +66,8 @@ bool draft_controller_tick(DraftController *draft, const char *doc, bool dirty, 
 bool draft_controller_poll(DraftController *draft);
 /* Blocks until no write is in flight, and adopts its result (tests, shutdown). */
 void draft_controller_wait(DraftController *draft);
+/* Tests only. */
+void draft_controller_set_write_hook(DraftController *draft, DraftWriteHook hook, void *ctx);
 /* 64-bit FNV-1a of a NUL-terminated string (the draft's change check). */
 uint64_t draft_text_hash(const char *s);
 

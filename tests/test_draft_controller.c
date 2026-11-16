@@ -5,6 +5,7 @@
 #define _DEFAULT_SOURCE
 
 #include <dirent.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -154,41 +155,118 @@ static void test_failures(void)
     draft_controller_destroy(&d);
 }
 
-/* The frame thread never waits for the write: a discard or a switch while it is in flight removes what it writes,
- * and no second write starts until it has finished. */
-static void test_in_flight(void)
+/* A gate the write hook blocks on: a write is held in flight until the test opens it, so every in-flight branch
+ * runs on purpose, not by timing (red team on remed/main). */
+typedef struct {
+    pthread_mutex_t mu;
+    pthread_cond_t cv;
+    bool open, entered;
+} Gate;
+
+static Gate g_gate = { PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, true, false };
+
+static void gate_hook(void *ctx)
 {
-    char doc[700], other[700];
+    Gate *g = ctx;
+    pthread_mutex_lock(&g->mu);
+    g->entered = true;
+    pthread_cond_broadcast(&g->cv);
+    while (!g->open) pthread_cond_wait(&g->cv, &g->mu);
+    pthread_mutex_unlock(&g->mu);
+}
+
+static void gate_close(Gate *g)
+{
+    pthread_mutex_lock(&g->mu);
+    g->open = false;
+    g->entered = false;
+    pthread_mutex_unlock(&g->mu);
+}
+
+/* Until the writer is inside the hook: the write is certainly in flight and has not touched the disk. */
+static void gate_wait_entered(Gate *g)
+{
+    pthread_mutex_lock(&g->mu);
+    while (!g->entered) pthread_cond_wait(&g->cv, &g->mu);
+    pthread_mutex_unlock(&g->mu);
+}
+
+static void gate_open(Gate *g)
+{
+    pthread_mutex_lock(&g->mu);
+    g->open = true;
+    pthread_cond_broadcast(&g->cv);
+    pthread_mutex_unlock(&g->mu);
+}
+
+/* A held write after a first, complete draft of `doc`. */
+static void start_held_write(DraftController *d, const char *doc, TextSource *src, char *first, size_t firstlen)
+{
+    draft_controller_init(d);
+    draft_controller_set_write_hook(d, gate_hook, &g_gate);
+    CHECK(tick_wait(d, doc, true, 10.0, src));
+    snprintf(first, firstlen, "%s", d->path);
+    gate_close(&g_gate);
+    src->text = "held in flight\n";
+    CHECK(draft_controller_tick(d, doc, true, 20.0, source_text, src));
+    gate_wait_entered(&g_gate);
+    CHECK(d->busy);
+}
+
+/* Saved (a clean buffer) while the write is in flight: the old draft goes at once, the new one when it lands. */
+static void test_discard_while_writing(void)
+{
+    char doc[700], first[PATH_MAX];
     make_doc(doc, sizeof(doc), "f.md");
-    make_doc(other, sizeof(other), "g.md");
     DraftController d;
-    draft_controller_init(&d);
-    TextSource src = { "in flight\n", 0 };
-    CHECK(tick_wait(&d, doc, true, 10.0, &src));
-    char first[PATH_MAX];
-    snprintf(first, sizeof(first), "%s", d.path);
-    src.text = "in flight, changed\n";
-    CHECK(draft_controller_tick(&d, doc, true, 20.0, source_text, &src)); /* not waited for */
-    CHECK(!draft_controller_tick(&d, doc, true, 40.0, source_text, &src) || !d.busy); /* one at a time */
-    CHECK(!draft_controller_tick(&d, doc, false, 41.0, source_text, &src)); /* saved while (maybe) writing */
-    CHECK(!d.path[0] && !d.doc[0] && access(first, F_OK) != 0);
+    TextSource src = { "first\n", 0 };
+    start_held_write(&d, doc, &src, first, sizeof(first));
+    int calls = src.calls;
+    CHECK(!draft_controller_tick(&d, doc, true, 40.0, source_text, &src) && src.calls == calls); /* one at a time */
+    CHECK(!draft_controller_tick(&d, doc, false, 41.0, source_text, &src));
+    CHECK(d.busy && d.discard_pending && !d.path[0] && !d.doc[0] && access(first, F_OK) != 0);
+    gate_open(&g_gate);
     draft_controller_wait(&d);
     CHECK(!d.busy && !d.discard_pending && !d.path[0] && count_drafts(g_dir, "f.md.scribodo-") == 0);
-
-    src.text = "switch\n";
-    CHECK(draft_controller_tick(&d, doc, true, 60.0, source_text, &src));
-    CHECK(!draft_controller_tick(&d, other, true, 61.0, source_text, &src)); /* another document */
-    draft_controller_wait(&d);
-    CHECK(!d.path[0] && count_drafts(g_dir, "f.md.scribodo-") == 0);
-    CHECK(tick_wait(&d, other, true, 72.0, &src) && file_is(d.path, "switch\n"));
-    /* Shutdown with a write in flight: it finishes, and the draft stays for recovery. */
-    src.text = "at exit\n";
-    CHECK(draft_controller_tick(&d, other, true, 90.0, source_text, &src));
     draft_controller_destroy(&d);
-    CHECK(!d.busy && d.path[0] && file_is(d.path, "at exit\n") && count_drafts(g_dir, "g.md.scribodo-") == 1);
+}
+
+/* Another document opened while the write is in flight: nothing of the first one stays, and the second drafts. */
+static void test_switch_while_writing(void)
+{
+    char doc[700], other[700], first[PATH_MAX];
+    make_doc(doc, sizeof(doc), "g.md");
+    make_doc(other, sizeof(other), "h.md");
+    DraftController d;
+    TextSource src = { "first\n", 0 };
+    start_held_write(&d, doc, &src, first, sizeof(first));
+    CHECK(!draft_controller_tick(&d, other, true, 21.0, source_text, &src));
+    CHECK(d.discard_pending && access(first, F_OK) != 0);
+    gate_open(&g_gate);
+    draft_controller_wait(&d);
+    CHECK(!d.path[0] && count_drafts(g_dir, "g.md.scribodo-") == 0);
+    src.text = "other\n";
+    CHECK(tick_wait(&d, other, true, 31.0, &src) && file_is(d.path, "other\n"));
+    draft_controller_discard(&d);
+    draft_controller_destroy(&d);
+}
+
+/* Quit while the write is in flight: shutdown waits for it, and the draft stays for recovery. */
+static void test_quit_while_writing(void)
+{
+    char doc[700], first[PATH_MAX];
+    make_doc(doc, sizeof(doc), "i.md");
+    DraftController d;
+    TextSource src = { "first\n", 0 };
+    start_held_write(&d, doc, &src, first, sizeof(first));
+    gate_open(&g_gate); /* the write lands; the controller has not joined it yet */
+    CHECK(d.busy);
+    draft_controller_destroy(&d);
+    CHECK(!d.busy && d.path[0] && file_is(d.path, "held in flight\n") && access(first, F_OK) != 0);
+    CHECK(count_drafts(g_dir, "i.md.scribodo-") == 1);
     bool differs = false;
     char recovered[PATH_MAX];
-    CHECK(doc_recover_strays(other, recovered, sizeof(recovered), &differs) == 1 && differs);
+    CHECK(doc_recover_strays(doc, recovered, sizeof(recovered), &differs) == 1 && differs);
 }
 
 static void rm_rf(const char *dir)
@@ -221,7 +299,9 @@ int main(void)
         { "interval_and_change", test_interval_and_change },
         { "clean_or_switch_discards", test_clean_or_switch_discards },
         { "failures", test_failures },
-        { "in_flight", test_in_flight },
+        { "discard_while_writing", test_discard_while_writing },
+        { "switch_while_writing", test_switch_while_writing },
+        { "quit_while_writing", test_quit_while_writing },
     };
     int rc = run_tests(tests, sizeof(tests) / sizeof(tests[0]));
     rm_rf(g_dir);

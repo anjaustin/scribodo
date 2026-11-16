@@ -21,15 +21,17 @@ void draft_controller_init(DraftController *draft)
     atomic_init(&draft->done, false);
 }
 
-static void run_write(DraftWrite *w)
+static void run_write(DraftController *draft)
 {
+    DraftWrite *w = &draft->write;
+    if (draft->write_hook) draft->write_hook(draft->write_hook_ctx);
     w->ok = doc_write_draft(w->doc, w->text, w->len, w->previous, w->out, sizeof(w->out));
 }
 
 static void *write_worker(void *arg)
 {
     DraftController *draft = arg;
-    run_write(&draft->write);
+    run_write(draft);
     atomic_store_explicit(&draft->done, true, memory_order_release);
     return NULL;
 }
@@ -56,6 +58,14 @@ static void adopt(DraftController *draft)
         draft->doc[0] = '\0'; /* no draft and none coming: the document owns nothing yet */
     }
 }
+
+void draft_controller_set_write_hook(DraftController *draft, DraftWriteHook hook, void *ctx)
+{
+    draft->write_hook = hook;
+    draft->write_hook_ctx = ctx;
+}
+
+
 
 bool draft_controller_poll(DraftController *draft)
 {
@@ -112,6 +122,6 @@ bool draft_controller_tick(DraftController *draft, const char *doc, bool dirty, 
     draft->busy = true;
     atomic_store_explicit(&draft->done, false, memory_order_relaxed);
     draft->threaded = pthread_create(&draft->thread, NULL, write_worker, draft) == 0;
-    if (!draft->threaded) run_write(w); /* no thread to be had: write here, as before the worker */
+    if (!draft->threaded) run_write(draft); /* no thread to be had: write here, as before the worker */
     return true;
 }
