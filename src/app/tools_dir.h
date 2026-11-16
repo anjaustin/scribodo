@@ -15,7 +15,6 @@
  *   Contents/Resources/tools/services.sh, services_lib.sh, services.defaults, backup.sh, restore.sh
  *   Contents/Resources/docker/compose.yml      (docker mode)
  *   Contents/Resources/bin/qdrant              (native mode; the pinned release, as `make qdrant` fetches it)
- *   Contents/Resources/assets/fonts/           (the bundled fonts; assets_dir_resolve in app/appearance.h)
  * MariaDB is not bundled: native mode uses Homebrew's mariadb@11.4 (SCRIBODO_MARIADB_BIN). */
 bool tools_dir_resolve(const char *app_dir, char *out, size_t outlen);
 
