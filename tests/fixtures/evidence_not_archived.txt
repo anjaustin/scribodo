@@ -12,6 +12,10 @@ build/observer_overlap	a tool binary (make tools)
 build/import_probe	a tool binary (make tools)
 build/chat_hang_probe	a tool binary (make tools)
 build/mutationtest/<name>	make mutationtest's per-control output, recreated every run
+build/memory-reach/memory_reach_eval	a tool binary (make tools)
+build/memory-quality/memory_quality_eval	a tool binary (make tools)
+build/memory_native_eval	a tool binary (make tools)
+build/memory-pipeline-soak/memory_pipeline_soak	a tool binary (make tools)
 build/test_memory_vectors_faults	a test binary (make test)
 build/llama/bin/llama-server	the pinned server binary (make llama)
 build/venv-coref	a locked experiment environment (make envs recreates it)
@@ -39,6 +43,7 @@ build/csvol	make cstest's volume mount point, named
 build/cs.sparseimage	make cstest's disk image, named
 build/src	make's object tree, named
 build/tests	make's test object tree, named
+build/mutationtest	make mutationtest's output root, named
 build/asan	make sanitize's build tree, named
 build/ui/<script>	make uitest's per-script output directory, recreated every run
 build/ui/<script>/work	make uitest's per-script fixture copy, recreated every run
