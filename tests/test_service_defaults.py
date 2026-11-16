@@ -96,6 +96,12 @@ class ServiceDefaults(unittest.TestCase):
             if rel.endswith((".c", ".h")):
                 self.assertNotRegex(text, r"\b" + self.d["SCRIBODO_DEFAULT_QDRANT_PORT"] + r"\b", rel)
 
+    def test_mariadb_pin_is_one_release(self) -> None:
+        compose = (ROOT / "docker/compose.yml").read_text()
+        tag = re.search(r"image: mariadb:([^@\s]+)@sha256:[0-9a-f]{64}", compose)
+        self.assertIsNotNone(tag)
+        self.assertEqual(tag.group(1), self.d["SCRIBODO_MARIADB_VERSION"])
+
     def test_variables_documented(self) -> None:
         # Every variable the services scripts and Compose read is in services.sh's header block (AUDIT-004 F6).
         header = (ROOT / "tools/services.sh").read_text().split("\nset -euo pipefail", 1)[0]

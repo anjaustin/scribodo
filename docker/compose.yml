@@ -6,7 +6,7 @@ name: scribodo
 
 services:
   mariadb:
-    image: mariadb:11.4.13@sha256:d1891ede5a559f1086f55053bb8cc1569b0298338c4d72d71725a7f74f6ba620
+    image: mariadb:11.4.13@sha256:5e73baf8179b29f115101bb102763a47a017361f3e9792daccba6646c3ab1532
     restart: unless-stopped
     # The server's settings and both host ports come from tools/services.defaults through tools/services.sh; this
     # file keeps no copy of them (AUDIT-004 F6). 3306 and 6333 below are the images' own ports inside the containers.

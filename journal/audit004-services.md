@@ -151,3 +151,42 @@ stream's report (the six from F6 plus `SCRIBODO_SERVICES`, `SCRIBODO_NATIVE_FRES
 table also lacks).
 
 **Gates (item 5 tree):** `make test` exit 0; `make analyze` exit 0; `make sanitize` exit 0.
+
+## Item 6 — the moved MariaDB tag (F13), and one release on both paths
+
+**What changed upstream**, from the registry API only (auth.docker.io token, `registry-1.docker.io/v2/library/mariadb`
+manifests and config blobs; no pull). Both digests are OCI indexes over amd64, arm64/v8, ppc64le and s390x.
+
+| | pinned `sha256:d1891ede…` | tag now `sha256:5e73baf8…` |
+|---|---|---|
+| `MARIADB_VERSION` (config env, every platform) | `1:11.4.13+maria~ubu2404` | `1:11.4.13+maria~ubu2404` |
+| `GOSU_VERSION` | 1.19 | 1.19 |
+| `org.opencontainers.image.version` (label / annotation) | 11.4.13 / 11.4.13-noble | 11.4.13 / 11.4.13-noble |
+| mariadb-docker revision (annotation) | `bdfe641466a5312bb97d06a1a4e1fb411c49e6b6` | same |
+| base (`org.opencontainers.image.base.*`, arm64) | `ubuntu:noble` `sha256:19cad596…` | `ubuntu:noble` `sha256:c9237665…` |
+| created (arm64 config) | 2026-10-26T23:29:47Z | 2026-11-11T23:34:22Z |
+| arm64 manifest | `sha256:9640785a96dd…` | `sha256:7bbca77eb05b…` |
+| layers | 8 | 8, all different digests |
+
+Labels are otherwise identical. Reading: the Official Images rebuild of the same Dockerfile revision and the same
+MariaDB package on a refreshed `ubuntu:noble` base (a routine base-image rebuild, 2026-11-11), not a different server
+release. Re-pinned `docker/compose.yml` to `mariadb:11.4.13@sha256:5e73baf8179b29f115101bb102763a47a017361f3e9792daccba6646c3ab1532`
+(the only tracked file that records the digest outside the audit's prose). Not run: the image itself (no Docker);
+the review is of provenance (same revision, same package version), not of the base layer's contents.
+`make dependency-report` after the re-pin: exit 0, both images "verified", "All pins and remote checks completed
+successfully".
+
+**Native version: exact, not series.** `tools/services.defaults` gains `SCRIBODO_MARIADB_VERSION=11.4.13`;
+`native_need` parses `mariadbd --version` and requires that release (exit 3, "MariaDB at … is 11.4.12, not 11.4.13,
+the release the store is pinned to (brew pin mariadb@11.4 keeps it)"); `test_mariadb_pin_is_one_release` fails if the
+Compose image tag and the file disagree. Reason: what CI and the rehearsal test is the native server, what the
+dependency report checks is the image; with the series check the two could be different releases and the report
+would speak for neither. The cost, accepted: a `brew upgrade` to 11.4.14 stops the store until the pin is reviewed and
+moved (with item 1 the app says exactly that, on the badge and in the status). Homebrew today: stable 11.4.13,
+installed 11.4.13_1, not pinned; the installed binary parses to 11.4.13, so the author's store is unaffected.
+**Recommendation for the author:** `brew pin mariadb@11.4`.
+
+**Tests:** `tests/test_services.c` adds 11.4.12 (refused by name) to the 10.11.9 case; the Docker-shim test's fake
+`mariadbd` reads the version from the defaults file.
+
+**Gates (item 6 tree):** `make test` exit 0; `make analyze` exit 0; `make sanitize` exit 0; `make dependency-report` exit 0.

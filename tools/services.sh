@@ -34,6 +34,7 @@
 # Set by the scripts themselves, not by hand:
 #   SCRIBODO_SERVICES_LOCKED   marks the re-run under the store's lock (lockf), so it does not lock again
 #   SCRIBODO_MARIADB_SERVER_FLAGS  the MariaDB server's settings from tools/services.defaults, exported for Compose
+#   SCRIBODO_MARIADB_VERSION   the MariaDB release the store is pinned to, from tools/services.defaults
 #
 # Exit codes: the contract the app reads (src/app/service_supervisor.h, SERVICES_EXIT_*; tests/test_services.c pins
 # both). The last line on stderr says what happened in words; the app shows it beside the code's sentence.
@@ -141,10 +142,15 @@ native_need() { # returns 3 (MariaDB) or 4 (Qdrant), the exit codes above
     [ -x "$QDRANT_BIN" ] || { echo "Qdrant isn't built: make qdrant (the pinned 1.20.0 release binary; or set SCRIBODO_QDRANT_BIN)" >&2; missing=4; }
     [ -x "$MARIADB_BIN/mariadbd" ] || { echo "MariaDB 11.4 isn't installed: brew install mariadb@11.4 (or set SCRIBODO_MARIADB_BIN)" >&2; missing=3; }
     [ "$missing" = 0 ] || return "$missing"
-    # Homebrew's formula is not pinned the way the container image is: the series is (REDTEAM-023), and `brew upgrade`
-    # within 11.4 is a patch release.
-    "$MARIADB_BIN/mariadbd" --no-defaults --version 2>/dev/null | grep -q " 11\.4\." ||
-        { echo "MariaDB at $MARIADB_BIN is not the 11.4 series the store is built and tested on" >&2; return 3; }
+    # The exact release the container image is pinned to (AUDIT-004 F13): the store is tested on what runs natively,
+    # and the dependency report checks the image, so the two must be one release. A `brew upgrade` to the next patch
+    # release is refused here, by name, until the pin is reviewed and moved (tools/services.defaults, the image digest).
+    local found
+    found="$("$MARIADB_BIN/mariadbd" --no-defaults --version 2>/dev/null | sed -n 's/.* Ver \([0-9][0-9.]*\)-MariaDB.*/\1/p')"
+    [ "$found" = "$SCRIBODO_MARIADB_VERSION" ] || {
+        echo "MariaDB at $MARIADB_BIN is ${found:-of unknown version}, not $SCRIBODO_MARIADB_VERSION, the release the store is pinned to (brew pin mariadb@11.4 keeps it)" >&2
+        return 3
+    }
 }
 
 mariadbd_args() {

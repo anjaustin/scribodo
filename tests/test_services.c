@@ -176,7 +176,12 @@ static void test_real_script_refusals(void)
 
     fake_install(&f, "10.11.9", true);
     r = run_up(g_repo_tools);
-    CHECK(r.exit_code == SERVICES_EXIT_MARIADB && strstr(r.reason, "MariaDB at "));
+    CHECK(r.exit_code == SERVICES_EXIT_MARIADB && strstr(r.reason, "MariaDB at ") && strstr(r.reason, "is 10.11.9, not "));
+
+    /* The same series, another release: refused by name (the pin is one release, AUDIT-004 F13). */
+    fake_install(&f, "11.4.12", true);
+    r = run_up(g_repo_tools);
+    CHECK(r.exit_code == SERVICES_EXIT_MARIADB && strstr(r.reason, "is 11.4.12, not 11.4.13"));
 
     fake_install(&f, "11.4.13", false);
     r = run_up(g_repo_tools);
