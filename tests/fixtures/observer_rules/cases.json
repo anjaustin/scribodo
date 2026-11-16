@@ -24,9 +24,10 @@
   {
    "text": "I saw Mr. X. Then I left.",
    "want": [
-    "I saw Mr. X. Then I left."
+    "I saw Mr. X.",
+    "Then I left."
    ],
-   "why": "a single capital is an initial even when it ends a sentence (known limit)"
+   "why": "a single capital before a sentence starter ends a sentence (kept as one until 2026-11-15)"
   },
   {
    "text": "“Mr. Bingley!” She cried.",
@@ -141,6 +142,46 @@
     "It grows."
    ],
    "why": "an initial before a lower-case word"
+  },
+  {
+   "text": "Her father is Tardos Mors in Chapter V. Lydia is not his daughter.",
+   "want": [
+    "Her father is Tardos Mors in Chapter V.",
+    "Lydia is not his daughter."
+   ],
+   "why": "a capital after a label is a numeral, not an initial"
+  },
+  {
+   "text": "It is as stated in Part I. That is not in dispute.",
+   "want": [
+    "It is as stated in Part I.",
+    "That is not in dispute."
+   ],
+   "why": "\"I\" is never an initial"
+  },
+  {
+   "text": "\"Proud,\" said I. \"Proud people breed sad sorrows.\"",
+   "want": [
+    "\"Proud,\" said I.",
+    "\"Proud people breed sad sorrows.\""
+   ],
+   "why": "the narrator's I before a quotation"
+  },
+  {
+   "text": "Captain James K. Powell rode. Then J. K. Rowling wrote.",
+   "want": [
+    "Captain James K. Powell rode.",
+    "Then J. K. Rowling wrote."
+   ],
+   "why": "initials between capitalised names stay inside the sentence"
+  },
+  {
+   "text": "I met a K. Smith there.",
+   "want": [
+    "I met a K.",
+    "Smith there."
+   ],
+   "why": "an initial after a lower-case word is read as a sentence end (known cost of the rule)"
   }
  ],
  "attributes": [

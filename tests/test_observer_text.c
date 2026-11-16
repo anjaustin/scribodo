@@ -138,6 +138,11 @@ static void test_first_sentence(void)
                             "The new text introduces 'Mrs. Collins' as a friend."));
     CHECK(first_sentence_is("A person named (Mr. Gardiner) writes. Then more.", "A person named (Mr. Gardiner) writes."));
     CHECK(first_sentence_is("It names **Mr. Darcy** of Pemberley. Then more.", "It names **Mr. Darcy** of Pemberley."));
+    /* a single capital is an initial only in context (red-team 2026-11-15) */
+    CHECK(first_sentence_is("Her father is Tardos Mors in Chapter V. Lydia is not his daughter.", "Her father is Tardos Mors in Chapter V."));
+    CHECK(first_sentence_is("It is as stated in Part I. That is not in dispute.", "It is as stated in Part I."));
+    CHECK(first_sentence_is("\"Proud,\" said I. Proud people breed sad sorrows.", "\"Proud,\" said I."));
+    CHECK(first_sentence_is("Canon states Captain James K. Powell is of Richmond. Then more.", "Canon states Captain James K. Powell is of Richmond."));
 }
 
 static void test_sentence_end(void)

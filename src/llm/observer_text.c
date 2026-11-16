@@ -286,6 +286,54 @@ int obs_overlap(const char *a, const char *b, bool ignore_titles)
     return score;
 }
 
+/* A single capital before a period is a name's initial ("James K. Powell", "J. K. Rowling") only when it is not "I", the
+ * word before it is capitalised and not a label (Chapter, Part, Book, Act, Source...), and the word after it is
+ * capitalised and not a usual sentence starter. Without the context every such capital was an initial, so "in Chapter V.
+ * Lydia is", "in Part I. That is" and "said I. \"Proud" were each kept as one sentence (red-team 2026-11-15). The rule
+ * and both lists are the data/text stream's text_name_initial_before (src/core/text_rules.c on remed/text), copied
+ * rather than depended on so the two can be unified at merge; tools/observer_plant.py name_initial is the Python
+ * mirror, and tests/fixtures/observer_rules/cases.json holds them to the same sentences. s[dot] is the period. */
+static const char *const k_label_words[] = { "Chapter", "Ch", "Part", "Book", "Volume", "Vol", "Act", "Scene", "Section",
+    "Sec", "Source", "Appendix", "Figure", "Fig", "Table", "Plate", "Page", "Item", "Note", "Step", "Letter", "Line",
+    "Option", "Plan", "Type", "Class", "Group", "Exhibit", "Article", "Clause", NULL };
+static const char *const k_sentence_starters[] = { "The", "This", "That", "These", "Those", "It", "Its", "He", "She", "They",
+    "We", "You", "I", "His", "Her", "Their", "My", "Our", "There", "Here", "Then", "Thus", "So", "But", "And", "Or", "If",
+    "When", "While", "As", "In", "On", "At", "For", "With", "From", "According", "However", "Also", "Yes", "No", "Now",
+    "Who", "What", "Which", "Where", "A", NULL };
+
+static bool exact_in(const char *const *list, const char *w, size_t n)
+{
+    for (size_t i = 0; list[i]; i++)
+        if (strlen(list[i]) == n && !strncmp(list[i], w, n)) return true;
+    return false;
+}
+
+static bool text_letter(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
+static bool text_space(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
+static bool text_word(char c) { return text_letter(c) || (c >= '0' && c <= '9') || c == '_'; }
+
+static bool name_initial(const char *s, size_t n, size_t dot)
+{
+    if (dot < 2 || dot >= n || s[dot - 1] < 'A' || s[dot - 1] > 'Z' || s[dot - 1] == 'I' || text_word(s[dot - 2])) return false;
+    size_t j = dot + 1; /* after: whitespace, then a capitalised word that does not start a sentence */
+    while (j < n && text_space(s[j])) j++;
+    if (j >= n || s[j] < 'A' || s[j] > 'Z') return false;
+    size_t je = j;
+    while (je < n && text_letter(s[je])) je++;
+    if (exact_in(k_sentence_starters, s + j, je - j)) return false;
+    size_t e = dot - 1; /* before: spaces or tabs, then a capitalised word that is not a label */
+    if (s[e - 1] != ' ' && s[e - 1] != '\t') return false;
+    while (e > 0 && (s[e - 1] == ' ' || s[e - 1] == '\t')) e--;
+    size_t b = e;
+    while (b > 0 && !text_space(s[b - 1])) b--;
+    while (b < e && !text_letter(s[b])) b++;
+    if (e > b && s[e - 1] == '.') e--;
+    if (e <= b || s[b] < 'A' || s[b] > 'Z') return false;
+    for (size_t k = b + 1; k < e; k++)
+        if (!text_letter(s[k]) && (unsigned char)s[k] < 0x80) return false;
+    return !exact_in(k_label_words, s + b, e - b);
+}
+
 /* Cuts s at the end of its first sentence: a period that ends the text or is followed by a space and a capital,
  * unless the period closes an initial ("James K. Powell") or a title ("Mr. Bennet"), which the real model's
  * explanations carry: a conflict's content read "Canon states Captain James K." before this, and "the new text
@@ -300,7 +348,7 @@ void obs_first_sentence(char *s)
         while (w > s && w[-1] != ' ') w--;
         while (w < end && !((*w >= 'A' && *w <= 'Z') || (*w >= 'a' && *w <= 'z') || (*w >= '0' && *w <= '9'))) w++;
         size_t wl = (size_t)(end - w);
-        bool abbrev = wl == 1 && *w >= 'A' && *w <= 'Z';
+        bool abbrev = wl == 1 && name_initial(s, strlen(s), (size_t)(end - s));
         for (size_t i = 0; !abbrev && i < sizeof(titles) / sizeof(titles[0]); i++)
             abbrev = wl == strlen(titles[i]) && !strncmp(w, titles[i], wl);
         if (abbrev && end[1] != '\0') continue;
@@ -360,13 +408,12 @@ static bool is_opening_quote(const unsigned char *u, size_t n, size_t *w)
     return false;
 }
 
-/* tools/observer_plant.py ABBREVIATIONS: a period after one of these, or after a single capital (an initial), ends no
- * sentence. */
+/* tools/observer_plant.py ABBREVIATIONS: a period after one of these ends no sentence (a single capital is an initial
+ * only in context: name_initial). */
 static bool abbreviation(const char *w, size_t n)
 {
     static const char *const ab[] = { "mr", "mrs", "ms", "dr", "st", "capt", "col", "lt", "gen", "prof", "sgt", "jr", "sr",
                                       "rev", "hon" };
-    if (n == 1) return w[0] >= 'A' && w[0] <= 'Z';
     for (size_t i = 0; i < sizeof(ab) / sizeof(ab[0]); i++)
         if (strlen(ab[i]) == n && !strncasecmp(ab[i], w, n)) return true;
     return false;
@@ -388,7 +435,7 @@ size_t obs_sentence_end(const char *s, size_t n)
         if (u[i] == '.') {
             size_t a = i;
             while (a > 0 && ((u[a - 1] >= 'A' && u[a - 1] <= 'Z') || (u[a - 1] >= 'a' && u[a - 1] <= 'z'))) a--;
-            if (a < i && abbreviation(s + a, i - a)) continue;
+            if (a < i && (i - a == 1 ? name_initial(s, n, i) : abbreviation(s + a, i - a))) continue;
         }
         return j;
     }

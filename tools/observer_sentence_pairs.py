@@ -40,7 +40,7 @@ def sentences(text):
         s = len(p) - len(p.lstrip(SPACE))
         for m in BOUNDARY.finditer(p, s):
             cut = len(p[:m.end()].rstrip(SPACE))
-            if not ends_sentence(p[s:cut], p[cut:cut + 1]):
+            if not ends_sentence(p[s:cut], p[cut:]):
                 continue
             out.append((base + s, p[s:cut]))
             s = m.end()

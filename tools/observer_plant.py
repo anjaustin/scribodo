@@ -21,19 +21,77 @@ import sys
 ABBREVIATIONS = {"mr", "mrs", "ms", "dr", "st", "capt", "col", "lt", "gen", "prof", "sgt", "jr", "sr", "rev", "hon"}
 
 
+# A single capital is a name's initial only in context (name_initial): the lists and the rule of
+# observer_text.c name_initial, itself the data/text stream's text_name_initial_before (red-team 2026-11-15).
+LABEL_WORDS = {"Chapter", "Ch", "Part", "Book", "Volume", "Vol", "Act", "Scene", "Section", "Sec", "Source", "Appendix",
+               "Figure", "Fig", "Table", "Plate", "Page", "Item", "Note", "Step", "Letter", "Line", "Option", "Plan",
+               "Type", "Class", "Group", "Exhibit", "Article", "Clause"}
+SENTENCE_STARTERS = {"The", "This", "That", "These", "Those", "It", "Its", "He", "She", "They", "We", "You", "I", "His",
+                     "Her", "Their", "My", "Our", "There", "Here", "Then", "Thus", "So", "But", "And", "Or", "If", "When",
+                     "While", "As", "In", "On", "At", "For", "With", "From", "According", "However", "Also", "Yes", "No",
+                     "Now", "Who", "What", "Which", "Where", "A"}
+_SPACE = " \t\n\r\v\f"
+
+
+def _letter(c):
+    return "A" <= c <= "Z" or "a" <= c <= "z"
+
+
+def name_initial(text, dot):
+    """True when the single capital before text[dot] (a period) is a name's initial: not "I", the word before it
+    capitalised and not a label (Chapter V., Part I.), the word after it capitalised and not a usual sentence starter
+    ("said I. Proud", "Mr. X. Then"). observer_text.c name_initial, character for character."""
+    if dot < 2 or dot >= len(text) or not "A" <= text[dot - 1] <= "Z" or text[dot - 1] == "I" \
+            or _letter(text[dot - 2]) or "0" <= text[dot - 2] <= "9" or text[dot - 2] == "_":
+        return False
+    j = dot + 1
+    while j < len(text) and text[j] in _SPACE:
+        j += 1
+    if j >= len(text) or not "A" <= text[j] <= "Z":
+        return False
+    je = j
+    while je < len(text) and _letter(text[je]):
+        je += 1
+    if text[j:je] in SENTENCE_STARTERS:
+        return False
+    e = dot - 1
+    if text[e - 1] not in " \t":
+        return False
+    while e > 0 and text[e - 1] in " \t":
+        e -= 1
+    b = e
+    while b > 0 and text[b - 1] not in _SPACE:
+        b -= 1
+    while b < e and not _letter(text[b]):
+        b += 1
+    if e > b and text[e - 1] == ".":
+        e -= 1
+    if e <= b or not "A" <= text[b] <= "Z":
+        return False
+    if any(not _letter(c) and ord(c) < 0x80 for c in text[b + 1:e]):
+        return False
+    return text[b:e] not in LABEL_WORDS
+
+
 def ends_sentence(anchor, after):
     """True when the anchor ends with sentence punctuation (closing quotes allowed), what follows in the text is a
     space, a line end or the end of the file, and a final period does not close a title or an initial: the letters
-    right before it are not on ABBREVIATIONS and not one capital ("drily--\u201cMr." is a title, "Kan\u2019s." ends a
-    sentence). This checks an anchor's end only. obs_sentence_end in src/llm/observer_text.c, which cuts running text,
-    agrees on titles, initials and closing quotes but also requires a capital (an opening quote allowed) after the space,
-    which is observer_sentence_pairs.BOUNDARY's rule: "ends with i. next" ends a sentence here and none there.
-    tests/fixtures/observer_rules/cases.json holds the C splitter and BOUNDARY with this check to the same sentences."""
+    right before it are not on ABBREVIATIONS, and a single capital is not a name's initial in context (name_initial,
+    which reads the next word in `after`: pass the rest of the line, not one character). "drily--\u201cMr." is a
+    title, "Kan\u2019s." and "in Chapter V." end a sentence. This checks an anchor's end only. obs_sentence_end in
+    src/llm/observer_text.c, which cuts running text, agrees on titles, initials and closing quotes but also requires a
+    capital (an opening quote allowed) after the space, which is observer_sentence_pairs.BOUNDARY's rule: "ends with i.
+    next" ends a sentence here and none there. tests/fixtures/observer_rules/cases.json holds the C splitter and
+    BOUNDARY with this check to the same sentences."""
     m = re.search(r"([A-Za-z]*)([.!?])[\"'\u201d\u2019)]*$", anchor)
     if not m or (after and not after[0].isspace()):
         return False
     word = m.group(1)
-    return not (m.group(2) == "." and (word.lower() in ABBREVIATIONS or (len(word) == 1 and word.isupper())))
+    if m.group(2) != ".":
+        return True
+    if word.lower() in ABBREVIATIONS:
+        return False
+    return not (len(word) == 1 and name_initial(anchor + after, m.start(2)))
 
 
 def plan(faults, src):
@@ -52,13 +110,13 @@ def plan(faults, src):
         else:
             text = texts[f["file"]]
             end = text.index(f["anchor"]) + len(f["anchor"])
-            if not ends_sentence(f["anchor"], text[end:end + 1]):
+            if not ends_sentence(f["anchor"], text[end:end + 200]):
                 errors.append(f"{f['id']}: anchor does not end a sentence in {f['file']} (it ends at "
                               f"{f['anchor'][-12:]!r}); the insert would land inside one")
             continue
         text = texts[f["file"]]
         end = text.index(f["anchor"]) + len(f["anchor"])
-        if not ends_sentence(f["anchor"], text[end:end + 1]):
+        if not ends_sentence(f["anchor"], text[end:end + 200]):
             errors.append(f"{f['id']}: anchor does not end a sentence in {f['file']} (it stops at "
                           f"{f['anchor'][-12:]!r}); the insert would land inside one")
     return texts, errors
