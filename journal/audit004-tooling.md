@@ -167,6 +167,36 @@ checks; the difference was the summing pattern.
 
 Gates: `make test` exit 0, `make analyze` exit 0, `make tools` exit 0 (`item5-*.log`).
 
+## Red-team remediation (2026-11-15, same branch)
+
+The red team found five faults in the work above; each is one commit.
+
+1. **A cited directory passed when one file under it was archived** (the audit's own mistake, repeated):
+   `build/gap003` passed with 32 files under it unarchived, `build/hangs` with one. A cited path that exists now
+   passes only when every file it denotes is archived or declared not evidence; relative names in backticks
+   (`gates-exit.txt`, `series-real-3/*`) resolve under a directory the same document cites; files are looked for in
+   the main checkout's `build/` (git's common directory), also from a worktree, and the summary names the folder.
+   The 33 files are `scribodo-evidence-2026-11-15-audit004c.tar.gz` (SHA-256
+   `b3c358881bd7f3dd905348dfbb4d70fff7cc3cff4c977ff2e3fb61dbaf463939`).
+2. **A not-evidence entry excused everything under it** (a crafted `fit-on3/result.json` under `build/ui` passed).
+   Entries now match one path; `*` stays within a component; only `DIR/**` covers a subtree; the lost list likewise.
+3. **Seven lost entries were archived file stems** (`build/relation/rel4-before`, `build/recover/gates2`,
+   `build/gap003/{gates,frames/gates,orphan/gates,reap/gates,soak-smoke}`): a stem resolves to `stem.*` and
+   `stem-*` members. Eleven entries remain: `build/ui/fit-on`, `build/ui/fit-native2`, `build/cr1/score.json`, the two
+   `build/mb-*/events.jsonl`, `build/memory-causal-parity.log` and `-v2.log`, `build/memory-continuity-*`,
+   `build/memory-safety-*`, `build/redteam2-*.log`, `build/remediation-*.log`. Item 1's statement that seven AUDIT-004
+   paths were lost is therefore wrong for those seven: only `fit-on` and `fit-native2` were.
+4. **`experiment_arms` would have dropped the observer flags** once remed/observer merges (read in level helpers
+   outside `read_environment`) and ignored `SCRIBODO_FAKE_EXTRACT_MS`. Every `SCRIBODO_*` literal is now classified
+   (arm, level, switch, test hook) or the run stops; tested on remed/observer's `experiments.c`.
+5. A missing archive folder now fails unless `CI` or `SCRIBODO_EVIDENCE_SKIP` is set; `build/servicestest-logs` is
+   gate-owned; the answer tools that record hashes record `answer_common.py`'s.
+
+Gates per commit (`build/audit004-tooling/r*-*.log`, archived in `scribodo-evidence-2026-11-15-audit004-tooling-r`): `make test` exit 0 and `make tools` exit 0 after each; `make
+analyze` exit 0 after the first; after commits 2 to 4 it was skipped because the busy check (`pgrep -f "clang
+--analyze"`) matched its own shell's command line, not another analyzer, and it ran once on the final tree with a
+check on the process name instead, exit 0 (the later commits change no C). `make mutationtest` was not rerun: nothing in this round touches it.
+
 ## Not done here
 
 - `git gc`, README, `docs/EVIDENCE.md`, `docs/TECHNICAL-DEBT.md` and the audit document belong to the coordinator;
