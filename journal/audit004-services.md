@@ -450,3 +450,9 @@ unset-variable bug in `up` would have read as success to the app.
   string). The pre-AUDIT-004 `server.c` is still caught (`popen`).
 
 **Gates (V2):** `make test` exit 0; `make analyze` exit 0; `make sanitize` exit 0.
+
+## Verification follow-up: end gates (tree `adf4f0d`)
+
+- `make dbtest`: exit 0 (12 suites, each "0 failures").
+- `make servicestest`: exit 0, run once (no other run found), with the main checkout's pinned Qdrant: 17 checks ok
+  across steps 1-9 (every native `up`/`down`/`purge` now ending through `leave`); step 10 skipped, Docker not running.
