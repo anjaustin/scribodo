@@ -78,7 +78,9 @@ without it.
 **Limits.** Delivering the right source is not the same as answering
 correctly. The recorded runs show no fabricated statement passing the
 verified pipeline, but the model can still misread a relation inside text it
-was given. A relation check withholds most such replies, not all of them. The current figures for
+was given. A relation check withholds a reply that states a kinship or
+possession relation no source states; other misreadings, such as a wrong
+label or the wrong subject of a pronoun, can still pass. The current figures for
 each novel tested are in [LANDSCAPE](LANDSCAPE.md) rows 12 and 13, and the
 earlier remediation runs in [MEMORY-022](MEMORY-022-product-remediation.md)
 and [REDTEAM-018](REDTEAM-018-memory-contracts.md).
@@ -95,7 +97,7 @@ Open it with the **Observer** button; the count shows new findings.
   - **Commit to canon** opens a canon draft; nothing is canon until you press Commit.
   - **Dismiss** hides it.
   - **Source** selects the passage.
-- The panel says how often a possible conflict turned out real on the test novels (about 1 in 13 with the default settings), so you can weigh them. Possible conflicts are suggestions.
+- When the list holds a possible conflict, the panel says how often one turned out real on the test novels (about 1 in 13 with the default settings), so you can weigh them. Possible conflicts are suggestions.
 - Findings are kept in the local project store. The file backend uses `.scribodo/findings.jsonl`. See [OBSERVER-001](OBSERVER-001-design.md).
 
 ## How saving protects your text

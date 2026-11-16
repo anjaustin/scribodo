@@ -38,9 +38,12 @@ links to the entry that holds its detail.
    2026-11-16 because a stale volume masked the defect
    ([AUDIT-004](AUDIT-004-repository-audit.md) F6). A failure there risks
    author data, but only authors moving between Docker and native services
-   reach it. Next action: run it in acceptance, or before any release that
-   touches `tools/services.sh`, with Docker running on the runner. It is
-   about an hour of work.
+   reach it. Plain `make servicestest` skips the whole migration step, with
+   a message, when Docker is not running, so a green run does not show the
+   path was exercised. Next action: run it in acceptance with
+   `SCRIBODO_SERVICESTEST_DOCKER=1` and Docker running on the runner, or
+   before any release that touches `tools/services.sh`. It is about an hour
+   of work.
 3. **Low: pinned known misses.** Each is pinned by a test or a fixture and
    is uncommon in prose.
    - The relation check misses three sentence shapes: "Mors K. Lydia",
@@ -51,7 +54,15 @@ links to the entry that holds its detail.
    - Accented names and sentences that open on a pronoun never co-sign the
      observer's same-subject check. The cost is a missed disclosure, never a
      false one. This moves into item 1 if a manuscript's cast is accented.
-4. **Low: `import_poll` and `store_adopt_project`** in `src/main.c` are
+4. **Low: the embedding and reranker models have no setup path** (found
+   2026-11-16 by the docs red team; part of GAP-002). `make model` fetches
+   only LFM3. No doc gives the Qwen3-Embedding-0.6B f16 GGUF's source or
+   hash (it is `QWEN3_EMBED_SHA256` in `src/llm/server.c`), and when that
+   file is missing the embedding server says "run `make model`", which does
+   not fetch it (`src/llm/server.c`, the "Model not found" message). A
+   missing reranker is noted only on stderr. Next action: a `make` target
+   for both files, and a per-model hint in the message.
+5. **Low: `import_poll` and `store_adopt_project`** in `src/main.c` are
    covered only by the UI suites. This is a coverage gap, not a known
    defect. Next action: a headless test when either function is next
    touched.

@@ -24,14 +24,15 @@ of these:
   credentials kept in a private folder. The local model server listens on a
   private Unix socket with a fresh API key each launch.
 - **No silent data exit.** Nothing leaves the Mac unless the author configures
-  and selects a remote model. Then HTTPS is required, redirects are not
+  and selects a remote model. Then HTTPS is required (plain HTTP only to this Mac), redirects are not
   followed, the API key is read only from a private file and sent only to the
   configured host, and the app shows where data is going.
 - **Pinned inputs.** Model files are checked against pinned hashes, vendored
   libraries are pinned submodules, container images are pinned by digest,
   and GitHub Actions are pinned by commit.
-- **The author's files.** Saves never overwrite a file another program
-  changed. Backups refuse symlinks and special files, and restore refuses a
+- **The author's files.** A save never silently overwrites a file another
+  program changed: it writes a sibling conflict copy, and the disk version is
+  replaced only if the author saves again within 30 seconds. Backups refuse symlinks and special files, and restore refuses a
   backup that contains a link or a file not in its checksum list. The
   checksums detect damage, not deliberate tampering, so restore only backups
   you made.

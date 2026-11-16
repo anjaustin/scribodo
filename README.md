@@ -50,7 +50,7 @@ model, a local database, no account and no telemetry.
 5. Watch observer findings appear in the sidebar as the work evolves. Each finding links to its exact source.
 6. Act on a finding: **Discuss** it in the chat, **Save as note**, **Commit to canon**, or **Dismiss** it.
 7. Close the project and come back later. Chats, documents, notes, canon, and findings are all preserved.
-8. Ask what the book says: **Recall** lists, with no model involved, every canon entry and source passage that matches, and conversations with memory on answer from verified excerpts of the manuscript.
+8. Ask what the book says: **Recall** lists, with no model involved, every canon entry and remembered passage that matches, and conversations with memory on and documents attached answer from verified excerpts of the manuscript.
 
 The [user guide](docs/USER-GUIDE.md) covers each feature in detail.
 
@@ -78,7 +78,7 @@ toolbar shows the model's status, which turns green when it's ready. The model
 server listens only on a private Unix socket, uses a fresh API key each launch,
 and stops when the app quits.
 
-- **The other two models:** semantic memory needs the Qwen3-Embedding-0.6B f16 GGUF, and the verified-answer pipeline the Qwen3-Reranker-0.6B BF16 GGUF, both in `~/Library/Application Support/Scribodo/models/` and checked against pinned hashes. `make` does not fetch them yet (part of GAP-002); [MODEL-002](docs/MODEL-002-qwen3-reranker.md) gives the reranker's conversion and hash, and [CONFIGURATION](docs/CONFIGURATION.md#app-models-and-files) the paths. Without the reranker the app says so and answers plainly.
+- **The other two models:** semantic memory needs the Qwen3-Embedding-0.6B f16 GGUF, and the verified-answer pipeline the Qwen3-Reranker-0.6B BF16 GGUF, both in `~/Library/Application Support/Scribodo/models/` and checked against pinned hashes. `make` does not fetch them yet (part of GAP-002); [MODEL-002](docs/MODEL-002-qwen3-reranker.md) gives the reranker's conversion and hash, and [CONFIGURATION](docs/CONFIGURATION.md#app-models-and-files) the paths. Without the reranker the app notes it on stderr and answers with the plain composer.
 - **Smaller checkout:** `git clone --recurse-submodules --shallow-submodules --depth 1 https://github.com/anjaustin/scribodo.git`. Full dependency history is not needed to build ([measured](docs/REDTEAM-017-repository-audit.md#clean-shallow-checkout)).
 - **Portable binary:** the build targets the host CPU (`-mcpu=native`); `make ARCH_FLAGS=` builds a portable one.
 - **Without the store:** `SCRIBODO_STORE=off` runs on per-project files only.
@@ -148,7 +148,7 @@ visualisation.
 
 ## Testing
 
-`make test` runs the unit and regression suites; it needs no services. CI runs
+`make test` runs the unit and regression suites; it needs no services. Outside the development Mac, set `SCRIBODO_EVIDENCE_SKIP=1 SCRIBODO_YARDSTICK_SKIP=1`: the evidence archive and the test novels it also checks are not in the repository ([CONTRIBUTING](CONTRIBUTING.md#building-and-testing)). CI runs
 it with static analysis and both sanitizers on every push, and a self-hosted
 Mac runs the store, UI and crash suites as trusted acceptance.
 
@@ -171,7 +171,7 @@ make historybench # bounded DB history workload: bytes/rows and diagnostic perce
 make historysoak  # 500 samples/case; a short repeated workload, not an hours-long soak
 ```
 
-Every test runs under `tools/watchdog.sh`, so a hang is killed with its stack
+The test binaries run under `tools/watchdog.sh`, so a hang is killed with its stack
 saved to `build/hangs/` instead of stalling the run. [TESTING](docs/TESTING.md)
 covers every target, how the UI tests work, and what they can't cover.
 

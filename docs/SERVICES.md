@@ -31,7 +31,9 @@ script uses, in order:
 2. native, if a native store exists;
 3. Docker, if credentials exist without a native store, so a store kept in
    the containers is never replaced by an empty native one;
-4. native, when its binaries are installed.
+4. native, when its binaries are installed; otherwise Docker. A machine
+   missing either MariaDB 11.4 or the Qdrant binary therefore reports that
+   Docker isn't running.
 
 The native services do not start at login. Scribodo starts them when it
 opens, and again, at most once a minute, if the database stops while it runs.
@@ -55,8 +57,9 @@ containers to the native services.
   first.
 - It keeps the dump of the containers' store.
 - If anything fails, it puts both stores back as they were.
-- The failure path is rehearsed by `make servicestest`, and the Docker path
-  by `SCRIBODO_SERVICESTEST_DOCKER=1 make servicestest`.
+- `make servicestest` rehearses the move, including a load that fails and
+  rolls back, when Docker is running, and skips it with a message otherwise.
+  `SCRIBODO_SERVICESTEST_DOCKER=1` turns a missing Docker into a failure.
 
 ## Moving a project into the store
 

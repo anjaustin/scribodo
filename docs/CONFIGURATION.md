@@ -3,7 +3,7 @@
 Every setting has a working default; nothing here needs to be set to use Scribodo.
 These variables override where Scribodo finds its services, models and configuration
 files, and select the experiments kept in the tree for repeat measurement.
-`tools/experiment_arms.py` pins every experiment to a stated value in each measurement run
+`tools/experiment_arms.py` pins every experiment arm a measurement run leaves unset to a stated value, and records diagnostics and test hooks when set
 ([TESTING](TESTING.md#test-harness-environment-variables)).
 
 ## App, models and files

@@ -17,15 +17,18 @@ what each covers are in [TESTING](docs/TESTING.md). In short:
 | The UI | `make uitest` (needs an unlocked console) |
 | `tools/services.sh` or `tools/backup.sh` | `make servicestest backuptest`; for migration changes also `SCRIBODO_SERVICESTEST_DOCKER=1 make servicestest` with Docker running |
 
+- **Outside the development Mac,** set `SCRIBODO_EVIDENCE_SKIP=1 SCRIBODO_YARDSTICK_SKIP=1` for `make test` and `make sanitize`. They also check the local evidence archive and the observer's output on the untracked test novels, which are not in the repository; hosted CI skips both the same way.
 - **Gate on the exit status,** not on a summary line. A commit or a written claim that a target passes needs that target's exit status and its log.
 - **Run database gates one at a time.** `dbtest`, `crashtest` and `uitest-db` share the one local MariaDB; run concurrently they hang until the watchdog kills them.
 - **Never point a test at a real store.** Tests use throwaway databases, Compose projects and secrets folders; `tools/services.sh` takes `SCRIBODO_SECRETS` and the port variables for that ([CONFIGURATION](docs/CONFIGURATION.md#services)).
 - **Test data is public domain.** The test novels come from Project Gutenberg ([MEMORY-021](docs/MEMORY-021-real-manuscript.md)). Never commit or test with an author's own manuscript.
 
-CI runs the hosted suites on every push and pull request. The trusted
-acceptance suite runs on a self-hosted Mac, only for branches in this
-repository, so a pull request from a fork gets the hosted checks and a
-maintainer runs acceptance after review.
+CI runs the hosted suites on every push and pull request. Trusted
+acceptance runs on the owner's self-hosted Mac for pushes to `main`, the
+owner's own pull requests into `main`, weekly, and on manual dispatch. Other
+pull requests get the hosted checks only; acceptance runs once the change
+reaches `main`, or after the owner pushes it to a branch here and dispatches
+it.
 
 ## How changes are made
 
@@ -38,7 +41,7 @@ maintainer runs acceptance after review.
 
 - Every experiment flag is a field of `Experiments` in `src/core/experiments.h`, read once at startup, with its measured default stated beside it. No other code reads one from the environment.
 - Only `src/app/startup_env.c` writes the environment, before the first thread starts (`tests/test_env_writes.py`, `tests/test_env_symbols.py`).
-- Every `SCRIBODO_*` variable has a row in [CONFIGURATION](docs/CONFIGURATION.md) or in TESTING's harness table (`tests/test_config_documented.py`).
+- Every `SCRIBODO_*` variable the app reads (a literal in `src/`) has a row in [CONFIGURATION](docs/CONFIGURATION.md) or in TESTING's harness table (`tests/test_config_documented.py`). The services scripts' variables are listed in `tools/services.sh`'s header (`tests/test_service_defaults.py`).
 - **Delete nothing, only archive.** A concluded or failed experiment stays in the tree behind its flag, or moves into the measurement harness; it is never simply deleted ([MEMORY-015](docs/MEMORY-015-effective-memory-contract.md) §5).
 - A measurement states every experiment arm it ran with. `tools/experiment_arms.py` pins the arms a tool leaves unset.
 
@@ -50,7 +53,7 @@ A new column or migration touches more than a grep finds:
 - the legacy importer's `INSERT` (`src/app/store_import.c`) and the file store's JSON key (`chat_store.c`);
 - positional initialisers of the affected structs;
 - the schema pins in `tests/test_crash_points.c` (`LATEST_SCHEMA`, the receipt counts, `MIGRATION_STATEMENTS`) and `tests/test_db_core.c`;
-- the counts in [GAP-004](docs/GAP-004-interruption-matrix.md) and [LANDSCAPE](docs/LANDSCAPE.md) row 8.
+- the counts in [GAP-004](docs/GAP-004-interruption-matrix.md) and [LANDSCAPE](docs/LANDSCAPE.md) rows 8 and 9.
 
 Then run `make dbtest crashtest`.
 
