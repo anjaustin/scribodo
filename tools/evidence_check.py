@@ -110,19 +110,71 @@ def pattern_regex(path):
     return re.compile("".join(out) + r"(/.*)?$")
 
 
-def citations(root):
-    """(path, "file:line") for every cited build/ path, in file order."""
+# A relative name in backticks ("`gates-exit.txt`", "`restart-real-2/*`") inside a document that also cites a
+# directory: the file it names under that directory, when one exists there (journals cite a run directory once and
+# its files by name after that).
+RELATIVE = re.compile(r"`([A-Za-z0-9_.*?{},/-]+)`")
+
+
+def citations(root, build=None):
+    """(path, "file:line") for every cited build/ path, in file order, then each relative name that resolves to an
+    existing file under a directory the same document cites."""
     root = Path(root)
+    build = Path(build) if build else default_build(root)
+    allow = load_list(root / NOT_ARCHIVED, 2)
     files = sorted(root.glob("docs/*.md")) + sorted(root.glob("journal/*.md"))
     if (root / "README.md").exists():
         files.append(root / "README.md")
     found = []
     for f in files:
-        for n, line in enumerate(f.read_text(errors="replace").splitlines(), 1):
+        lines = f.read_text(errors="replace").splitlines()
+        cited_dirs = []
+        for n, line in enumerate(lines, 1):
             for m in CITE.finditer(line):
                 for p in normalize(m.group(0)):
                     found.append((p, "%s:%d" % (f.relative_to(root), n)))
+                    if not is_pattern(p) and (build / p[len("build/"):]).is_dir() and p not in cited_dirs \
+                            and not listed(p, allow):  # not a checkout or build tree named in prose
+                        cited_dirs.append(p)
+        if not cited_dirs:
+            continue
+        for n, line in enumerate(lines, 1):
+            for m in RELATIVE.finditer(line):
+                token = m.group(1)
+                if token.startswith(("build/", "/", "-", ".")) or not any(c in token for c in "./*"):
+                    continue
+                for t in expand_braces(token.rstrip(TRAILING)):
+                    for d in cited_dirs:
+                        candidate = d + "/" + t.rstrip("/")
+                        if candidate != d and denoted_files(candidate, build):
+                            found.append((candidate, "%s:%d" % (f.relative_to(root), n)))
     return found
+
+
+def default_build(root):
+    """The build/ that holds the evidence: the main checkout's, also from a git worktree (whose own build/ is nearly
+    empty), found through git's common directory; ROOT/build outside git."""
+    import subprocess
+    try:
+        common = subprocess.run(["git", "-C", str(root), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                                capture_output=True, text=True, timeout=10)
+        if common.returncode == 0 and common.stdout.strip():
+            return Path(common.stdout.strip()).parent / "build"
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return Path(root) / "build"
+
+
+def denoted_files(path, build):
+    """The existing files a citation denotes under build: the file itself, every file under a directory, every file
+    a glob or placeholder matches. Binaries, objects, debug symbols and sockets are left out."""
+    rel = path[len("build/"):]
+    tops = [build / rel] if not is_pattern(path) else sorted(build.glob(re.sub(r"<[^>]*>", "*", rel)))
+    out = []
+    for top in tops:
+        files = [top] if top.is_file() else (sorted(top.rglob("*")) if top.is_dir() else [])
+        out.extend(f for f in files if not f.is_dir() and not is_artifact(f))
+    return out
 
 
 def norm_member(name):
@@ -210,22 +262,25 @@ def under(path, dirs):
     return next((d for d in dirs if prefix == d or prefix.startswith(d + "/")), None)
 
 
+def file_archived(name, idx, allow):
+    return name in idx.exact or bool(listed(name, allow)) or any(name.startswith(p + "/") for p in idx.prefixes)
+
+
 def check(root, evidence, build=None):
-    """(violations, report rows, stale entries)."""
+    """(violations, report rows, stale entries, the build/ looked at)."""
     root = Path(root)
+    build = Path(build) if build else default_build(root)
     idx = Index(load_archives(evidence))
     allow = load_list(root / NOT_ARCHIVED, 2)
     lost = load_list(root / LOST, 2)
     owned = gate_owned_dirs(root)
-    build = Path(build) if build else root / "build"
     violations, rows = [], []
     used = set()
     seen = set()
-    for path, where in citations(root):
+    for path, where in citations(root, build):
         if (path, where) in seen:
             continue
         seen.add((path, where))
-        archived = idx.covers(path)
         gone = listed(path, lost)
         wiped = under(path, owned)
         not_ev = listed(path, allow)
@@ -233,14 +288,23 @@ def check(root, evidence, build=None):
             used.add(("lost", gone[0]))
         if not_ev:
             used.add(("allow", not_ev[0]))
+        exact_excuse = bool(not_ev) and not_ev[0].rstrip("/") == path
+        # What exists must be archived file by file: one archived file does not cover its directory (AUDIT-004 F1).
+        files = [] if not_ev else denoted_files(path, build)
+        missing = ["build/" + str(f.relative_to(build)) for f in files]
+        missing = [n for n in missing if not file_archived(n, idx, allow)]
+        archived = (bool(files) or idx.covers(path)) and not missing
         if archived:
             status = "archived"
+        elif missing:
+            status = "unarchived"
+            violations.append("%s: %s%s: %d existing file(s) under %s in no archive (%s%s); archive them "
+                              "(tools/evidence_check.py --unarchived)"
+                              % (where, path, " is recorded as lost but exists" if gone else "", len(missing), build,
+                                 ", ".join(missing[:3]), ", ..." if len(missing) > 3 else ""))
         elif gone:
             status = "lost"
-            here = build / path[len("build/"):]
-            if not is_pattern(path) and here.exists():
-                violations.append("%s: %s is recorded as lost but exists under %s; archive it" % (where, path, build))
-        elif wiped and not is_pattern(path) and not (not_ev and not_ev[0].rstrip("/") == path):
+        elif wiped and not is_pattern(path) and not exact_excuse:
             # Only an entry naming exactly this path (the gate's own directory named in prose) excuses it.
             status = "wiped"
             violations.append("%s: %s is under %s, which a gate deletes; archive it or record it as lost"
@@ -254,7 +318,7 @@ def check(root, evidence, build=None):
         rows.append((status, path, where))
     stale = ["%s: %s" % (NOT_ARCHIVED, e[0]) for e in allow if ("allow", e[0]) not in used]
     stale += ["%s: %s" % (LOST, e[0]) for e in lost if ("lost", e[0]) not in used]
-    return violations, rows, stale
+    return violations, rows, stale, build
 
 
 MACHO = (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\x7fELF")
@@ -274,29 +338,19 @@ def is_artifact(path):
 
 
 def unarchived_files(root, evidence, build=None):
-    """Every file under a cited path that exists, is in no archive, and is not declared not-evidence: the input of
-    the next archive pass (relative to the folder holding build/). Binaries, objects and sockets are left out."""
+    """Every existing file a citation denotes that is in no archive and not declared not-evidence: the input of the
+    next archive pass (relative to the folder holding build/). Binaries, objects and sockets are left out."""
     root = Path(root)
-    build = Path(build) if build else root / "build"
+    build = Path(build) if build else default_build(root)
     idx = Index(load_archives(evidence))
     allow = load_list(root / NOT_ARCHIVED, 2)
     out = set()
-    for path, _ in citations(root):
+    for path, _ in citations(root, build):
         if listed(path, allow):
             continue
-        rel = path[len("build/"):]
-        tops = [build / rel] if not is_pattern(path) else \
-            [p for p in build.glob(re.sub(r"<[^>]*>", "*", rel))]
-        for top in tops:
-            files = [top] if top.is_file() else (sorted(top.rglob("*")) if top.is_dir() else [])
-            for f in files:
-                if f.is_dir() or is_artifact(f):
-                    continue
-                name = "build/" + str(f.relative_to(build))
-                if name in idx.exact or listed(name, allow):
-                    continue
-                if any(name.startswith(pfx + "/") for pfx in idx.prefixes):
-                    continue
+        for f in denoted_files(path, build):
+            name = "build/" + str(f.relative_to(build))
+            if not file_archived(name, idx, allow):
                 out.add(name)
     return sorted(out)
 
@@ -305,7 +359,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--root", default=str(Path(__file__).resolve().parents[1]))
     ap.add_argument("--evidence", default=os.environ.get("SCRIBODO_EVIDENCE_DIR", str(DEFAULT_EVIDENCE)))
-    ap.add_argument("--build", help="where cited paths would exist (default ROOT/build)")
+    ap.add_argument("--build", help="where cited paths exist (default the main checkout's build/, also from a worktree)")
     ap.add_argument("--list", action="store_true", help="print every citation with its status")
     ap.add_argument("--unarchived", action="store_true",
                     help="print every existing file under a cited path that no archive holds (the next archive pass)")
@@ -318,7 +372,7 @@ def main(argv=None):
         for name in unarchived_files(a.root, a.evidence, a.build):
             print(name)
         return 0
-    violations, rows, stale = check(a.root, a.evidence, a.build)
+    violations, rows, stale, build = check(a.root, a.evidence, a.build)
     if a.list:
         for status, path, where in rows:
             print("%-13s %s\t%s" % (status, path, where))
@@ -331,9 +385,10 @@ def main(argv=None):
     if violations:
         for v in violations:
             print(v)
-        print("evidence_check: %d violation(s) over %d citations (%s)" % (len(violations), len(rows), summary))
+        print("evidence_check: %d violation(s) over %d citations (%s); files looked for under %s"
+              % (len(violations), len(rows), summary, build))
         return 1
-    print("evidence_check: %d citations: %s" % (len(rows), summary))
+    print("evidence_check: %d citations: %s; files looked for under %s" % (len(rows), summary, build))
     return 0
 
 

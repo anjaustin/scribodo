@@ -98,6 +98,47 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn("3 archived", out)
 
+    def test_one_archived_file_does_not_cover_its_directory(self):
+        # The red-team case: build/observer/old archived, build/observer cited, build/observer/new unarchived.
+        t = self.tree(docs="`build/observer`\n", tarballs={"scribodo-evidence-a": ["build/observer/old/log.txt"]})
+        write(t.build / "observer/old/log.txt", "archived")
+        write(t.build / "observer/new/result.json", "{}")
+        code, out = t.run()
+        self.assertEqual(code, 1, out)
+        self.assertIn("build/observer: 1 existing file(s)", out)
+        self.assertIn("build/observer/new/result.json", out)
+        write(t.build / "observer/new/result.json", "")  # still there: still a violation
+        (t.build / "observer/new/result.json").unlink()
+        self.assertEqual(t.run()[0], 0)
+
+    def test_a_glob_citation_needs_every_match_archived(self):
+        t = self.tree(docs="`build/g/gates-*.log`\n", tarballs={"scribodo-evidence-a": ["build/g/gates-test.log"]})
+        write(t.build / "g/gates-test.log", "x")
+        write(t.build / "g/gates-tsan.log", "x")
+        code, out = t.run()
+        self.assertEqual(code, 1)
+        self.assertIn("build/g/gates-tsan.log", out)
+
+    def test_relative_names_resolve_under_a_cited_directory(self):
+        t = self.tree(journal="Runs in `build/gap003`.\nThe exit codes are in `gates-exit.txt`; `series-real-3/*` too.\n"
+                              "`missing.txt` and `x.y` name nothing there.\n",
+                      tarballs={"scribodo-evidence-a": ["build/gap003/soak.log"]})
+        write(t.build / "gap003/soak.log", "x")
+        write(t.build / "gap003/gates-exit.txt", "0")
+        write(t.build / "gap003/series-real-3/run-1.log", "x")
+        code, out = t.run("--list")
+        self.assertEqual(code, 1)
+        self.assertIn("journal/step.md:2: build/gap003/gates-exit.txt", out)
+        self.assertIn("journal/step.md:2: build/gap003/series-real-3/*", out)
+        self.assertNotIn("missing.txt", out)
+        code, out = t.run("--unarchived")
+        self.assertEqual(out.split(), ["build/gap003/gates-exit.txt", "build/gap003/series-real-3/run-1.log"])
+
+    def test_the_build_folder_looked_at_is_reported(self):
+        t = self.tree(docs="nothing\n")
+        code, out = t.run()
+        self.assertIn("files looked for under %s" % t.build, out)
+
     def test_tarball_listing_is_exact(self):
         # The manifest says the whole directory; the tarball holds one file. The tarball wins.
         t = self.tree(docs="`build/run/a.json` `build/run/b.json` `build/run`\n",
