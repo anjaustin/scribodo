@@ -112,7 +112,7 @@ class ProductTableTests(unittest.TestCase):
     def test_every_flag_of_the_product_table_is_found(self):
         header = (ROOT / "src/core/experiments.h").read_text()
         struct = header[header.index("typedef struct"):header.index("} Experiments;")]
-        fields = re.findall(r"^\s*bool\s+([a-z_]+);", struct, re.M)
+        fields = re.findall(r"^\s*[A-Za-z_]+\s+([a-z_]+);", struct, re.M)  # bool, int and enum fields alike
         source = (ROOT / "src/core/experiments.c").read_text()
         initialised = re.findall(r"\.([a-z_]+)\s*=", source[source.index("read_environment"):])
         self.assertEqual(sorted(fields), sorted(initialised))
@@ -120,6 +120,9 @@ class ProductTableTests(unittest.TestCase):
         self.assertIn("SCRIBODO_ANSWER_PIPELINE", names)
         self.assertIn("SCRIBODO_MEMORY_EXPERIMENT", names)
         self.assertEqual(dict(ea.arms())["SCRIBODO_ANSWER_PIPELINE"], "1")  # default on since 52d44fe
+        kinds = {v: k for v, k, _ in ea.classify()}
+        if "SCRIBODO_FAKE_EXTRACT_MS" in kinds:  # merged from remed/observer: a test hook, never pinned
+            self.assertEqual(kinds["SCRIBODO_FAKE_EXTRACT_MS"], "hook")
 
 
 class ObserverBranchTests(unittest.TestCase):
