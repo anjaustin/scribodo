@@ -324,6 +324,92 @@ static void test_failure_reported_once(void)
     draft_controller_destroy(&d);
 }
 
+/* A folder whose drafts can be made to fail and succeed again for the same document (writes need the folder). */
+static void make_guarded_doc(char *dir, size_t dirlen, char *doc, size_t doclen, const char *name)
+{
+    snprintf(dir, dirlen, "%s/guarded-%s", g_dir, name);
+    CHECK(mkdir(dir, 0755) == 0);
+    snprintf(doc, doclen, "%s/%s", dir, name);
+    FILE *f = fopen(doc, "wb");
+    if (f) {
+        fputs("saved\n", f);
+        fclose(f);
+    }
+}
+
+/* A success re-arms the report on its own, with no discard after it (red team: the old test hid this). */
+static void test_success_rearms_report(void)
+{
+    char dir[700], doc[800];
+    make_guarded_doc(dir, sizeof(dir), doc, sizeof(doc), "l.md");
+    DraftController d;
+    draft_controller_init(&d);
+    int error = 0;
+    TextSource src = { "one", 0 };
+    chmod(dir, 0555);
+    CHECK(tick_wait(&d, doc, true, 10.0, &src) && !d.path[0]);
+    CHECK(draft_controller_take_failure(&d, &error));
+    chmod(dir, 0755);
+    src.text = "two";
+    CHECK(tick_wait(&d, doc, true, 20.0, &src) && d.path[0]); /* the success */
+    chmod(dir, 0555);
+    src.text = "three";
+    CHECK(tick_wait(&d, doc, true, 30.0, &src));
+    chmod(dir, 0755);
+    CHECK(draft_controller_take_failure(&d, &error)); /* a new run */
+    draft_controller_discard(&d);
+    draft_controller_destroy(&d);
+}
+
+/* With no draft on disk (a failed first write), a save, another document or a load still starts a new run
+ * (red team: each of these was silent). */
+static void test_failure_runs_without_a_draft(void)
+{
+    char dir_a[700], doc_a[800], dir_b[700], doc_b[800];
+    make_guarded_doc(dir_a, sizeof(dir_a), doc_a, sizeof(doc_a), "m.md");
+    make_guarded_doc(dir_b, sizeof(dir_b), doc_b, sizeof(doc_b), "n.md");
+    chmod(dir_a, 0555);
+    chmod(dir_b, 0555);
+    DraftController d;
+    draft_controller_init(&d);
+    int error = 0;
+    TextSource src = { "one", 0 };
+    CHECK(tick_wait(&d, doc_a, true, 10.0, &src) && draft_controller_take_failure(&d, &error));
+    CHECK(!d.path[0] && !d.busy);
+    CHECK(!tick_wait(&d, doc_a, false, 11.0, &src)); /* saved: clean */
+    src.text = "two";
+    CHECK(tick_wait(&d, doc_a, true, 21.0, &src));
+    CHECK(draft_controller_take_failure(&d, &error)); /* fail, save, fail: reported again */
+    src.text = "three";
+    CHECK(tick_wait(&d, doc_b, true, 31.0, &src));
+    CHECK(draft_controller_take_failure(&d, &error)); /* fail on A, then on B: reported */
+    draft_controller_before_load(&d, doc_b, true);
+    src.text = "four";
+    CHECK(tick_wait(&d, doc_b, true, 41.0, &src));
+    CHECK(draft_controller_take_failure(&d, &error)); /* a load starts a new run */
+    src.text = "five";
+    CHECK(tick_wait(&d, doc_b, true, 51.0, &src));
+    CHECK(!draft_controller_take_failure(&d, &error)); /* still once per run */
+    chmod(dir_a, 0755);
+    chmod(dir_b, 0755);
+    draft_controller_destroy(&d);
+}
+
+/* Loading while the draft belongs to another document: the draft goes, dirty or not. */
+static void test_load_discards_other_documents_draft(void)
+{
+    char doc[700], other[700];
+    make_doc(doc, sizeof(doc), "o.md");
+    make_doc(other, sizeof(other), "p.md");
+    DraftController d;
+    draft_controller_init(&d);
+    TextSource src = { "unsaved o\n", 0 };
+    CHECK(tick_wait(&d, doc, true, 10.0, &src) && d.path[0]);
+    draft_controller_before_load(&d, other, true);
+    CHECK(!d.path[0] && !d.doc[0] && count_drafts(g_dir, "o.md.scribodo-") == 0);
+    draft_controller_destroy(&d);
+}
+
 static void rm_rf(const char *dir)
 {
     DIR *d = opendir(dir);
@@ -359,6 +445,9 @@ int main(void)
         { "quit_while_writing", test_quit_while_writing },
         { "load_while_writing", test_load_while_writing },
         { "failure_reported_once", test_failure_reported_once },
+        { "success_rearms_report", test_success_rearms_report },
+        { "failure_runs_without_a_draft", test_failure_runs_without_a_draft },
+        { "load_discards_other_documents_draft", test_load_discards_other_documents_draft },
     };
     int rc = run_tests(tests, sizeof(tests) / sizeof(tests[0]));
     rm_rf(g_dir);

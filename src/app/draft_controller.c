@@ -60,8 +60,11 @@ static void adopt(DraftController *draft)
         draft->failing = false;
         return;
     }
-    if (!draft->failing) { /* reported once per run of failures */
+    /* Reported once per run of failures of one document: a failure on another document is a new run (the first
+     * failed write leaves the controller owning no document, so the tick's switch rule cannot see the change). */
+    if (!draft->failing || strcmp(draft->failing_doc, w->doc) != 0) {
         draft->failing = true;
+        snprintf(draft->failing_doc, sizeof(draft->failing_doc), "%s", w->doc);
         draft->failure_unread = true;
         draft->failure_error = w->error;
     }
@@ -85,6 +88,7 @@ void draft_controller_set_write_hook(DraftController *draft, DraftWriteHook hook
 void draft_controller_before_load(DraftController *draft, const char *doc, bool dirty)
 {
     draft_controller_wait(draft);
+    draft->failing = false; /* a load starts a new run of failures */
     if (!doc || !dirty || (draft->doc[0] && strcmp(draft->doc, doc) != 0)) {
         if (draft->path[0]) draft_controller_discard(draft);
     }
@@ -122,6 +126,7 @@ bool draft_controller_tick(DraftController *draft, const char *doc, bool dirty, 
 {
     (void)draft_controller_poll(draft);
     if (!doc || !dirty || (draft->doc[0] && strcmp(draft->doc, doc) != 0)) {
+        draft->failing = false; /* saved, closed or switched: a later failure is a new run, draft or no draft */
         if (draft->path[0] || (draft->busy && !draft->discard_pending)) draft_controller_discard(draft);
         return false;
     }

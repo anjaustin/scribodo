@@ -266,3 +266,33 @@ Gates on `2c34003` (exit status read from the shell):
 | `make uitest` | not run here; the coordinator runs it after merge |
 
 Every item ran `make test` (exit 0) before its commit.
+
+## Second red-team pass (one commit)
+
+The coordinator verified items 1, 3, 4 and 5 closed (uitest 409/409 on `e2615b8`). Still open: item 2, missing tests,
+and a way around the environment guard.
+
+- **Failure reporting re-arm.** `failing` was cleared only by a success or by `discard`, and `discard` runs only when
+  a draft file exists or a write is in flight. After a failed first write, which leaves no draft, a save or a
+  document switch left `failing` set. Fail, save, fail was silent, and so was fail on A then fail on B. Now the
+  tick's clean/closed/switched branch and `draft_controller_before_load` clear `failing` unconditionally. Because a
+  failed first write leaves the controller owning no document, the switch branch cannot see a change of document;
+  `adopt` therefore also starts a new run when the failing document differs (`failing_doc`).
+- **Tests added**, each checked to fail when the line it guards is removed:
+  - `success_rearms_report`: fail, then succeed with no discard, then fail on the same document. Writes fail through
+    a folder made read-only, so it is the same document every time.
+  - `failure_runs_without_a_draft`: fail, save, fail; fail on A, then on B; a load re-arms; still once per run.
+  - `load_discards_other_documents_draft`: `before_load` with the draft on another document.
+  - `tests/test_draft_call_sites.py`, a static check: `doc_recover_strays` is called only in `editor_load_file`;
+    `open_path` is the only caller of `editor_load_file`; it calls `draft_controller_before_load` first. Removing the
+    call fails it.
+- **Object-level environment guard.** `tests/test_env_symbols.py` runs `nm -u` over every product object
+  (`CORE_OBJS`, `LLM_OBJS`, `APP_OBJS`) and fails if any object other than `startup_env.o` references `setenv`,
+  `unsetenv`, `putenv` or `_NSGetEnviron`. It also checks that it sees `startup_env.o`'s own `_setenv`, so it cannot
+  pass by finding nothing. `make test` now depends on those objects and runs it after the unit binaries. A scratch
+  object that token-pastes `set##env` fails it. `dlsym("setenv")` still evades both checks; nothing in `src/` calls
+  `dlsym`.
+
+Gates on this commit (exit status read): `make test` 0, `make sanitize` 0 (the symbol guard ran over the ASan objects
+too), `make tsan` 0, `make analyze` 0, "0 warnings across 97 source files". Analyze was run after `pgrep -fl "clang
+--analyze"` returned 1; on the first try another stream's analyze was running, so it waited.

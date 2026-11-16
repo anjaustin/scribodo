@@ -290,13 +290,16 @@ MEMORY_VECTORS_FAULT_SRCS := $(CORE_SRCS) $(filter-out src/app/memory_gc.c,$(LLM
 $(BUILD)/test_memory_vectors_faults: $(MEMORY_VECTORS_FAULT_SRCS) $(wildcard src/core/*.h src/app/*.h src/llm/*.h) tests/fault_alloc.h $(BUILD)/tests/fault_alloc.o | $(MARIADB_LIB)
 	$(CC) $(CFLAGS) $(INCLUDES) -include tests/fault_alloc.h $(MEMORY_VECTORS_FAULT_SRCS) $(BUILD)/tests/fault_alloc.o -o $@ $(MARIADB_LIBS) -lpthread
 
-test: $(TESTS)
+# The product's objects are built too: the environment-write guard reads their symbols (tests/test_env_symbols.py).
+test: $(TESTS) $(CORE_OBJS) $(LLM_OBJS) $(APP_OBJS)
 	@set -e; for t in $(TESTS); do echo "== $$t"; $(WATCHDOG) $(TEST_TIMEOUT) $$(basename $$t) ./$$t; echo; done
+	$(WATCHDOG) $(TEST_TIMEOUT) test_env_symbols python3 tests/test_env_symbols.py $(CORE_OBJS) $(LLM_OBJS) $(APP_OBJS)
 	$(WATCHDOG) $(TEST_TIMEOUT) test_backup python3 tests/test_backup.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_frame_soak python3 tests/test_frame_soak.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_manuscript_series python3 tests/test_manuscript_series.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_power_source python3 tests/test_power_source.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_env_writes python3 tests/test_env_writes.py
+	$(WATCHDOG) $(TEST_TIMEOUT) test_draft_call_sites python3 tests/test_draft_call_sites.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_sysmem_sample python3 tests/test_sysmem_sample.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_observer_faults python3 tests/test_observer_faults.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_observer_judge_score python3 tests/test_observer_judge_score.py
