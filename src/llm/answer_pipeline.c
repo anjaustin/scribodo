@@ -1,6 +1,7 @@
 #define _DARWIN_C_SOURCE
 #include "llm/answer_pipeline.h"
 #include "core/experiments.h"
+#include "core/text_rules.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -396,14 +397,13 @@ static bool in_any(const char *token_norm, const char *const *texts, size_t n)
  * same anchor. Returns the digit string for a number word, else NULL. */
 static const char *number_word(const char *w)
 {
-    static const char *const k[] = { "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
-        "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty" };
+    const char *const *k = TEXT_NUMBER_WORDS; /* zero..twenty */
     static const char *const d[] = { "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15",
         "16", "17", "18", "19", "20" };
-    static const char *const tens[] = { "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety" };
+    const char *const *tens = TEXT_TENS_WORDS + 1; /* thirty..ninety */
     static const char *const tensd[] = { "30", "40", "50", "60", "70", "80", "90" };
-    for (size_t i = 0; i < sizeof(k) / sizeof(k[0]); i++) if (!strcmp(w, k[i])) return d[i];
-    for (size_t i = 0; i < sizeof(tens) / sizeof(tens[0]); i++) if (!strcmp(w, tens[i])) return tensd[i];
+    for (size_t i = 0; i < TEXT_COUNT(TEXT_NUMBER_WORDS); i++) if (!strcmp(w, k[i])) return d[i];
+    for (size_t i = 0; i < TEXT_COUNT(tensd); i++) if (!strcmp(w, tens[i])) return tensd[i];
     return NULL;
 }
 
@@ -411,9 +411,7 @@ static const char *number_word(const char *w)
  * across calls, so callers copy before the next call. */
 static const char *digit_word(const char *digits)
 {
-    static const char *const k[] = { "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
-        "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty" };
-    static const char *const tens[] = { "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety" };
+    const char *const *k = TEXT_NUMBER_WORDS, *const *tens = TEXT_TENS_WORDS;
     static char compound[32];
     char *end;
     long v = strtol(digits, &end, 10);
@@ -427,7 +425,7 @@ static const char *digit_word(const char *digits)
 /* "twenty seven" (normalized) or "twenty-seven" to "27"; single words via number_word. Static buffer as above. */
 static const char *compound_number(const char *w)
 {
-    static const char *const tens[] = { "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety" };
+    const char *const *tens = TEXT_TENS_WORDS;
     static char digits[8];
     const char *single = number_word(w);
     if (single) return single;
@@ -457,14 +455,14 @@ static bool contains_word(const char *text_norm, const char *needle)
 
 static bool tens_word(const char *w, size_t n)
 {
-    static const char *const k[] = { "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety" };
+    const char *const *k = TEXT_TENS_WORDS;
     for (size_t i = 0; i < 8; i++) if (strlen(k[i]) == n && !strncmp(w, k[i], n)) return true;
     return false;
 }
 
 static bool units_word(const char *w, size_t n)
 {
-    static const char *const k[] = { "one", "two", "three", "four", "five", "six", "seven", "eight", "nine" };
+    const char *const *k = TEXT_NUMBER_WORDS + 1; /* one..nine */
     for (size_t i = 0; i < 9; i++) if (strlen(k[i]) == n && !strncmp(w, k[i], n)) return true;
     return false;
 }
@@ -829,11 +827,6 @@ size_t answer_quotations(const char *reply, const char *const *spans, size_t nsp
  * recorded replies both must agree on. Patterns are matched on the reply's prose (quotations and blockquote lines
  * removed), sentence by sentence, in pattern order, left to right, as the arm's regular expressions do. */
 
-static const char *const k_rel_kin[] = { "father", "mother", "son", "daughter", "sister", "sisters", "brother", "brothers",
-                                         "wife", "husband", "friend", "estate", "fortune", "inheritance", "property",
-                                         "nephew", "niece", "cousin", "cousins", "uncle", "aunt", "grandfather", "grandmother",
-                                         "grandson", "granddaughter", "widow", "heir" };
-static const char *const k_rel_honorific[] = { "Mr.", "Mrs.", "Miss", "Dr.", "Sir", "Lady" };
 static const char *const k_rel_not_names[] = { "The", "This", "That", "These", "Those", "It", "So", "If", "Let", "However",
                                                "According", "From", "Based", "Source", "Sources", "Summary", "Answer", "Current",
                                                "Older", "Correction", "Note", "Verified", "Neither", "Both", "Also", "And", "But",
@@ -841,9 +834,8 @@ static const char *const k_rel_not_names[] = { "The", "This", "That", "These", "
                                                "We", "You", "Who", "Whose", "What", "Which", "When", "Where", "Why", "How", "Yes", "No",
                                                "Here", "There", "Then", "Thus", "Now" };
 static const char *const k_rel_negation[] = { "not", "never", "neither", "nor", "wrong", "instead", "isn't", "aren't", "wasn't" };
-
-static bool rel_word_char(char c) { return isalnum((unsigned char)c) || c == '_'; }
-static bool rel_boundary(const char *s, size_t i) { return i == 0 || !rel_word_char(s[i - 1]); }
+/* The kin and possession words, the name honorifics and the word-character rule are src/core/text_rules.h's
+ * (TEXT_RELATION_WORDS, TEXT_NAME_HONORIFICS, text_word_char), the same lists the arm's KIN and NAME carry. */
 
 /* The reply without blockquote lines and without the text between a pair of double quotes on one line (straight
  * pairs first, then curly), each replaced by one space: the quotation check's territory. */
@@ -893,8 +885,8 @@ static char *rel_prose(const char *reply_text)
 
 /* The next sentence of `text` from `*pos`: [start, end) or false when none is left. A sentence ends at a run of
  * newlines, or at [.!?] followed by whitespace unless the period closes a title or an initial, each at a word
- * boundary: the observer's titles and rule, so "Ms. Bennet" and "James K. Powell" are not cut in two (AUDIT-004 F10;
- * measured on 670 recorded replies, no sentence changed: journal/audit004-text.md). */
+ * boundary (text_abbreviation_before): the observer's titles and rule, so "Ms. Bennet" and "James K. Powell" are not
+ * cut in two (AUDIT-004 F10; measured on 670 recorded replies, no sentence changed: journal/audit004-text.md). */
 static bool rel_next_sentence(const char *text, size_t *pos, size_t *start, size_t *end)
 {
     size_t n = strlen(text), i = *pos;
@@ -903,17 +895,7 @@ static bool rel_next_sentence(const char *text, size_t *pos, size_t *start, size
         size_t s = i;
         while (i < n && text[i] != '\n') {
             if ((text[i] == '.' || text[i] == '!' || text[i] == '?') && i + 1 < n && isspace((unsigned char)text[i + 1])) {
-                bool honorific = false;
-                if (text[i] == '.') {
-                    static const char *const h[] = { "Mr", "Mrs", "Ms", "Dr", "St", "Capt", "Col", "Lt", "Gen", "Prof",
-                                                     "Sgt", "Jr", "Sr", "Rev", "Hon" };
-                    honorific = i >= 1 && text[i - 1] >= 'A' && text[i - 1] <= 'Z' && rel_boundary(text, i - 1); /* an initial */
-                    for (size_t k = 0; k < sizeof(h) / sizeof(h[0]) && !honorific; k++) {
-                        size_t hl = strlen(h[k]);
-                        honorific = i >= hl && !strncmp(text + i - hl, h[k], hl) && rel_boundary(text, i - hl);
-                    }
-                }
-                if (!honorific) { i++; break; }
+                if (!(text[i] == '.' && text_abbreviation_before(text, i))) { i++; break; }
             }
             i++;
         }
@@ -929,10 +911,10 @@ static bool rel_next_sentence(const char *text, size_t *pos, size_t *start, size
 static bool rel_negated(const char *s, size_t len)
 {
     for (size_t i = 0; i < len; i++) {
-        if (!rel_boundary(s, i)) continue;
+        if (!text_word_boundary(s, i)) continue;
         for (size_t k = 0; k < sizeof(k_rel_negation) / sizeof(k_rel_negation[0]); k++) {
             size_t wl = strlen(k_rel_negation[k]);
-            if (i + wl <= len && !strncasecmp(s + i, k_rel_negation[k], wl) && (i + wl == len || !rel_word_char(s[i + wl]))) return true;
+            if (i + wl <= len && !strncasecmp(s + i, k_rel_negation[k], wl) && (i + wl == len || !text_word_char(s[i + wl]))) return true;
         }
     }
     return false;
@@ -1000,9 +982,9 @@ static size_t rel_name_ends(const char *s, size_t len, size_t i, size_t ends[REL
         size_t j = i;
         if (path == 0) {
             bool found = false;
-            for (size_t k = 0; k < sizeof(k_rel_honorific) / sizeof(k_rel_honorific[0]) && !found; k++) {
-                size_t hl = strlen(k_rel_honorific[k]);
-                if (i + hl < len && !strncmp(s + i, k_rel_honorific[k], hl) && s[i + hl] == ' ') { j = i + hl + 1; found = true; }
+            for (size_t k = 0; k < TEXT_COUNT(TEXT_NAME_HONORIFICS) && !found; k++) {
+                size_t hl = strlen(TEXT_NAME_HONORIFICS[k]);
+                if (i + hl < len && !strncmp(s + i, TEXT_NAME_HONORIFICS[k], hl) && s[i + hl] == ' ') { j = i + hl + 1; found = true; }
             }
             if (!found) continue;
         }
@@ -1025,9 +1007,9 @@ static size_t rel_name_ends(const char *s, size_t len, size_t i, size_t ends[REL
 /* A kin word at i (lowercase, whole word): its length, or 0. */
 static size_t rel_kin(const char *s, size_t len, size_t i)
 {
-    for (size_t k = 0; k < sizeof(k_rel_kin) / sizeof(k_rel_kin[0]); k++) {
-        size_t kl = strlen(k_rel_kin[k]);
-        if (i + kl <= len && !strncmp(s + i, k_rel_kin[k], kl) && (i + kl == len || !rel_word_char(s[i + kl]))) return kl;
+    for (size_t k = 0; k < TEXT_COUNT(TEXT_RELATION_WORDS); k++) {
+        size_t kl = strlen(TEXT_RELATION_WORDS[k]);
+        if (i + kl <= len && !strncmp(s + i, TEXT_RELATION_WORDS[k], kl) && (i + kl == len || !text_word_char(s[i + kl]))) return kl;
     }
     return 0;
 }
@@ -1042,9 +1024,9 @@ static bool rel_lit(const char *s, size_t len, size_t i, const char *lit)
 static bool rel_real_name(const char *name, size_t len)
 {
     size_t i = 0;
-    for (size_t k = 0; k < sizeof(k_rel_honorific) / sizeof(k_rel_honorific[0]); k++) {
-        size_t hl = strlen(k_rel_honorific[k]);
-        if (len > hl && !strncmp(name, k_rel_honorific[k], hl) && name[hl] == ' ') { i = hl + 1; break; }
+    for (size_t k = 0; k < TEXT_COUNT(TEXT_NAME_HONORIFICS); k++) {
+        size_t hl = strlen(TEXT_NAME_HONORIFICS[k]);
+        if (len > hl && !strncmp(name, TEXT_NAME_HONORIFICS[k], hl) && name[hl] == ' ') { i = hl + 1; break; }
     }
     size_t j = i;
     while (j < len && name[j] != ' ') j++;
@@ -1061,7 +1043,7 @@ static bool rel_match_at(const char *s, size_t len, size_t i, int which, RelMatc
     size_t ends[REL_MAX_ENDS], n;
     memset(m, 0, sizeof(*m));
     m->start = i;
-    if (!rel_boundary(s, i)) return false;
+    if (!text_word_boundary(s, i)) return false;
     if (which == 1) { /* KIN of NAME */
         size_t kl = rel_kin(s, len, i);
         if (!kl || !rel_lit(s, len, i + kl, " of ")) return false;
@@ -1228,19 +1210,12 @@ size_t answer_relations(const char *reply, const char *const *spans, size_t nspa
 
 /* ---- question parts and slot assignment (cycle 3) ----------------------- */
 
-static bool word_char(char c) { return isalnum((unsigned char)c) || c == '_'; }
 static bool space_char(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v'; }
 
 /* The period at `dot` ends an honorific ("Mr. Bennet"), not a sentence. */
 static bool honorific_period(const char *start, const char *dot)
 {
-    static const char *const k[] = { "Mr", "Mrs", "Ms", "Dr", "St" };
-    for (size_t i = 0; i < sizeof(k) / sizeof(k[0]); i++) {
-        size_t n = strlen(k[i]);
-        if ((size_t)(dot - start) < n || strncmp(dot - n, k[i], n)) continue;
-        if ((size_t)(dot - start) == n || !word_char(*(dot - n - 1))) return true;
-    }
-    return false;
+    return text_title_before(start, (size_t)(dot - start), TEXT_TITLES_QUESTION, TEXT_COUNT(TEXT_TITLES_QUESTION));
 }
 
 static char *trimmed_copy(const char *s, size_t n)
@@ -1290,7 +1265,7 @@ static const char *conjunction(const char *s, const char **cut)
         while (space_char(*k)) k++;
         for (size_t i = 0; i < sizeof(wh) / sizeof(wh[0]); i++) {
             size_t n = strlen(wh[i]);
-            if (!strncasecmp(k, wh[i], n) && !word_char(k[n])) { *cut = p; return k; }
+            if (!strncasecmp(k, wh[i], n) && !text_word_char(k[n])) { *cut = p; return k; }
         }
     }
     return NULL;

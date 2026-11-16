@@ -97,3 +97,47 @@ closed. Reproduce: `python3 -I build/audit004-text/item2/rel_measure.py <worktre
 **Gates.** Item 1 commit (`85c2e19`), the other items' changes stashed: `make test` exit 0, `make analyze` exit 0 (0
 warnings, 87 files), `make sanitize` exit 0 (`build/audit004-text/item1-{test,analyze,sanitize}.{log,exit}`). Item 2:
 below.
+Item 2 commit (`275688e`), items 3 and 4 stashed: `make test` exit 0, `make analyze` exit 0, `make sanitize` exit 0
+(`build/audit004-text/item2-*.{log,exit}`).
+
+## Item 3: F10 consolidation, one home for the text rules
+
+**Module.** `src/core/text_rules.{h,c}` (in `CORE_SRCS`, and in the context planner's headless test sources):
+`text_word_char` / `text_word_boundary` (ASCII \w and \b), `text_is_initial`, `text_title_before(s, dot, titles, n)`,
+`text_abbreviation_before(s, dot)` (the sentence rule: a `TEXT_TITLES` title or an initial at a word boundary),
+`text_word_in_folded`, and named lists: `TEXT_TITLES` (the fifteen of the observer and, since item 2, the relation
+check), `TEXT_TITLES_QUESTION` (Mr Mrs Ms Dr St: the question splitter as measured), `TEXT_TITLES_EXCERPT` (the
+context planner's eight, folded), `TEXT_NAME_HONORIFICS` (the relation NAME prefix, pinned to the arm),
+`TEXT_RELATION_WORDS` (the relation check's 27, pinned to the arm's KIN), `TEXT_NUMBER_WORDS` (zero to twenty),
+`TEXT_TENS_WORDS` (twenty to ninety), and, for the observer stream to adopt, `TEXT_OBSERVER_KIN_WORDS` and
+`TEXT_OBSERVER_NUMBER_WORDS` (copies of `observer_text.c`'s frozen lists, NULL-terminated as there; until adopted
+they are copies, and `observer_text.c`'s `abbreviation()` / `obs_first_sentence` titles equal `TEXT_TITLES`, the
+first case-folded). Different lists were not merged: each module keeps exactly the list it was measured with.
+
+**Migrated.** `answer_pipeline.c`: the three title lists (relation splitter -> `text_abbreviation_before`; question
+splitter `honorific_period` -> `text_title_before(..., TEXT_TITLES_QUESTION)`; relation names ->
+`TEXT_NAME_HONORIFICS`), the two identical word-character functions (`rel_word_char`, `word_char`) and `rel_boundary`
+-> `text_word_char` / `text_word_boundary`, the kin list -> `TEXT_RELATION_WORDS`, the six number-word arrays in
+`number_word`, `digit_word`, `compound_number`, `tens_word`, `units_word` -> `TEXT_NUMBER_WORDS` / `TEXT_TENS_WORDS`
+(slices where a function used a sub-range). `context_planner.c`: the excerpt splitter's eight-way `strcmp` ->
+`text_word_in_folded(..., TEXT_TITLES_EXCERPT)`. Not touched: `observer*.c` (another stream), `context_planner.c`'s
+stop-word list (a stop list, not a title rule), `k_rel_not_names`, `k_rel_negation`.
+
+**Byte-identical, proved.**
+
+- End to end: a probe linked against the product objects, old (`answer_pipeline.c` at `275688e`) and new, over 5,220
+  inputs (the 670 recorded replies with their spans, turns and questions, and 4,550 manuscript paragraphs of the
+  three novels, each with the previous paragraph as span and a random paragraph as question), printing
+  `answer_relations`, `answer_question_parts` of the question and of the reply text, `answer_gate` (the number
+  words) and `answer_quotations`: the two outputs are identical (`cmp`, 6,016,128 bytes;
+  `build/audit004-text/item3/`).
+- Function level (`item3/rules_fuzz.c`): the old inline rules against the shared functions at every period of the
+  manuscripts (chapters and the full source texts, 18,838 periods), at 675,957 periods of 2,000,000 random strings
+  over title letters, initials, digits, underscore, a UTF-8 letter and newline, and every byte value for the
+  word-character rule: 0 differences for the relation rule, the question rule, the excerpt rule and the
+  word-character rule; the number, tens, kin and honorific lists equal the old arrays element for element.
+- The existing tests: `test_answer_pipeline` (299 checks, including the C/arm parity over the 230-row fixture),
+  `test_context_planner`, and a new `test_core` `text_rules` case.
+
+No `setlocale` call exists in the tree, so the old `isalnum` was the C locale's ASCII rule, which `text_word_char`
+now states without depending on the locale.

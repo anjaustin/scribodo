@@ -11,6 +11,7 @@
 #include "../src/core/experiments.h"
 #include "../src/core/recall_terms.h"
 #include "../src/core/text_cut.h"
+#include "../src/core/text_rules.h"
 #include "../src/app/frame_view_model.h"
 #include "test_util.h"
 
@@ -616,9 +617,33 @@ static void test_text_cut(void)
     CHECK(text_cut("\xF0\x9F\x90\x8B rest", 2) == 0);
 }
 
+/* The shared text rules (AUDIT-004 F10): a title or an initial before a period, at a word boundary. */
+static void test_text_rules(void)
+{
+    const char *t = "Ms. Bennet met James K. Powell and Capt. Kidd. Then I. xMr. 3K. Mrs. mr. Sir.";
+    size_t dots[16], nd = 0;
+    for (size_t i = 0; t[i] && nd < 16; i++) if (t[i] == '.') dots[nd++] = i;
+    CHECK(nd == 10); /* Ms K Capt Kidd I xMr 3K Mrs mr Sir */
+    bool want[10] = { true, true, true, false, true, false, false, true, false, false };
+    for (size_t k = 0; k < nd && k < 10; k++) CHECK(text_abbreviation_before(t, dots[k]) == want[k]);
+    CHECK(!text_abbreviation_before(".", 0));
+    /* the question splitter keeps its own five titles: "Capt." is a sentence end there */
+    CHECK(text_title_before("Ms.", 2, TEXT_TITLES_QUESTION, TEXT_COUNT(TEXT_TITLES_QUESTION)));
+    CHECK(!text_title_before("Capt.", 4, TEXT_TITLES_QUESTION, TEXT_COUNT(TEXT_TITLES_QUESTION)));
+    CHECK(text_word_in_folded("CAPT", 4, TEXT_TITLES_EXCERPT, TEXT_COUNT(TEXT_TITLES_EXCERPT)));
+    CHECK(!text_word_in_folded("Ms", 1, TEXT_TITLES_EXCERPT, TEXT_COUNT(TEXT_TITLES_EXCERPT)));
+    CHECK(!text_word_in_folded("", 0, TEXT_TITLES_EXCERPT, TEXT_COUNT(TEXT_TITLES_EXCERPT)));
+    CHECK(text_word_char('_') && text_word_char('7') && !text_word_char('-') && !text_word_char((char)0xC3));
+    CHECK(text_word_boundary("a b", 2) && !text_word_boundary("ab", 1) && text_word_boundary("x", 0));
+    CHECK(!strcmp(TEXT_NUMBER_WORDS[20], "twenty") && !strcmp(TEXT_TENS_WORDS[7], "ninety"));
+    CHECK(TEXT_OBSERVER_KIN_WORDS[TEXT_COUNT(TEXT_OBSERVER_KIN_WORDS) - 1] == NULL &&
+          TEXT_OBSERVER_NUMBER_WORDS[TEXT_COUNT(TEXT_OBSERVER_NUMBER_WORDS) - 1] == NULL);
+}
+
 int main(void)
 {
     TestCase tests[] = {
+        { "text_rules", test_text_rules },
         { "recall_terms", test_recall_terms },
         { "text_cut", test_text_cut },
         { "utf8_clip", test_utf8_clip },

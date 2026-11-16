@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "llm/context_planner.h"
 #include "core/experiments.h"
+#include "core/text_rules.h"
 #include "llm/memory_vectors.h"
 #include "llm/llm_text.h"
 #include "core/utf8.h"
@@ -102,16 +103,7 @@ static size_t document_excerpts(const MemoryUnit *u, const char *query, MemoryEx
             size_t start = i;
             while (start && ((u->text[start - 1] >= 'A' && u->text[start - 1] <= 'Z') ||
                              (u->text[start - 1] >= 'a' && u->text[start - 1] <= 'z'))) start--;
-            char word[8] = {0};
-            if (i - start < sizeof(word)) {
-                for (size_t j = start; j < i; j++) {
-                    unsigned char c = (unsigned char)u->text[j];
-                    word[j - start] = (char)(c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c);
-                }
-                if (!strcmp(word, "mr") || !strcmp(word, "mrs") || !strcmp(word, "ms") ||
-                    !strcmp(word, "dr") || !strcmp(word, "st") || !strcmp(word, "rev") ||
-                    !strcmp(word, "col") || !strcmp(word, "capt")) continue;
-            }
+            if (text_word_in_folded(u->text + start, i - start, TEXT_TITLES_EXCERPT, TEXT_COUNT(TEXT_TITLES_EXCERPT))) continue;
         }
         size_t end = i + 1;
         while (end < u->text_bytes) {
