@@ -972,12 +972,21 @@ static bool rel_continues_name(const char *t, size_t n)
     return true;
 }
 
+/* A period that bounds a negation's reach: an initial's, or a name suffix's ("Jr.", "Sr."), which the splitter keeps
+ * inside the sentence like a title's but which ends a name ("Tardos Mors Jr. Lydia is not his daughter."; round 3). */
+static bool rel_bound_period(const char *s, size_t len, size_t p)
+{
+    static const char *const suffix[] = { "Jr", "Sr" };
+    return text_initial_period(s, len, p) ||
+           (s[p] == '.' && p + 1 < len && text_ascii_space(s[p + 1]) && text_title_before(s, p, suffix, 2));
+}
+
 static void rel_scope(const char *s, size_t len, size_t start, size_t end, size_t *lo, size_t *hi)
 {
     *lo = 0;
     *hi = len;
     for (size_t p = 1; p + 1 < len; p++) {
-        if (!text_initial_period(s, len, p)) continue;
+        if (!rel_bound_period(s, len, p)) continue;
         size_t cut = p + 1;
         if (cut <= start) { if (cut > *lo) *lo = cut; }
         else if (p >= end && !rel_continues_name(s + end, cut - end) && cut < *hi) *hi = cut;

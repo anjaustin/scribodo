@@ -143,13 +143,24 @@ def sentences(text):
 # with its period ("father| Dr. K." of "father Dr. K. Bennet"; round 3: bare initials only cut "Is Lydia's father James
 # K. Powell?" at "K." and left the "?" outside). The C's rel_continues_name.
 _CONTINUES_NAME = re.compile(r'(?: (?:[A-Z][a-z]+|(?:' + '|'.join(TITLES) + r')\.|[A-Z]\.))+')
+# A name suffix's period bounds a negation like an initial's: the splitter keeps "Jr." inside the sentence, but it ends
+# a name ("Tardos Mors Jr. Lydia is not his daughter."; round 3). The C's rel_bound_period.
+_SUFFIXES = ('Jr', 'Sr')
+
+
+def _bound_period(s, p):
+    if s[p] != '.' or p + 1 >= len(s) or s[p + 1] not in WS:
+        return False
+    return _initial_before(s, p) or any(s[:p].endswith(t) and (p == len(t) or not _word_char(s[p - len(t) - 1])) for t in _SUFFIXES)
+
+
 def phrase_scope(s, start, end):
     """[lo, hi) of s that a negation or a question mark must lie in to reach the phrase s[start:end]: bounded by every
-    initial's period before the phrase, and after it unless the name tokens up to it directly continue
+    initial's or name suffix's period before the phrase, and after it unless the name tokens up to it directly continue
     the phrase's name ("son of James| K. Powell"). The C's rel_scope."""
     lo, hi = 0, len(s)
     for p in range(1, len(s) - 1):
-        if s[p] != '.' or not _initial_before(s, p) or s[p + 1] not in WS:
+        if not _bound_period(s, p):
             continue
         cut = p + 1
         if cut <= start:

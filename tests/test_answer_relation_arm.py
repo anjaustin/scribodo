@@ -94,7 +94,8 @@ class RelationArmTests(unittest.TestCase):
             else:
                 self.assertTrue(flags and flags[0].startswith('Her father is Tardos Mors'), reply)
         for reply, phrase in (('The son of James K. Powell is not Hareton.', 'son of James'),
-                              ('The daughter of Ms. Gardiner is not Lydia.', 'daughter of Ms')):
+                              ('The daughter of Ms. Gardiner is not Lydia.', 'daughter of Ms'),
+                              ('The son of James K. Powell Jr. is not Hareton.', 'son of James')):  # a suffix continuing the name
             self.assertEqual([(r['phrase'], r['negated'], r['flag']) for r in ra.check(reply, [], [], 'q')], [(phrase, True, False)])
         self.assertEqual(ra.phrase_scope('Ab in K. B is not C.', 0, 2), (0, 8))
         self.assertEqual(ra.phrase_scope('In K. Ab is not C.', 6, 8), (5, 18))

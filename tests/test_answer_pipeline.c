@@ -437,6 +437,8 @@ static void test_relations(void)
         }
         CHECK(ncases >= 59);
         free(cases);
+        n = answer_relations("The son of James K. Powell Jr. is not Hareton.", NULL, 0, NULL, 0, "q", &bad);
+        CHECK(n == 1 && bad == NULL); /* "Jr." continuing the name is no bound: the denial still reaches */
         n = answer_relations("She is the daughter of Mr Source.", NULL, 0, NULL, 0, "q", &bad);
         CHECK(n == 0 && bad == NULL); /* "Mr Source" is "Source", no name (the arm's real_name) */
         n = answer_relations("Her father is Tardos Mors.\x1cLydia is not his daughter.", NULL, 0, NULL, 0, "q", &bad);

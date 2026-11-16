@@ -471,3 +471,21 @@ and the question was flagged as a stated relation (none was flagged at `1eeb9bd`
 a capitalised word, a title with its period, or an initial with its period (C `rel_continues_name`, arm
 `_CONTINUES_NAME`). The three questions are in `negation_scope.txt` as lines opened by "- " (must flag nothing), read
 by both test suites; at `eced5df` all three were flagged (arm, checked).
+Gates (`4d37ee1`): `make test` 0, `make sanitize` 0, `make dbtest` 0, `make analyze` 0 (88 files; no clang analyzer
+process was running); logs `build/audit004-text/r3-1/`.
+
+### 2. A miss through "Jr." and "Sr."
+
+**Finding.** "Jr" and "Sr" are in the splitter's titles (since `275688e`), so a sentence ending in "Jr." joined the
+next, and only initials bounded the scope: "Her father is Tardos Mors Jr. Lydia is not his daughter." and "... Jr.
+Is Lydia his daughter?" were unflagged (flagged at `ed95681`).
+
+**Choice.** Keep "Jr." and "Sr." in the splitter (so "Tardos Mors Jr. is her father" stays one sentence and "Tardos
+Mors Jr" stays one name in the phrases, NAME taking "Jr" as a word) and make their period a scope bound like an
+initial's (C `rel_bound_period`, arm `_bound_period`), subject to the same continuation rule: "The son of James K.
+Powell Jr. is not Hareton." stays negated, because "K. Powell Jr." continues the phrase's name. Removing them from the
+splitter would cut "Tardos Mors Jr. is ..." in two. "Esq." is not a title, so it already ends a sentence; "II." and
+"III." are not initials (two letters), so they already do too.
+
+**Tests.** Three lines in `negation_scope.txt` (Jr. then a negation, Jr. then a question, Sr. then a negation), each
+must flag the "Her father is Tardos Mors Jr" statement; the Jr.-continued denial stays negated (both languages).
