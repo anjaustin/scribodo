@@ -360,3 +360,59 @@ conversation, both named in the receipt; a missing legacy folder (receipt "0 leg
 `test_crash_points` `titles_points`: deaths after each of the four statements (one row rewritten, two inserted, the
 receipt); at each death the archive and receipts are as before, and the next open (and the one after) leaves the file's
 titles before the store's rename, each once, one receipt.
+
+**Backfill gates** (the commit alone, nothing else in the tree): `make test` 0, `make sanitize` 0, `make dbtest` 0,
+`make crashtest` 0 (141 rows, 1,583 checks, 0 failures, 556 s; `titles.statement` 4 points, each recovered). A first
+crashtest of the same tree was killed by its 900 s watchdog while the shared MariaDB was loaded by other streams (at
+the fork row, before the new row ran; `build/audit004-text/backfill/pre-crashtest.log`); the rerun passed.
+`make analyze`: not run (another stream's analyzer was running, then later items were in the tree).
+
+## Verification round 2: R1 again, the negation scope (2026-11-15)
+
+**Finding.** The list rule still let a next-sentence negation hide "Her father is Tardos Mors" in 23 of the verifier's
+59 adversarial replies: labels outside the list (Room B., Canto X., Vitamin C., Pemberley House B., ...), name-shaped
+labels ("says Darcy V.", "says Mrs. B."), starters outside the list (Neither, Nothing, Instead, Yesterday), and a joined
+"?" that made the whole sentence, the first statement included, be skipped.
+
+**Change: the verifier's rule.** The splitter goes back to item 2's (a title, or any single capital at a word
+boundary, ends no sentence), and the lists are retired to an archive comment in `src/core/text_rules.h` and the arm.
+Instead, an initial's period bounds how far a negation and a question mark reach a phrase: `rel_scope` (C) /
+`phrase_scope` (arm) give the part of the sentence between the nearest initial's period before the phrase and the
+nearest after it, unless the initials after it directly continue the phrase's name ("son of James| K. Powell"); the
+clause negation and the "?" skip read only that part. The question skip is per phrase now, not per sentence.
+`text_initial_period` (C) / `_initial_before` plus whitespace (arm) define an initial's period.
+
+**Do the lists still matter? No.** With the scope rule the splitter can join at every capital: a join can no longer
+carry a negation or a question mark from one statement to another, and the 59 cases are all flagged with the
+retired item-2 splitter, so the label and starter lists are unnecessary and are archived, not kept.
+
+**The two old C/Python mismatches.** One whitespace definition on both sides, the C's (space, \t, \n, \v, \f, \r): the
+arm's sentence breaks, clause breaks, blank test and blockquote test no longer take \x1c-\x1f or \x85 as whitespace,
+and its \b and NEGATION use ASCII word characters (re.ASCII), as the C's bytes do. "daughter of Mr Source": the C now
+strips an honorific without its period from a name's front as the arm's `real_name` does, so "Mr Source" is
+"Source", no name, on both sides.
+
+**Tests.** The 59 cases (plus the bare "Room V." line) are `tests/fixtures/answer_relation/negation_scope.txt`, read by
+both `test_answer_pipeline` and `test_answer_relation_arm`: each flags "Her father is Tardos Mors". "The son of James K.
+Powell is not Hareton." and "The daughter of Ms. Gardiner is not Lydia." stay negated; `phrase_scope` unit cases; \x1c,
+\x1f and \x85 join nothing; "Mr Source" is no name; `test_core` checks the rule and `text_initial_period`.
+
+**Re-measured (no model).**
+
+| measure | result |
+|---|---|
+| 670 recorded replies, arm, vs `ed95681`, `013f879` and `f128b92` (R1's list rule) | 5,095 sentences each; 0 splits, phrases or verdicts changed |
+| C `answer_relations`, 670 replies, vs `1eeb9bd` and `ed95681` | 0 rows differ |
+| C full output (relations, question parts, gate, quotations), 5,220 inputs, vs `1eeb9bd` | identical |
+| C vs arm, 670 replies | agree on all (63 flagged) |
+| C vs arm, fuzz: 3 seeds x 40,000 replies of names, labels, initials, negations, "?" and separators including \x1c, \x1f, \x85, \xa0, \v, \f | 0 differ |
+| fixture (230 rows) | unchanged on both sides |
+
+Novels (the arm's splitter over the chapters, `build/audit004-text/r1b/r1b_manuscripts.txt`): the same as item 2's
+splitter (Mars 2,003, Pride and Prejudice 3,160, Wuthering Heights 3,737); against R1's list rule P&P and Wuthering
+Heights rejoin 1 and 7 sentences ("said I.", initials), harmless now that a join carries no negation, and the C's
+relation output over all 4,550 manuscript paragraphs is identical to R1's.
+
+The observer's `obs_sentence_end` / `obs_first_sentence` still join at any capital (`redteam/observer-probe.txt`);
+for the observer the join itself is the issue (a first sentence or a pairing unit spans two statements), so the scope
+rule does not transfer as is: routing note for the observer stream.

@@ -33,18 +33,22 @@ from answer_citation_binding import normalize  # noqa: E402
 
 KIN = r"(?:father|mother|son|daughter|sister|sisters|brother|brothers|wife|husband|friend|estate|fortune|inheritance|property|nephew|niece|cousin|cousins|uncle|aunt|grandfather|grandmother|grandson|granddaughter|widow|heir)"
 NAME = r"(?:(?:Mr\.|Mrs\.|Miss|Dr\.|Sir|Lady) )?[A-Z][a-z]+(?: [A-Z][a-z]+)*"
+# ASCII classes throughout, as the C reads bytes: \b and whitespace are the C's (AUDIT-004 red team: Python's \s took
+# \x1c-\x1f and \x85 as whitespace and its \b took accented letters as word characters, the C's do not).
+WS = ' \t\n\r\x0b\x0c'
+_WSR = '[ \t\n\r\x0b\x0c]'
 PHRASES = [
-    re.compile(rf"\b({KIN}) of ({NAME})"),
-    re.compile(rf"\b({NAME})['’]s ({KIN})\b"),
+    re.compile(rf"\b({KIN}) of ({NAME})", re.ASCII),
+    re.compile(rf"\b({NAME})['’]s ({KIN})\b", re.ASCII),
     # The subject is a pronoun or a possessive name: "the youngest Bennet daughter is Lydia" (a family name as an
     # adjective) is not a relation statement; "Lydia's father is Mr. Bennet" is one, checked whole.
     # "is" and "was" alike: a relation stated in the past tense is stated (journal/redteam-loose_ends.md).
-    re.compile(rf"\b([Hh]is|[Hh]er|[Tt]heir|{NAME}['’]s) ({KIN}) (?:is|was) (?:the |a )?({NAME})"),
-    re.compile(rf"\b({NAME}) (?:is|was) (?:the |a |not the )?({KIN}) of ({NAME})"),
+    re.compile(rf"\b([Hh]is|[Hh]er|[Tt]heir|{NAME}['’]s) ({KIN}) (?:is|was) (?:the |a )?({NAME})", re.ASCII),
+    re.compile(rf"\b({NAME}) (?:is|was) (?:the |a |not the )?({KIN}) of ({NAME})", re.ASCII),
 ]
-NEGATION = re.compile(r"\b(?:not|never|neither|nor|wrong|instead|isn't|aren't|wasn't)\b", re.I)
+NEGATION = re.compile(r"\b(?:not|never|neither|nor|wrong|instead|isn't|aren't|wasn't)\b", re.I | re.ASCII)
 # A negation reaches its own clause: "Hareton is Heathcliff's nephew, not his son" states the first and denies the second.
-CLAUSE_BREAK = re.compile(r'[,;:]\s+|\s+but\s+')
+CLAUSE_BREAK = re.compile(rf'[,;:]{_WSR}+|{_WSR}+but{_WSR}+')
 
 
 def clause_bounds(s):
@@ -72,7 +76,7 @@ def prose(reply):
     spaces, as the C's rel_prose reads them, so the patterns' literal spaces match a no-break space."""
     out = []
     for line in UNICODE_SPACES.sub(' ', reply).split('\n'):
-        if line.lstrip().startswith('>'):
+        if line.lstrip(' \t\r\x0c\x0b').startswith('>'):  # the C's rel_prose: these, not every Unicode space
             continue
         line = re.sub(r'"[^"\n]*"', ' ', line)
         line = re.sub(r'“[^”\n]*”', ' ', line)
@@ -81,18 +85,18 @@ def prose(reply):
 
 
 # The sentence rule of src/core/text_rules.c (text_abbreviation_before), mirrored: a period after one of TITLES at a
-# word boundary, or after a name's initial, ends no sentence, so "Ms. Bennet" and "James K. Powell" stay whole while
-# "... in Chapter V. Lydia is not his daughter." is still two sentences (AUDIT-004 F10 and its red team;
-# journal/audit004-text.md). Character for character the C's: ASCII classes, a capital other than "I".
+# word boundary, or after an initial (one capital at a word boundary), ends no sentence, so "Ms. Bennet" and
+# "James K. Powell" stay whole (AUDIT-004 F10). A joined sentence never lets one statement's negation reach another:
+# an initial's period bounds a negation's reach and a question's (phrase_scope), unless the initial continues the
+# phrase's own name (AUDIT-004 red team, journal/audit004-text.md).
+#
+# Archive (2026-11-15, R1 of the red team; retired the same day): an initial was first allowed only between a
+# capitalised word that was not a label (Chapter, Ch, Part, Book, Volume, Vol, Act, Scene, Section, Sec, Source,
+# Appendix, Figure, Fig, Table, Plate, Page, Item, Note, Step, Letter, Line, Option, Plan, Type, Class, Group, Exhibit,
+# Article, Clause) and a capitalised word that did not start a sentence (The, This, That, ... 47 words), never "I". The
+# verifier found 23 of 59 adversarial replies the lists missed (Room B., Canto X., "says Mrs. B.", "Neither ...", a
+# joined "?"): a list cannot name every label. Scoping the negation by the initial instead closes all 59 with no list.
 TITLES = ('Mr', 'Mrs', 'Ms', 'Dr', 'St', 'Capt', 'Col', 'Lt', 'Gen', 'Prof', 'Sgt', 'Jr', 'Sr', 'Rev', 'Hon')
-LABEL_WORDS = {'Chapter', 'Ch', 'Part', 'Book', 'Volume', 'Vol', 'Act', 'Scene', 'Section', 'Sec', 'Source', 'Appendix',
-               'Figure', 'Fig', 'Table', 'Plate', 'Page', 'Item', 'Note', 'Step', 'Letter', 'Line', 'Option', 'Plan', 'Type',
-               'Class', 'Group', 'Exhibit', 'Article', 'Clause'}
-SENTENCE_STARTERS = {'The', 'This', 'That', 'These', 'Those', 'It', 'Its', 'He', 'She', 'They', 'We', 'You', 'I', 'His',
-                     'Her', 'Their', 'My', 'Our', 'There', 'Here', 'Then', 'Thus', 'So', 'But', 'And', 'Or', 'If', 'When',
-                     'While', 'As', 'In', 'On', 'At', 'For', 'With', 'From', 'According', 'However', 'Also', 'Yes', 'No',
-                     'Now', 'Who', 'What', 'Which', 'Where', 'A'}
-_ASCII_SPACE = ' \t\n\r\v\f'
 
 
 def _letter(c):
@@ -107,50 +111,21 @@ def _title_before(s, dot):
     return any(s[:dot].endswith(t) and (dot == len(t) or not _word_char(s[dot - len(t) - 1])) for t in TITLES)
 
 
-def _name_initial_before(s, dot):
-    n = len(s)
-    if dot < 2 or dot >= n or not ('A' <= s[dot - 1] <= 'Z') or s[dot - 1] == 'I' or _word_char(s[dot - 2]):
-        return False
-    j = dot + 1
-    while j < n and s[j] in _ASCII_SPACE:
-        j += 1
-    if j >= n or not ('A' <= s[j] <= 'Z'):
-        return False
-    je = j
-    while je < n and _letter(s[je]):
-        je += 1
-    if s[j:je] in SENTENCE_STARTERS:
-        return False
-    e = dot - 1
-    if s[e - 1] not in ' \t':
-        return False
-    while e > 0 and s[e - 1] in ' \t':
-        e -= 1
-    b = e
-    while b > 0 and s[b - 1] not in _ASCII_SPACE:
-        b -= 1
-    while b < e and not _letter(s[b]):
-        b += 1
-    if e > b and s[e - 1] == '.':
-        e -= 1
-    if e <= b or not ('A' <= s[b] <= 'Z'):
-        return False
-    if any(not _letter(c) and ord(c) < 0x80 for c in s[b + 1:e]):
-        return False
-    return s[b:e] not in LABEL_WORDS
+def _initial_before(s, dot):
+    return dot >= 1 and 'A' <= s[dot - 1] <= 'Z' and (dot == 1 or not _word_char(s[dot - 2]))
 
 
 def abbreviation_at(s, dot):
-    """The period at s[dot] closes a title or a name's initial (the C's text_abbreviation_before)."""
-    return _title_before(s, dot) or _name_initial_before(s, dot)
+    """The period at s[dot] closes a title or an initial (the C's text_abbreviation_before)."""
+    return _title_before(s, dot) or _initial_before(s, dot)
 
 
-SENTENCE_END = re.compile(r'(?<=[.!?])\s+|\n+')
+SENTENCE_END = re.compile(rf'(?<=[.!?]){_WSR}+|\n+')
 
 
 def sentences(text):
-    """Sentences of the prose; a title's or a name's initial's period ("Mr. Bingley", "James K. Powell") does not end
-    one. A break refused at a period still breaks at any newline run inside its whitespace, as the C's loop does."""
+    """Sentences of the prose; a title's or an initial's period ("Mr. Bingley", "James K. Powell") does not end one.
+    A break refused at a period still breaks at any newline run inside its whitespace, as the C's loop does."""
     pieces, start = [], 0
     for m in SENTENCE_END.finditer(text):
         if m.group()[0] != '\n' and text[m.start() - 1] == '.' and abbreviation_at(text, m.start() - 1):
@@ -161,7 +136,26 @@ def sentences(text):
         pieces.append(text[start:m.start()])
         start = m.end()
     pieces.append(text[start:])
-    return [p for p in pieces if p.strip()]
+    return [p for p in pieces if p.strip(WS)]
+
+
+_CONTINUES_NAME = re.compile(r'(?: [A-Z]\.)+')
+
+
+def phrase_scope(s, start, end):
+    """[lo, hi) of s that a negation or a question mark must lie in to reach the phrase s[start:end]: bounded by every
+    initial's period (a capital at a word boundary, a period, whitespace) before the phrase, and after it unless the
+    initials directly continue the phrase's name ("son of James| K. Powell"). The C's rel_scope."""
+    lo, hi = 0, len(s)
+    for p in range(1, len(s) - 1):
+        if s[p] != '.' or not _initial_before(s, p) or s[p + 1] not in WS:
+            continue
+        cut = p + 1
+        if cut <= start:
+            lo = max(lo, cut)
+        elif p - 1 >= end and not _CONTINUES_NAME.fullmatch(s[end:cut]):
+            hi = min(hi, cut)
+    return lo, hi
 
 
 # Capitalized words that are not names: sentence starters and labels the composer writes.
@@ -183,14 +177,15 @@ def phrases(reply):
     """(phrase text, negated) for every relation phrase in the reply's prose whose name is a name."""
     found = []
     for s in sentences(prose(reply)):
-        if '?' in s:
-            continue  # a question the composer asks back states nothing
-        bounds = clause_bounds(s)
         for rx in PHRASES:
             for m in rx.finditer(s):
                 if rx is not PHRASES[1] and re.match(r"['’]s", s[m.end():]):
                     continue  # "daughter of Mr. Bingley's cousin" is not "daughter of Mr. Bingley": the name goes on
-                negated = negated_at(s, bounds, m.start())
+                lo, hi = phrase_scope(s, m.start(), m.end())
+                sub = s[lo:hi]
+                if '?' in sub:
+                    continue  # a question the composer asks back states nothing
+                negated = negated_at(sub, clause_bounds(sub), m.start() - lo)
                 names = [re.sub(r"['’]s$", '', g) for g in m.groups() if g and re.match(r'^(?:(?:Mr\.|Mrs\.|Miss|Dr\.|Sir|Lady) )?[A-Z]', g)
                          and not re.match(KIN + '$', g) and g.lower() not in ('his', 'her', 'their')]
                 if names and all(real_name(n) for n in names):

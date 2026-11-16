@@ -7,13 +7,6 @@ const char *const TEXT_TITLES[15] = { "Mr", "Mrs", "Ms", "Dr", "St", "Capt", "Co
                                       "Rev", "Hon" };
 const char *const TEXT_TITLES_QUESTION[5] = { "Mr", "Mrs", "Ms", "Dr", "St" };
 const char *const TEXT_TITLES_EXCERPT[8] = { "mr", "mrs", "ms", "dr", "st", "rev", "col", "capt" };
-const char *const TEXT_LABEL_WORDS[30] = { "Chapter", "Ch", "Part", "Book", "Volume", "Vol", "Act", "Scene", "Section",
-    "Sec", "Source", "Appendix", "Figure", "Fig", "Table", "Plate", "Page", "Item", "Note", "Step", "Letter", "Line",
-    "Option", "Plan", "Type", "Class", "Group", "Exhibit", "Article", "Clause" };
-const char *const TEXT_SENTENCE_STARTERS[47] = { "The", "This", "That", "These", "Those", "It", "Its", "He", "She", "They",
-    "We", "You", "I", "His", "Her", "Their", "My", "Our", "There", "Here", "Then", "Thus", "So", "But", "And", "Or", "If",
-    "When", "While", "As", "In", "On", "At", "For", "With", "From", "According", "However", "Also", "Yes", "No", "Now",
-    "Who", "What", "Which", "Where", "A" };
 const char *const TEXT_NAME_HONORIFICS[6] = { "Mr.", "Mrs.", "Miss", "Dr.", "Sir", "Lady" };
 
 const char *const TEXT_RELATION_WORDS[27] = { "father", "mother", "son", "daughter", "sister", "sisters", "brother",
@@ -51,44 +44,19 @@ bool text_title_before(const char *s, size_t dot, const char *const *titles, siz
     return false;
 }
 
-static bool ascii_letter(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
-static bool ascii_space(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
-
-static bool in_list(const char *w, size_t n, const char *const *list, size_t count)
-{
-    for (size_t k = 0; k < count; k++)
-        if (strlen(list[k]) == n && !strncmp(w, list[k], n)) return true;
-    return false;
-}
-
-bool text_name_initial_before(const char *s, size_t n, size_t dot)
-{
-    if (dot < 2 || dot >= n || !text_is_initial(s + dot - 1, 1) || s[dot - 1] == 'I' || !text_word_boundary(s, dot - 1))
-        return false;
-    /* after: whitespace, then a capitalised word that does not start a sentence */
-    size_t j = dot + 1;
-    while (j < n && ascii_space(s[j])) j++;
-    if (j >= n || s[j] < 'A' || s[j] > 'Z') return false;
-    size_t je = j;
-    while (je < n && ascii_letter(s[je])) je++;
-    if (in_list(s + j, je - j, TEXT_SENTENCE_STARTERS, TEXT_COUNT(TEXT_SENTENCE_STARTERS))) return false;
-    /* before: spaces or tabs, then a capitalised word that is not a label */
-    size_t e = dot - 1;
-    if (s[e - 1] != ' ' && s[e - 1] != '\t') return false;
-    while (e > 0 && (s[e - 1] == ' ' || s[e - 1] == '\t')) e--;
-    size_t b = e;
-    while (b > 0 && !ascii_space(s[b - 1])) b--;
-    while (b < e && !ascii_letter(s[b])) b++;
-    if (e > b && s[e - 1] == '.') e--;
-    if (e <= b || s[b] < 'A' || s[b] > 'Z') return false;
-    for (size_t k = b + 1; k < e; k++)
-        if (!ascii_letter(s[k]) && (unsigned char)s[k] < 0x80) return false;
-    return !in_list(s + b, e - b, TEXT_LABEL_WORDS, TEXT_COUNT(TEXT_LABEL_WORDS));
-}
+bool text_ascii_space(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
 
 bool text_abbreviation_before(const char *s, size_t n, size_t dot)
 {
-    return text_title_before(s, dot, TEXT_TITLES, TEXT_COUNT(TEXT_TITLES)) || text_name_initial_before(s, n, dot);
+    (void)n;
+    return text_title_before(s, dot, TEXT_TITLES, TEXT_COUNT(TEXT_TITLES)) ||
+           (dot >= 1 && text_is_initial(s + dot - 1, 1) && text_word_boundary(s, dot - 1));
+}
+
+bool text_initial_period(const char *s, size_t n, size_t p)
+{
+    return p >= 1 && p + 1 < n && s[p] == '.' && text_is_initial(s + p - 1, 1) && text_word_boundary(s, p - 1) &&
+           text_ascii_space(s[p + 1]);
 }
 
 bool text_word_in_folded(const char *w, size_t n, const char *const *words, size_t nwords)

@@ -412,6 +412,35 @@ static void test_relations(void)
     CHECK(n == 1 && bad && !strcmp(bad, "Mr. Bingley's cousin"));
     free(bad); bad = NULL;
 
+    /* The verifier's 59 adversarial replies (AUDIT-004 red team R1; the arm's test reads the same file): no negation or
+     * question mark across an initial's period hides "Her father is Tardos Mors"; a name's own initial is not a bound. */
+    {
+        char *cases = read_file("tests/fixtures/answer_relation/negation_scope.txt");
+        CHECK(cases != NULL);
+        size_t ncases = 0;
+        for (char *save = NULL, *line = cases ? strtok_r(cases, "\n", &save) : NULL; line; line = strtok_r(NULL, "\n", &save)) {
+            char reply[600];
+            size_t o = 0;
+            for (const char *c = line; *c && o + 1 < sizeof(reply); c++) {
+                if (c[0] == '\\' && (c[1] == 'n' || c[1] == 't')) { reply[o++] = c[1] == 'n' ? '\n' : '\t'; c++; }
+                else reply[o++] = *c;
+            }
+            reply[o] = '\0';
+            n = answer_relations(reply, NULL, 0, NULL, 0, "q", &bad);
+            bool flagged = bad && !strcmp(bad, "Her father is Tardos Mors");
+            if (!flagged) fprintf(stderr, "    negation scope: %s -> %s\n", reply, bad ? bad : "(none)");
+            CHECK(flagged);
+            free(bad); bad = NULL;
+            ncases++;
+        }
+        CHECK(ncases >= 59);
+        free(cases);
+        n = answer_relations("She is the daughter of Mr Source.", NULL, 0, NULL, 0, "q", &bad);
+        CHECK(n == 0 && bad == NULL); /* "Mr Source" is "Source", no name (the arm's real_name) */
+        n = answer_relations("Her father is Tardos Mors.\x1cLydia is not his daughter.", NULL, 0, NULL, 0, "q", &bad);
+        CHECK(n == 1 && bad == NULL); /* \x1c is not whitespace on either side: one sentence */
+    }
+
     char *text = read_file("tests/fixtures/answer_relation/replies.json");
     CHECK(text != NULL);
     if (!text) return;

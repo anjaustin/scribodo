@@ -884,9 +884,9 @@ static char *rel_prose(const char *reply_text)
 }
 
 /* The next sentence of `text` from `*pos`: [start, end) or false when none is left. A sentence ends at a run of
- * newlines, or at [.!?] followed by whitespace unless the period closes a title or a name's initial
- * (text_abbreviation_before), so "Ms. Bennet" and "James K. Powell" are not cut in two while "Chapter V. Lydia ..."
- * still is (AUDIT-004 F10 and its red team; measured on 670 recorded replies: journal/audit004-text.md). */
+ * newlines, or at [.!?] followed by whitespace unless the period closes a title or an initial
+ * (text_abbreviation_before), so "Ms. Bennet" and "James K. Powell" are not cut in two (AUDIT-004 F10). What a joined
+ * sentence must not do, let one statement's negation reach another, rel_scope prevents (the red team, R1). */
 static bool rel_next_sentence(const char *text, size_t *pos, size_t *start, size_t *end)
 {
     size_t n = strlen(text), i = *pos;
@@ -944,6 +944,30 @@ static bool rel_break_at(const char *s, size_t len, size_t i, size_t *blen)
 
 /* A negation reaches its own clause: "Hareton is Heathcliff's nephew, not his son" states the first and denies the
  * second. The clause holding `pos`, then rel_negated on it. */
+/* [*lo, *hi) of the sentence s[0..len) that a negation or a question mark must lie in to reach the phrase [start, end):
+ * bounded by every initial's period before the phrase, and after it unless the initials directly continue the phrase's
+ * name ("son of James| K. Powell"). "Her father is Tardos Mors in Chapter V. Lydia is not his daughter." is one
+ * sentence to the splitter, two scopes here (AUDIT-004 red team R1, the verifier's rule; the arm's phrase_scope). */
+static bool rel_continues_name(const char *t, size_t n)
+{
+    if (!n || n % 3) return false;
+    for (size_t i = 0; i < n; i += 3)
+        if (t[i] != ' ' || t[i + 1] < 'A' || t[i + 1] > 'Z' || t[i + 2] != '.') return false;
+    return true;
+}
+
+static void rel_scope(const char *s, size_t len, size_t start, size_t end, size_t *lo, size_t *hi)
+{
+    *lo = 0;
+    *hi = len;
+    for (size_t p = 1; p + 1 < len; p++) {
+        if (!text_initial_period(s, len, p)) continue;
+        size_t cut = p + 1;
+        if (cut <= start) { if (cut > *lo) *lo = cut; }
+        else if (p - 1 >= end && !rel_continues_name(s + end, cut - end) && cut < *hi) *hi = cut;
+    }
+}
+
 static bool rel_clause_negated(const char *s, size_t len, size_t pos)
 {
     size_t a = 0, b = len, bl = 0;
@@ -1023,10 +1047,16 @@ static bool rel_lit(const char *s, size_t len, size_t i, const char *lit)
 /* The first word of a name, past an honorific when more follows, is not a sentence starter or label. */
 static bool rel_real_name(const char *name, size_t len)
 {
-    size_t i = 0;
-    for (size_t k = 0; k < TEXT_COUNT(TEXT_NAME_HONORIFICS); k++) {
+    /* The first word without its trailing periods, if it is an honorific and more words follow, is not the name: "Mr
+     * Source" is "Source" (the arm's real_name; the red team found the C taking "Mr" without its period as the name). */
+    size_t i = 0, w = 0;
+    while (w < len && name[w] != ' ') w++;
+    size_t wl = w;
+    while (wl && name[wl - 1] == '.') wl--;
+    for (size_t k = 0; w < len && k < TEXT_COUNT(TEXT_NAME_HONORIFICS); k++) {
         size_t hl = strlen(TEXT_NAME_HONORIFICS[k]);
-        if (len > hl && !strncmp(name, TEXT_NAME_HONORIFICS[k], hl) && name[hl] == ' ') { i = hl + 1; break; }
+        if (TEXT_NAME_HONORIFICS[k][hl - 1] == '.') hl--;
+        if (wl == hl && !strncmp(name, TEXT_NAME_HONORIFICS[k], hl)) { i = w + 1; break; }
     }
     size_t j = i;
     while (j < len && name[j] != ' ') j++;
@@ -1181,7 +1211,6 @@ size_t answer_relations(const char *reply, const char *const *spans, size_t nspa
     while (rel_next_sentence(prose, &pos, &start, &end)) {
         const char *s = prose + start;
         size_t len = end - start;
-        if (memchr(s, '?', len)) continue; /* a question the composer asks back states nothing */
         for (int which = 1; which <= 4; which++) {
             size_t i = 0;
             while (i < len) {
@@ -1189,9 +1218,12 @@ size_t answer_relations(const char *reply, const char *const *spans, size_t nspa
                 if (!rel_match_at(s, len, i, which, &m)) { i++; continue; }
                 bool names_ok = m.nnames > 0;
                 for (size_t q = 0; q < m.nnames && names_ok; q++) names_ok = rel_real_name(s + m.name_start[q], m.name_len[q]);
+                size_t lo = 0, hi = len;
+                if (names_ok) rel_scope(s, len, m.start, m.end, &lo, &hi);
+                if (names_ok && memchr(s + lo, '?', hi - lo)) names_ok = false; /* a question the composer asks back states nothing */
                 if (names_ok) {
                     checked++;
-                    bool negated = rel_clause_negated(s, len, m.start);
+                    bool negated = rel_clause_negated(s + lo, hi - lo, m.start - lo);
                     char *phrase = malloc(m.end - m.start + 1);
                     if (phrase) {
                         memcpy(phrase, s + m.start, m.end - m.start); phrase[m.end - m.start] = '\0';

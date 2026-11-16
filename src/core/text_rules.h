@@ -43,24 +43,25 @@ extern const char *const TEXT_TITLES_EXCERPT[8];
  * (tools/answer_relation_arm.py), pinned by tests/fixtures/answer_relation. A name prefix, not a splitting rule. */
 extern const char *const TEXT_NAME_HONORIFICS[6];
 
-/* w[0..n) is one ASCII capital (the shape of an initial; whether it is one depends on its neighbours, below). */
+/* w[0..n) is one ASCII capital (the shape of an initial). */
 bool text_is_initial(const char *w, size_t n);
-/* The words before a capital and its period that make the capital a label, not an initial ("Chapter V.", "Part I.",
- * "Source B."), and the words after one that start a sentence, not a surname ("... Plan B. That is ..."). */
-extern const char *const TEXT_LABEL_WORDS[30];
-extern const char *const TEXT_SENTENCE_STARTERS[47];
-/* The period at s[dot] (s has n bytes) closes a name's initial ("James K. Powell"): s[dot - 1] is one capital other
- * than the pronoun "I", at a word boundary; after the period and whitespace comes a capitalised word that is not a
- * TEXT_SENTENCE_STARTERS word; before the capital, after spaces or tabs, is a capitalised word (leading quotes and
- * brackets ignored, one trailing period allowed, so "J. K." chains) that is not a TEXT_LABEL_WORDS word. Any capital
- * with a period ended no sentence before the AUDIT-004 red team: "... in Chapter V. Lydia is not his daughter."
- * joined two sentences and the negation hid the first's wrong relation. */
-bool text_name_initial_before(const char *s, size_t n, size_t dot);
+/* ASCII whitespace, the C locale's isspace and the arm's WS: space, \t, \n, \v, \f, \r. */
+bool text_ascii_space(char c);
 /* s[0..dot) ends with one of `titles` (case-sensitive) that starts at a word boundary. */
 bool text_title_before(const char *s, size_t dot, const char *const *titles, size_t ntitles);
-/* The sentence rule: the period at s[dot] closes a TEXT_TITLES title at a word boundary, or a name's initial
- * (text_name_initial_before). Mirrored by tools/answer_relation_arm.py (abbreviation_at). */
+/* The sentence rule: the period at s[dot] closes a TEXT_TITLES title at a word boundary, or an initial (one capital at a
+ * word boundary), so "Ms. Bennet" and "James K. Powell" are not cut. Mirrored by tools/answer_relation_arm.py
+ * (abbreviation_at). A sentence joined at an initial must not let one statement's negation reach another: the relation
+ * check bounds a negation's reach by every initial's period (text_initial_period; answer_pipeline.c rel_scope).
+ * Archive (AUDIT-004 red team R1, 2026-11-15, retired the same day): an initial was briefly allowed only between a
+ * capitalised word that was not a label (Chapter, Ch, Part, Book, Volume, Vol, Act, Scene, Section, Sec, Source,
+ * Appendix, Figure, Fig, Table, Plate, Page, Item, Note, Step, Letter, Line, Option, Plan, Type, Class, Group, Exhibit,
+ * Article, Clause) and a capitalised word that did not start a sentence (The, This, That, ... 47 words), and never "I".
+ * The verifier found 23 of 59 adversarial replies those lists missed ("Room B.", "Canto X.", "says Mrs. B.",
+ * "Neither ...", a joined "?"); no list names every label, so the scope rule replaced them (journal/audit004-text.md). */
 bool text_abbreviation_before(const char *s, size_t n, size_t dot);
+/* s[p] is an initial's period: a capital at a word boundary before it, ASCII whitespace after it. */
+bool text_initial_period(const char *s, size_t n, size_t p);
 /* w[0..n) equals one of the lower-case `words` with ASCII letters folded to lower case. */
 bool text_word_in_folded(const char *w, size_t n, const char *const *words, size_t nwords);
 

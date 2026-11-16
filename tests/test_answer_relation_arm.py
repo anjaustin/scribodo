@@ -75,9 +75,31 @@ class RelationArmTests(unittest.TestCase):
             rows = ra.check(reply, [], [], 'q')
             self.assertEqual([r['phrase'] for r in rows if r['flag']], ['Her father is Tardos Mors'], reply)
         self.assertEqual(ra.sentences('Her father is James K. Powell. Lydia is not his daughter. J. K. Rowling wrote it.'),
-                         ['Her father is James K. Powell.', 'Lydia is not his daughter.', 'J.', 'K. Rowling wrote it.'])
+                         ['Her father is James K. Powell.', 'Lydia is not his daughter.', 'J. K. Rowling wrote it.'])
         self.assertEqual(ra.sentences('Mr. Darcy met Dr. K. Smith. It rained.'), ['Mr. Darcy met Dr. K. Smith.', 'It rained.'])
-        self.assertEqual(ra.sentences('He met John K. The rest is lost.'), ['He met John K.', 'The rest is lost.'])
+
+    def test_an_initial_bounds_a_negation_and_a_question(self):
+        """AUDIT-004 red team R1, the verifier's 59 adversarial replies (tests/fixtures/answer_relation/
+        negation_scope.txt; the C test reads the same file): a sentence joined at an initial is one sentence, but no
+        negation or question mark across an initial's period reaches the phrase, unless the initial continues the
+        phrase's own name."""
+        path = ROOT / 'tests/fixtures/answer_relation/negation_scope.txt'
+        lines = [l.rstrip('\n').replace('\\n', '\n').replace('\\t', '\t') for l in path.read_text().splitlines(True)]
+        self.assertGreaterEqual(len(lines), 59)
+        for reply in lines:
+            rows = ra.check(reply, [], [], 'q')
+            self.assertEqual([r['phrase'] for r in rows if r['flag']][:1], ['Her father is Tardos Mors'], reply)
+        for reply, phrase in (('The son of James K. Powell is not Hareton.', 'son of James'),
+                              ('The daughter of Ms. Gardiner is not Lydia.', 'daughter of Ms')):
+            self.assertEqual([(r['phrase'], r['negated'], r['flag']) for r in ra.check(reply, [], [], 'q')], [(phrase, True, False)])
+        self.assertEqual(ra.phrase_scope('Ab in K. B is not C.', 0, 2), (0, 8))
+        self.assertEqual(ra.phrase_scope('In K. Ab is not C.', 6, 8), (5, 18))
+        self.assertEqual(ra.phrase_scope('son of James K. Powell is not X.', 0, 12), (0, 32))  # the name goes on
+        # The one whitespace definition, the C's: \x1c-\x1f and \x85 are not whitespace, so they join nothing.
+        for sep in ('\x1c', '\x1f', '\x85'):
+            self.assertEqual(len(ra.sentences(f'Her father is Tardos Mors.{sep}Lydia is not his daughter.')), 1)
+        # "Mr Source" is "Source" to both sides: no name, no phrase (the C used to take "Mr" as the name).
+        self.assertEqual(ra.check('She is the daughter of Mr Source.', [], [], 'q'), [])
 
     def test_author_turns_and_the_question_support_a_phrase(self):
         rows = ra.check("Lydia's age is seventeen.", [], ['Note for later: Lydia, my youngest, is seventeen.'], 'How old?')
