@@ -61,66 +61,68 @@ native_sock() {
 # redirect them or change what they do.
 mdb() { local tool="$1"; shift; "$MARIADB_BIN/$tool" --no-defaults "$@"; }
 
-# rootsql [mariadb client arguments]: stdin to the MariaDB client as root. The password comes from the secret file
-# through the environment (never argv, so never in ps); in docker mode the container reads its own copy.
-rootsql() {
-    local m; m="$(services_mode)" || return 2
-    case "$m" in
-        native) MYSQL_PWD="$(cat "$SCRIBODO_SECRETS/db_root_password")" mdb mariadb -uroot -h127.0.0.1 -P"$SCRIBODO_DB_PORT" --skip-ssl-verify-server-cert "$@" ;;
-        *) compose exec -T mariadb sh -c 'MYSQL_PWD="$(cat /run/secrets/db_root_password)" exec mariadb -uroot "$@"' sh "$@" ;;
-    esac
+# The root operations, written once for both modes (AUDIT-004 F6): one POSIX sh script, run on this Mac in native
+# mode and inside the MariaDB container in docker mode. A prelude per mode gives it
+#   ROOT_PW         the root password file
+#   ACCOUNT_HOST    where a one-time account connects from (TCP natively, the socket in the container)
+#   client TOOL …   a MariaDB client tool connected to this store (natively: no option files, --no-defaults first,
+#                   so a ~/.my.cnf or Homebrew's my.cnf cannot redirect it)
+# Passwords reach the clients through MYSQL_PWD, never argv, so never ps.
+#   sql [client args]   stdin to the client as root
+#   dump DATABASE       one consistent snapshot to stdout (mariadb-dump --single-transaction)
+#   load DATABASE       stdin (plain mariadb-dump output) loaded by a one-time user that can reach only that database,
+#                       in the client's sandbox (no shell, no file access); the user is dropped afterwards
+root_ops_script() {
+    cat <<'SH'
+as_root() { t=$1; shift; MYSQL_PWD="$(cat "$ROOT_PW")" client "$t" -uroot "$@"; }
+op=$1; shift
+case $op in
+    sql) as_root mariadb "$@" ;;
+    dump) as_root mariadb-dump --single-transaction --quick --routines --triggers --hex-blob --default-character-set=utf8mb4 "$1" ;;
+    load)
+        db=$1; u=scribodo_restore_$$
+        pw=$(head -c 18 /dev/urandom | od -An -tx1 | tr -d ' \n')
+        printf "CREATE USER '%s'@'%s' IDENTIFIED BY '%s';\nGRANT ALL ON \`%s\`.* TO '%s'@'%s';\n" \
+            "$u" "$ACCOUNT_HOST" "$pw" "$db" "$u" "$ACCOUNT_HOST" | as_root mariadb || exit 1
+        rc=0
+        MYSQL_PWD="$pw" client mariadb --sandbox -u"$u" "$db" || rc=$?
+        printf "DROP USER IF EXISTS '%s'@'%s';\n" "$u" "$ACCOUNT_HOST" | as_root mariadb
+        exit $rc ;;
+    *) echo "unknown root operation $op" >&2; exit 2 ;;
+esac
+SH
 }
 
-# dump DATABASE: one consistent snapshot to stdout (mariadb-dump --single-transaction).
-dump_db() {
+root_op() { # root_op sql|dump|load ARGS: the script above, in this store's mode
     local m; m="$(services_mode)" || return 2
-    case "$m" in
-        native) MYSQL_PWD="$(cat "$SCRIBODO_SECRETS/db_root_password")" mdb mariadb-dump -uroot -h127.0.0.1 -P"$SCRIBODO_DB_PORT" --skip-ssl-verify-server-cert \
-                    --single-transaction --quick --routines --triggers --hex-blob --default-character-set=utf8mb4 "$1" ;;
-        *) compose exec -T mariadb sh -c 'MYSQL_PWD="$(cat /run/secrets/db_root_password)" exec mariadb-dump -uroot --single-transaction --quick --routines --triggers --hex-blob --default-character-set=utf8mb4 "$1"' sh "$1" ;;
-    esac
+    if [ "$m" = native ]; then
+        ROOT_PW="$SCRIBODO_SECRETS/db_root_password" ACCOUNT_HOST=127.0.0.1 MDB_DIR="$MARIADB_BIN" MDB_PORT="$SCRIBODO_DB_PORT" \
+            /bin/sh -c 'client() { t=$1; shift; "$MDB_DIR/$t" --no-defaults -h127.0.0.1 -P"$MDB_PORT" --skip-ssl-verify-server-cert "$@"; }
+'"$(root_ops_script)" sh "$@"
+    else
+        compose exec -T mariadb sh -c 'ROOT_PW=/run/secrets/db_root_password; ACCOUNT_HOST=localhost
+client() { "$@"; }
+'"$(root_ops_script)" sh "$@"
+    fi
 }
+rootsql() { root_op sql "$@"; }
+dump_db() { root_op dump "$1"; }
+load_dump() { root_op load "$1"; }
 
-# load_dump DATABASE: stdin (plain mariadb-dump output) loaded by a one-time user that can reach only that database,
-# in the client's sandbox (no shell, no file access); the user is dropped afterwards.
-load_dump() {
-    local db="$1" m
-    m="$(services_mode)" || return 2
-    case "$m" in
-        native)
-            local u="scribodo_restore_$$" pw rc=0
-            pw="$(head -c 18 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-            printf "CREATE USER '%s'@'127.0.0.1' IDENTIFIED BY '%s';\nGRANT ALL ON \`%s\`.* TO '%s'@'127.0.0.1';\n" "$u" "$pw" "$db" "$u" | rootsql
-            MYSQL_PWD="$pw" mdb mariadb --sandbox -u"$u" -h127.0.0.1 -P"$SCRIBODO_DB_PORT" --skip-ssl-verify-server-cert "$db" || rc=$?
-            printf "DROP USER IF EXISTS '%s'@'127.0.0.1';\n" "$u" | rootsql
-            return $rc ;;
-        *)
-            compose exec -T mariadb sh -c '
-                set -e
-                db=$1
-                u=scribodo_restore_$$
-                pw=$(head -c 18 /dev/urandom | od -An -tx1 | tr -d " \n")
-                MYSQL_PWD="$(cat /run/secrets/db_root_password)" mariadb -uroot <<EOF
-CREATE USER '"'"'$u'"'"'@'"'"'localhost'"'"' IDENTIFIED BY '"'"'$pw'"'"';
-GRANT ALL ON \`$db\`.* TO '"'"'$u'"'"'@'"'"'localhost'"'"';
-EOF
-                rc=0
-                MYSQL_PWD="$pw" mariadb --sandbox -u"$u" "$db" || rc=$?
-                MYSQL_PWD="$(cat /run/secrets/db_root_password)" mariadb -uroot <<EOF
-DROP USER IF EXISTS '"'"'$u'"'"'@'"'"'localhost'"'"';
-EOF
-                exit $rc' sh "$db" ;;
-    esac
+# qdrant_curl [curl arguments] URL: a request to this store's Qdrant with its key, the one header the app also sends
+# (src/llm/http.c); the key comes from a file descriptor, never argv.
+qdrant_curl() {
+    local key
+    key="$(cat "$SCRIBODO_SECRETS/qdrant_api_key" 2>/dev/null)" && [ -n "$key" ] || return 1
+    curl -s -H @<(printf 'Authorization: Bearer %s\n' "$key") "$@"
 }
 
 # qdrant_delete_collections PREFIX: drop every collection of a database ("<database>__<project>"); the index is
 # derived and rebuilt from the store.
 qdrant_delete_collections() {
-    local key
-    key="$(cat "$SCRIBODO_SECRETS/qdrant_api_key" 2>/dev/null || true)"
-    [ -n "$key" ] || return 0
-    for c in $(curl -s -H @<(printf 'Authorization: Bearer %s\n' "$key") "http://127.0.0.1:$SCRIBODO_QDRANT_PORT/collections" |
+    [ -s "$SCRIBODO_SECRETS/qdrant_api_key" ] || return 0
+    for c in $(qdrant_curl "http://127.0.0.1:$SCRIBODO_QDRANT_PORT/collections" |
                python3 -I -c 'import json,sys; print(" ".join(c["name"] for c in json.load(sys.stdin)["result"]["collections"]))' 2>/dev/null); do
-        case "$c" in "${1}__"*) curl -s -o /dev/null -X DELETE -H @<(printf 'Authorization: Bearer %s\n' "$key") "http://127.0.0.1:$SCRIBODO_QDRANT_PORT/collections/$c" ;; esac
+        case "$c" in "${1}__"*) qdrant_curl -o /dev/null -X DELETE "http://127.0.0.1:$SCRIBODO_QDRANT_PORT/collections/$c" ;; esac
     done
 }

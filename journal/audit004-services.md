@@ -78,3 +78,44 @@ Not changed: the in-container ports in Compose (3306, 6333, the healthcheck) are
 benchmark tools under `tools/` that still default the port or folder themselves (`history_bench.sh`,
 `memory_pipeline_soak.*`, `memory_quality_eval.*`, `memory_reach_eval.c`, `store_growth_sample.sh`, `backuptest.sh`,
 `offlinetest.sh`) are outside the product path and this stream's scope.
+
+## Item 3 — the Docker path: written once, and covered without Docker
+
+**Root operations written once.** `rootsql`, `dump_db` and `load_dump` each had a native body and a Docker body
+(`services_lib.sh:63-118`). They are now one POSIX sh script (`root_ops_script`) run by `root_op`: on this Mac
+through `/bin/sh` in native mode, inside the MariaDB container through `compose exec -T mariadb sh -c` in docker
+mode. A two-line prelude per mode supplies the root password file (the secrets folder / `/run/secrets`), the host a
+one-time account connects from (`127.0.0.1` / `localhost`) and `client TOOL …` (natively `--no-defaults` first, the
+TCP address and `--skip-ssl-verify-server-cert`; in the container the tool as is). Passwords still reach the clients
+only through `MYSQL_PWD`. One behaviour change: native `load_dump` now stops if creating the one-time user fails
+(it used to go on and load as a user that did not exist); the Docker body already did (`set -e`).
+
+**Qdrant's key, one header.** Qdrant accepts both `api-key:` and `Authorization: Bearer`; the app sends Bearer
+(`src/llm/http.c`), so does `qdrant_delete_collections`, and `backuptest.sh`; `services.sh`'s readiness check was the
+one `api-key:`. Both scripts now go through `qdrant_curl` (Bearer, key from a descriptor). Evidence that Qdrant 1.20
+accepts Bearer with the plain API key: the app's semantic index has always authenticated that way (dbtest's vector
+suites), and `make servicestest` step 1 now waits for HTTP 200 through `qdrant_curl` (result below).
+
+**migrate-from-docker extracted.** The ~115 inline lines are `migrate_from_docker`, `migration_restore` and
+`migration_rollback` (the two nested functions moved out, renamed); the `case` entry is one line. Moved verbatim,
+state kept global, called as a plain command so `set -e` holds inside as it did inline.
+
+**Coverage without Docker:** `tests/test_services_docker.sh` (in `make test`). `docker` and `curl` are bash functions
+exported to the scripts (a function wins over PATH, so the real `~/.docker/bin/docker` the library puts first is
+never reached; exported functions survive `lockf`'s re-exec, checked first in isolation). The shim records every
+call and, for `compose exec`, runs the in-container script here with `/run/secrets` and the MariaDB clients faked,
+so the container half is executed, not just named. The same three operations run in native mode against the same
+fake clients and are held to the same transcript (only the connection arguments and the account host differ). 21
+checks: rootsql/dump_db/load_dump in both modes (arguments, stdin, root password by environment, one compose exec,
+the one-time user's create/sandboxed load/drop with the same random password, a failed load's status kept and the
+user still dropped); `qdrant_delete_collections` (Bearer, only the database's collections); no `api-key` left;
+`services.sh` in docker mode: `up` (info, compose up --wait, ps; secret modes; forced mode not remembered), `up`
+without Docker (exit 6), down/status/logs, purge refused for the author's project and done for a throwaway one,
+`testdb create`; `migrate-from-docker` refusing a forced mode (2) and without Docker (6, nothing written).
+Before the refactor the same test passed every Docker check except two of my own exact-text expectations (trailing
+spaces, then corrected) and failed the native ones only on argument order: the transcripts are equivalent.
+
+**Gates (item 3 tree):** `make test` exit 0; `make analyze` exit 0; `make sanitize` exit 0.
+
+Not covered: a whole migration (it needs a real native MariaDB and real containers); that stays servicestest step
+10, which still needs Docker.

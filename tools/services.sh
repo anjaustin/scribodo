@@ -236,12 +236,11 @@ EOF
         QDRANT__SERVICE__API_KEY="$(cat "$SCRIBODO_SECRETS/qdrant_api_key")" \
             detach "$qdata" "$SCRIBODO_LOGS/qdrant.log" "$qpid" "$QDRANT_BIN" --config-path "$qdata/config.yaml" || return 1
     fi
-    local key; key="$(cat "$SCRIBODO_SECRETS/qdrant_api_key")"
     for _ in $(seq 1 120); do
-        [ "$(curl -s -o /dev/null -w '%{http_code}' -H @<(printf 'api-key: %s\n' "$key") "http://127.0.0.1:$SCRIBODO_QDRANT_PORT/collections")" = 200 ] && break
+        [ "$(qdrant_curl -o /dev/null -w '%{http_code}' "http://127.0.0.1:$SCRIBODO_QDRANT_PORT/collections")" = 200 ] && break
         sleep 0.5
     done
-    [ "$(curl -s -o /dev/null -w '%{http_code}' -H @<(printf 'api-key: %s\n' "$key") "http://127.0.0.1:$SCRIBODO_QDRANT_PORT/collections")" = 200 ] ||
+    [ "$(qdrant_curl -o /dev/null -w '%{http_code}' "http://127.0.0.1:$SCRIBODO_QDRANT_PORT/collections")" = 200 ] ||
         { echo "Qdrant did not start; see $SCRIBODO_LOGS/qdrant.log" >&2; return 1; }
 }
 
@@ -281,6 +280,103 @@ native_purge() {
 
 # The app writes to the author's own store; a throwaway store (CI, the rehearsal) is not the app's.
 app_running() { is_default_store && pgrep -x scribodo >/dev/null 2>&1; }
+
+# migrate-from-docker (AUDIT-004 F6: these were 115 lines inside the `case`). Its state (prior, native_existed,
+# native_was_up, containers_were_up, keepn) is global, for migration_restore and migration_rollback; it reads `mode`,
+# set before the commands run. Called as a plain command, so `set -e` holds inside it as it did inline.
+migrate_from_docker() {
+    # The author's store moves from the containers to the native services. Refused while the app runs (its writes
+    # after the snapshot would stay behind) and when the native store already holds data (it would be replaced;
+    # SCRIBODO_MIGRATE_REPLACE=1 dumps it beside the secrets first). The mode becomes native only after the load and
+    # its check succeed. Any failure puts both stores back exactly as they were before the migration began: the
+    # containers up or down as they were, the native services up or down as they were, a native data directory this
+    # migration created removed, a replaced native store reloaded from its dump (REDTEAM-023).
+    [ -z "${SCRIBODO_SERVICES:-}" ] || { echo "unset SCRIBODO_SERVICES for the migration" >&2; exit 2; }
+    app_running && { echo "quit Scribodo first (it would keep writing to the store being moved)" >&2; exit 2; }
+    native_need || leave $?
+    docker info >/dev/null 2>&1 || { echo "Docker isn't running; the store to move is in its containers" >&2; leave 6; }
+    prior="$mode"
+    native_existed=0; native_store_exists && native_existed=1
+    native_was_up=0; m_alive && native_was_up=1
+    if [ "$native_existed" = 1 ] && [ "${SCRIBODO_MIGRATE_REPLACE:-}" != 1 ]; then
+        echo "a native store already exists; nothing was changed (SCRIBODO_MIGRATE_REPLACE=1 keeps a dump of it and replaces it)" >&2; exit 2
+    fi
+    mkdir -p "$SCRIBODO_SECRETS" && chmod 700 "$SCRIBODO_SECRETS"
+    # The choice is written down now, so a native data directory a failed migration leaves can never become the
+    # store by default.
+    [ -s "$SCRIBODO_SECRETS/mode" ] || printf '%s\n' "$prior" > "$SCRIBODO_SECRETS/mode"
+    export SCRIBODO_SERVICES=docker
+    containers_were_up=0; [ -n "$(compose ps -q 2>/dev/null)" ] && containers_were_up=1
+    keepn=""
+    # The two stores share their ports: the native services stop before the containers start.
+    if [ "$native_was_up" = 1 ]; then native_down || { echo "the native services did not stop; nothing was changed" >&2; exit 1; }; fi
+    secrets docker
+    compose up -d --wait --wait-timeout 180 >/dev/null || migration_rollback
+    stamp="$(date +%Y%m%d-%H%M%S)"
+    keep="$SCRIBODO_SECRETS/migration-$stamp.sql.gz"
+    umask 077
+    dump_db scribodo | gzip -9 > "$keep.part" || { rm -f "$keep.part"; migration_rollback; }
+    gzip -dc "$keep.part" | tail -1 | grep -q '^-- Dump completed' || { echo "the dump is incomplete; nothing moved" >&2; rm -f "$keep.part"; migration_rollback; }
+    mv "$keep.part" "$keep" || migration_rollback
+    echo "dumped the containers' scribodo database to $keep"
+    compose down || migration_rollback
+    export SCRIBODO_SERVICES=native
+    SCRIBODO_NATIVE_FRESH=1 native_up >/dev/null || migration_rollback
+    tables="$(rootsql -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'scribodo'")" || migration_rollback
+    if [ "$tables" != 0 ]; then
+        if [ "${SCRIBODO_MIGRATE_REPLACE:-}" != 1 ]; then
+            echo "the native store already holds $tables tables; nothing was replaced (SCRIBODO_MIGRATE_REPLACE=1 keeps a dump of it and replaces it)" >&2
+            migration_restore || true; exit 2
+        fi
+        # The dump is trusted for a reload only once it is complete (REDTEAM-023: a part-written one would have been
+        # loaded over the intact native store).
+        native_dump="$SCRIBODO_SECRETS/migration-native-$stamp.sql.gz"
+        { dump_db scribodo | gzip -9 > "$native_dump.part"; } || { rm -f "$native_dump.part"; migration_rollback; }
+        gzip -dc "$native_dump.part" | tail -1 | grep -q '^-- Dump completed' || { rm -f "$native_dump.part"; migration_rollback; }
+        mv "$native_dump.part" "$native_dump" || migration_rollback
+        keepn="$native_dump"
+        echo "kept the native store's previous contents in $keepn"
+    fi
+    gzip -dc "$keep" | load_dump scribodo || migration_rollback
+    v="$(rootsql -N -e 'SELECT MAX(version) FROM schema_migrations' scribodo)" || migration_rollback
+    [ -n "$v" ] && [ "$v" != NULL ] || migration_rollback
+    printf 'native\n' > "$SCRIBODO_SECRETS/mode"
+    echo "loaded into the native MariaDB: schema version $v; the semantic index is rebuilt by the app (Rebuild memory, the observer's index); the containers' volume is kept"
+    native_status
+}
+
+# migration_restore: true when both stores are back as they were. Every step is guarded: it runs under `set -e`.
+migration_restore() {
+    local clean=0
+    export SCRIBODO_SERVICES=native
+    if [ -n "$keepn" ] && [ -s "$keepn" ] && m_alive; then
+        # The database is emptied first, so a table only the failed load created does not survive the reload.
+        if printf "DROP DATABASE IF EXISTS scribodo;\nCREATE DATABASE scribodo CHARACTER SET utf8mb4;\nGRANT ALL ON scribodo.* TO 'scribodo'@'%%';\n" | rootsql &&
+           gzip -dc "$keepn" | load_dump scribodo; then :; else
+            echo "the native store's previous contents could not be reloaded; they are kept in $keepn" >&2; clean=1
+        fi
+    fi
+    if native_down; then
+        if [ "$native_existed" = 0 ]; then rm -rf "${mdata:?}" "${qdata:?}" || { echo "the native directories this migration created could not be removed" >&2; clean=1; }; fi
+    else
+        echo "the native services did not stop; their directories were left in place" >&2; clean=1
+    fi
+    if [ "$native_was_up" = 1 ]; then SCRIBODO_NATIVE_FRESH=1 native_up >/dev/null || { echo "the native services did not come back: tools/services.sh up" >&2; clean=1; }; fi
+    export SCRIBODO_SERVICES=docker
+    if [ "$containers_were_up" = 1 ]; then
+        { secrets docker && compose up -d --wait --wait-timeout 180 >/dev/null; } ||
+            { echo "the containers did not come back: SCRIBODO_SERVICES=docker tools/services.sh up" >&2; clean=1; }
+    else
+        compose down >/dev/null 2>&1 || true
+    fi
+    return $clean
+}
+
+migration_rollback() {
+    if migration_restore; then echo "the migration failed; both stores are as they were before it and the remembered mode is unchanged" >&2
+    else echo "the migration failed, and putting the stores back was incomplete (above); the remembered mode is unchanged" >&2; fi
+    exit 1
+}
 
 # ---- the commands ----------------------------------------------------------------------------------------------------
 mode="$(services_mode)"
@@ -329,97 +425,7 @@ case "${1:-status}" in
             echo "rotation failed; the old password is unchanged" >&2; exit 1
         fi
         ;;
-    migrate-from-docker)
-        # The author's store moves from the containers to the native services. Refused while the app runs (its writes
-        # after the snapshot would stay behind) and when the native store already holds data (it would be replaced;
-        # SCRIBODO_MIGRATE_REPLACE=1 dumps it beside the secrets first). The mode becomes native only after the load and
-        # its check succeed. Any failure puts both stores back exactly as they were before the migration began: the
-        # containers up or down as they were, the native services up or down as they were, a native data directory this
-        # migration created removed, a replaced native store reloaded from its dump (REDTEAM-023).
-        [ -z "${SCRIBODO_SERVICES:-}" ] || { echo "unset SCRIBODO_SERVICES for the migration" >&2; exit 2; }
-        app_running && { echo "quit Scribodo first (it would keep writing to the store being moved)" >&2; exit 2; }
-        native_need || leave $?
-        docker info >/dev/null 2>&1 || { echo "Docker isn't running; the store to move is in its containers" >&2; leave 6; }
-        prior="$mode"
-        native_existed=0; native_store_exists && native_existed=1
-        native_was_up=0; m_alive && native_was_up=1
-        if [ "$native_existed" = 1 ] && [ "${SCRIBODO_MIGRATE_REPLACE:-}" != 1 ]; then
-            echo "a native store already exists; nothing was changed (SCRIBODO_MIGRATE_REPLACE=1 keeps a dump of it and replaces it)" >&2; exit 2
-        fi
-        mkdir -p "$SCRIBODO_SECRETS" && chmod 700 "$SCRIBODO_SECRETS"
-        # The choice is written down now, so a native data directory a failed migration leaves can never become the
-        # store by default.
-        [ -s "$SCRIBODO_SECRETS/mode" ] || printf '%s\n' "$prior" > "$SCRIBODO_SECRETS/mode"
-        export SCRIBODO_SERVICES=docker
-        containers_were_up=0; [ -n "$(compose ps -q 2>/dev/null)" ] && containers_were_up=1
-        keepn=""
-        # restore: true when both stores are back as they were. Every step is guarded: it runs under `set -e`.
-        restore() {
-            local clean=0
-            export SCRIBODO_SERVICES=native
-            if [ -n "$keepn" ] && [ -s "$keepn" ] && m_alive; then
-                # The database is emptied first, so a table only the failed load created does not survive the reload.
-                if printf "DROP DATABASE IF EXISTS scribodo;\nCREATE DATABASE scribodo CHARACTER SET utf8mb4;\nGRANT ALL ON scribodo.* TO 'scribodo'@'%%';\n" | rootsql &&
-                   gzip -dc "$keepn" | load_dump scribodo; then :; else
-                    echo "the native store's previous contents could not be reloaded; they are kept in $keepn" >&2; clean=1
-                fi
-            fi
-            if native_down; then
-                if [ "$native_existed" = 0 ]; then rm -rf "${mdata:?}" "${qdata:?}" || { echo "the native directories this migration created could not be removed" >&2; clean=1; }; fi
-            else
-                echo "the native services did not stop; their directories were left in place" >&2; clean=1
-            fi
-            if [ "$native_was_up" = 1 ]; then SCRIBODO_NATIVE_FRESH=1 native_up >/dev/null || { echo "the native services did not come back: tools/services.sh up" >&2; clean=1; }; fi
-            export SCRIBODO_SERVICES=docker
-            if [ "$containers_were_up" = 1 ]; then
-                { secrets docker && compose up -d --wait --wait-timeout 180 >/dev/null; } ||
-                    { echo "the containers did not come back: SCRIBODO_SERVICES=docker tools/services.sh up" >&2; clean=1; }
-            else
-                compose down >/dev/null 2>&1 || true
-            fi
-            return $clean
-        }
-        rollback() {
-            if restore; then echo "the migration failed; both stores are as they were before it and the remembered mode is unchanged" >&2
-            else echo "the migration failed, and putting the stores back was incomplete (above); the remembered mode is unchanged" >&2; fi
-            exit 1
-        }
-        # The two stores share their ports: the native services stop before the containers start.
-        if [ "$native_was_up" = 1 ]; then native_down || { echo "the native services did not stop; nothing was changed" >&2; exit 1; }; fi
-        secrets docker
-        compose up -d --wait --wait-timeout 180 >/dev/null || rollback
-        stamp="$(date +%Y%m%d-%H%M%S)"
-        keep="$SCRIBODO_SECRETS/migration-$stamp.sql.gz"
-        umask 077
-        dump_db scribodo | gzip -9 > "$keep.part" || { rm -f "$keep.part"; rollback; }
-        gzip -dc "$keep.part" | tail -1 | grep -q '^-- Dump completed' || { echo "the dump is incomplete; nothing moved" >&2; rm -f "$keep.part"; rollback; }
-        mv "$keep.part" "$keep" || rollback
-        echo "dumped the containers' scribodo database to $keep"
-        compose down || rollback
-        export SCRIBODO_SERVICES=native
-        SCRIBODO_NATIVE_FRESH=1 native_up >/dev/null || rollback
-        tables="$(rootsql -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'scribodo'")" || rollback
-        if [ "$tables" != 0 ]; then
-            if [ "${SCRIBODO_MIGRATE_REPLACE:-}" != 1 ]; then
-                echo "the native store already holds $tables tables; nothing was replaced (SCRIBODO_MIGRATE_REPLACE=1 keeps a dump of it and replaces it)" >&2
-                restore || true; exit 2
-            fi
-            # The dump is trusted for a reload only once it is complete (REDTEAM-023: a part-written one would have been
-            # loaded over the intact native store).
-            native_dump="$SCRIBODO_SECRETS/migration-native-$stamp.sql.gz"
-            { dump_db scribodo | gzip -9 > "$native_dump.part"; } || { rm -f "$native_dump.part"; rollback; }
-            gzip -dc "$native_dump.part" | tail -1 | grep -q '^-- Dump completed' || { rm -f "$native_dump.part"; rollback; }
-            mv "$native_dump.part" "$native_dump" || rollback
-            keepn="$native_dump"
-            echo "kept the native store's previous contents in $keepn"
-        fi
-        gzip -dc "$keep" | load_dump scribodo || rollback
-        v="$(rootsql -N -e 'SELECT MAX(version) FROM schema_migrations' scribodo)" || rollback
-        [ -n "$v" ] && [ "$v" != NULL ] || rollback
-        printf 'native\n' > "$SCRIBODO_SECRETS/mode"
-        echo "loaded into the native MariaDB: schema version $v; the semantic index is rebuilt by the app (Rebuild memory, the observer's index); the containers' volume is kept"
-        native_status
-        ;;
+    migrate-from-docker) migrate_from_docker ;;
     down) if [ "$mode" = native ]; then native_down; else compose down; fi ;;
     purge)
         if [ "$mode" = native ]; then native_purge; else
