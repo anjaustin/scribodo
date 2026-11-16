@@ -292,6 +292,8 @@ def listed(path, entries):
         if e[0].rstrip("/") == path:
             return e
     for e in entries:
+        if "<" in e[0] and "<" not in path:
+            continue  # a placeholder entry ("build/ui/<script>") names a family in prose, never a concrete path
         if entry_regex(e[0].rstrip("/") if not e[0].endswith("/**") else e[0]).match(path):
             return e
     return None
@@ -330,18 +332,26 @@ def check(root, evidence, build=None):
             used.add(("allow", not_ev[0]))
         exact_excuse = bool(not_ev) and not_ev[0].rstrip("/") == path
         # What exists must be archived file by file: one archived file does not cover its directory (AUDIT-004 F1).
-        files = [] if not_ev else denoted_files(path, build)
+        # Only an entry naming exactly this citation skips the walk; a glob entry's matches are still looked at.
+        files = [] if exact_excuse else denoted_files(path, build)
         missing = ["build/" + str(f.relative_to(build)) for f in files]
         missing = [n for n in missing if not file_archived(n, idx, allow)]
         archived = (bool(files) or idx.covers(path)) and not missing
-        if archived:
+        if gone and files:
+            # A path recorded as lost that exists again, archived or not, is a fault: the record says it is gone.
+            status = "unarchived" if missing else "archived"
+            violations.append("%s: %s is recorded as lost but %d file(s) exist under %s (%s%s); archive them and "
+                              "remove the entry from %s" % (where, path, len(files), build,
+                                                            ", ".join("build/" + str(f.relative_to(build)) for f in files[:3]),
+                                                            ", ..." if len(files) > 3 else "", LOST))
+        elif archived:
             status = "archived"
         elif missing:
             status = "unarchived"
-            violations.append("%s: %s%s: %d existing file(s) under %s in no archive (%s%s); archive them "
+            violations.append("%s: %s: %d existing file(s) under %s in no archive (%s%s); archive them "
                               "(tools/evidence_check.py --unarchived)"
-                              % (where, path, " is recorded as lost but exists" if gone else "", len(missing), build,
-                                 ", ".join(missing[:3]), ", ..." if len(missing) > 3 else ""))
+                              % (where, path, len(missing), build, ", ".join(missing[:3]),
+                                 ", ..." if len(missing) > 3 else ""))
         elif gone:
             status = "lost"
         elif wiped and not is_pattern(path) and not exact_excuse:

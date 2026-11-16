@@ -218,6 +218,39 @@ class CheckTests(unittest.TestCase):
                 self.assertIn(cited, out)
                 self.assertNotIn("not-evidence)", out.splitlines()[-1])
 
+    def test_placeholder_entries_never_excuse_concrete_paths(self):
+        # Verification hole A: build/ui/<script> excused build/ui/fit-on3 and skipped the walk.
+        allow = "build/ui/<script>\tmake uitest's per-script directory\nbuild/ui/<script>/work\tits fixture copy\n"
+        t = self.tree(docs="`build/ui/fit-on3/` and `build/ui/<script>/work`\n", allow=allow)
+        write(t.build / "ui/fit-on3/result.json", "{}")
+        code, out = t.run()
+        self.assertEqual(code, 1, out)
+        self.assertIn("build/ui/fit-on3: 1 existing file(s)", out)
+        self.assertNotIn("<script>/work:", out)  # the placeholder citation itself is still excused
+        self.assertIsNone(ec.listed("build/ui/fit-on3", ec.load_list(t.root / ec.NOT_ARCHIVED, 2)))
+
+    def test_a_recreated_lost_path_fails_archived_or_not(self):
+        lost = "build/ui/fit-on\tjournal/x.md\tlost\n"
+        t = self.tree(docs="`build/ui/fit-on`\n", lost=lost, allow="build/ui/<script>\tper-script directory\n")
+        self.assertEqual(t.run()[0], 0)
+        write(t.build / "ui/fit-on/result.json", "{}")
+        code, out = t.run()
+        self.assertEqual(code, 1, out)
+        self.assertIn("build/ui/fit-on is recorded as lost but 1 file(s) exist", out)
+        t2 = self.tree(docs="`build/ui/fit-on`\n", lost=lost,
+                       tarballs={"scribodo-evidence-a": ["build/ui/fit-on/result.json"]})
+        write(t2.build / "ui/fit-on/result.json", "{}")
+        code, out = t2.run()
+        self.assertEqual(code, 1, out)
+        self.assertIn("recorded as lost but 1 file(s) exist", out)
+
+    def test_a_glob_entry_still_walks_its_matches(self):
+        t = self.tree(docs="`build/live-1/run`\n", allow="build/live-*/run\ta frozen run copy\n")
+        write(t.build / "live-1/run/result.json", "{}")
+        code, out = t.run()
+        self.assertEqual(code, 1, out)
+        self.assertIn("build/live-1/run: 1 existing file(s)", out)
+
     def test_a_star_stays_in_one_component(self):
         self.assertTrue(ec.entry_regex("build/memory-continuity-*").match("build/memory-continuity-ui.log"))
         self.assertFalse(ec.entry_regex("build/memory-continuity-*").match("build/memory-continuity-x/run/a.log"))
@@ -241,7 +274,7 @@ class CheckTests(unittest.TestCase):
         write(t.build / "gone/run/result.json", "{}")
         code, out = t.run()
         self.assertEqual(code, 1)
-        self.assertIn("build/gone/run is recorded as lost but exists", out)
+        self.assertIn("build/gone/run is recorded as lost but 1 file(s) exist", out)
 
     def test_lost_needs_the_citing_document(self):
         t = self.tree(docs="`build/gone`\n", lost="build/gone\n")
