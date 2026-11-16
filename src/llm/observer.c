@@ -646,7 +646,7 @@ static void job_semantic(JobRun *r)
 }
 
 /* The canon entries one statement is judged against: up to two nearest in meaning (projects with an index), then the
- * best two by shared words, three at most, each once. */
+ * best two by shared words, three at most, each once. Under the conflict gate a shared title is no shared word. */
 static int job_canon_candidates(JobRun *r, const char *stmt, size_t cand[4])
 {
     size_t best[2] = { SIZE_MAX, SIZE_MAX };
@@ -654,7 +654,7 @@ static int job_canon_candidates(JobRun *r, const char *stmt, size_t cand[4])
     for (size_t c = 0; c < r->ncanon; c++) {
         const RecordVersion *v = record_current(&r->canon[c]);
         if (strcmp(v->status, "committed")) continue;
-        int sc = obs_overlap(stmt, v->content);
+        int sc = obs_overlap(stmt, v->content, experiments()->observer_conflict_gate);
         if (sc > score[0]) {
             best[1] = best[0];
             score[1] = score[0];
@@ -748,13 +748,15 @@ static bool job_judge_pair(JobRun *r, bool sentence, size_t i, size_t c, const c
     return true;
 }
 
-/* A related note (no model call): the first live note sharing three words with the statement. */
+/* A related note (no model call): the first live note sharing three words with the statement. A shared title counts
+ * whatever the conflict gate says: the gate's title rule is a canon candidate rule (step 5), and note linking was never
+ * part of what it measured (AUDIT-004 F4; journal/audit004-observer.md item 4). */
 static void job_note_overlap(JobRun *r, size_t i, const char *stmt)
 {
     for (size_t n = 0; n < r->nnotes; n++) {
         const RecordVersion *v = record_current(&r->notes[n]);
         if (!strcmp(v->status, "deleted")) continue;
-        if (obs_overlap(stmt, v->content) >= 3) {
+        if (obs_overlap(stmt, v->content, false) >= 3) {
             snprintf(r->cands[i].info.related, sizeof(r->cands[i].info.related), "%s", r->notes[n].id);
             r->cands[i].info.related_text = strdup(v->content);
             break;
@@ -766,14 +768,15 @@ static void job_note_overlap(JobRun *r, size_t i, const char *stmt)
  * is checked, including ones that duplicate an existing finding ("Zoë" is known, but "Zoë's brown eyes" may still
  * contradict canon). A question asserts nothing. */
 /* The two best committed canon entries for a sentence by obs_overlap, each scoring at least SENTENCE_MIN_OVERLAP
- * (ties to the earlier entry). Returns how many. */
+ * (ties to the earlier entry); a canon candidate step, so under the conflict gate a shared title is no shared word.
+ * Returns how many. */
 static int sentence_canon(JobRun *r, const char *sentence, size_t best[SENTENCE_TOP])
 {
     int score[SENTENCE_TOP], n = 0;
     for (size_t c = 0; c < r->ncanon; c++) {
         const RecordVersion *v = record_current(&r->canon[c]);
         if (strcmp(v->status, "committed")) continue;
-        int sc = obs_overlap(v->content, sentence);
+        int sc = obs_overlap(v->content, sentence, experiments()->observer_conflict_gate);
         if (sc < SENTENCE_MIN_OVERLAP) continue;
         int at = n;
         while (at > 0 && sc > score[at - 1]) at--;

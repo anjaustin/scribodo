@@ -1,7 +1,8 @@
 /* Diagnostic: the observer's text functions over stdin, one answer per line, so changes to what the judge is shown are
  * scored offline with the product's own code (tools/observer_sentence_pairs.py; GAP-001).
  *
- * usage: observer_overlap                 "A<TAB>B" lines -> obs_overlap(A, B) (-1 for a line without a tab)
+ * usage: observer_overlap                 "A<TAB>B" lines -> obs_overlap(A, B) (-1 for a line without a tab); titles are
+ *                                         ignored under SCRIBODO_OBSERVER_CONFLICT_GATE=1, as in the canon candidate step
  *        observer_overlap --attributes    "CANON<TAB>TEXT" lines -> 1 or 0, obs_attributes_differ(CANON, TEXT)
  *        observer_overlap --subject       "CANON<TAB>TEXT" lines -> 1 or 0, obs_same_subject(CANON, TEXT)
  *        observer_overlap --sentences     text lines -> the byte length of each sentence, space-separated
@@ -9,6 +10,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "core/experiments.h"
 #include "llm/observer.h"
 
 int main(int argc, char **argv)
@@ -33,7 +35,7 @@ int main(int argc, char **argv)
         *tab = '\0';
         if (subject) puts(obs_same_subject(line, tab + 1) ? "1" : "0");
         else if (attributes) puts(obs_attributes_differ(line, tab + 1) ? "1" : "0");
-        else printf("%d\n", obs_overlap(line, tab + 1));
+        else printf("%d\n", obs_overlap(line, tab + 1, experiments()->observer_conflict_gate));
     }
     return 0;
 }

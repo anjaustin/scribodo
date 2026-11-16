@@ -43,23 +43,23 @@ static void test_paragraphs_and_overlap(void)
     size_t count = obs_paragraphs(document, starts, lens, 8);
     CHECK(count == 2 && !strncmp(document + starts[0], "First para\nstill first.", lens[0]) && lens[0] == 23 &&
           !strncmp(document + starts[1], "Second.", lens[1]));
-    CHECK(obs_overlap("Zo\xC3\xAB\xE2\x80\x99s eyes are brown.", "Zo\xC3\xAB's eyes are green.") >= 3);
-    CHECK(obs_overlap("The fog came in.", "Dvo\xC5\x99\xC3\xA1k lost his hand.") == 0);
+    CHECK(obs_overlap("Zo\xC3\xAB\xE2\x80\x99s eyes are brown.", "Zo\xC3\xAB's eyes are green.", false) >= 3);
+    CHECK(obs_overlap("The fog came in.", "Dvo\xC5\x99\xC3\xA1k lost his hand.", false) == 0);
     /* a shared title counts as a shared name by default (measured: the stoplist lost a place fault whose only shared
-     * word was "Princess"); under the conflict-gate experiment it does not (2026-11-14) */
-    unsetenv("SCRIBODO_OBSERVER_CONFLICT_GATE");
-    experiments_reload();
-    CHECK(obs_overlap("Mr. Darcy's estate is in Derbyshire.", "Mr. Wickham joined the Regulars.") == 2);
-    CHECK(obs_overlap("Dejah Thoris is the Princess of Helium.", "She was, after all, the Princess of Zodanga.") == 2);
+     * word was "Princess"); when the caller ignores titles (the canon candidate steps under the conflict gate,
+     * 2026-11-14) it does not. The setting is a parameter: the text module reads no flag, whatever the environment
+     * says (AUDIT-004 F12). */
     setenv("SCRIBODO_OBSERVER_CONFLICT_GATE", "1", 1);
     experiments_reload();
-    CHECK(obs_overlap("Mr. Darcy's estate is in Derbyshire.", "Mr. Wickham joined the Regulars.") == 0);
-    CHECK(obs_overlap("Lady Catherine de Bourgh is Mr. Darcy's aunt.", "Lady Lucas called at Longbourn.") == 0);
-    CHECK(obs_overlap("Captain James K. Powell is of Richmond.", "Powell had been born in Boston.") == 2);
-    CHECK(obs_overlap("Dejah Thoris is the Princess of Helium.", "She was, after all, the Princess of Zodanga.") == 0);
+    CHECK(obs_overlap("Mr. Darcy's estate is in Derbyshire.", "Mr. Wickham joined the Regulars.", false) == 2);
+    CHECK(obs_overlap("Dejah Thoris is the Princess of Helium.", "She was, after all, the Princess of Zodanga.", false) == 2);
     unsetenv("SCRIBODO_OBSERVER_CONFLICT_GATE");
     experiments_reload();
-    CHECK(obs_overlap("Mr. Darcy's estate is in Derbyshire.", "Mr. Wickham joined the Regulars.") == 2);
+    CHECK(obs_overlap("Mr. Darcy's estate is in Derbyshire.", "Mr. Wickham joined the Regulars.", true) == 0);
+    CHECK(obs_overlap("Lady Catherine de Bourgh is Mr. Darcy's aunt.", "Lady Lucas called at Longbourn.", true) == 0);
+    CHECK(obs_overlap("Captain James K. Powell is of Richmond.", "Powell had been born in Boston.", true) == 2);
+    CHECK(obs_overlap("Dejah Thoris is the Princess of Helium.", "She was, after all, the Princess of Zodanga.", true) == 0);
+    CHECK(obs_overlap("Mr. Darcy's estate is in Derbyshire.", "Mr. Wickham joined the Regulars.", false) == 2);
     CHECK(obs_title("Mrs", 3) && obs_title("captain", 7) && !obs_title("Darcy", 5) && !obs_title("Mrsx", 4));
 }
 

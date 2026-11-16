@@ -7,6 +7,15 @@ set -eu
 label=$1; binary=$2
 root=$(cd "$(dirname "$0")/.." && pwd)
 out="$root/build/observer"; mkdir -p "$out"
+# Every observer flag is pinned here, from the caller's environment or its default (off), and recorded in
+# build/observer/<label>-flags.txt, so a run says which arm it measured (AUDIT-004 F4); the replay also writes the flags
+# it read on each .err. SCRIBODO_FAKE_EXTRACT_MS is a test hook and never set for a measurement.
+SCRIBODO_OBSERVER_CONFLICT_GATE=${SCRIBODO_OBSERVER_CONFLICT_GATE:-off}
+SCRIBODO_OBSERVER_SENTENCES=${SCRIBODO_OBSERVER_SENTENCES:-off}
+export SCRIBODO_OBSERVER_CONFLICT_GATE SCRIBODO_OBSERVER_SENTENCES
+unset SCRIBODO_FAKE_EXTRACT_MS
+printf 'SCRIBODO_OBSERVER_CONFLICT_GATE=%s SCRIBODO_OBSERVER_SENTENCES=%s\n' "$SCRIBODO_OBSERVER_CONFLICT_GATE" \
+    "$SCRIBODO_OBSERVER_SENTENCES" | tee "$out/$label-flags.txt"
 run() {
     novel=$1; src=$2; shift 2
     dir="$out/$label-$novel"; rm -rf "$dir"; mkdir -p "$dir"; cp "$src"/*.md "$dir/"

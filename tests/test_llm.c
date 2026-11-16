@@ -1744,6 +1744,37 @@ static void test_observer_sentence_arms(void)
     CHECK(!experiments()->observer_sentences);
 }
 
+/* Every on/off combination of the two observer flags, each sentence arm included, through the fake backend (AUDIT-004
+ * F4). The gate's title rule acts on the canon candidate steps only (the statement path's and the sentence path's):
+ * under the gate the canon entry that shares only "Captain" and "horse" with the text is never judged; the note that
+ * shares the same two words is linked under every combination, because note linking was never part of the gate's
+ * measurement (step 5). The sentence arms differ only on the accented name's conflict, as in the arms test. */
+static void test_observer_flag_combinations(void)
+{
+    const struct {
+        const char *name, *sentences, *gate;
+        size_t conflicts;
+        bool zoe, sentence_path, title_pairs;
+    } arms[] = {
+        { "off-off", NULL, NULL, 2, true, false, true },
+        { "gate-off", NULL, "1", 2, true, false, false },
+        { "off-attributes", "attributes", NULL, 2, true, true, true },
+        { "off-subject", "subject", NULL, 1, false, true, true },
+        { "gate-attributes", "attributes", "1", 2, true, true, false },
+        { "gate-subject", "subject", "1", 1, false, true, false },
+    };
+    for (size_t i = 0; i < sizeof(arms) / sizeof(arms[0]); i++) {
+        ArmRun r = run_observer_arm(arms[i].name, arms[i].sentences, arms[i].gate);
+        bool ok = r.ran && r.conflicts == arms[i].conflicts && r.zoe == arms[i].zoe && r.sola && r.note_linked &&
+                  (arms[i].sentence_path ? r.sentence_calls > 0 && r.statement_calls == 0 : r.statement_calls > 0 && r.sentence_calls == 0) &&
+                  (r.title_only_calls > 0) == arms[i].title_pairs;
+        if (!ok)
+            fprintf(stderr, "    %s: ran %d conflicts %zu zoe %d sola %d note %d sentence %zu statement %zu title-only %zu\n", arms[i].name,
+                    r.ran, r.conflicts, r.zoe, r.sola, r.note_linked, r.sentence_calls, r.statement_calls, r.title_only_calls);
+        CHECK(ok);
+    }
+}
+
 static void test_observer_run(void)
 {
     char proj[700], doc[800];
@@ -2951,6 +2982,7 @@ int main(int argc, char **argv)
         { "observer_judge_log", test_observer_judge_log },
         { "observer_sentence_pairs", test_observer_sentence_pairs },
         { "observer_sentence_arms", test_observer_sentence_arms },
+        { "observer_flag_combinations", test_observer_flag_combinations },
         { "observer_wait_mode", test_observer_wait_mode },
         { "observer_redteam", test_observer_redteam },
         { "recent_and_renames", test_recent_and_renames },

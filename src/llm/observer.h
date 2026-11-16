@@ -91,8 +91,11 @@ bool observer_set_finding_status(Observer *o, const char *project_dir, const cha
 bool obs_locate(const char *text, size_t n, const char *evidence, size_t *start, size_t *len);
 
 /* Relevance score between two texts: shared names count 2, other shared
- * content words 1. Used to choose which canon entries to check. */
-int obs_overlap(const char *a, const char *b);
+ * content words 1. Used to choose which canon entries to check and which note
+ * a finding relates to. With ignore_titles a title (obs_title) is no shared
+ * word; the observer asks for it only in its canon candidate steps under
+ * SCRIBODO_OBSERVER_CONFLICT_GATE (AUDIT-004 F4: the text module reads no flag). */
+int obs_overlap(const char *a, const char *b, bool ignore_titles);
 
 /* Paragraphs of a document: byte ranges split on blank lines. */
 size_t obs_paragraphs(const char *text, size_t *starts, size_t *lens, size_t max);
@@ -102,7 +105,7 @@ size_t obs_paragraphs(const char *text, size_t *starts, size_t *lens, size_t max
 #define OBS_STATEMENT_BYTES 2400
 void obs_statement(const char *desc, const char *quote, char *out, size_t cap);
 
-/* A title or honorific (Mr, Lady, Captain, …): never a shared name in obs_overlap. */
+/* A title or honorific (Mr, Lady, Captain, …): no shared name in obs_overlap when it ignores titles. */
 bool obs_title(const char *word, size_t len);
 
 /* The judge's two disagreeing values, each located in its own text and different from each other; a conflict verdict

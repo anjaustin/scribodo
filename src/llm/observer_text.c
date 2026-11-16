@@ -3,7 +3,6 @@
 #include "observer_text_internal.h"
 #include <stdint.h>
 #include <stdio.h>
-#include "core/experiments.h"
 #include "core/utf8.h"
 
 #include <stdbool.h>
@@ -221,9 +220,10 @@ bool obs_stopword(const char *w, size_t n)
 }
 
 /* A title or honorific is not a name two texts share: "Mr. Darcy" and "Mr. Wickham" have "Mr" in common and nothing
- * else, and the canon candidate step sent such pairs to the judge (journal/observer-cycle2_quality.md, step 4). Applied
- * in tokens() only under the conflict-gate experiment: measured with the value-verified judge on both planted novels
- * (step 5), the off-fault conflicts rose and a Mars place fault whose only shared word was "Princess" was lost. */
+ * else, and the canon candidate step sent such pairs to the judge (journal/observer-cycle2_quality.md, step 4). Skipped
+ * in tokens() only when the caller asks (obs_overlap's ignore_titles), which the observer does for its canon candidate
+ * steps under the conflict-gate experiment: measured with the value-verified judge on both planted novels (step 5), the
+ * off-fault conflicts rose and a Mars place fault whose only shared word was "Princess" was lost. */
 bool obs_title(const char *w, size_t n)
 {
     static const char *const titles[] = {
@@ -242,10 +242,9 @@ typedef struct {
     bool name;
 } Tok;
 
-static size_t tokens(const char *s, Tok *out, size_t max)
+static size_t tokens(const char *s, Tok *out, size_t max, bool ignore_titles)
 {
     size_t k = 0;
-    const bool gate = experiments()->observer_conflict_gate;
     const unsigned char *u = (const unsigned char *)s;
     for (size_t i = 0; u[i] && k < max;) {
         while (u[i] && !obs_word_byte(u[i])) i++;
@@ -258,7 +257,7 @@ static size_t tokens(const char *s, Tok *out, size_t max)
         /* strip a possessive ('s / ’s) */
         if (n > 2 && u[a + n - 1] == 's' && u[a + n - 2] == '\'') n -= 2;
         else if (n > 4 && u[a + n - 1] == 's' && u[a + n - 2] == 0x99 && u[a + n - 3] == 0x80) n -= 4;
-        if (n >= sizeof(out[0].w) || obs_stopword(s + a, n) || (gate && obs_title(s + a, n))) continue;
+        if (n >= sizeof(out[0].w) || obs_stopword(s + a, n) || (ignore_titles && obs_title(s + a, n))) continue;
         bool name = obs_upper_start(u + a);
         if (!name && cp_count(s + a, n) < 4) continue;
         bool dup = false;
@@ -272,10 +271,10 @@ static size_t tokens(const char *s, Tok *out, size_t max)
     return k;
 }
 
-int obs_overlap(const char *a, const char *b)
+int obs_overlap(const char *a, const char *b, bool ignore_titles)
 {
     Tok ta[64], tb[64];
-    size_t na = tokens(a, ta, 64), nb = tokens(b, tb, 64);
+    size_t na = tokens(a, ta, 64, ignore_titles), nb = tokens(b, tb, 64, ignore_titles);
     int score = 0;
     for (size_t i = 0; i < na; i++)
         for (size_t j = 0; j < nb; j++)
