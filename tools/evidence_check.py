@@ -14,7 +14,8 @@ not-evidence list cannot excuse it, because the next run of the gate erases it. 
 (build/ui/<script>/, build/audit004/<target>.log) and globs are families: covered when an archive holds a member
 that matches, or when the not-evidence list names them.
 
-Without the archive folder the check fails (exit 2) unless CI (set on hosted runners) or SCRIBODO_EVIDENCE_SKIP is
+Without the archive folder the check fails (exit 2) unless it runs on a GitHub-hosted runner (CI set and
+RUNNER_ENVIRONMENT=github-hosted; the self-hosted Mac sets CI too and has the folder) or SCRIBODO_EVIDENCE_SKIP is
 set, when it skips and says so. Exit 1 lists every violation. Files are looked for in the main checkout's build/
 (git's common directory), also from a worktree; the summary line names it.
 
@@ -33,7 +34,11 @@ LOST = "tests/fixtures/evidence_lost.txt"
 
 # A citation starts at "build/" not preceded by a path or identifier character ("rebuild/", "$(BUILD)/" and
 # "foo/build/" are not citations) and runs to whitespace, a backtick or a quote.
-CITE = re.compile(r"(?<![A-Za-z0-9_./$-])build/[^\s`'\"|]*")
+# Markdown's own syntax ends it too: "[build/x](build/x)" is two citations of build/x, "<build/r.log>" one of
+# build/r.log; angle brackets stay only as a "<placeholder>" segment; parentheses end it (no cited path has one). A path with a space is cited only inside
+# backticks, where it runs to the closing backtick (SPACED); outside them a citation stops at the first space.
+CITE = re.compile(r"(?<![A-Za-z0-9_./$-])build/(?:[^\s`'\"|\[\]()<>]|<[A-Za-z0-9_-]+>)*")
+SPACED = re.compile(r"`(build/[^`]* [^`]*)`")
 TRAILING = ".,;:)]!?"
 
 
@@ -132,8 +137,13 @@ def citations(root, build=None):
         lines = f.read_text(errors="replace").splitlines()
         cited_dirs = []
         for n, line in enumerate(lines, 1):
-            for m in CITE.finditer(line):
-                for p in normalize(m.group(0)):
+            tokens = [m.group(1) for m in SPACED.finditer(line)]
+            tokens += [m.group(0) for m in CITE.finditer(SPACED.sub("``", line))]
+            for token in tokens:
+                if token.rstrip(TRAILING + "/") == "build":
+                    found.append(("build/", "%s:%d" % (f.relative_to(root), n)))  # the folder itself, named
+                    continue
+                for p in normalize(token):
                     found.append((p, "%s:%d" % (f.relative_to(root), n)))
                     if not is_pattern(p) and (build / p[len("build/"):]).is_dir() and p not in cited_dirs \
                             and not listed(p, allow):  # not a checkout or build tree named in prose
@@ -328,6 +338,9 @@ def check(root, evidence, build=None):
         if (path, where) in seen:
             continue
         seen.add((path, where))
+        if path == "build/":
+            rows.append(("build-folder", path, where))  # prose about the folder as a whole, not a citation of a run
+            continue
         gone = listed(path, lost)
         wiped = under(path, owned)
         not_ev = listed(path, allow)
@@ -371,7 +384,8 @@ def check(root, evidence, build=None):
             violations.append("%s: %s is in no archive, not declared not-evidence (%s), not recorded as lost (%s)"
                               % (where, path, NOT_ARCHIVED, LOST))
         rows.append((status, path, where))
-    stale = ["%s: %s" % (NOT_ARCHIVED, e[0]) for e in allow if ("allow", e[0]) not in used]
+    stale = ["%s: %s" % (NOT_ARCHIVED, e[0]) for e in allow
+             if ("allow", e[0]) not in used and not (len(e) > 2 and e[2] == "walk")]
     stale += ["%s: %s" % (LOST, e[0]) for e in lost if ("lost", e[0]) not in used]
     return violations, rows, stale, build
 
@@ -401,7 +415,7 @@ def unarchived_files(root, evidence, build=None):
     allow = load_list(root / NOT_ARCHIVED, 2)
     out = set()
     for path, _ in citations(root, build):
-        if listed(path, allow):
+        if path == "build/" or listed(path, allow):
             continue
         for f in denoted_files(path, build):
             name = "build/" + str(f.relative_to(build))
@@ -421,13 +435,16 @@ def main(argv=None):
     a = ap.parse_args(argv)
     if not Path(a.evidence).is_dir():
         # Hosted CI has no archive folder; anywhere else a missing folder is a fault, not a pass (red-team 5a).
-        why = "CI=%s" % os.environ["CI"] if os.environ.get("CI") else \
+        # Only a GitHub-hosted runner, which never has the folder, or an explicit SCRIBODO_EVIDENCE_SKIP may skip:
+        # CI is set on every runner, the self-hosted Mac included, where the folder exists (red-team 5e).
+        hosted = os.environ.get("CI") and os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted"
+        why = "CI on a github-hosted runner" if hosted else \
             "SCRIBODO_EVIDENCE_SKIP=%s" % os.environ["SCRIBODO_EVIDENCE_SKIP"] if os.environ.get("SCRIBODO_EVIDENCE_SKIP") else None
         if why:
             print("evidence_check: skipped (%s): no archive folder at %s" % (why, a.evidence))
             return 0
         print("evidence_check: no archive folder at %s; set SCRIBODO_EVIDENCE_DIR, or SCRIBODO_EVIDENCE_SKIP=1 where "
-              "there are no archives (hosted CI sets CI)" % a.evidence)
+              "there are no archives (a GitHub-hosted runner skips by itself)" % a.evidence)
         return 2
     if a.unarchived:
         for name in unarchived_files(a.root, a.evidence, a.build):

@@ -59,7 +59,8 @@ def main():
         with (run / 'native-visible.json').open('x') as file:
             json.dump({'method': 'Actual native split-thinking and speaker cleanup; default Scribodo label, no author label',
                        'native_source_sha256': sha(ROOT / 'src/llm/llm_text.c'), 'library_sha256': sha(args.library),
-                       'tool_sha256': sha(Path(__file__)), 'results_sha256': sha(run / 'results.json'),
+                       'tool_sha256': sha(Path(__file__)), 'common_sha256': sha(ROOT / 'tools/answer_common.py'),
+                       'results_sha256': sha(run / 'results.json'),
                        'native_smoke_controls': 4, 'rows': rows}, file, ensure_ascii=False, indent=2)
             file.write('\n')
         print(json.dumps({'run': str(run), 'changed_arms': [r['arm'] for r in rows if not r['unchanged']]}))

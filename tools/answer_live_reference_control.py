@@ -58,7 +58,8 @@ def main():
                    'llama_maximum_top10_gap': max(r['llama_max_top10_gap'] for r in checks),
                    'llama_argmax_disagreements': sum(not r['llama_argmax_matches'] for r in checks)}
             write(args.run / f"reference-full-{case['index']}.json", {'summary': row, 'top': tops, 'checks': checks,
-                  'tool_sha256': sha(Path(__file__)), 'method': 'CPU F32 SDPA, entire prompt plus candidate prefix in one forward, no cache'})
+                  'tool_sha256': sha(Path(__file__)), 'common_sha256': sha(Path(__file__).with_name('answer_common.py')),
+                  'method': 'CPU F32 SDPA, entire prompt plus candidate prefix in one forward, no cache'})
             results.append(row)
             print(json.dumps(row), flush=True)
             del output, hidden, logprobs, values, tokens

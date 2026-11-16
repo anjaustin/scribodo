@@ -78,6 +78,19 @@ class NormalizeTests(unittest.TestCase):
         found = [ec.normalize(m.group(0)) for m in ec.CITE.finditer(line)]
         self.assertEqual(found, [["build/real/p"], ["build/q"]])
 
+    def tokens(self, line):
+        return [ec.normalize(m.group(1)) for m in ec.SPACED.finditer(line)] + \
+            [ec.normalize(m.group(0)) for m in ec.CITE.finditer(ec.SPACED.sub("``", line))]
+
+    def test_markdown_links_and_angle_brackets(self):
+        self.assertEqual(self.tokens("[build/x](build/x)."), [["build/x"], ["build/x"]])
+        self.assertEqual(self.tokens("<build/r.log>"), [["build/r.log"]])
+        self.assertEqual(self.tokens("`build/ui/<script>/work`"), [["build/ui/<script>/work"]])
+
+    def test_a_spaced_path_is_cited_only_in_backticks(self):
+        self.assertEqual(self.tokens("see `build/my dir/f`."), [["build/my dir/f"]])
+        self.assertEqual(self.tokens("see build/my dir/f"), [["build/my"]])
+
     def test_patterns(self):
         rx = ec.pattern_regex("build/ui/<script>/saved.png")
         self.assertTrue(rx.match("build/ui/smoke/saved.png"))
@@ -177,6 +190,13 @@ class CheckTests(unittest.TestCase):
                       "journal/step.md:1: build/c/d", "journal/step.md:1: build/c/e"]:
             self.assertIn(where, out)
         self.assertIn("4 violation(s)", out)
+
+    def test_the_bare_build_folder_is_reported_not_dropped(self):
+        t = self.tree(docs="Everything under `build/` is a working location.\n")
+        code, out = t.run("--list")
+        self.assertEqual(code, 0, out)
+        self.assertIn("build-folder  build/\tdocs/REPORT.md:1", out)
+        self.assertIn("1 build-folder", out)
 
     def test_readme_is_scanned(self):
         t = self.tree(readme="see `build/observer/redteam023/durability/`\n")
@@ -318,13 +338,14 @@ class CheckTests(unittest.TestCase):
 
     def absent(self, **env):
         out = io.StringIO()
-        saved = {k: os.environ.pop(k, None) for k in ("CI", "SCRIBODO_EVIDENCE_SKIP")}
+        keys = ("CI", "SCRIBODO_EVIDENCE_SKIP", "RUNNER_ENVIRONMENT")
+        saved = {k: os.environ.pop(k, None) for k in keys}
         os.environ.update(env)
         try:
             with tempfile.TemporaryDirectory() as d, contextlib.redirect_stdout(out):
                 code = ec.main(["--root", str(ROOT), "--evidence", str(Path(d) / "missing")])
         finally:
-            for k in ("CI", "SCRIBODO_EVIDENCE_SKIP"):
+            for k in keys:
                 os.environ.pop(k, None)
                 if saved[k] is not None:
                     os.environ[k] = saved[k]
@@ -334,9 +355,13 @@ class CheckTests(unittest.TestCase):
         code, out = self.absent()
         self.assertEqual(code, 2)
         self.assertIn("no archive folder", out)
-        code, out = self.absent(CI="true")
+        code, out = self.absent(CI="true")  # the self-hosted Mac sets CI too: not a reason
+        self.assertEqual(code, 2)
+        code, out = self.absent(CI="true", RUNNER_ENVIRONMENT="self-hosted")
+        self.assertEqual(code, 2)
+        code, out = self.absent(CI="true", RUNNER_ENVIRONMENT="github-hosted")
         self.assertEqual(code, 0)
-        self.assertIn("skipped (CI=true)", out)
+        self.assertIn("skipped (CI on a github-hosted runner)", out)
         code, out = self.absent(SCRIBODO_EVIDENCE_SKIP="1")
         self.assertEqual(code, 0)
         self.assertIn("skipped (SCRIBODO_EVIDENCE_SKIP=1)", out)

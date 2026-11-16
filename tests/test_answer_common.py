@@ -52,10 +52,9 @@ class AnswerCommonTests(unittest.TestCase):
             text = path.read_text()
             if path.name == "answer_common.py" or "answer_common" not in text:
                 continue
-            if "runner_sha256" in text or "probe_sha256" in text or "helpers_sha256" in text \
-                    or ("tool_sha256" in text and "manifest" in text and "GGUF" in text):
+            if any(k in text for k in ("runner_sha256", "probe_sha256", "helpers_sha256", "tool_sha256")):
                 with self.subTest(tool=path.name):
-                    self.assertIn("answer_common.py')", text.replace('"', "'"))
+                    self.assertIn("answer_common.py'", text.replace('"', "'"))
 
 
 if __name__ == "__main__":
