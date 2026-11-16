@@ -22,37 +22,75 @@ def code(path: Path) -> str:
     return re.sub(r'"(?:\\.|[^"\\\n])*"', '""', text)
 
 
+# Names that only ever mean starting or loading code: banned as words, wherever they appear (a call, a macro alias
+# `#define RUN popen`, a function pointer `= popen;`, a selector). NSTask is Foundation's process class, for the .m files.
+BANNED = ["popen", "vfork", "forkpty", "daemon", "wordexp", "execl", "execlp", "execle", "execv", "execvp", "execvP",
+          "execve", "execvpe", "execvP", "dlsym", "dlopen", "NSTask"]
+# `system` and `fork` are also ordinary variable names here (a chat message's system part, a forked project), so they
+# are banned as a call, a pointer taken (`= system;`, `&fork`), or a macro alias.
+GENERIC = ["system", "fork"]
+
+
+def findings(text: str) -> list[str]:
+    found = [m.group(1) for m in re.finditer(r"\b(" + "|".join(sorted(set(BANNED))) + r")\b", text)]
+    g = "|".join(GENERIC)
+    for pattern in (r"\b(" + g + r")\s*\(",                              # a call
+                    r"(?<![=!<>&|])=\s*(" + g + r")\s*[;,)]",            # a pointer assigned
+                    r"(?<!&)&\s*(" + g + r")\b(?!\s*[&|])",              # a pointer taken
+                    r"#\s*define\s+\w+(?:\([^)]*\))?\s+(" + g + r")\b"):  # a macro alias
+        found += [m.group(1) for m in re.finditer(pattern, text)]
+    return found
+
+
 class SpawnHygiene(unittest.TestCase):
     def sources(self) -> list[Path]:
         files = sorted(p for p in (ROOT / "src").rglob("*") if p.suffix in (".c", ".m", ".h"))
         self.assertTrue(files)
         return files
 
-    def test_no_shell_or_fork(self) -> None:
-        bad = []
-        for p in self.sources():
-            for m in re.finditer(r"\b(popen|system|fork|vfork|execl|execlp|execle|execv|execvp|execve)\s*\(", code(p)):
-                bad.append(f"{p.relative_to(ROOT)}: {m.group(1)}()")
+    def test_no_shell_fork_or_loader(self) -> None:
+        bad = [f"{p.relative_to(ROOT)}: {name}" for p in self.sources() for name in findings(code(p))]
         self.assertEqual(bad, [], "spawn through src/core/child_process.h instead")
 
     def test_posix_spawn_only_with_cloexec_default(self) -> None:
         for p in self.sources():
             rel = str(p.relative_to(ROOT))
             text = code(p)
-            if re.search(r"\bposix_spawnp?\s*\(", text):
+            if re.search(r"\bposix_spawnp?\b", text):
                 self.assertIn(rel, SPAWN_SITES, f"{rel} calls posix_spawn: use child_spawn()")
                 self.assertIn("POSIX_SPAWN_CLOEXEC_DEFAULT", text, rel)
 
-    def test_the_check_sees_a_popen(self) -> None:
-        # The check itself: a popen in server.c's text (as before AUDIT-004) is found, a comment naming it is not.
-        sample = 'int f(void) { /* popen( */ FILE *p = popen("ps", "r"); return 0; }'
-        tmp = ROOT / "build" / "spawn_hygiene_sample.c"
+    def check_sample(self, sample: str, suffix: str = ".c") -> list[str]:
+        tmp = ROOT / "build" / f"spawn_hygiene_sample{suffix}"
         tmp.parent.mkdir(exist_ok=True)
         tmp.write_text(sample)
         try:
-            self.assertEqual(len(re.findall(r"\bpopen\s*\(", code(tmp))), 1)
+            return findings(code(tmp))
         finally:
             tmp.unlink()
+
+    def test_the_check_bites(self) -> None:
+        # The verification's seven evasions, and the two generic names in their pointer and macro forms.
+        caught = {
+            '#define RUN popen\nFILE *f = RUN("ps", "r");': "popen",
+            'FILE *(*open_cmd)(const char *, const char *) = popen;': "popen",
+            'int (*run)(const char *) = dlsym(RTLD_DEFAULT, "system");': "dlsym",
+            'wordexp_t w; wordexp("ps -p 1", &w, 0);': "wordexp",
+            'int fd; pid_t p = forkpty(&fd, NULL, NULL, NULL);': "forkpty",
+            'execvP("ps", "/bin", argv);': "execvP",
+            '#define RUN_SHELL system\nint (*p)(const char *) = system;': "system",
+            'pid_t (*f)(void) = &fork;': "fork",
+        }
+        for sample, name in caught.items():
+            self.assertIn(name, self.check_sample(sample), sample)
+        self.assertIn("NSTask", self.check_sample('NSTask *t = [[NSTask alloc] init];', ".m"))
+        self.assertIn("popen", self.check_sample('int f(void) { /* popen( */ FILE *p = popen("ps", "r"); return 0; }'))
+        # Ordinary variables named system and fork (as in answer_pipeline.c and store_import.c) are not spawns.
+        for sample in ('cJSON *system = message("system", k), *turn = NULL; ok = add(messages, system) && system;',
+                       'bool fork = strcmp(a, b) != 0; bool ok = fork ? x : y;',
+                       'static char *complete(void *m, const char *system, const char *user);',
+                       '/* system( in a comment */ const char *s = "popen(";'):
+            self.assertEqual(self.check_sample(sample), [], sample)
 
 
 if __name__ == "__main__":

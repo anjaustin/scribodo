@@ -33,9 +33,9 @@ svc() { tools/services.sh "$@"; }
 # Compose through the library, which exports what docker/compose.yml requires (the server flags, the ports): a bare
 # `docker compose` fails at parse time and its empty output would pass a "no containers" check (RED-TEAM, AUDIT-004).
 lib_compose() { bash -c '. tools/services_lib.sh; compose "$@"' lib "$@"; }
-containers_down() { # containers_down PROJECT: true only when Compose answered and listed no container
-    local out
-    out="$(SCRIBODO_COMPOSE_PROJECT="$1" lib_compose ps -q 2>/dev/null)" || return 1
+containers_down() { # containers_down PROJECT: true only when Compose answered and the containers are removed (-a: a
+    local out                                         # stopped container that still exists is not "down")
+    out="$(SCRIBODO_COMPOSE_PROJECT="$1" lib_compose ps -aq 2>/dev/null)" || return 1
     [ -z "$out" ]
 }
 mdb() { MYSQL_PWD="$1" "$MB/mariadb" --no-defaults --skip-ssl-verify-server-cert -N "${@:2}"; }

@@ -426,3 +426,27 @@ unset-variable bug in `up` would have read as success to the app.
   bash's error on stderr and Compose never started.
 
 **Gates (V1):** `make test` exit 0; `make analyze` exit 0; `make sanitize` exit 0.
+
+
+
+## V2 — the small gaps
+
+- **(a) Version format.** A release is now three numbers of at most nine digits with no leading zeros, for both the
+  pin and what `mariadbd` reports. A 20-digit patch used to make `[ -lt ]` fail with "integer expression expected",
+  which read as "not older". Decision on `11.4.013`: refuse it, not normalise it. `mariadbd` never prints a leading
+  zero, so it is a misread or a mistyped pin. Tests: a 21-digit, a 10-digit and a zero-padded patch are refused (3); a
+  zero-padded pin is refused as "not a release".
+- **(b) Removed, not stopped.** `servicestest.sh`'s `containers_down` lists with `ps -aq`, so a stopped container that
+  still exists is not "down". This only runs in step 10, with Docker.
+- **(c) The Compose check, wider.** It now matches `docker compose` with any spacing, `docker-compose`, and docker
+  through a variable (`$DOCKER compose`, `"${docker_bin}" compose`). The test asserts the pattern catches each of those
+  five spellings and ignores the library's own `compose` and `docker info`.
+- **(d) Spawn hygiene, wider.** Names are matched without requiring `(`. Banned as words anywhere: `popen`, `vfork`,
+  `forkpty`, `daemon`, `wordexp`, the `exec*` family including `execvP`, `dlsym`, `dlopen`, and `NSTask` (in `.m`).
+  `system` and `fork` are ordinary variable names in `src/` (a chat message's system part, a forked project), so they
+  are banned as a call, a pointer taken (`= system;`, `&fork`) or a macro alias. Samples tested: the verification's
+  seven (`#define RUN popen`, `= popen;`, `dlsym(…, "system")`, `wordexp`, `forkpty`, `execvP`, `NSTask`), the
+  generic names in pointer and macro form, and four false-positive guards (the real variable uses, a comment, a
+  string). The pre-AUDIT-004 `server.c` is still caught (`popen`).
+
+**Gates (V2):** `make test` exit 0; `make analyze` exit 0; `make sanitize` exit 0.

@@ -197,11 +197,13 @@ out="$(version_case "$series.$((patch + 1))")"
 [ "${out%%|*}" = 0 ] && printf '%s' "$out" | grep -qF "MariaDB $series.$((patch + 1)) is running; the store is pinned to $pin" &&
     [ "${out##*|}" = "" ]
 check "a newer patch of the series passes, with a warning naming both versions" $?
-for v in "$series.$((patch - 1))" "11.5.0" "10.11.9" ""; do
+for v in "$series.$((patch - 1))" "11.5.0" "10.11.9" "" "$series.123456789012345678901" "$series.0$patch" "$series.1234567890"; do
     out="$(version_case "$v")"
     [ "${out%%|*}" = 3 ] && printf '%s' "$out" | grep -qF "the store needs $pin or a newer $series patch" || { check "MariaDB '$v' refused" 1; continue; }
 done
-check "an older patch, another series or an unreadable version is refused (3), saying what is needed" 0
+check "an older patch, another series, an unreadable version, a 21- or 10-digit patch, or a leading zero (11.4.013) is refused (3)" 0
+[ "$(version_case "$pin" "$series.0$patch" | cut -d'|' -f1)" = 3 ] && version_case "$pin" "$series.0$patch" | grep -q "not a release"
+check "a pin with a leading zero is refused as not a release" $?
 [ "$(version_case "$pin" "$series.$((patch + 2))" | cut -d'|' -f1)" = 3 ] && [ "$(version_case "$series.$((patch + 2))" "$series.$((patch + 2))")" = "0||" ]
 check "SCRIBODO_MARIADB_VERSION overrides the pin" $?
 printf 'V=%s\n' "$pin" > "$T/version"
@@ -273,7 +275,14 @@ rm -rf "$P"
 # ---- Compose is called only through the library ------------------------------------------------------------------
 # docker/compose.yml requires variables only services_lib.sh exports: a direct `docker compose` elsewhere fails at parse
 # time, and a check reading its (empty) output passes vacuously (the red-team finding on servicestest and backuptest).
-direct="$(grep -nE '(^|[^#]*[;&|({ ]|^[[:space:]]*)docker compose' tools/*.sh tests/*.sh Makefile .github/workflows/*.yml 2>/dev/null |
+# Any spelling: the plugin (docker compose, with any spacing), the old binary (docker-compose), docker through a variable
+# ($DOCKER compose, "${docker_bin}" compose).
+compose_call='(docker-compose|docker[[:space:]]+compose|\$\{?[A-Za-z_]*[Dd][Oo][Cc][Kk][Ee][Rr][A-Za-z_]*\}?"?[[:space:]]+compose)'
+for sample in 'docker compose ps' 'docker  compose ps' 'docker-compose ps' '$DOCKER compose ps' '"${docker_bin}" compose ps'; do
+    printf '%s\n' "$sample" | grep -qE "$compose_call" || { check "the compose check sees: $sample" 1; continue; }
+done
+printf '%s\n' 'compose ps' 'docker info' | grep -qE "$compose_call" && check "the compose check ignores the library's compose and docker info" 1
+direct="$(grep -nE "$compose_call" tools/*.sh tests/*.sh Makefile .github/workflows/*.yml 2>/dev/null |
           grep -v '^tools/services_lib.sh:' | grep -v '^tests/test_services_docker.sh:' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#')"
 [ -z "$direct" ] || printf '      %s\n' "$direct"
 [ -z "$direct" ]
