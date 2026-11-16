@@ -26,6 +26,7 @@
 #include <sys/stat.h>
 #include "../src/app/renames.h"
 #include "../src/app/chat_store_internal.h"
+#include "../src/app/import_job.h"
 #include "../src/core/file_text.h"
 #include "test_util.h"
 #include "test_db_internal.h"
@@ -2129,7 +2130,7 @@ static char *legacy_chat(const char *proj, const char *id)
 
 static void test_chat_title_backfill(void)
 {
-    char why[256] = "", root[PATH_MAX], proj[PATH_MAX + 32], pid[40], got[512], detail[4000];
+    char why[256] = "", root[PATH_MAX], proj[PATH_MAX + 32], pid[40], got[512], detail[4000], status[400];
     CHECK(store_start(g_store, g_name, why, sizeof(why)));
     Db *db = store_db(g_store);
     snprintf(root, sizeof(root), "%sscribodo-title-backfill-XXXXXX", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp/");
@@ -2143,7 +2144,7 @@ static void test_chat_title_backfill(void)
     CHECK(legacy && file_text_read(legacy, &before) == FILE_TEXT_OK);
     archive_of(db, pid, got, sizeof(got));
     CHECK(!strcmp(got, ""));
-    store_finish_import(g_store, proj);
+    CHECK(store_backfill_chat_titles(g_store, proj, status, sizeof(status))); /* the worker's call at open */
     archive_of(db, pid, got, sizeof(got));
     CHECK(!strcmp(got, "First|Second"));
     DbRows r;
@@ -2156,12 +2157,12 @@ static void test_chat_title_backfill(void)
     free(after);
     free(legacy);
     /* A re-run is a no-op: by the receipt, and without it by the archive already holding the titles. */
-    store_finish_import(g_store, proj);
+    CHECK(store_backfill_chat_titles(g_store, proj, status, sizeof(status))); /* the worker's call at open */
     archive_of(db, pid, got, sizeof(got));
     CHECK(!strcmp(got, "First|Second"));
-    CHECK(store_backfill_chat_titles_db(db, pid, proj, detail, sizeof(detail)) && strstr(detail, "1 chats backfilled (2 titles)"));
+    CHECK(store_backfill_chat_titles_db(db, pid, proj, detail, sizeof(detail), NULL, NULL) && strstr(detail, "1 chats backfilled (2 titles)"));
     CHECK(db_run(db, "DELETE FROM project_backfills WHERE project_id = ?", (DbArg[1]){ DB_S(pid) }, 1, NULL));
-    CHECK(store_backfill_chat_titles_db(db, pid, proj, detail, sizeof(detail)) && strstr(detail, "0 chats backfilled"));
+    CHECK(store_backfill_chat_titles_db(db, pid, proj, detail, sizeof(detail), NULL, NULL) && strstr(detail, "0 chats backfilled"));
     archive_of(db, pid, got, sizeof(got));
     CHECK(!strcmp(got, "First|Second"));
 
@@ -2171,7 +2172,7 @@ static void test_chat_title_backfill(void)
     CHECK(db_query(db, "SELECT id FROM conversations WHERE project_id = ?", (DbArg[1]){ DB_S(pid_b) }, 1, &r) && r.nrows == 1 &&
           strcmp(db_cell(&r, 0, 0), x) != 0);
     db_rows_free(&r);
-    CHECK(store_backfill_chat_titles_db(db, pid_b, proj, detail, sizeof(detail)) && strstr(detail, "1 chats backfilled (2 titles)"));
+    CHECK(store_backfill_chat_titles_db(db, pid_b, proj, detail, sizeof(detail), NULL, NULL) && strstr(detail, "1 chats backfilled (2 titles)"));
     archive_of(db, pid_b, got, sizeof(got));
     CHECK(!strcmp(got, "First|Second"));
     archive_of(db, pid, got, sizeof(got));
@@ -2185,7 +2186,7 @@ static void test_chat_title_backfill(void)
     CHECK(chat_store_rename(g_store, proj, y, "Fourth"));
     archive_of(db, pid_c, got, sizeof(got));
     CHECK(!strcmp(got, "Third"));
-    CHECK(store_backfill_chat_titles_db(db, pid_c, proj, detail, sizeof(detail)));
+    CHECK(store_backfill_chat_titles_db(db, pid_c, proj, detail, sizeof(detail), NULL, NULL));
     archive_of(db, pid_c, got, sizeof(got));
     CHECK(!strcmp(got, "First|Second|Third"));
     CHECK(chat_store_rename(g_store, proj, y, "Fifth"));
@@ -2223,7 +2224,13 @@ static void test_chat_title_backfill(void)
     free(other);
     free(text);
     free(legacy);
-    CHECK(store_backfill_chat_titles_db(db, pid_d, proj, detail, sizeof(detail)));
+    CHECK(store_backfill_chat_titles(g_store, proj, status, sizeof(status)));
+    /* The line shown at open: skipped for good, not retried, the receipt named. */
+    CHECK(strstr(status, "3 chat files skipped for good") && strstr(status, "not retried") && strstr(status, "chat-titles-legacy"));
+    CHECK(db_query(db, "SELECT detail FROM project_backfills WHERE project_id = ?", (DbArg[1]){ DB_S(pid_d) }, 1, &r) && r.nrows == 1);
+    snprintf(detail, sizeof(detail), "%s", r.nrows == 1 && db_cell(&r, 0, 0) ? db_cell(&r, 0, 0) : "");
+    db_rows_free(&r);
+    CHECK(!store_backfill_pending(g_store, proj)); /* ambiguous is for good: no retry */
     CHECK(strstr(detail, "0 chats backfilled") && strstr(detail, "ambiguous (one conversation, two histories)") &&
           strstr(detail, "no conversation of this project matches") && strstr(detail, "3 skipped") && !strstr(detail, root));
     archive_of(db, pid_d, got, sizeof(got));
@@ -2239,13 +2246,119 @@ static void test_chat_title_backfill(void)
     if (legacy) *strstr(legacy, "/chats/") = '\0';
     CHECK(legacy && rename(legacy, moved) == 0);
     free(legacy);
-    store_finish_import(g_store, proj);
+    CHECK(store_backfill_chat_titles(g_store, proj, status, sizeof(status))); /* the worker's call at open */
     CHECK(db_query(db, "SELECT detail FROM project_backfills WHERE project_id = ?", (DbArg[1]){ DB_S(pid_e) }, 1, &r) &&
           r.nrows == 1 && db_cell(&r, 0, 0) && strstr(db_cell(&r, 0, 0), "0 legacy folders"));
     db_rows_free(&r);
     archive_of(db, pid_e, got, sizeof(got));
     CHECK(!strcmp(got, ""));
 
+    /* Round 3 (a): a file whose titles went A -> B -> A, renamed B -> Q in the store after the import, has an archive
+     * that starts [A, B] with the store's times: not the file's titles, so they are added before them. */
+    char pid_g[40];
+    const char *v = "20261115-130500-abcd";
+    snprintf(proj, sizeof(proj), "%s/g", root);
+    CHECK(mkdir(proj, 0755) == 0);
+    {
+        ChatMessage u = { .role = CHAT_USER, .content = "Round trip" };
+        CHECK(chat_store_append(g_store, proj, v, "A", &u) && chat_store_title_line_files(proj, v, "B", 1700000000) &&
+              chat_store_title_line_files(proj, v, "A", 1700000100) && store_import(g_store, proj, why, sizeof(why)) &&
+              store_mode(g_store, proj, pid_g, sizeof(pid_g), NULL) == STORE_DB);
+        CHECK(db_run(db, "DELETE t FROM conversation_titles t JOIN conversations c ON c.id = t.conversation_id WHERE c.project_id = ?",
+                     (DbArg[1]){ DB_S(pid_g) }, 1, NULL));
+    }
+    CHECK(chat_store_rename(g_store, proj, v, "B") && chat_store_rename(g_store, proj, v, "Q"));
+    archive_of(db, pid_g, got, sizeof(got));
+    CHECK(!strcmp(got, "A|B"));
+    CHECK(store_backfill_pending(g_store, proj) && store_backfill_chat_titles(g_store, proj, status, sizeof(status)) && !status[0]);
+    archive_of(db, pid_g, got, sizeof(got));
+    CHECK(!strcmp(got, "A|B|A|B"));
+
+    /* Round 3 (b): a legacy file that cannot be read fails the run: nothing written, no receipt, a line saying it will be
+     * tried again, and the next open does it. */
+    char pid_h[40];
+    const char *u_id = "20261115-130600-abcd";
+    CHECK(old_import(root, "h", u_id, "Retry", proj, sizeof(proj), pid_h, sizeof(pid_h)));
+    legacy = legacy_chat(proj, u_id);
+    CHECK(legacy && chmod(legacy, 0000) == 0);
+    CHECK(!store_backfill_chat_titles(g_store, proj, status, sizeof(status)));
+    CHECK(strstr(status, "could not be read") && strstr(status, "tried again at the next open"));
+    CHECK(store_backfill_pending(g_store, proj));
+    archive_of(db, pid_h, got, sizeof(got));
+    CHECK(!strcmp(got, ""));
+    CHECK(legacy && chmod(legacy, 0644) == 0);
+    free(legacy);
+    CHECK(store_backfill_chat_titles(g_store, proj, status, sizeof(status)) && !status[0] && !store_backfill_pending(g_store, proj));
+    archive_of(db, pid_h, got, sizeof(got));
+    CHECK(!strcmp(got, "First|Second"));
+
+    /* Round 3 (c): at open it runs on the import worker, off the frame thread, and its poll says it was the backfill. */
+    char pid_i[40];
+    const char *t_id = "20261115-130700-abcd";
+    CHECK(old_import(root, "i", t_id, "Worker", proj, sizeof(proj), pid_i, sizeof(pid_i)));
+    ImportJob job;
+    CHECK(import_job_init(&job, g_store));
+    CHECK(store_backfill_pending(g_store, proj) && import_job_start_backfill(&job, proj));
+    char dir[PATH_MAX];
+    bool done = false, succeeded = false;
+    for (int spin = 0; !done && spin < 3000; spin++) {
+        done = import_job_poll(&job, dir, sizeof(dir), &succeeded, status, sizeof(status));
+        if (!done) usleep(2000);
+    }
+    CHECK(done && succeeded && !status[0] && import_job_last_was_backfill(&job) && !strcmp(dir, proj));
+    import_job_destroy(&job);
+    archive_of(db, pid_i, got, sizeof(got));
+    CHECK(!strcmp(got, "First|Second") && !store_backfill_pending(g_store, proj));
+
+    char cmd[PATH_MAX + 20];
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root);
+    system(cmd);
+}
+
+/* Round 3 (c), measured, not a gate: SCRIBODO_TITLE_BACKFILL_TIMING=1 builds an old-imported project of 200 chats with
+ * 100 title lines each (20,000 lines) and times the open's frame-thread part (store_backfill_pending) and the
+ * worker's part (store_backfill_chat_titles). Recorded in journal/audit004-text.md. */
+static double now_ms(void)
+{
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return tv.tv_sec * 1000.0 + tv.tv_usec / 1000.0;
+}
+
+static void test_chat_title_backfill_timing(void)
+{
+    if (!getenv("SCRIBODO_TITLE_BACKFILL_TIMING")) return;
+    char why[256] = "", root[PATH_MAX], proj[PATH_MAX + 32], pid[40] = "", status[400];
+    CHECK(store_start(g_store, g_name, why, sizeof(why)));
+    snprintf(root, sizeof(root), "%sscribodo-title-timing-XXXXXX", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp/");
+    CHECK(mkdtemp(root) != NULL);
+    snprintf(proj, sizeof(proj), "%s/p", root);
+    CHECK(mkdir(proj, 0755) == 0);
+    int chats = atoi(getenv("SCRIBODO_TITLE_BACKFILL_TIMING")) > 1 ? atoi(getenv("SCRIBODO_TITLE_BACKFILL_TIMING")) : 200;
+    for (int c = 0; c < chats; c++) {
+        char id[40], body[40];
+        snprintf(id, sizeof(id), "20261115-16%04d-abcd", c);
+        snprintf(body, sizeof(body), "Chat %d", c);
+        ChatMessage u = { .role = CHAT_USER, .content = body };
+        CHECK(chat_store_append(g_store, proj, id, "T0", &u));
+        for (int t = 1; t <= 100; t++) {
+            char title[32];
+            snprintf(title, sizeof(title), "T%d", t);
+            CHECK(chat_store_title_line_files(proj, id, title, 1700000000 + t));
+        }
+    }
+    CHECK(store_import(g_store, proj, why, sizeof(why)) && store_mode(g_store, proj, pid, sizeof(pid), NULL) == STORE_DB);
+    Db *db = store_db(g_store);
+    CHECK(db_run(db, "DELETE t FROM conversation_titles t JOIN conversations c ON c.id = t.conversation_id WHERE c.project_id = ?",
+                 (DbArg[1]){ DB_S(pid) }, 1, NULL));
+    double t0 = now_ms();
+    bool pending = store_backfill_pending(g_store, proj);
+    double t1 = now_ms();
+    bool ok = store_backfill_chat_titles(g_store, proj, status, sizeof(status));
+    double t2 = now_ms();
+    CHECK(pending && ok);
+    printf("    backfill timing: %d chats x 100 title lines: pending %.2f ms (frame thread), backfill %.1f ms (worker)\n", chats,
+           t1 - t0, t2 - t1);
     char cmd[PATH_MAX + 20];
     snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root);
     system(cmd);
@@ -2399,6 +2512,7 @@ int main(void)
                           { "chat_title_reimport", test_chat_title_reimport },
                           { "chat_title_backfill", test_chat_title_backfill },
                           { "chat_title_contents", test_chat_title_contents },
+                          { "chat_title_backfill_timing", test_chat_title_backfill_timing },
                          { "entities_redteam", test_entities_redteam }, { "semantic", test_semantic } };
     int rc = run_db_core_tests();
     if (run_tests(tests, sizeof(tests) / sizeof(tests[0])) != 0) rc = 1;

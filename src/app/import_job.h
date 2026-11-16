@@ -19,12 +19,19 @@ typedef struct {
     StoreManager *store;
     char *project_dir;
     bool succeeded;
+    bool backfill;      /* this run is the chat-title backfill (store_backfill_chat_titles), not an import */
+    bool last_backfill; /* the run the last poll returned was */
     char why[400];
 } ImportJob;
 
 bool import_job_init(ImportJob *job, StoreManager *store);
 /* False while a run is in flight or awaiting poll. */
 bool import_job_start(ImportJob *job, const char *project_dir);
+/* The same worker for the chat-title backfill of a project already in the store (AUDIT-004 F11): off the frame thread,
+ * one run at a time with imports. Its poll's `why` is the status line to show, or "". */
+bool import_job_start_backfill(ImportJob *job, const char *project_dir);
+/* The run the last import_job_poll returned was a backfill. */
+bool import_job_last_was_backfill(const ImportJob *job);
 /* True once per run; copies the project folder, success and reason out. */
 bool import_job_poll(ImportJob *job, char *project_dir, size_t dirlen, bool *succeeded, char *why, size_t whylen);
 bool import_job_busy(const ImportJob *job);

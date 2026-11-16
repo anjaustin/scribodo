@@ -9,7 +9,8 @@
 static void *import_main(void *arg)
 {
     ImportJob *job = arg;
-    job->succeeded = store_import(job->store, job->project_dir, job->why, sizeof(job->why));
+    job->succeeded = job->backfill ? store_backfill_chat_titles(job->store, job->project_dir, job->why, sizeof(job->why))
+                                   : store_import(job->store, job->project_dir, job->why, sizeof(job->why));
     store_thread_done(job->store);
     atomic_store(&job->state, 2);
     return NULL;
@@ -24,7 +25,15 @@ bool import_job_init(ImportJob *job, StoreManager *store)
     return pthread_mutex_init(&job->mu, NULL) == 0;
 }
 
-bool import_job_start(ImportJob *job, const char *project_dir)
+static bool start_run(ImportJob *job, const char *project_dir, bool backfill);
+
+bool import_job_start(ImportJob *job, const char *project_dir) { return start_run(job, project_dir, false); }
+
+bool import_job_start_backfill(ImportJob *job, const char *project_dir) { return start_run(job, project_dir, true); }
+
+bool import_job_last_was_backfill(const ImportJob *job) { return job && job->last_backfill; }
+
+static bool start_run(ImportJob *job, const char *project_dir, bool backfill)
 {
     if (!job || !project_dir || !project_dir[0] || pthread_mutex_lock(&job->mu) != 0) return false;
     if (atomic_load(&job->state) != 0) {
@@ -37,6 +46,7 @@ bool import_job_start(ImportJob *job, const char *project_dir)
         return false;
     }
     job->succeeded = false;
+    job->backfill = backfill;
     job->why[0] = '\0';
     atomic_store(&job->state, 1);
     if (pthread_create(&job->thread, NULL, import_main, job) != 0) {
@@ -61,6 +71,7 @@ bool import_job_poll(ImportJob *job, char *project_dir, size_t dirlen, bool *suc
     if (project_dir && dirlen) snprintf(project_dir, dirlen, "%s", job->project_dir ? job->project_dir : "");
     if (succeeded) *succeeded = job->succeeded;
     if (why && whylen) snprintf(why, whylen, "%s", job->why);
+    job->last_backfill = job->backfill;
     free(job->project_dir);
     job->project_dir = NULL;
     atomic_store(&job->state, 0);

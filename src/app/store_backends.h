@@ -86,9 +86,16 @@ bool store_needs_import(StoreManager *manager, const char *project_dir);
 bool store_finish_import(StoreManager *manager, const char *project_dir);
 /* The chat titles an importer before migration 019 left only in .scribodo/legacy-* go into conversation_titles, once
  * per project (receipt "chat-titles-legacy" in project_backfills), in one transaction (store_import.c). True when done
- * now or before; `detail` (may be NULL) gets the receipt's account: counts and every file skipped, with why. Called by
- * store_finish_import at open. */
-bool store_backfill_chat_titles_db(Db *db, const char *pid, const char *project_dir, char *detail, size_t detaillen);
+ * now or before; `detail` (may be NULL) gets the receipt's account: counts and every file skipped, with why; `ran`
+ * says it ran now (not from a receipt), `skipped` how many files it skipped for good (ambiguous, unmatched, not a chat,
+ * undecodable). A file it cannot read fails the whole run, with no receipt, so the next open tries again. */
+bool store_backfill_chat_titles_db(Db *db, const char *pid, const char *project_dir, char *detail, size_t detaillen,
+                                   bool *ran, size_t *skipped);
+/* At open, on the frame thread: one receipt lookup; true when the backfill still has to run for this project. */
+bool store_backfill_pending(StoreManager *manager, const char *project_dir);
+/* The backfill for a project, on a worker (import_job_start_backfill): `status` gets the line to show at open when it
+ * failed (tried again at the next open) or skipped files for good (named by the receipt), else "". */
+bool store_backfill_chat_titles(StoreManager *manager, const char *project_dir, char *status, size_t statuslen);
 /* The document file `name` in `project_dir` gets a saved revision holding its
  * on-disk text (reusing a revision with that content, else an "import" one).
  * import=true runs inside an import's transaction and makes both pointers

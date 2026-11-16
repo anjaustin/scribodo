@@ -1466,11 +1466,15 @@ static bool title_claim_apply(Db *db, const TitleClaim *c, bool *applied)
         return false;
     bool ok = db_rows_has_columns(&r, 3);
     size_t m = ok ? r.nrows : 0;
+    /* Already there: the archive starts with the file's earlier titles, each replaced at the time the file gives it.
+     * Titles alone are not enough: a file that went A -> B -> A, then renamed B -> Q in the store, has an archive that
+     * starts [A, B] with the store's times (round 3). */
     bool present = ok && m >= k;
     for (size_t j = 0; ok && present && j < k; j++) {
         const char *t;
-        ok = db_cell_text(&r, j, 1, &t);
-        present = ok && !strcmp(t, c->titles[j].title);
+        double at;
+        ok = db_cell_text(&r, j, 1, &t) && db_cell_double(&r, j, 2, &at);
+        present = ok && !strcmp(t, c->titles[j].title) && at == (c->titles[j + 1].has_ts ? c->titles[j + 1].ts : c->updated);
     }
     if (!ok || present) {
         db_rows_free(&r);
@@ -1508,8 +1512,11 @@ static bool title_claim_apply(Db *db, const TitleClaim *c, bool *applied)
     return ok;
 }
 
-bool store_backfill_chat_titles_db(Db *db, const char *pid, const char *project_dir, char *detail, size_t detaillen)
+bool store_backfill_chat_titles_db(Db *db, const char *pid, const char *project_dir, char *detail, size_t detaillen,
+                                   bool *ran, size_t *skipped_out)
 {
+    if (ran) *ran = false;
+    if (skipped_out) *skipped_out = 0;
     char local[4000];
     if (!detail || !detaillen) {
         detail = local;
@@ -1572,9 +1579,10 @@ bool store_backfill_chat_titles_db(Db *db, const char *pid, const char *project_
             snprintf(c.label, sizeof(c.label), "%.100s/%s", dirs[d], names[f]);
             struct stat st;
             if (stat(c.file, &st) != 0 || !chat_store_titles_path(c.file, &c.titles, &c.n)) {
-                skipped++;
-                detail_add(detail, detaillen, "%s/%s: unreadable; ", dirs[d], names[f]);
-                continue;
+                /* Transient (permissions, a disk error): nothing is written and the next open tries again. */
+                detail_add(detail, detaillen, "%s/%s: could not be read; ", dirs[d], names[f]);
+                ok = false;
+                break;
             }
             c.updated = st.st_mtimespec.tv_sec > 0 ? (double)st.st_mtimespec.tv_sec : 0; /* before 1970: unknown */
             if (c.n < 2) { chat_store_titles_free(c.titles, c.n); continue; } /* never renamed: nothing to archive */
@@ -1584,7 +1592,8 @@ bool store_backfill_chat_titles_db(Db *db, const char *pid, const char *project_
                 chat_store_free_messages(msgs, nm);
                 chat_store_titles_free(c.titles, c.n);
                 skipped++;
-                detail_add(detail, detaillen, "%s/%s: no first message to match; ", dirs[d], names[f]);
+                detail_add(detail, detaillen, nm ? "%s/%s: messages could not be decoded; " : "%s/%s: no first message to match; ",
+                           dirs[d], names[f]);
                 continue;
             }
             int found = title_claim_conversation(db, pid, id, &msgs[0], c.cid, sizeof(c.cid), &ok);
@@ -1648,21 +1657,57 @@ bool store_backfill_chat_titles_db(Db *db, const char *pid, const char *project_
     free(dirs);
     if (ok) ok = db_commit(db);
     if (!ok) db_rollback(db);
+    if (ran) *ran = true;
+    if (skipped_out) *skipped_out = skipped;
     return ok;
 }
 
-/* At open (store_adopt_project): the move finished if it died after its marker, then, once the move is complete (no
- * witness, no legacy item live), the chat-title backfill, which is once per project by its receipt. A backfill that
- * fails leaves no receipt and is tried at the next open; it never changes what this returns. */
-bool store_finish_import(StoreManager *manager, const char *project_dir)
+bool store_finish_import(StoreManager *manager, const char *project_dir) { return finish_import_move(manager, project_dir); }
+
+/* The project is in the store, its move complete (no witness, no legacy item live). */
+static bool backfill_ready(StoreManager *manager, const char *project_dir, char *pid, size_t pidlen, Db **db)
 {
-    bool finished = finish_import_move(manager, project_dir);
-    char pid[40] = "", pending[PATH_MAX + 64];
-    Db *db = NULL;
-    if (!project_dir || !project_dir[0] || store_mode(manager, project_dir, pid, sizeof(pid), &db) != STORE_DB || !db) return finished;
+    char pending[PATH_MAX + 64];
+    if (!project_dir || !project_dir[0] || store_mode(manager, project_dir, pid, pidlen, db) != STORE_DB || !*db) return false;
     snprintf(pending, sizeof(pending), "%s/.scribodo/import-pending", project_dir);
     struct stat st;
-    if (lstat(pending, &st) == 0 || legacy_items_live(project_dir)) return finished;
-    (void)store_backfill_chat_titles_db(db, pid, project_dir, NULL, 0);
-    return finished;
+    return !(lstat(pending, &st) == 0 || legacy_items_live(project_dir));
+}
+
+/* At open, on the frame thread: one receipt lookup. */
+bool store_backfill_pending(StoreManager *manager, const char *project_dir)
+{
+    char pid[40] = "";
+    Db *db = NULL;
+    if (!backfill_ready(manager, project_dir, pid, sizeof(pid), &db)) return false;
+    DbRows r;
+    if (!db_query(db, "SELECT COUNT(*) FROM project_backfills WHERE project_id = ? AND name = ?",
+                  (DbArg[2]){ DB_S(pid), DB_S(TITLE_BACKFILL) }, 2, &r))
+        return false;
+    int64_t have = 1;
+    bool ok = r.nrows == 1 && db_rows_has_columns(&r, 1) && db_cell_i64(&r, 0, 0, &have);
+    db_rows_free(&r);
+    return ok && have == 0;
+}
+
+bool store_backfill_chat_titles(StoreManager *manager, const char *project_dir, char *status, size_t statuslen)
+{
+    if (status && statuslen) status[0] = '\0';
+    char pid[40] = "", detail[4000] = "";
+    Db *db = NULL;
+    if (!backfill_ready(manager, project_dir, pid, sizeof(pid), &db)) return false;
+    bool ran = false;
+    size_t skipped = 0;
+    bool ok = store_backfill_chat_titles_db(db, pid, project_dir, detail, sizeof(detail), &ran, &skipped);
+    if (!status || !statuslen) return ok;
+    if (!ok) {
+        const char *cause = strstr(detail, "could not be read") ? detail : db_error(db);
+        snprintf(status, statuslen,
+                 "Couldn't copy this project's older chat titles into the store (%.200s); they will be tried again at the next open",
+                 cause && cause[0] ? cause : "unknown cause");
+    } else if (ran && skipped)
+        snprintf(status, statuslen,
+                 "Older chat titles copied into the store; %zu chat file%s skipped for good (ambiguous or unmatched, not retried): "
+                 "receipt chat-titles-legacy in project_backfills", skipped, skipped == 1 ? "" : "s");
+    return ok;
 }

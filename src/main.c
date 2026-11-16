@@ -268,7 +268,12 @@ static bool store_adopt_project(App *app)
     if (!app->project_dir[0] || !store_online(app->store)) return false;
     /* A move that died after its marker is finished here, once, on open (GAP-004 matrix, import row). */
     if (store_finish_import(app->store, app->project_dir)) set_status(app, "Finished moving this project into the project store (its old files are in .scribodo/legacy-\xE2\x80\xA6)");
-    if (!store_needs_import(app->store, app->project_dir)) return false;
+    if (!store_needs_import(app->store, app->project_dir)) {
+        /* Chat titles an older import left in .scribodo/legacy-*: copied once, on the import worker (AUDIT-004 F11). */
+        if (app->import_job_initialized && !import_job_busy(&app->import_job) && store_backfill_pending(app->store, app->project_dir))
+            import_job_start_backfill(&app->import_job, app->project_dir);
+        return false;
+    }
     if (!app->import_job_initialized || import_job_busy(&app->import_job)) return false; /* one at a time; retried when it ends */
     if (!import_job_start(&app->import_job, app->project_dir)) {
         set_status(app, "Could not start moving the project into the store");
@@ -284,6 +289,10 @@ static void import_poll(App *app)
     bool ok = false;
     if (!app->import_job_initialized || !import_job_poll(&app->import_job, dir, sizeof(dir), &ok, why, sizeof(why))) return;
     bool current = strcmp(dir, app->project_dir) == 0;
+    if (current && import_job_last_was_backfill(&app->import_job)) { /* the chat-title backfill: a line only if it failed or skipped */
+        if (why[0]) set_status(app, why);
+        return;
+    }
     if (current) {
         if (ok) {
             app->store_just_moved = true;

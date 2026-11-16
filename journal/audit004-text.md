@@ -506,3 +506,43 @@ Gates (round-3 item 2): `make test` 0, `make sanitize` 0, `make dbtest` 0, `make
 No recorded reply contains a name continued past an initial inside a question, or a "Jr."/"Sr." before another
 statement, so the two fixes change nothing recorded; the 9 new fixture lines pin them. Evidence:
 `build/audit004-text/r3-measure/`.
+
+### 3. Backfill: the false "already done", visibility, and the frame thread
+
+**(a) A false "already done".** The archive counted as backfilled when it started with the file's earlier titles; a
+file that went A -> B -> A, renamed B -> Q in the store after the import, has an archive starting [A, B] (the store's
+renames), so nothing was added. Now each matched row must also carry the file's time for it (the `ts` of the line that
+replaced it, or the file's time when untimed, as the importer stamps it); store renames carry the store's own times.
+Test: that history ends "A|B|A|B"; with the time comparison removed the test fails (checked by mutation).
+
+**(b) Visible, and retried only when it can help.** A legacy file that cannot be read (permissions, a disk error) now
+fails the whole run: nothing is written, no receipt, and the next open tries again. Skips for good (ambiguous,
+unmatched, not a chat id, no first message, messages that cannot be decoded) are written to the receipt and not
+retried. `store_backfill_chat_titles` returns the status line shown at open: on failure "Couldn't copy this project's
+older chat titles into the store (<cause>); they will be tried again at the next open", on skips "Older chat titles
+copied into the store; N chat files skipped for good (ambiguous or unmatched, not retried): receipt
+chat-titles-legacy in project_backfills", otherwise nothing. Tests: an unreadable legacy file (chmod 000) fails with
+that line, leaves no receipt and the backfill still pending, and the next run after it is readable completes; the
+ambiguous project's line names the receipt and says not retried, and nothing is pending after it.
+
+**(c) Off the frame thread.** It ran on the frame thread at open (`store_finish_import`), 0.9 s once for 20,000 title
+lines. It now runs on the existing import worker: `import_job_start_backfill` (`src/app/import_job.c`, the worker
+that runs imports, one run at a time with them), and the frame thread does only `store_backfill_pending`, one receipt
+lookup. Measured (`SCRIBODO_TITLE_BACKFILL_TIMING=200 build/test_db`, an old-imported project of 200 chats x 100 title
+lines, three runs): the frame thread's part 0.12 to 0.16 ms, the worker's 1,143 to 1,237 ms. Test: the backfill
+started on an `ImportJob` completes, its poll says it was the backfill, and the archive is filled.
+
+**main.c (two small edits, flagged for the main.c stream).** `store_adopt_project`: when the project needs no import,
+start the backfill on the import worker if `store_backfill_pending` (instead of returning straight away);
+`import_poll`: a completed backfill for the current project shows its status line, if any, and returns before the
+import's own messages. Without them the backfill would have stayed on the frame thread or never run.
+
+The crash test's child and the tests now call `store_backfill_chat_titles` (the worker's call) instead of
+`store_finish_import`, which no longer runs the backfill.
+
+Gates (round-3 item 3, the whole branch): `make test` 0, `make sanitize` 0, `make dbtest` 0, `make analyze` 0 (no clang
+analyzer process running), `make crashtest` 0 (141 rows, 1,583 checks, 0 failures, 604 s; `titles.statement` 4 points
+through the worker's call). A first crashtest was killed by its 900 s watchdog while another stream's crash test ran
+on the shared MariaDB (`r3-3/crashtest-timeout1.log`); the gate script now waits on process names (`pgrep -x
+test_crash_points`, `pgrep -x test_db`), since `pgrep -f` matched this stream's own shell; the rerun passed. Logs:
+`build/audit004-text/r3-3/`.

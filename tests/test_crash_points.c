@@ -432,7 +432,7 @@ static int child_titles_main(const char *name, const char *dir)
     char why[256] = "";
     StoreManager *manager = store_manager_create();
     bool ok = manager && store_start(manager, name, why, sizeof(why));
-    if (ok) store_finish_import(manager, dir); /* at open: the backfill */
+    if (ok) store_backfill_chat_titles(manager, dir, NULL, 0); /* at open, on the import worker: the backfill */
     if (!ok) fprintf(stderr, "child: %s\n", why);
     printf("DONE ok=%d version=0 hits=%ld\n", ok, crash_point_hits());
     fflush(stdout);
@@ -506,8 +506,8 @@ static void test_titles_points(void)
         char at_death[400];
         long receipts_at_death;
         titles_state(manager, pid, at_death, sizeof(at_death), &receipts_at_death);
-        store_finish_import(manager, dir); /* the next open */
-        store_finish_import(manager, dir); /* and the one after: nothing more */
+        store_backfill_chat_titles(manager, dir, NULL, 0); /* the next open */
+        store_backfill_chat_titles(manager, dir, NULL, 0); /* and the one after: nothing more */
         titles_state(manager, pid, got, sizeof(got), &receipts);
         bool held = !strcmp(at_death, "Renamed twice") && receipts_at_death == 0 && !strcmp(got, want) && receipts == 1;
         CHECK(held);
