@@ -274,7 +274,21 @@ in [`docs/TESTING.md`](docs/TESTING.md).
 | `SCRIBODO_MEMORY_SMALL_UNITS` | unset | `1` tests 128-token saved-document units and a 16-unit candidate packet. Failed its 14/14 development reach target; off by default. Rebuild memory to change existing units. |
 | `SCRIBODO_ANSWER_PIPELINE` | on | The verified-answer pipeline answers in conversations with memory on, since 2026-11-14: the local Qwen3-Reranker picks one unit from 64 candidates, one extraction call copies the stating sentence, the span is byte-checked against the unit, and only that span reaches the model (0 fabrications shown in any recorded run; 10 to 15 s of reranking before the reply). `off` or `0` selects the plain composer. Needs the pinned reranker GGUF (`SCRIBODO_RERANK_MODEL`); without the file the app says so on stderr and answers plainly. See `docs/MODEL-002-qwen3-reranker.md`. |
 | `SCRIBODO_ANSWER_BLOCK` | unset | With the verified pipeline, `message` places the verified block at the top of the author's newest message (the pass 3a shape); the default places it in the system message after the composer instruction (pass 3b, measured as the better shape in journal `answer-cycle2_pipeline_live.md`). Kept for repeat measurement. |
-| `SCRIBODO_OBSERVER_CONFLICT_GATE` | unset | `1` turns on the observer's conflict-gate experiment: shared titles do not pair a statement with a canon entry, and a conflict verdict must name the two disagreeing values, found in the texts. Measured on both planted novels 2026-11-14 and worse than the default (more off-fault conflicts, two faults lost); kept for repeat measurement, off by default (journal `observer-cycle2_quality.md`, step 5). |
+| `SCRIBODO_OBSERVER_CONFLICT_GATE` | unset | `1` turns on the observer's conflict-gate experiment: shared titles do not pair a statement with a canon entry (since 2026-11-15 this applies only where the observer picks canon entries to judge, not to note linking), and a conflict verdict must name the two disagreeing values, found in the texts. Measured on both planted novels 2026-11-14 and worse than the default (more off-fault conflicts, two faults lost); kept for repeat measurement, off by default (journal `observer-cycle2_quality.md`, step 5). Any other value runs off with a warning. |
+| `SCRIBODO_OBSERVER_SENTENCES` | unset | Pairs a document's own sentences, not the model's statements, with canon. `attributes` (or `1`): a conflict also needs a differing value of one kind (step 8; real model: Mars 6 true of 42 shown, *Pride and Prejudice* 5 of 18). `subject`: it also needs the same subject (step 9; scored offline on recorded replies: 4 of 5, 5 of 7). Off by default; any other value runs off with a warning (journal `observer-cycle2_quality.md`, steps 7 to 9; `journal/audit004-observer.md`). |
+| `SCRIBODO_SEM_DEBUG` | unset | Set: failed Qdrant calls are logged to stderr. Diagnostic only. |
+| `SCRIBODO_FAKE_EXTRACT_MS` | unset | Test hook: the fake observer backend waits this many milliseconds per extraction. Never set for a measurement. |
+| `SCRIBODO_TOOLS_DIR` | the bundle's `Resources/tools`, else `../tools` beside the app | Where the app finds `services.sh` and `backup.sh`. |
+| `SCRIBODO_SERVICES` | the remembered mode | `native` or `docker` for one `tools/services.sh` call; never remembered. |
+| `SCRIBODO_LOGS` | `~/Library/Logs/Scribodo` | Where the native MariaDB and Qdrant write their logs. |
+| `SCRIBODO_MARIADB_BIN` | `/opt/homebrew/opt/mariadb@11.4/bin` | Folder with `mariadbd` and its clients. |
+| `SCRIBODO_MARIADB_VERSION` | `11.4.13` | The pinned MariaDB release (`tools/services.defaults`). Native mode starts the pinned release silently, a newer 11.4 patch with a warning shown once in the app, and refuses another series or an older patch. |
+| `SCRIBODO_QDRANT_BIN` | `build/qdrant/qdrant` | The Qdrant executable (`make qdrant`). |
+| `SCRIBODO_COMPOSE_PROJECT` | `scribodo` | Docker mode's Compose project; throwaway stores use their own. |
+| `SCRIBODO_MARIADB_MEM_LIMIT` / `SCRIBODO_QDRANT_MEM_LIMIT` | `768m` / `1g` | Docker mode's memory caps. |
+| `SCRIBODO_NATIVE_FRESH` | unset | `1`: `up` starts an empty native store over credentials whose store is in the containers. |
+| `SCRIBODO_SERVICES_LOCK_WAIT` | `300` | Seconds `services.sh` waits for another run's store lock. |
+| `SCRIBODO_SERVICES_LOCKED` | set by the script | Internal: marks the re-run under the store's lock. Do not set. |
 | `SCRIBODO_ANSWER_PARTS` | unset | With the verified pipeline, `1` splits a multi-part question into its parts (each with the request's context sentence), retrieves and reranks one candidate pool per part and assigns the two verified spans as a maximum-score matching. Measured live and rejected (journal `answer-cycle3_relation.md`, pass 7): a part with no manuscript answer still gets a slot. Kept for repeat measurement; the default is one pool for the whole request. |
 
 ### Dependencies
@@ -291,7 +305,8 @@ in [`docs/TESTING.md`](docs/TESTING.md).
 
 The pinned inventory and container digests are verified by `make dependency-report`.
 The local services are MariaDB 11.4.13 (GPLv2) and Qdrant v1.20.0 (Apache-2.0),
-pinned by digest in `docker/compose.yml`. The LFM3-1.7B weights are under the
+pinned by digest in `docker/compose.yml` (re-pinned 2026-11-15 to the same release rebuilt on a newer base,
+`journal/audit004-services.md`); the native MariaDB is checked against the same release (`tools/services.defaults`). The LFM3-1.7B weights are under the
 LFM Open License v1.0, including its $10M commercial-revenue threshold; see
 [MODEL-001](docs/MODEL-001-lfm3-runtime.md#license-not-legal-advice). Because
 the MariaDB client is linked statically, a binary distribution must meet
