@@ -255,6 +255,26 @@ bool font_file_has_outlines(const uint8_t *data, size_t len, int index)
            (face_table(data, len, index, TAG('C', 'F', 'F', ' '), &o, &l) && l > 0);
 }
 
+/* --- Apple's names ---------------------------------------------------------------------------------------------- */
+
+static const struct { const char *file, *family; } k_apple[] = {
+    { "SFNS.ttf", "San Francisco" },  { "SFNSItalic.ttf", "San Francisco" }, { "SFNSRounded.ttf", "SF Rounded" },
+    { "SFCompact.ttf", "SF Compact" }, { "SFCompactItalic.ttf", "SF Compact" }, { "SFNSMono.ttf", "SF Mono" },
+    { "SFNSMonoItalic.ttf", "SF Mono" }, { "NewYork.ttf", "New York" },      { "NewYorkItalic.ttf", "New York" },
+};
+
+bool font_file_apple_family(const char *path, char *out, size_t cap)
+{
+    static const char sys[] = "/System/Library/Fonts/";
+    if (!path || strncmp(path, sys, sizeof(sys) - 1) || strchr(path + sizeof(sys) - 1, '/')) return false;
+    for (size_t i = 0; i < sizeof(k_apple) / sizeof(k_apple[0]); i++)
+        if (!strcmp(path + sizeof(sys) - 1, k_apple[i].file)) {
+            snprintf(out, cap, "%s", k_apple[i].family);
+            return true;
+        }
+    return false;
+}
+
 /* --- extraction ------------------------------------------------------------------------------------------------- */
 
 uint8_t *font_file_extract_face(const uint8_t *data, size_t len, int index, size_t *out_len)

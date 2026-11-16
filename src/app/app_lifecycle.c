@@ -83,9 +83,16 @@ unsigned app_fonts_apply(App *app, unsigned roles, char *why, size_t whylen)
 
 /* Frames at the display's own rate: 120 on a ProMotion screen, 60 on this MacBook Air's, so motion is as smooth as
  * the panel allows. UI test runs stay at 60: their waits count frames. Checked again every few seconds by the frame
- * loop, since the window can move to another display. */
+ * loop, since the window can move to another display, along with that display's scale (fonts and icons follow it). */
 void app_match_refresh_rate(App *app)
 {
+    /* A display of another scale (a Retina laptop and a plain monitor): fonts and icons are rasterised again for it. */
+    float dpi = GetWindowScaleDPI().x;
+    if (app->window_ready && app->fonts[FONT_UI].nfaces && dpi > 0 && dpi != app->dpi) { /* after the first load */
+        app->dpi = dpi;
+        char why[PATH_MAX + 128];
+        app_fonts_apply(app, APP_FONTS_ALL, why, sizeof(why));
+    }
     int hz = app->scripted ? 60 : GetMonitorRefreshRate(GetCurrentMonitor());
     if (hz < 30 || hz > 240) hz = 60;
     if (hz != app->target_fps) {

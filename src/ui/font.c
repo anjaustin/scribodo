@@ -155,6 +155,7 @@ static bool load_face(const SFontSource *s, int px, int *cps, int ncps, Font *ou
         Font font = ext ? LoadFontFromMemory(ext, face, (int)xn, px, cps, ncps) : (Font){ 0 };
         if (IsFontValid(font) && font.glyphCount > 0) {
             *out = font;
+            (void)font_file_apple_family(s->path, fn.family, sizeof(fn.family)); /* "System Font" is San Francisco */
             snprintf(name, namelen, "%s %s", fn.family, fn.style);
             ok = true;
         } else if (font.glyphs) {

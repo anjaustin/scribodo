@@ -37,6 +37,12 @@ bool font_file_has_codepoint(const uint8_t *data, size_t len, int index, uint32_
  * nothing from it. */
 bool font_file_has_outlines(const uint8_t *data, size_t len, int index);
 
+/* macOS's own interface faces carry an internal family name ("System Font" in SFNS.ttf, ".SF NS Mono" hidden by its
+ * leading dot), so the app lists and names them as Apple does: San Francisco, SF Rounded, SF Compact, SF Mono, New York.
+ * True, with that family in `out`, when `path` is one of those files in /System/Library/Fonts; the file's own style
+ * (SF Mono's default weight is Light) is left as the file says. */
+bool font_file_apple_family(const char *path, char *out, size_t cap);
+
 /* Face `index` as a standalone sfnt in a new malloc'd buffer (*out_len bytes), its tables copied 4-byte aligned and
  * its table directory rewritten for the new offsets; the caller frees it. For a single-face file this is a copy.
  * NULL when the face is malformed, a table lies outside the file, or the tables together exceed the file's size (they

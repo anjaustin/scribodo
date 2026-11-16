@@ -577,6 +577,11 @@ These sit above raylib and need a real-input pass:
 - key auto-repeat
 - file drops from Finder
 - HiDPI changes when moving between displays
+- the window chrome (ui/mac_window.c): dragging the window by the toolbar, the double-click action, the traffic lights'
+  place through resizing and full screen (scripts inject raylib events, not AppKit ones; checked by reading the window
+  back in a scratch program and by hand)
+- motion (ui/motion.h is off in scripted runs) and the frosted backdrop's look beyond the screenshots
+- macOS's Reduce motion setting and a ProMotion display's refresh rate
 
 ## Checking that the tests catch regressions
 

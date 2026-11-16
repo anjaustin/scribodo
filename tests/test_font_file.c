@@ -194,6 +194,18 @@ static void test_corrupted(void)
     free(d);
 }
 
+static void test_apple_family(void)
+{
+    char f[64];
+    CHECK(font_file_apple_family("/System/Library/Fonts/SFNS.ttf", f, sizeof(f)) && !strcmp(f, "San Francisco"));
+    CHECK(font_file_apple_family("/System/Library/Fonts/SFNSMono.ttf", f, sizeof(f)) && !strcmp(f, "SF Mono"));
+    CHECK(font_file_apple_family("/System/Library/Fonts/SFCompactItalic.ttf", f, sizeof(f)) && !strcmp(f, "SF Compact"));
+    CHECK(!font_file_apple_family("/System/Library/Fonts/Supplemental/SFNS.ttf", f, sizeof(f))); /* only the top folder */
+    CHECK(!font_file_apple_family("/Users/x/Library/Fonts/SFNS.ttf", f, sizeof(f)));
+    CHECK(!font_file_apple_family("/System/Library/Fonts/Helvetica.ttc", f, sizeof(f)));
+    CHECK(!font_file_apple_family(NULL, f, sizeof(f)));
+}
+
 int main(void)
 {
     static const TestCase tests[] = {
@@ -202,6 +214,7 @@ int main(void)
         { "collection", test_collection },
         { "truncated", test_truncated },
         { "corrupted", test_corrupted },
+        { "apple_family", test_apple_family },
     };
     return run_tests(tests, sizeof(tests) / sizeof(tests[0]));
 }

@@ -1,7 +1,6 @@
 -std=c11
 -Isrc
 -Ithird_party/raylib/src
--Ithird_party/raygui/src
 -Ithird_party/clay
 -Ithird_party/stb
 -Ithird_party/mariadb-connector-c/include

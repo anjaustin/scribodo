@@ -1169,12 +1169,16 @@ static void frame_left_click(App *app, Vector2 mouse, bool modal, bool trace)
      * system setting says; a press starts the system's own window drag. */
     if (!modal && app->unified_titlebar && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && toolbar_empty()) {
         double now = GetTime();
-        if (now - app->toolbar_click_t < 0.4) {
+        if (app->toolbar_click_t > 0 && now - app->toolbar_click_t < mac_window_double_click_interval()) {
             app->toolbar_click_t = 0;
             mac_window_title_double_click(GetWindowHandle());
         } else {
-            app->toolbar_click_t = now;
-            mac_window_begin_drag(GetWindowHandle());
+            Vector2 before = GetWindowPosition();
+            bool dragged = mac_window_begin_drag(GetWindowHandle());
+            Vector2 after = GetWindowPosition();
+            /* A click that left the window where it was can be the first of a double-click; a drag cannot. */
+            bool moved = before.x != after.x || before.y != after.y;
+            app->toolbar_click_t = dragged && !moved ? now : 0;
         }
         return;
     }
@@ -1783,6 +1787,7 @@ static bool frame_end(App *app, MainLoop *loop)
 /* One frame after the worker polls in main(). False to leave the loop. */
 static bool frame_step(App *app, MainLoop *loop)
 {
+    backdrop_frame_begin();
     if (app->unified_titlebar) mac_window_place_buttons(GetWindowHandle(), TOOLBAR_H); /* AppKit re-lays them out */
     static double refresh_checked;
     if (GetTime() - refresh_checked > 3.0) { /* the window may have moved to another display */

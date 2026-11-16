@@ -2,9 +2,9 @@
  * Xcode, instead of a grey title bar above it.
  *
  * Done through the Objective-C runtime on the NSWindow raylib (GLFW) creates, from plain C: the window gets a
- * full-size content view and a transparent, untitled title bar, so the app's own drawing fills it; the three buttons
- * are moved to sit centred in the app's toolbar (AppKit lays them out again on resize and full screen, so the app places
- * them every frame). With the title bar gone, the empty parts of the toolbar move the window and a double-click there
+ * full-size content view, a transparent, untitled title bar and an empty toolbar in the unified compact style, which
+ * makes AppKit's title bar exactly as tall as the app's toolbar with the three buttons centred in it, through resizing
+ * and full screen. With the title bar gone, the empty parts of the toolbar move the window and a double-click there
  * does what the author set in System Settings ▸ Desktop & Dock (zoom, minimise or nothing). */
 #ifndef SCRIBODO_MAC_WINDOW_H
 #define SCRIBODO_MAC_WINDOW_H
@@ -14,12 +14,17 @@
 /* Unifies the title bar with a toolbar `toolbar_h` points tall. False (and nothing changed) when the handle is not a
  * window that answers the calls used. */
 bool mac_window_unify(void *nswindow, float toolbar_h);
-/* Keeps the traffic lights centred in the toolbar (cheap: three frames read, moved only when AppKit reset them). */
+/* Keeps the traffic lights centred in the toolbar where the title bar has another height (a macOS without toolbar
+ * styles): moved vertically only, and only when off by more than a point. A no-op otherwise. */
 void mac_window_place_buttons(void *nswindow, float toolbar_h);
-/* Where the app's toolbar content may start, in points: right of the traffic lights. 0 when not unified. */
-float mac_window_toolbar_inset(void);
+/* Where the app's toolbar content may start, in points: right of the zoom button as AppKit placed it. 0 when not
+ * unified or in full screen (the buttons are not in the window then). */
+float mac_window_toolbar_inset(void *nswindow);
+/* The system's double-click interval, in seconds. */
+double mac_window_double_click_interval(void);
 /* A press on an empty part of the toolbar: the system's own window drag (with its snapping and tiling). False when
- * the event in hand is not that press, so the caller does nothing. */
+ * the event in hand is neither that press nor a drag following it in the same frame, is another window's, or the
+ * button is already up: the caller then does nothing. */
 bool mac_window_begin_drag(void *nswindow);
 /* A double-click on an empty part of the toolbar: zoom, minimise or nothing, as the author's system setting says. */
 void mac_window_title_double_click(void *nswindow);

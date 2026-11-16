@@ -31,14 +31,31 @@ static bool g_shader_tried, g_shader_ok;
 static RenderTexture2D g_a, g_b; /* half resolution: the blur's ping and pong */
 static bool g_ready;
 static int g_w, g_h; /* the window's render size the snapshot was taken at */
+/* Frames, so a snapshot is never taken in the frame that asked for it: that frame may still show the menu that opened
+ * the dialog, or text laid out with the font being replaced (red team). */
+static unsigned long g_frame;
+static long g_wanted_at = -1; /* the frame a fresh snapshot was asked for; -1: none pending */
 
-void backdrop_release(void)
+void backdrop_frame_begin(void) { g_frame++; }
+
+static void unload(void)
 {
     if (g_ready) {
         UnloadRenderTexture(g_a);
         UnloadRenderTexture(g_b);
     }
     g_ready = false;
+}
+
+void backdrop_release(void)
+{
+    unload();
+    g_wanted_at = -1;
+}
+
+void backdrop_invalidate(void)
+{
+    if (g_wanted_at < 0) g_wanted_at = (long)g_frame;
 }
 
 static void blur_pass(RenderTexture2D src, RenderTexture2D dst, float dx, float dy)
@@ -93,8 +110,12 @@ void backdrop_draw(Rectangle screen)
         g_shader_ok = IsShaderValid(g_blur);
         g_step_loc = g_shader_ok ? GetShaderLocation(g_blur, "step") : -1;
     }
-    if (g_ready && (g_w != GetRenderWidth() || g_h != GetRenderHeight())) backdrop_release(); /* resized */
-    if (g_shader_ok && !g_ready) capture();
+    if (g_ready && (g_w != GetRenderWidth() || g_h != GetRenderHeight())) unload(); /* resized */
+    if (!g_ready && g_wanted_at < 0) g_wanted_at = (long)g_frame;
+    if (g_shader_ok && g_wanted_at >= 0 && (long)g_frame > g_wanted_at) { /* a later frame than the one that asked */
+        unload();
+        if (capture()) g_wanted_at = -1;
+    }
     if (g_ready) {
         DrawTexturePro(g_a.texture, (Rectangle){ 0, 0, (float)g_a.texture.width, -(float)g_a.texture.height }, screen,
                        (Vector2){ 0, 0 }, 0, THEME_NO_TINT);

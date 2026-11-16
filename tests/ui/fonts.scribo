@@ -52,6 +52,11 @@ click_element FontsPick3
 type "menlo regular"
 click_element FontsItem1
 expect font 3 "Menlo Regular"
+# macOS's own face, by Apple's name in the list and once chosen (red team: it showed "System Font").
+click_element FontsPick0
+type "san francisco"
+click_element FontsItem1
+expect font 0 "San Francisco"
 # Back to the defaults; Esc on the panel is Cancel, so Done keeps them.
 click_element FontsDefaults
 expect font 1 "Share Regular"

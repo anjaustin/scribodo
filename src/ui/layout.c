@@ -162,7 +162,7 @@ static void layout_toolbar(App *app)
     /* Toolbar */
     CLAY({ .id = CLAY_ID("Toolbar"),
            .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(TOOLBAR_H) },
-                       .padding = { (uint16_t)(14 + mac_window_toolbar_inset()), 14, 0, 0 }, .childGap = 14,
+                       .padding = { (uint16_t)(14 + mac_window_toolbar_inset(GetWindowHandle())), 14, 0, 0 }, .childGap = 14,
                        .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
            .backgroundColor = COL_PANEL,
            .border = { .color = COL_BORDER, .width = { .bottom = 1 } } }) {
