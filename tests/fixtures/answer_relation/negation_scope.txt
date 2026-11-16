@@ -76,3 +76,10 @@ Her father is Tardos Mors Sr. Lydia is not his daughter.
 Her father is Tardos Mors Chapter X. Lydia is not his daughter.
 Her father is Tardos Mors Dr. Lydia is not his daughter.
 ~ Her father is Tardos Mors K. Lydia is not his daughter.
+Her father is Tardos Mors M.D. Lydia is not his daughter.
+Her father is Tardos Mors U.S. Lydia is not his daughter.
+Her father is Tardos Mors of U.S. Lydia is not his daughter.
+~ Her father is Tardos Mors van K. Lydia is not his daughter.
+~ Her father is Tardos Mors de la K. Lydia is not his daughter.
+Her father is Tardos Mors of Room B. Lydia is not his daughter.
+Her father is Tardos Mors of Barsoom B. Lydia is not his daughter.

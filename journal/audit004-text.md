@@ -731,3 +731,36 @@ Gates on the final tree (`build/audit004-text/f-gates`), run after the coordinat
 is unarchived. The same targets with `evidencecheck` taken as done (`make -o evidencecheck test`, and sanitize's
 `make BUILD=build/asan OPT="$(SAN_FLAGS)" -o evidencecheck test`) exited 0 (`test-without-evidencecheck.log`,
 `sanitize-without-evidencecheck.log`).
+
+## Final verification, second pass (2026-11-15)
+
+### 1. Abbreviations and particles no longer carry a name across a sentence end
+
+**Regression (from item 1 of the first pass).** The name-token rule took a multi-dot abbreviation or a particle as
+part of a name, so a following sentence's negation reached back: "Her father is Tardos Mors M.D. Lydia is not his
+daughter.", "... Mors U.S. Lydia ...", "... Mors of U.S. Lydia ...", "... Mors van K. Lydia ...", "... Mors de la K.
+Lydia ...", "... Mors of Room B. Lydia ...", "... Mors of Barsoom B. Lydia ..." were all unflagged (the arm at
+`b311c2c` flagged them all).
+
+**Change** (C `rel_token_kind` and `rel_continues_name`, the arm's `_token_kind` and `_continues_name`). Two shapes now
+end the name, in addition to the earlier ones:
+- several initials in one token ("M.D.", "U.S.", "Q.C.", "D.D.S.") continue a name only as the first token after the
+  phrase, and only when the phrase's last word is not capitalised: "father J.R.R. Tolkien" is a name, "Mors M.D." and
+  "Mors of U.S." are a post-nominal and an abbreviation, bounds as "Jr." is ("Ph.D." was never a name token);
+- an initial after a particle and a word ("of Room B.", "of Barsoom B.") is a label's: a particle starts a surname, and
+  no initial follows the surname in a name.
+
+**Not separable: pinned as known misses.** "... Mors van K. Lydia is not ..." and "... Mors de la K. Lydia is not ..."
+have the shape of "Is Lydia's father James van K. Powell?" (a word, a particle, an initial, a capitalised word); any
+rule that bounds the first cuts the second's name and flags the question, which the first pass closed as a false
+alarm. They are "~ " lines in `negation_scope.txt` (they flag nothing in both languages), as "Mors K." is. A residual
+cost of the first-token rule: "Is Lydia's father James J.R. Powell?" (several initials after a first name) would now
+be cut and flagged; no recorded reply or test case has that shape.
+
+**Tests.** The seven lines in `negation_scope.txt`: five must flag, two pinned misses; both suites.
+
+**Re-measured (no model).** 670 recorded replies (262 distinct), arm vs `b7d6220`: 5,095 sentences, 0 splits, phrases
+or verdicts changed; C vs `b7d6220`: 0 of 670 differ, and the full output over 5,220 inputs (replies and every
+manuscript paragraph) is identical; C and arm agree on all 670 (63 flagged) and on 120,000 fuzzed replies with the
+new shapes among the tokens; the 230-row fixture and the novels' sentence counts are unchanged. Evidence:
+`build/audit004-text/g1/`.

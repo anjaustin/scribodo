@@ -968,19 +968,48 @@ static bool rel_name_token(const char *w, size_t len)
     return true;
 }
 
-/* t[0..n) is a run of name tokens, each after a run of whitespace ("father| Dr. K." of "father Dr. K. Bennet"; "father|
- * José K." and "father|  J.R.R." too). The verifier's round 3 found bare initials only; the final verification found
- * the rest. */
-static bool rel_continues_name(const char *t, size_t n)
+static void rel_word_before(const char *s, size_t b, size_t *ws, size_t *we);
+
+/* The kind of a name token (rel_name_token): 0 a word, 1 a title, 2 a particle, otherwise 2 + the number of initials. */
+static int rel_token_kind(const char *w, size_t len)
 {
+    bool initials = len >= 2 && len % 2 == 0;
+    for (size_t k = 0; initials && k < len; k += 2) initials = w[k] >= 'A' && w[k] <= 'Z' && w[k + 1] == '.';
+    if (initials) return 2 + (int)(len / 2);
+    if (len >= 2 && w[len - 1] == '.') return 1;
+    return w[0] >= 'A' && w[0] <= 'Z' ? 0 : 2;
+}
+
+/* s[end..cut) is a run of name tokens, each after a run of whitespace, continuing the name the phrase s[..end) ends
+ * with ("father| Dr. K." of "father Dr. K. Bennet"; "father| José K." and "father|  J.R.R." too; round 3 and the final
+ * verification). Two shapes end the name instead (the final verification's second pass, journal):
+ * - several initials in one token ("M.D.", "U.S.", "Q.C.") start a name only right after the phrase and only when the
+ *   phrase's last word is not capitalised ("father| J.R.R. Tolkien"); after a name they are a post-nominal or an
+ *   abbreviation ("Tardos Mors| M.D. Lydia is not ...", "Mors| of U.S. Lydia ...");
+ * - an initial after a particle and a word ("Mors| of Room B. Lydia ...") is a label's, not a name's: a particle starts a
+ *   surname, and no initial follows the surname in a name. */
+static bool rel_continues_name(const char *s, size_t end, size_t cut)
+{
+    const char *t = s + end;
+    size_t n = cut - end;
     if (!n) return false;
-    size_t i = 0;
+    size_t ws, we;
+    rel_word_before(s, end, &ws, &we);
+    bool after_name = we > ws && s[ws] >= 'A' && s[ws] <= 'Z';
+    bool particle = false, particle_word = false;
+    size_t i = 0, index = 0;
     while (i < n) {
         if (!text_ascii_space(t[i])) return false;
         while (i < n && text_ascii_space(t[i])) i++;
         size_t a = i;
         while (i < n && !text_ascii_space(t[i])) i++;
         if (!rel_name_token(t + a, i - a)) return false;
+        int kind = rel_token_kind(t + a, i - a);
+        if (kind >= 4 && (index > 0 || after_name)) return false;
+        if (kind >= 3 && particle_word) return false;
+        if (kind == 0 && particle) particle_word = true;
+        particle = kind == 2;
+        index++;
     }
     return true;
 }
@@ -1037,7 +1066,7 @@ static void rel_scope(const char *s, size_t len, size_t start, size_t end, size_
         size_t ws, we;
         rel_word_before(s, p - 1, &ws, &we);
         bool label = text_initial_period(s, len, p) && rel_is_label(s + ws, we - ws);
-        if (label || !rel_continues_name(s + end, cut - end)) *hi = cut;
+        if (label || !rel_continues_name(s, end, cut)) *hi = cut;
     }
 }
 

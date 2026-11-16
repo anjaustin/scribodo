@@ -147,11 +147,37 @@ PARTICLES = ('de', 'van', 'von', 'du', 'la', 'le', 'of', 'da', 'di', 'del', 'der
 _NAME_TOKEN = re.compile(r"(?:[A-Z]\.)+|(?:" + '|'.join(TITLES) + r")\.|(?:" + '|'.join(PARTICLES) + r")|[A-Z](?:[A-Za-z'-]|[^\x00-\x7f])*")
 
 
-def _continues_name(t):
+def _token_kind(w):
+    """0 a word, 1 a title, 2 a particle, otherwise 2 + the number of initials (the C's rel_token_kind)."""
+    if re.fullmatch(r'(?:[A-Z]\.)+', w):
+        return 2 + len(w) // 2
+    if len(w) >= 2 and w[-1] == '.':
+        return 1
+    return 0 if 'A' <= w[0] <= 'Z' else 2
+
+
+def _continues_name(s, end, cut):
+    """s[end:cut] continues the name the phrase s[:end] ends with: name tokens, each after whitespace, except several
+    initials in one token anywhere but right after a phrase ending in a lower-case word, and an initial after a particle
+    and a word (the C's rel_continues_name; final verification, second pass)."""
+    t = s[end:cut]
     if not t or t[0] not in WS:
         return False
-    tokens = re.split(_WSR + '+', t)[1:]
-    return all(tok and _NAME_TOKEN.fullmatch(tok) for tok in tokens)
+    a, e = _word_before(s, end)
+    after_name = e > a and 'A' <= s[a] <= 'Z'
+    particle = particle_word = False
+    for index, tok in enumerate(re.split(_WSR + '+', t)[1:]):
+        if not tok or not _NAME_TOKEN.fullmatch(tok):
+            return False
+        kind = _token_kind(tok)
+        if kind >= 4 and (index > 0 or after_name):
+            return False
+        if kind >= 3 and particle_word:
+            return False
+        if kind == 0 and particle:
+            particle_word = True
+        particle = kind == 2
+    return True
 
 
 # A name suffix's period bounds a negation like an initial's: the splitter keeps "Jr." inside the sentence, but it ends
@@ -213,7 +239,7 @@ def phrase_scope(s, start, end):
             continue
         a, e = _word_before(s, p - 1)
         label = _initial_period(s, p) and s[a:e] in LABEL_WORDS
-        if label or not _continues_name(s[end:cut]):
+        if label or not _continues_name(s, end, cut):
             hi = cut
     return lo, hi
 
