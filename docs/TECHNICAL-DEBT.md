@@ -15,6 +15,47 @@ The five post-audit product-readiness gaps are tracked separately in
 sustained-use evidence, is P0 by user direction.** The other four are retained
 as deferred follow-ups; completed architectural debt below is historical.
 
+## Deferred after AUDIT-004, weighted (2026-11-16)
+
+Weighed after AUDIT-004 closed (`a94f4ee`) against the MEMORY-015 contract:
+nothing written is forgotten, the record is never corrupted, and model errors
+are measured and disclosed. Listed from most to least important. Each item
+links to the entry that holds its detail.
+
+1. **High: observer recall, then default on.** This is the one remaining
+   item that changes what an author receives. On the step 9 path, recall is
+   9 of 20 and conflict precision is 4 of 5 (*Mars*) and 5 of 7 (*P&P*).
+   The bar is recall of at least 0.50 with precision held, then the default
+   flips. Detail: [PRODUCT-GAPS](PRODUCT-GAPS.md) working order, item 6.
+   Before starting it, check this item against the selection track
+   ([LANDSCAPE](LANDSCAPE.md) row 12). Selection is done for stated facts.
+   Its open class is pronoun-subject attributes: all three of the third
+   novel's held-out passages of that class missed admission. If that class
+   matters more to authors than conflict recall, it goes first.
+2. **Medium: the Docker migration rehearsal as a regular check.**
+   `SCRIBODO_SERVICESTEST_DOCKER=1 make servicestest` is the only test of
+   the migration's rollback path. That path sat broken from 2026-11-15 to
+   2026-11-16 because a stale volume masked the defect
+   ([AUDIT-004](AUDIT-004-repository-audit.md) F6). A failure there risks
+   author data, but only authors moving between Docker and native services
+   reach it. Next action: run it in acceptance, or before any release that
+   touches `tools/services.sh`, with Docker running on the runner. It is
+   about an hour of work.
+3. **Low: pinned known misses.** Each is pinned by a test or a fixture and
+   is uncommon in prose.
+   - The relation check misses three sentence shapes: "Mors K. Lydia",
+     "Mors van K." and "Mors de la K."
+     (`tests/fixtures/answer_relation/negation_scope.txt`).
+   - "Is Lydia's father James J.R. Powell?" is now flagged, which is a false
+     disclosure.
+   - Accented names and sentences that open on a pronoun never co-sign the
+     observer's same-subject check. The cost is a missed disclosure, never a
+     false one. This moves into item 1 if a manuscript's cast is accented.
+4. **Low: `import_poll` and `store_adopt_project`** in `src/main.c` are
+   covered only by the UI suites. This is a coverage gap, not a known
+   defect. Next action: a headless test when either function is next
+   touched.
+
 ## Status legend
 
 - **Open** — accepted debt, no implementation started.

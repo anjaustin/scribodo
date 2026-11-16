@@ -104,6 +104,7 @@ The local model must run with BF16 weights and BF16 compute. Quantized checkpoin
 
 The full acceptance criteria are in [`docs/SOW.md` §8](docs/SOW.md#8-acceptance-criteria). The MVP acceptance run on this Mac is in [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md).
 Architectural and maintenance follow-up is tracked in [`docs/TECHNICAL-DEBT.md`](docs/TECHNICAL-DEBT.md).
+The items deferred after AUDIT-004, weighted by importance, are listed in [Deferred after AUDIT-004](docs/TECHNICAL-DEBT.md#deferred-after-audit-004-weighted-2026-11-16).
 The five remaining product-readiness gaps are tracked in [`docs/PRODUCT-GAPS.md`](docs/PRODUCT-GAPS.md).
 The one-table view of capabilities and gaps is [`docs/LANDSCAPE.md`](docs/LANDSCAPE.md).
 **Current P0:** memory. The goal is infinite *effective* memory for the local
