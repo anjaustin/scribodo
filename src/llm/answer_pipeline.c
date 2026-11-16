@@ -948,37 +948,79 @@ static bool rel_break_at(const char *s, size_t len, size_t i, size_t *blen)
  * bounded by every initial's period before the phrase, and after it unless the initials directly continue the phrase's
  * name ("son of James| K. Powell"). "Her father is Tardos Mors in Chapter V. Lydia is not his daughter." is one
  * sentence to the splitter, two scopes here (AUDIT-004 red team R1, the verifier's rule; the arm's phrase_scope). */
-/* t[0..n) is a run of name tokens, each after one space: a capitalised word, a title with its period, an initial with
- * its period ("father| Dr. K." of "father Dr. K. Bennet"). The verifier's round 3: bare initials only cut "Is Lydia's
- * father James K. Powell?" at "K." and left the "?" outside the scope. */
+/* A name token (final verification, item 1): a capitalised word whose letters may be UTF-8, with an apostrophe, a hyphen or
+ * an inner capital ("José", "O'Brien", "Mary-Jane", "DeWitt", "McAllister"); a title with its period; one or more
+ * initials ("K.", "J.R.R."); or a particle of a name (de, van, von, du, la, le, of, da, di, del, der, ter). */
+static bool rel_name_token(const char *w, size_t len)
+{
+    static const char *const particles[] = { "de", "van", "von", "du", "la", "le", "of", "da", "di", "del", "der", "ter" };
+    if (!len) return false;
+    bool initials = len % 2 == 0;
+    for (size_t k = 0; initials && k < len; k += 2) initials = w[k] >= 'A' && w[k] <= 'Z' && w[k + 1] == '.';
+    if (initials) return true;
+    for (size_t k = 0; k < TEXT_COUNT(TEXT_TITLES); k++)
+        if (len >= 2 && w[len - 1] == '.' && strlen(TEXT_TITLES[k]) == len - 1 && !strncmp(w, TEXT_TITLES[k], len - 1)) return true;
+    for (size_t k = 0; k < TEXT_COUNT(particles); k++)
+        if (strlen(particles[k]) == len && !strncmp(w, particles[k], len)) return true;
+    if (w[0] < 'A' || w[0] > 'Z') return false;
+    for (size_t k = 1; k < len; k++)
+        if (!text_ascii_letter(w[k]) && (unsigned char)w[k] < 0x80 && w[k] != '\'' && w[k] != '-') return false;
+    return true;
+}
+
+/* t[0..n) is a run of name tokens, each after a run of whitespace ("father| Dr. K." of "father Dr. K. Bennet"; "father|
+ * José K." and "father|  J.R.R." too). The verifier's round 3 found bare initials only; the final verification found
+ * the rest. */
 static bool rel_continues_name(const char *t, size_t n)
 {
     if (!n) return false;
     size_t i = 0;
     while (i < n) {
-        if (t[i] != ' ') return false;
-        size_t a = ++i;
-        while (i < n && t[i] != ' ') i++;
-        size_t len = i - a;
-        const char *w = t + a;
-        bool word = len >= 2 && w[0] >= 'A' && w[0] <= 'Z';
-        for (size_t k = 1; word && k < len; k++) word = w[k] >= 'a' && w[k] <= 'z';
-        bool initial = len == 2 && w[0] >= 'A' && w[0] <= 'Z' && w[1] == '.';
-        bool title = false;
-        for (size_t k = 0; !title && len >= 2 && w[len - 1] == '.' && k < TEXT_COUNT(TEXT_TITLES); k++)
-            title = strlen(TEXT_TITLES[k]) == len - 1 && !strncmp(w, TEXT_TITLES[k], len - 1);
-        if (!word && !initial && !title) return false;
+        if (!text_ascii_space(t[i])) return false;
+        while (i < n && text_ascii_space(t[i])) i++;
+        size_t a = i;
+        while (i < n && !text_ascii_space(t[i])) i++;
+        if (!rel_name_token(t + a, i - a)) return false;
     }
     return true;
 }
 
-/* A period that bounds a negation's reach: an initial's, or a name suffix's ("Jr.", "Sr."), which the splitter keeps
- * inside the sentence like a title's but which ends a name ("Tardos Mors Jr. Lydia is not his daughter."; round 3). */
+/* The word right before position b (after any whitespace), as [*ws, *we). */
+static void rel_word_before(const char *s, size_t b, size_t *ws, size_t *we)
+{
+    size_t e = b;
+    while (e > 0 && text_ascii_space(s[e - 1])) e--;
+    size_t a = e;
+    while (a > 0 && !text_ascii_space(s[a - 1])) a--;
+    *ws = a;
+    *we = e;
+}
+
+static bool rel_is_label(const char *w, size_t n)
+{
+    for (size_t k = 0; k < TEXT_COUNT(TEXT_LABEL_WORDS); k++)
+        if (strlen(TEXT_LABEL_WORDS[k]) == n && !strncmp(w, TEXT_LABEL_WORDS[k], n)) return true;
+    return false;
+}
+
+/* A period that bounds a negation's reach: an initial's; a name suffix's ("Jr.", "Sr."), which the splitter keeps inside
+ * the sentence like a title's but which ends a name ("Tardos Mors Jr. Lydia is not his daughter."; round 3); or a
+ * title's right after a capitalised word ("Tardos Mors Dr. Lydia is not ..."; a title follows a name only where the
+ * name has ended, final verification). */
 static bool rel_bound_period(const char *s, size_t len, size_t p)
 {
     static const char *const suffix[] = { "Jr", "Sr" };
-    return text_initial_period(s, len, p) ||
-           (s[p] == '.' && p + 1 < len && text_ascii_space(s[p + 1]) && text_title_before(s, p, suffix, 2));
+    if (text_initial_period(s, len, p)) return true;
+    if (s[p] != '.' || p + 1 >= len || !text_ascii_space(s[p + 1])) return false;
+    if (text_title_before(s, p, suffix, 2)) return true;
+    for (size_t k = 0; k < TEXT_COUNT(TEXT_TITLES); k++) {
+        size_t tl = strlen(TEXT_TITLES[k]);
+        if (!text_title_before(s, p, TEXT_TITLES + k, 1) || p - tl == 0 || !text_ascii_space(s[p - tl - 1])) continue;
+        size_t ws, we;
+        rel_word_before(s, p - tl, &ws, &we);
+        return we > ws && s[ws] >= 'A' && s[ws] <= 'Z' && rel_name_token(s + ws, we - ws) && s[we - 1] != '.';
+    }
+    return false;
 }
 
 static void rel_scope(const char *s, size_t len, size_t start, size_t end, size_t *lo, size_t *hi)
@@ -988,8 +1030,14 @@ static void rel_scope(const char *s, size_t len, size_t start, size_t end, size_
     for (size_t p = 1; p + 1 < len; p++) {
         if (!rel_bound_period(s, len, p)) continue;
         size_t cut = p + 1;
-        if (cut <= start) { if (cut > *lo) *lo = cut; }
-        else if (p >= end && !rel_continues_name(s + end, cut - end) && cut < *hi) *hi = cut;
+        if (cut <= start) { if (cut > *lo) *lo = cut; continue; }
+        if (p < end || cut >= *hi) continue;
+        /* An initial right after a label ("Chapter X.") is a label's, never a name's, even when the phrase's name took
+         * the label in ("Tardos Mors Chapter X. Lydia is not ..."; final verification). */
+        size_t ws, we;
+        rel_word_before(s, p - 1, &ws, &we);
+        bool label = text_initial_period(s, len, p) && rel_is_label(s + ws, we - ws);
+        if (label || !rel_continues_name(s + end, cut - end)) *hi = cut;
     }
 }
 

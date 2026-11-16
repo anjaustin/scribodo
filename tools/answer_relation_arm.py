@@ -139,19 +139,62 @@ def sentences(text):
     return [p for p in pieces if p.strip(WS)]
 
 
-# A run of name tokens after the phrase, each after one space: a capitalised word, a title with its period, an initial
-# with its period ("father| Dr. K." of "father Dr. K. Bennet"; round 3: bare initials only cut "Is Lydia's father James
-# K. Powell?" at "K." and left the "?" outside). The C's rel_continues_name.
-_CONTINUES_NAME = re.compile(r'(?: (?:[A-Z][a-z]+|(?:' + '|'.join(TITLES) + r')\.|[A-Z]\.))+')
+# A name token (final verification, item 1): a capitalised word whose letters may be non-ASCII, with an apostrophe, a
+# hyphen or an inner capital ("José", "O'Brien", "Mary-Jane", "DeWitt"); a title with its period; one or more initials
+# ("K.", "J.R.R."); or a particle (de, van, von, ...). A run of them, each after a run of whitespace, continues a
+# phrase's name up to a bound. The C's rel_name_token and rel_continues_name.
+PARTICLES = ('de', 'van', 'von', 'du', 'la', 'le', 'of', 'da', 'di', 'del', 'der', 'ter')
+_NAME_TOKEN = re.compile(r"(?:[A-Z]\.)+|(?:" + '|'.join(TITLES) + r")\.|(?:" + '|'.join(PARTICLES) + r")|[A-Z](?:[A-Za-z'-]|[^\x00-\x7f])*")
+
+
+def _continues_name(t):
+    if not t or t[0] not in WS:
+        return False
+    tokens = re.split(_WSR + '+', t)[1:]
+    return all(tok and _NAME_TOKEN.fullmatch(tok) for tok in tokens)
+
+
 # A name suffix's period bounds a negation like an initial's: the splitter keeps "Jr." inside the sentence, but it ends
-# a name ("Tardos Mors Jr. Lydia is not his daughter."; round 3). The C's rel_bound_period.
+# a name ("Tardos Mors Jr. Lydia is not his daughter."; round 3); so does a title's right after a capitalised word
+# ("Tardos Mors Dr. Lydia is not ..."; final verification). The C's rel_bound_period.
 _SUFFIXES = ('Jr', 'Sr')
+# The labels whose initial is never a name's ("Chapter X."), even when a phrase's name took the label in (the C's
+# rel_is_label over TEXT_LABEL_WORDS).
+LABEL_WORDS = ('Chapter', 'Ch', 'Part', 'Book', 'Volume', 'Vol', 'Act', 'Scene', 'Section', 'Sec', 'Source', 'Appendix',
+               'Figure', 'Fig', 'Table', 'Plate', 'Page', 'Item', 'Note', 'Step', 'Letter', 'Line', 'Option', 'Plan', 'Type',
+               'Class', 'Group', 'Exhibit', 'Article', 'Clause')
+
+
+def _ends_with(s, p, t):
+    return s[:p].endswith(t) and (p == len(t) or not _word_char(s[p - len(t) - 1]))
+
+
+def _word_before(s, b):
+    e = b
+    while e > 0 and s[e - 1] in WS:
+        e -= 1
+    a = e
+    while a > 0 and s[a - 1] not in WS:
+        a -= 1
+    return a, e
+
+
+def _initial_period(s, p):
+    return s[p] == '.' and p + 1 < len(s) and s[p + 1] in WS and _initial_before(s, p)
 
 
 def _bound_period(s, p):
     if s[p] != '.' or p + 1 >= len(s) or s[p + 1] not in WS:
         return False
-    return _initial_before(s, p) or any(s[:p].endswith(t) and (p == len(t) or not _word_char(s[p - len(t) - 1])) for t in _SUFFIXES)
+    if _initial_before(s, p) or any(_ends_with(s, p, t) for t in _SUFFIXES):
+        return True
+    for t in TITLES:
+        if not _ends_with(s, p, t) or p - len(t) == 0 or s[p - len(t) - 1] not in WS:
+            continue
+        a, e = _word_before(s, p - len(t))
+        w = s[a:e]
+        return bool(w) and 'A' <= w[0] <= 'Z' and bool(_NAME_TOKEN.fullmatch(w)) and w[-1] != '.'
+    return False
 
 
 def phrase_scope(s, start, end):
@@ -165,8 +208,13 @@ def phrase_scope(s, start, end):
         cut = p + 1
         if cut <= start:
             lo = max(lo, cut)
-        elif p >= end and not _CONTINUES_NAME.fullmatch(s[end:cut]):
-            hi = min(hi, cut)
+            continue
+        if p < end or cut >= hi:
+            continue
+        a, e = _word_before(s, p - 1)
+        label = _initial_period(s, p) and s[a:e] in LABEL_WORDS
+        if label or not _continues_name(s[end:cut]):
+            hi = cut
     return lo, hi
 
 

@@ -619,3 +619,35 @@ so every new log under it was unarchived; it now cites the archived subdirectori
 cause, was discarded rather than kept (its logs were removed when the gate folder was recreated). With the citation
 fixed and the archive rebuilt, `make test` and `make sanitize` were run again on the final tree; their logs are kept
 uncited in the folder beside the gate logs, so the run that checks the evidence does not cite its own log.
+
+## Final verification (2026-11-15, branch `remed/text-final` from `ac73f79`)
+
+### 1. Name runs in the relation check
+
+**False alarms.** The continuation exception (a name running on to an initial) took only `[A-Z][a-z]+` words, titles
+and single initials, each after one space, so questions whose name run held anything else were cut at "K." and
+flagged: "Is Lydia's father José K. Powell?", "DeWitt K.", "Mary-Jane K.", "O'Brien K.", "McAllister K.", "James van
+K. Powell", "J.R.R. Tolkien", and two spaces or a tab before "K." (all nine flagged at `ac73f79`, arm, checked).
+Now a run of name tokens, each after any run of whitespace, continues the name (C `rel_name_token` and
+`rel_continues_name`, arm `_NAME_TOKEN` and `_continues_name`): a capitalised word whose letters may be non-ASCII, with
+an apostrophe, a hyphen or an inner capital; a title with its period; one or more initials ("J.R.R."); or a particle
+(de, van, von, du, la, le, of, da, di, del, der, ter).
+
+**Older misses.** Two are closed by rules that add no false alarm on any recorded reply, manuscript paragraph or
+test case: "... Tardos Mors Chapter X. Lydia is not ..." (the name took "Chapter" in, so " X." looked like its
+continuation): an initial right after a label (`TEXT_LABEL_WORDS`, the arm's `LABEL_WORDS`) is a bound even inside a
+name run; "... Tardos Mors Dr. Lydia is not ...": a title's period right after a capitalised word is a bound (a title
+follows a name only where the name has ended). One is not: "... Tardos Mors K. Lydia is not his daughter." reads, to
+any rule on the text, exactly as "The son of James K. Powell is not Hareton." (a name, an initial, a capitalised word,
+"is not"); bounding the first would end the second's denial too, a false alarm on a correct correction. It is pinned
+as a known miss ("~ " in `negation_scope.txt`, flags nothing in both languages) rather than guessed at.
+
+**Tests.** Twelve lines in `tests/fixtures/answer_relation/negation_scope.txt` (nine "- " questions that must flag
+nothing, the two closed misses that must flag, the known miss), read by both test suites.
+
+**Re-measured (no model).** 670 recorded replies (262 distinct), arm vs `ac73f79`: 5,095 sentences, 0 splits,
+phrases or verdicts changed. C vs `ac73f79`: 0 of 670 differ; full output over 5,220 inputs (replies and every
+manuscript paragraph of the three novels) identical. C and arm agree on all 670 (63 flagged) and on 120,000 fuzzed
+replies (three seeds, with the new name shapes, particles, multi-dot initials, labels, titles after names and runs of
+spaces and tabs among the tokens). The 230-row fixture is unchanged on both sides; the novels' sentence counts are
+unchanged (the splitter did not change). Evidence: `build/audit004-text/f1/`.

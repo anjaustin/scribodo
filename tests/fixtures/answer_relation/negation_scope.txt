@@ -64,3 +64,15 @@ Her father is Tardos Mors in Room V.
 Her father is Tardos Mors Jr. Lydia is not his daughter.
 Her father is Tardos Mors Jr. Is Lydia his daughter?
 Her father is Tardos Mors Sr. Lydia is not his daughter.
+- Is Lydia's father José K. Powell?
+- Is Lydia's father DeWitt K. Powell?
+- Is Lydia's father Mary-Jane K. Powell?
+- Is Lydia's father O'Brien K. Powell?
+- Is Lydia's father McAllister K. Powell?
+- Is Lydia's father James van K. Powell?
+- Is Lydia's father J.R.R. Tolkien?
+- Is Lydia's father James  K. Powell?
+- Is Lydia's father James\tK. Powell?
+Her father is Tardos Mors Chapter X. Lydia is not his daughter.
+Her father is Tardos Mors Dr. Lydia is not his daughter.
+~ Her father is Tardos Mors K. Lydia is not his daughter.

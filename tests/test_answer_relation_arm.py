@@ -86,10 +86,11 @@ class RelationArmTests(unittest.TestCase):
         path = ROOT / 'tests/fixtures/answer_relation/negation_scope.txt'
         lines = [l.rstrip('\n').replace('\\n', '\n').replace('\\t', '\t') for l in path.read_text().splitlines(True)]
         self.assertGreaterEqual(len(lines), 59)
-        for reply in lines:  # "- " opens a reply that must flag nothing (a question the composer asks back)
-            rows = ra.check(reply[2:] if reply.startswith('- ') else reply, [], [], 'q')
+        for reply in lines:  # "- " opens a reply that must flag nothing; "~ " a known miss, pinned (journal)
+            quiet = reply.startswith('- ') or reply.startswith('~ ')
+            rows = ra.check(reply[2:] if quiet else reply, [], [], 'q')
             flags = [r['phrase'] for r in rows if r['flag']]
-            if reply.startswith('- '):
+            if quiet:
                 self.assertEqual(flags, [], reply)
             else:
                 self.assertTrue(flags and flags[0].startswith('Her father is Tardos Mors'), reply)
