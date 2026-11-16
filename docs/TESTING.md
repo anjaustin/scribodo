@@ -11,7 +11,9 @@
 | `make dbtest` | MariaDB/Qdrant integration in throwaway databases (`tools/services.sh up` first) | No |
 | `make crashtest` | Process death at every kill point of a store transition (GAP-004), one throwaway database per death (`tools/services.sh up` first) | No |
 | `make envs` | Recreate the two experiment Python environments under `build/` from `tools/envs/*.lock` (uv, Homebrew Python 3.12) | No |
-| `make tools` | Build every diagnostic tool binary | No |
+| `make tools` | Build every diagnostic and measurement tool binary (the observer and gate replays, the crash-point driver, the memory evaluations, the pipeline soak, the hang and import probes); hosted CI builds it | No |
+| `make mutationtest` | The five mutation controls that need no services (`tools/test_{audit,history_worker,memory,memory_pipeline,memory_redteam}_mutations.py`), each writing under `build/mutationtest/<name>` | No |
+| `make mutationtest-db` | The three that need the local services (`memory_cutoff`, `product_memory`, `recall`; `tools/services.sh up` first); trusted acceptance runs both | No |
 | `make llmtest` | The model adapter end to end against the real `llama-server`: verification, stale-socket start-up, auth, streaming, injection neutralization, crash and restart | No |
 | `make uitest-real` | `tests/ui/real-*.scribo`: the real model through the real UI | Yes |
 | `make dependency-report` | Verifies committed submodule gitlinks against clean checkouts, container digests and OSV advisories; lists available upstream updates without failing on them | No |
@@ -777,7 +779,7 @@ the next reader can tell a hang from a nap without consulting `pmset`.
 A legacy project's move into the store runs on an owned worker since
 MEMORY-019 (`src/app/import_job.c`); UI scripts that open a freshly seeded
 legacy project must `wait_status "now kept in the project store"` before
-using it. `tools/import_probe.c` times that import and counts its SQL
+using it. `tools/import_probe.c` (`make tools`, `build/import_probe`) times that import and counts its SQL
 statements on a seeded project.
 
 A real manuscript goes through the same harnesses (MEMORY-021):
@@ -804,7 +806,7 @@ and `tests/ui/store/20_manuscript_ready_prepare.scribo` (complete-index gate).
 Both cancel generation after checking the as-of source packet; they
 establish preparation, not answer correctness.
 
-`tools/chat_hang_probe.c` (build it with the overlay in its header comment)
+`tools/chat_hang_probe.c` (`make tools`, `build/chat_hang_probe`)
 drives a real `ChatSession` against a stand-in server that accepts the
 completion and never answers, with or without stream headers, requests
 cancellation and samples the process. Both modes end within 30 ms of

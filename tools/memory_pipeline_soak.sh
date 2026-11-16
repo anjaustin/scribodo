@@ -34,13 +34,9 @@ check_port SCRIBODO_DB_PORT "${SCRIBODO_DB_PORT-33061}"
 check_port SCRIBODO_QDRANT_PORT "${SCRIBODO_QDRANT_PORT-6333}"
 cd "$here"
 mkdir -p build/memory-pipeline-soak
-# An ephemeral make overlay uses the real project's object/library definitions;
-# it neither modifies Makefile nor links main, UI, raylib, or a model process.
-make --no-print-directory -f Makefile -f - memory-pipeline-soak-build <<'MAKE'
-.PHONY: memory-pipeline-soak-build
-memory-pipeline-soak-build: $(CORE_OBJS) $(LLM_OBJS)
-	$(CC) $(CFLAGS) $(INCLUDES) tools/memory_pipeline_soak.c $(CORE_OBJS) $(LLM_OBJS) -o build/memory-pipeline-soak/memory_pipeline_soak $(MARIADB_LIBS) -lm -lpthread
-MAKE
+# Links the project's objects; not main, UI, raylib, or a model process.
+# The Makefile rule (make tools builds it too; AUDIT-004 F9).
+make --no-print-directory build/memory-pipeline-soak/memory_pipeline_soak
 name="scribodo_test_memory_soak_$$_$(openssl rand -hex 8)"
 temp=$(mktemp -d "${TMPDIR:-/tmp}/scribodo-memory-soak.XXXXXXXX")
 created=0

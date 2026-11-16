@@ -6,11 +6,7 @@ here="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$here"
 export SCRIBODO_LLAMA_SERVER="${SCRIBODO_LLAMA_SERVER:-$PWD/build/llama/bin/llama-server}"
 mkdir -p build/memory-reach
-make --no-print-directory -f Makefile -f - memory-reach-build <<'MAKE'
-REACH_OBJS := $(sort $(CORE_OBJS) $(LLM_OBJS))
-.PHONY: memory-reach-build
-memory-reach-build: $(REACH_OBJS) $(LLAMA_BIN)
-	$(CC) $(CFLAGS) $(INCLUDES) tools/memory_reach_eval.c $(REACH_OBJS) -o build/memory-reach/memory_reach_eval $(MARIADB_LIBS) -lm -lpthread
-MAKE
+# The Makefile rule (make tools builds it too; AUDIT-004 F9).
+make --no-print-directory build/memory-reach/memory_reach_eval llama
 if [[ "${1-}" == "--build-only" ]]; then exit 0; fi
 exec python3 tools/memory_reach_eval.py "$@"

@@ -61,6 +61,11 @@ jobs:
       - name: Build and run database integration
         run: caffeinate -i make all test dbtest crashtest
 
+      # The eight mutation controls (AUDIT-004 F9): each weakened guard must fail its suite. About 6 minutes on the
+      # author's Mac; three of them need the services started above, so they run here and not on hosted CI.
+      - name: Run mutation controls
+        run: caffeinate -i make mutationtest mutationtest-db
+
       - name: Run scripted UI acceptance
         run: caffeinate -i make uitest
 

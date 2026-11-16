@@ -4,6 +4,7 @@
 Compilation failures are errors, not killed mutants. No DB/model/services used.
 The connection-lock mutant is terminated by the test's explicit SIGALRM gate.
 """
+import argparse
 import os
 from pathlib import Path
 import shlex
@@ -12,7 +13,10 @@ import subprocess
 
 def main():
     root = Path(__file__).resolve().parents[1]
-    output = root / "build/history-worker-mutations"
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, default=root / "build/history-worker-mutations",
+                        help="where generated sources and logs go (make mutationtest passes its own)")
+    output = parser.parse_args().output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     compiler = shlex.split(os.environ.get("CC", "cc"))
     worker = (root / "src/app/chat_history_job.c").read_text()
@@ -39,7 +43,8 @@ def main():
         implementation = output / f"{name}.c"
         implementation.write_text(text)
         test = root / f"tests/test_{'chat_history_job' if kind == 'worker' else 'store_connections'}.c"
-        sources = [str(implementation), str(test)]
+        # The store links the atomic writer, as the Makefile's test_store_connections does (since de82f6d).
+        sources = [str(implementation), str(test), "src/core/file_text.c"]
         if kind == "worker":
             generated = output / f"{name}_test.c"
             generated.write_text(test.read_text().replace('../src/app/chat_history_job.c', str(implementation)))

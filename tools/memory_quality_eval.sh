@@ -13,15 +13,8 @@ if [[ "${1-}" == "--help" || "${1-}" == "--self-test" || "${1-}" == "--prepare-o
     exec python3 tools/memory_quality_eval.py "$@"
 fi
 mkdir -p build/memory-quality
-# Temporary overlay only. Parent may already have added these modules to its
-# object lists; sort avoids duplicate definitions without editing the Makefile.
-make --no-print-directory -f Makefile -f - memory-quality-build <<'MAKE'
-QUALITY_EXTRA := build/src/app/memory_brief_store.o build/src/llm/memory_brief.o build/src/llm/generative_gate.o
-QUALITY_OBJS := $(sort $(CORE_OBJS) $(LLM_OBJS) $(QUALITY_EXTRA))
-.PHONY: memory-quality-build
-memory-quality-build: $(QUALITY_OBJS) $(LLAMA_BIN)
-	$(CC) $(CFLAGS) $(INCLUDES) tools/memory_quality_eval.c $(QUALITY_OBJS) -o build/memory-quality/memory_quality_eval $(MARIADB_LIBS) -lm -lpthread
-MAKE
+# The Makefile rule (make tools builds it too; AUDIT-004 F9).
+make --no-print-directory build/memory-quality/memory_quality_eval llama
 python3 tools/memory_quality_eval.py --snapshot-build
 if (( build_only )); then exit 0; fi
 exec python3 tools/memory_quality_eval.py "$@"

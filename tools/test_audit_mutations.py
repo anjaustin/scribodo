@@ -4,6 +4,7 @@
 Compile failures, crashes and timeouts are errors, not killed mutants. Requires
 the normal persistence-fault test prerequisites; no services or models are used.
 """
+import argparse
 import json
 from pathlib import Path
 import re
@@ -14,7 +15,10 @@ import subprocess
 
 def main():
     root = Path(__file__).resolve().parents[1]
-    output = root / "build/audit-mutations"
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, default=root / "build/audit-mutations",
+                        help="where generated sources and logs go (make mutationtest passes its own)")
+    output = parser.parse_args().output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     subprocess.run(["make", "build/test_persistence_faults"], cwd=root, check=True)
     dry = subprocess.check_output(

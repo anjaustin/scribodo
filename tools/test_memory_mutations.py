@@ -5,6 +5,7 @@ Only generated files under build/memory-mutations change. No databases, models
 or network are used. Compilation failures are errors, not killed mutations.
 """
 
+import argparse
 import os
 from pathlib import Path
 import shlex
@@ -13,7 +14,10 @@ import subprocess
 
 def main():
     root = Path(__file__).resolve().parents[1]
-    output = root / "build/memory-mutations"
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, default=root / "build/memory-mutations",
+                        help="where generated sources and logs go (make mutationtest passes its own)")
+    output = parser.parse_args().output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     source = (root / "src/llm/chat_history.c").read_text()
     guard = """if (current->role != CHAT_USER || current->error || current->streaming || current->excerpt || !current->content ||

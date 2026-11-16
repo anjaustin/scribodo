@@ -34,6 +34,13 @@ jobs:
           ARCH_FLAGS: ""
         run: make all
 
+      # Every diagnostic and measurement tool binary (AUDIT-004 F9): they link the product's objects and the
+      # Connector/C client only, no model or services, so a change that breaks one fails here.
+      - name: Build the diagnostic tools
+        env:
+          ARCH_FLAGS: ""
+        run: make tools
+
       - name: Run headless tests
         env:
           ARCH_FLAGS: ""

@@ -39,8 +39,9 @@ def main():
         raise RuntimeError("Expected chat and edit publication guards")
     variants = [
         ("history_control", "history", None),
-        ("copied_tail_excluded", "history", ("for (size_t i = first_history; i < history.count; i++)",
-                                                "for (size_t i = 0; i < history.count; i++)")),
+        # The loop moved into the request builder's struct (b->) in REDTEAM-022/023; same guard, same mutation.
+        ("copied_tail_excluded", "history", ("for (size_t i = b->first_history; i < b->history.count; i++)",
+                                                "for (size_t i = 0; i < b->history.count; i++)")),
         ("recall_reservation_removed", "history", ("base_ctx -= (int)MEMORY_PLAN_TOKENS;", "base_ctx -= 0;")),
         ("payload_control", "fault", None),
         ("chat_partial_publication", "fault", 0),

@@ -469,8 +469,45 @@ $(BUILD)/venv-%/.locked: tools/envs/venv-%.lock
 	uv pip install --python $(BUILD)/venv-$*/bin/python -r $<
 	cp $< $@
 
-# Every diagnostic tool binary (the Python tools need no build).
+# Every diagnostic tool binary (the Python tools need no build). Hosted CI builds them (ci.yml).
 tools: $(BUILD)/draft_tick_probe $(BUILD)/answer_gate_replay $(BUILD)/observer_replay $(BUILD)/observer_judge_pairs $(BUILD)/observer_overlap $(BUILD)/test_crash_points
+# --- Measurement tools (AUDIT-004 F9) -------------------------------------------
+# Built by `make tools`; until 2026-11-15 each was a Makefile overlay in its script's heredoc, so no gate compiled
+# them. The scripts build these targets (and `llama` where they run the model). Output paths are the ones the Python
+# drivers read.
+MEASURE_TOOLS := $(BUILD)/memory-reach/memory_reach_eval $(BUILD)/memory-quality/memory_quality_eval \
+                 $(BUILD)/memory_native_eval $(BUILD)/memory-pipeline-soak/memory_pipeline_soak \
+                 $(BUILD)/chat_hang_probe $(BUILD)/import_probe
+tools: $(MEASURE_TOOLS)
+$(addprefix $(BUILD)/tools/,$(addsuffix .o,memory_reach_eval memory_quality_eval memory_native_eval memory_pipeline_soak chat_hang_probe import_probe)): | $(MARIADB_LIB)
+$(BUILD)/memory-reach/memory_reach_eval $(BUILD)/memory-quality/memory_quality_eval $(BUILD)/memory-pipeline-soak/memory_pipeline_soak $(BUILD)/chat_hang_probe $(BUILD)/import_probe: $(BUILD)/%: $(CORE_OBJS) $(LLM_OBJS)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(filter %.o,$^) -o $@ $(MARIADB_LIBS) -lm -lpthread
+$(BUILD)/memory-reach/memory_reach_eval: $(BUILD)/tools/memory_reach_eval.o
+$(BUILD)/memory-quality/memory_quality_eval: $(BUILD)/tools/memory_quality_eval.o
+$(BUILD)/memory-pipeline-soak/memory_pipeline_soak: $(BUILD)/tools/memory_pipeline_soak.o
+$(BUILD)/chat_hang_probe: $(BUILD)/tools/chat_hang_probe.o
+$(BUILD)/import_probe: $(BUILD)/tools/import_probe.o
+# The native evaluation supplies its own chat driver: everything but chat.o.
+$(BUILD)/memory_native_eval: $(CORE_OBJS) $(filter-out $(BUILD)/src/llm/chat.o,$(LLM_OBJS)) $(BUILD)/tools/memory_native_eval.o
+	$(CC) $(CFLAGS) $(filter %.o,$^) -o $@ $(MARIADB_LIBS) -lm -lpthread
+
+# The eight mutation controls (tools/test_*_mutations.py): a guard weakened per mutant, its suite must fail. Each
+# writes under build/mutationtest/<name>, which this target owns and deletes first; the tools' own default output
+# directories are cited evidence and are never written by a gate. mutationtest needs no services; mutationtest-db
+# needs tools/services.sh up (trusted acceptance runs both).
+MUTATION_TOOLS    := audit history_worker memory memory_pipeline memory_redteam
+MUTATION_DB_TOOLS := memory_cutoff product_memory recall
+.PHONY: mutationtest mutationtest-db
+mutationtest: $(TESTS) $(BUILD)/test_persistence_faults
+	@chmod -R u+w build/mutationtest 2>/dev/null; for m in $(MUTATION_TOOLS); do rm -rf build/mutationtest/$$m; done; mkdir -p build/mutationtest
+	@set -e; for m in $(MUTATION_TOOLS); do echo "== mutations: $$m"; \
+	  $(WATCHDOG) 1800 mutations-$$m python3 tools/test_$${m}_mutations.py --output build/mutationtest/$$m; done
+mutationtest-db: $(BUILD)/test_recall $(BUILD)/test_memory_chat $(BUILD)/test_db
+	@chmod -R u+w build/mutationtest 2>/dev/null; for m in $(MUTATION_DB_TOOLS); do rm -rf build/mutationtest/$$m; done; mkdir -p build/mutationtest
+	@set -e; for m in $(MUTATION_DB_TOOLS); do echo "== mutations: $$m"; \
+	  $(WATCHDOG) 1800 mutations-$$m python3 tools/test_$${m}_mutations.py --output build/mutationtest/$$m; done
+
 # Process death at every kill point, against the local MariaDB (tools/services.sh up); one fresh database per death.
 crashtest: $(BUILD)/test_crash_points
 	$(WATCHDOG) 900 crash-points ./$(BUILD)/test_crash_points

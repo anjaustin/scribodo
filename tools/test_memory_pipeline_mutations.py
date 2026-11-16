@@ -4,7 +4,9 @@
 Only generated files in build/memory-pipeline-mutations change. Compilation
 failures are errors, not killed mutations; nonzero test assertions kill mutants.
 """
+import argparse
 import os
+import re
 from pathlib import Path
 import shlex
 import subprocess
@@ -12,7 +14,10 @@ import subprocess
 
 def main():
     root = Path(__file__).resolve().parents[1]
-    output = root / "build/memory-pipeline-mutations"
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, default=root / "build/memory-pipeline-mutations",
+                        help="where generated sources and logs go (make mutationtest passes its own)")
+    output = parser.parse_args().output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     planner = (root / "src/llm/context_planner.c").read_text()
     worker = (root / "src/app/memory_job.c").read_text()
@@ -45,8 +50,10 @@ def main():
         implementation = output / f"{name}.c"
         implementation.write_text(text)
         if kind == "planner":
-            sources = [str(implementation), "tests/test_context_planner.c", "src/llm/llm_text.c",
-                       "src/core/utf8.c", "src/core/json.c", "src/core/json_vendor.c"]
+            # The Makefile's own source list for test_context_planner, the planner swapped for the mutant: a
+            # hand-kept copy here went stale when recall_terms.c and experiments.c joined it.
+            listed = re.search(r"^CONTEXT_PLANNER_TEST_SRCS := (.*)$", (root / "Makefile").read_text(), re.M)
+            sources = [str(implementation) if s == "src/llm/context_planner.c" else s for s in listed.group(1).split()]
         else:
             test = output / f"{name}_test.c"
             original = (root / "tests/test_memory_job.c").read_text()

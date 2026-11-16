@@ -9,6 +9,7 @@ host checks are defense in depth and a surviving mutant there would be noise,
 not a gap. Needs the local services (tools/services.sh up) and a prior build
 of build/test_recall. Only files under build/recall-mutations change.
 """
+import argparse
 from pathlib import Path
 import subprocess
 
@@ -23,7 +24,10 @@ recall-mutant: $(RECALL_MUTANT_OBJS)
 
 def main():
     root = Path(__file__).resolve().parents[1]
-    output = root / "build/recall-mutations"
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, default=root / "build/recall-mutations",
+                        help="where generated sources and logs go (make mutationtest passes its own)")
+    output = parser.parse_args().output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     cases = [
         ("control", None),
@@ -36,7 +40,9 @@ def main():
         ("no_terms", ("    if (!out->terms) {\n        out->canon_ok = true;", "    if (false) {\n        out->canon_ok = true;")),
         ("query_bound", ("if (strnlen(query, RECALL_QUERY_BYTES + 1) > RECALL_QUERY_BYTES) {", "if (false) {")),
         # Store-side guard the recall path depends on: lexical length normalization (MEMORY-018).
-        ("lexical_length_norm", ('" / POW(CHAR_LENGTH(u.text)," MEMORY_LEXICAL_LENGTH_NORM ") AS score"', '" AS score"'), "src/app/memory_store.c"),
+        # The column became a %s argument when the index-text experiment was retired; same guard (the extra
+        # snprintf argument the mutant leaves is ignored).
+        ("lexical_length_norm", ('" / POW(CHAR_LENGTH(%s)," MEMORY_LEXICAL_LENGTH_NORM ") AS score"', '" AS score"'), "src/app/memory_store.c"),
         ("lexical_case_fold", ("COLLATE utf8mb4_unicode_ci NOT NULL", "COLLATE utf8mb4_bin NOT NULL"), "src/app/db.c"),
         ("short_token_fallback", ("#define RECALL_FULLTEXT_MIN_TOKEN 3u", "#define RECALL_FULLTEXT_MIN_TOKEN 0u")),
         ("canon_committed_only", ('if (strcmp(v->status, "committed") != 0 || !v->content) continue;', "if (!v->content) continue;"), "src/llm/canon_reference.c"),

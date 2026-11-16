@@ -38,10 +38,10 @@ TRAILING = ".,;:)]!?"
 
 def gate_owned_dirs(root):
     """Directories a make target deletes before it writes, or in make clean: build/src, build/tests and build/asan,
-    one build/ui/<script> per UI script (uitest, uitest-real), the store, backup, offline and remote suites' and
-    cstest's volume (Makefile UI_OWNED and clean; tools/*test.sh). make distclean removes all of build/ and is the
+    one build/ui/<script> per UI script (uitest, uitest-real), the store, backup, offline and remote suites',
+    cstest's volume and make mutationtest's build/mutationtest (Makefile UI_OWNED and clean; tools/*test.sh). make distclean removes all of build/ and is the
     one explicit exception: run it only after an archive pass. tests/test_evidence_check.py pins this list."""
-    owned = ["build/src", "build/tests", "build/asan", "build/csvol", "build/cs.sparseimage",
+    owned = ["build/src", "build/tests", "build/asan", "build/csvol", "build/cs.sparseimage", "build/mutationtest",
              "build/ui/store", "build/ui/backup", "build/ui/offline", "build/ui/remote"]
     for script in sorted((Path(root) / "tests/ui").glob("*.scribo")):
         if script.stem != "case_sensitive":  # cstest runs it on its own volume (build/csvol)
