@@ -102,6 +102,7 @@ The local model must run with BF16 weights and BF16 compute. Quantized checkpoin
 4. **Semantic and observer pipeline.** Embeddings, Qdrant indexing and retrieval, async extraction, provenance, the findings panel, and note and canon actions.
 5. **Connections and verification.** Entity and link navigation, canon conflict checks, the optional remote adapter, and backup and recovery (all done); offline integration tests and acceptance tests.
 
+A map of all the documentation, grouped by topic, is in [`docs/README.md`](docs/README.md).
 The full acceptance criteria are in [`docs/SOW.md` §8](docs/SOW.md#8-acceptance-criteria). The MVP acceptance run on this Mac is in [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md).
 Architectural and maintenance follow-up is tracked in [`docs/TECHNICAL-DEBT.md`](docs/TECHNICAL-DEBT.md).
 The items deferred after AUDIT-004, weighted by importance, are listed in [Deferred after AUDIT-004](docs/TECHNICAL-DEBT.md#deferred-after-audit-004-weighted-2026-11-16).
