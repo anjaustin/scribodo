@@ -13,6 +13,7 @@
 #include "app/store.h"
 #include "core/deadline_clock.h"
 #include "core/child_process.h"
+#include "core/utf8.h"
 
 
 static double monotonic_seconds(void)
@@ -50,12 +51,15 @@ static void tail_last_line(const StderrTail *t, char *out, size_t outlen)
     while (n > 0 && (t->buf[n - 1] == '\n' || t->buf[n - 1] == '\r' || t->buf[n - 1] == ' ')) n--;
     size_t at = n;
     while (at > 0 && t->buf[at - 1] != '\n') at--;
+    char line[sizeof(t->buf) + 1];
     size_t w = 0;
-    for (size_t i = at; i < n && w + 1 < outlen; i++) {
+    for (size_t i = at; i < n; i++) {
         unsigned char c = (unsigned char)t->buf[i];
-        out[w++] = c < 0x20 || c == 0x7f ? ' ' : (char)c;
+        line[w++] = c < 0x20 || c == 0x7f ? ' ' : (char)c;
     }
-    out[w] = '\0';
+    line[w] = '\0';
+    /* Bounded at a character boundary: the line is shown, and half a UTF-8 sequence would draw as garbage. */
+    utf8_clip(out, outlen, line, outlen ? outlen - 1 : 0);
 }
 
 static void drain(int fd, StderrTail *t, bool *open)
@@ -237,8 +241,10 @@ void service_supervisor_describe(const ServiceSupervisorResult *result, char *ou
     out[0] = '\0';
     const char *headline = service_supervisor_headline(result);
     if (!headline) return;
-    if (result->reason[0]) snprintf(out, outlen, "%s: %s", headline, result->reason);
-    else snprintf(out, outlen, "%s (tools/services.sh exit %d)", headline, result->exit_code);
+    char text[512];
+    if (result->reason[0]) snprintf(text, sizeof(text), "%s: %s", headline, result->reason);
+    else snprintf(text, sizeof(text), "%s (tools/services.sh exit %d)", headline, result->exit_code);
+    utf8_clip(out, outlen, text, outlen - 1); /* at a character boundary, as the reason itself */
 }
 
 const char *service_supervisor_warning(const ServiceSupervisorResult *result)

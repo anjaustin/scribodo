@@ -137,6 +137,39 @@ static void test_reason_bounds(void)
     CHECK(strstr(service_supervisor_headline(&missing), "couldn't run"));
 }
 
+static bool valid_utf8(const char *s)
+{
+    const unsigned char *p = (const unsigned char *)s;
+    while (*p) {
+        int extra = *p < 0x80 ? 0 : (*p & 0xE0) == 0xC0 ? 1 : (*p & 0xF0) == 0xE0 ? 2 : (*p & 0xF8) == 0xF0 ? 3 : -1;
+        if (extra < 0) return false;
+        for (int i = 1; i <= extra; i++)
+            if ((p[i] & 0xC0) != 0x80) return false;
+        p += 1 + extra;
+    }
+    return true;
+}
+
+/* A long line of multi-byte characters is cut at a character boundary, in the reason and in its description. */
+static void test_reason_utf8(void)
+{
+    /* 200 x "é" (2 bytes): a byte cut at 239 would split the 120th. */
+    ServiceSupervisorResult r = run_fake("i=0; while [ $i -lt 200 ]; do printf '\303\251' >&2; i=$((i+1)); done; echo >&2", 1);
+    CHECK(r.exit_code == 1 && valid_utf8(r.reason));
+    CHECK(strlen(r.reason) == SERVICES_REASON_MAX - 2 && !strncmp(r.reason, "\xC3\xA9", 2)); /* 119 whole: 238 bytes */
+    char text[300];
+    service_supervisor_describe(&r, text, sizeof(text));
+    CHECK(valid_utf8(text) && strlen(text) < sizeof(text) && strstr(text, "didn't start: \xC3\xA9"));
+    for (size_t size = 1; size < 64; size++) { /* every small buffer, so every cut position */
+        char small[64];
+        service_supervisor_describe(&r, small, size);
+        CHECK(valid_utf8(small) && strlen(small) < size);
+    }
+    /* "€" (3 bytes) lines too */
+    r = run_fake("i=0; while [ $i -lt 100 ]; do printf '\342\202\254' >&2; i=$((i+1)); done; echo >&2", 1);
+    CHECK(valid_utf8(r.reason) && strlen(r.reason) == 237);
+}
+
 /* The real script, on a throwaway store whose MariaDB and Qdrant are stand-ins: it refuses before starting anything. */
 typedef struct {
     char secrets[PATH_MAX];
@@ -441,6 +474,7 @@ int main(int argc, char **argv)
     TestCase tests[] = {
         { "exit_codes", test_exit_codes },
         { "reason_bounds", test_reason_bounds },
+        { "reason_utf8", test_reason_utf8 },
         { "real_script_refusals", test_real_script_refusals },
         { "contract_written_once", test_contract_written_once },
         { "tools_dir", test_tools_dir },

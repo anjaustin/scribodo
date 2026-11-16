@@ -367,3 +367,22 @@ Correction to the RT3 and RT4 skips: `pgrep -fl "clang --analyze"` also matched 
 that merely contain that text, so "another analyze is running" may have been false both times. My gate now matches
 only a process whose executable is clang (`pgrep -fl '^[^ ]*clang(-[0-9]+)? --analyze'`). This analyze run, on a
 tree that includes RT3 and RT4, is their analyze result too.
+
+## RT6 — the reason cut mid-character (minor)
+
+The reason was cut byte-wise at 239, and `service_supervisor_describe` cut again wherever its buffer ended. Either
+could split a UTF-8 sequence, which the app then draws. Both now cut with `utf8_clip` (`src/core/utf8.c`). The line
+is sanitised in full first and then clipped at a character boundary. The description is composed in full and then
+clipped to the caller's buffer. `main.c` copies the description into `store_why`, a buffer of the same size, so no
+third cut happens.
+
+**Test** (`reason_utf8` in `tests/test_services.c`):
+- a stderr line of 200 "é": the reason is valid UTF-8, 238 bytes (119 whole characters, where a byte cut at 239
+  would split the 120th);
+- the description into its normal buffer and into every size from 1 to 63: valid each time;
+- a line of "€": 237 bytes.
+
+Mutation: with byte-wise `snprintf` restored in both places, the case fails at the reason, the description and 16
+of the small-buffer sizes.
+
+**Gates (RT6):** `make test` exit 0; `make analyze` exit 0 (0 warnings, 89 files); `make sanitize` exit 0.
