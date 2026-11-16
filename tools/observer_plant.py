@@ -38,11 +38,14 @@ def _letter(c):
 
 
 def name_initial(text, dot):
-    """True when the single capital before text[dot] (a period) is a name's initial: not "I", the word before it
-    capitalised and not a label (Chapter V., Part I.), the word after it capitalised and not a usual sentence starter
-    ("said I. Proud", "Mr. X. Then"). observer_text.c name_initial, character for character."""
-    if dot < 2 or dot >= len(text) or not "A" <= text[dot - 1] <= "Z" or text[dot - 1] == "I" \
-            or _letter(text[dot - 2]) or "0" <= text[dot - 2] <= "9" or text[dot - 2] == "_":
+    """True when the single capital before text[dot] (a period) is a name's initial: not "I", no word character right
+    before it, the word after it capitalised and not a usual sentence starter ("said I. Proud", "Mr. X. Then"), and the
+    word before it, if any, not a label ("Chapter V.", "Part I."). "J. R. R. Tolkien", "T. S. Eliot" at the start and
+    "names E. Bennet" keep their initials. observer_text.c name_initial, character for character (the verifier's rule,
+    2026-11-15)."""
+    if dot < 1 or dot >= len(text) or not "A" <= text[dot - 1] <= "Z" or text[dot - 1] == "I":
+        return False
+    if dot >= 2 and (_letter(text[dot - 2]) or "0" <= text[dot - 2] <= "9" or text[dot - 2] == "_"):
         return False
     j = dot + 1
     while j < len(text) and text[j] in _SPACE:
@@ -55,22 +58,18 @@ def name_initial(text, dot):
     if text[j:je] in SENTENCE_STARTERS:
         return False
     e = dot - 1
-    if text[e - 1] not in " \t":
-        return False
-    while e > 0 and text[e - 1] in " \t":
+    while e > 0 and text[e - 1] not in _SPACE:
+        e -= 1
+    while e > 0 and text[e - 1] in _SPACE:
         e -= 1
     b = e
     while b > 0 and text[b - 1] not in _SPACE:
         b -= 1
     while b < e and not _letter(text[b]):
         b += 1
-    if e > b and text[e - 1] == ".":
+    while e > b and not _letter(text[e - 1]):
         e -= 1
-    if e <= b or not "A" <= text[b] <= "Z":
-        return False
-    if any(not _letter(c) and ord(c) < 0x80 for c in text[b + 1:e]):
-        return False
-    return text[b:e] not in LABEL_WORDS
+    return e <= b or text[b:e] not in LABEL_WORDS
 
 
 def ends_sentence(anchor, after):

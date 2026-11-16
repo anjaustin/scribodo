@@ -286,13 +286,16 @@ int obs_overlap(const char *a, const char *b, bool ignore_titles)
     return score;
 }
 
-/* A single capital before a period is a name's initial ("James K. Powell", "J. K. Rowling") only when it is not "I", the
- * word before it is capitalised and not a label (Chapter, Part, Book, Act, Source...), and the word after it is
- * capitalised and not a usual sentence starter. Without the context every such capital was an initial, so "in Chapter V.
- * Lydia is", "in Part I. That is" and "said I. \"Proud" were each kept as one sentence (red-team 2026-11-15). The rule
- * and both lists are the data/text stream's text_name_initial_before (src/core/text_rules.c on remed/text), copied
- * rather than depended on so the two can be unified at merge; tools/observer_plant.py name_initial is the Python
- * mirror, and tests/fixtures/observer_rules/cases.json holds them to the same sentences. s[dot] is the period. */
+/* A single capital before a period is a name's initial ("James K. Powell", "J. R. R. Tolkien", "T. S. Eliot",
+ * "signed E. Bennet", "\u201cE. GARDINER.\u201d") only when it is not "I", no word character comes right before it,
+ * the word after it is capitalised and not a usual sentence starter, and the word before it (if any) is not a label
+ * (Chapter, Part, Book, Act, Source...). Without the context every such capital was an initial, so "in Chapter V. Lydia
+ * is", "in Part I. That is" and "said I. \"Proud" were each one sentence (red-team 2026-11-15). A first version also
+ * required the word before to be capitalised and spaced, which cut "J. R. R. Tolkien", "T. S. Eliot" at the start of
+ * a text and "names E. Bennet" (the step 3/4 truncation, back on the default path through obs_first_sentence); this
+ * is the verifier's rule. The lists are the data/text stream's (src/core/text_rules.c on remed/text), copied rather
+ * than depended on so the two can be unified at merge; tools/observer_plant.py name_initial is the Python mirror, and
+ * tests/fixtures/observer_rules/cases.json holds them to the same sentences. s[dot] is the period. */
 static const char *const k_label_words[] = { "Chapter", "Ch", "Part", "Book", "Volume", "Vol", "Act", "Scene", "Section",
     "Sec", "Source", "Appendix", "Figure", "Fig", "Table", "Plate", "Page", "Item", "Note", "Step", "Letter", "Line",
     "Option", "Plan", "Type", "Class", "Group", "Exhibit", "Article", "Clause", NULL };
@@ -314,24 +317,22 @@ static bool text_word(char c) { return text_letter(c) || (c >= '0' && c <= '9') 
 
 static bool name_initial(const char *s, size_t n, size_t dot)
 {
-    if (dot < 2 || dot >= n || s[dot - 1] < 'A' || s[dot - 1] > 'Z' || s[dot - 1] == 'I' || text_word(s[dot - 2])) return false;
+    if (dot < 1 || dot >= n || s[dot - 1] < 'A' || s[dot - 1] > 'Z' || s[dot - 1] == 'I') return false;
+    if (dot >= 2 && text_word(s[dot - 2])) return false;
     size_t j = dot + 1; /* after: whitespace, then a capitalised word that does not start a sentence */
     while (j < n && text_space(s[j])) j++;
     if (j >= n || s[j] < 'A' || s[j] > 'Z') return false;
     size_t je = j;
     while (je < n && text_letter(s[je])) je++;
     if (exact_in(k_sentence_starters, s + j, je - j)) return false;
-    size_t e = dot - 1; /* before: spaces or tabs, then a capitalised word that is not a label */
-    if (s[e - 1] != ' ' && s[e - 1] != '\t') return false;
-    while (e > 0 && (s[e - 1] == ' ' || s[e - 1] == '\t')) e--;
+    size_t e = dot - 1; /* before: past what is attached to the capital (an opening quote), spaces, then a word */
+    while (e > 0 && !text_space(s[e - 1])) e--;
+    while (e > 0 && text_space(s[e - 1])) e--;
     size_t b = e;
     while (b > 0 && !text_space(s[b - 1])) b--;
     while (b < e && !text_letter(s[b])) b++;
-    if (e > b && s[e - 1] == '.') e--;
-    if (e <= b || s[b] < 'A' || s[b] > 'Z') return false;
-    for (size_t k = b + 1; k < e; k++)
-        if (!text_letter(s[k]) && (unsigned char)s[k] < 0x80) return false;
-    return !exact_in(k_label_words, s + b, e - b);
+    while (e > b && !text_letter(s[e - 1])) e--;
+    return e <= b || !exact_in(k_label_words, s + b, e - b);
 }
 
 /* Cuts s at the end of its first sentence: a period that ends the text or is followed by a space and a capital,

@@ -143,6 +143,9 @@ static void test_first_sentence(void)
     CHECK(first_sentence_is("It is as stated in Part I. That is not in dispute.", "It is as stated in Part I."));
     CHECK(first_sentence_is("\"Proud,\" said I. Proud people breed sad sorrows.", "\"Proud,\" said I."));
     CHECK(first_sentence_is("Canon states Captain James K. Powell is of Richmond. Then more.", "Canon states Captain James K. Powell is of Richmond."));
+    CHECK(first_sentence_is("Written by J. R. R. Tolkien. Then more.", "Written by J. R. R. Tolkien."));
+    CHECK(first_sentence_is("T. S. Eliot wrote the poem. Then more.", "T. S. Eliot wrote the poem."));
+    CHECK(first_sentence_is("The canon names E. Bennet as the eldest. Then more.", "The canon names E. Bennet as the eldest."));
 }
 
 static void test_sentence_end(void)

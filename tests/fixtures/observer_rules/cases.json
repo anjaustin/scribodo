@@ -178,10 +178,63 @@
   {
    "text": "I met a K. Smith there.",
    "want": [
-    "I met a K.",
-    "Smith there."
+    "I met a K. Smith there."
    ],
-   "why": "an initial after a lower-case word is read as a sentence end (known cost of the rule)"
+   "why": "an initial after a lower-case word stays (the first version of the rule cut it)"
+  },
+  {
+   "text": "I admire J. R. R. Tolkien. Then I read.",
+   "want": [
+    "I admire J. R. R. Tolkien.",
+    "Then I read."
+   ],
+   "why": "three initials in a row"
+  },
+  {
+   "text": "T. S. Eliot wrote it. Then he left.",
+   "want": [
+    "T. S. Eliot wrote it.",
+    "Then he left."
+   ],
+   "why": "initials at the start of a text"
+  },
+  {
+   "text": "The canon names E. Bennet as the eldest. So it says.",
+   "want": [
+    "The canon names E. Bennet as the eldest.",
+    "So it says."
+   ],
+   "why": "an initial after a lower-case word"
+  },
+  {
+   "text": "\"J. Smith came,\" she said.",
+   "want": [
+    "\"J. Smith came,\" she said."
+   ],
+   "why": "an initial after an opening quote at the start"
+  },
+  {
+   "text": "It was signed “E. GARDINER.” Then the letter ended.",
+   "want": [
+    "It was signed “E. GARDINER.”",
+    "Then the letter ended."
+   ],
+   "why": "an initial before a name in capitals (P&P's signatures)"
+  },
+  {
+   "text": "It was signed “M. GARDINER.”",
+   "want": [
+    "It was signed “M. GARDINER.”"
+   ],
+   "why": "the second P&P signature"
+  },
+  {
+   "text": "with the letters W. H. cut on its north side. Then more.",
+   "want": [
+    "with the letters W. H. cut on its north side.",
+    "Then more."
+   ],
+   "why": "Wuthering Heights' carved initials"
   }
  ],
  "attributes": [
