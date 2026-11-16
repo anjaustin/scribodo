@@ -197,6 +197,26 @@ analyze` exit 0 after the first; after commits 2 to 4 it was skipped because the
 --analyze"`) matched its own shell's command line, not another analyzer, and it ran once on the final tree with a
 check on the process name instead, exit 0 (the later commits change no C). `make mutationtest` was not rerun: nothing in this round touches it.
 
+## Verification holes (2026-11-15, same branch)
+
+The coordinator's verification closed the five findings and found three more holes and four small items.
+
+- A: a placeholder not-evidence entry (`build/ui/<script>`) excused concrete paths and skipped their file walk, so a
+  recreated `fit-on` passed as lost. Placeholder entries now match only placeholder citations, only an exact entry
+  skips the walk, and a lost entry with any file on disk fails.
+- B: a watchdog dump written before `make test` failed every citation of the directory `build/hangs`. Entries can be
+  marked `walk` (they excuse only files found under a cited directory); `build/hangs/*-*.txt` is one, so a dump cited
+  by name is still checked.
+- C: `experiment_arms` took a one-line `getenv` before a level helper for a level. A level now needs
+  `v = getenv(X)` and `off_value(v)` in the same brace-matched function.
+- Small: Markdown links and angle brackets end a citation; a spaced path is cited only inside backticks; a missing
+  archive folder skips only on a GitHub-hosted runner or with `SCRIBODO_EVIDENCE_SKIP`; two more answer tools hash
+  `answer_common.py`; a bare `build/` is reported as the folder.
+
+Gates (`build/audit004-tooling/rA-*.log` to `rD-*.log`, archived in `scribodo-evidence-2026-11-15-audit004-tooling-v`): after
+each commit `make test` exit 0, `make tools` exit 0 and, with no analyzer process running (checked by process name),
+`make analyze` exit 0.
+
 ## Not done here
 
 - `git gc`, README, `docs/EVIDENCE.md`, `docs/TECHNICAL-DEBT.md` and the audit document belong to the coordinator;
