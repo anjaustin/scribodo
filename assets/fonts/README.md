@@ -3,7 +3,7 @@
 The default interface, document and monospace faces: Google's **Share** family
 by Carrois Type Design, under the SIL Open Font License 1.1 (the `OFL-*.txt`
 files beside them). Authors can choose any installed font per role instead
-(the app's **Fonts** panel; [USER-GUIDE](../../docs/USER-GUIDE.md#fonts)).
+(the app's **Appearance** panel; [USER-GUIDE](../../docs/USER-GUIDE.md#appearance)).
 
 Fetched from [google/fonts](https://github.com/google/fonts) at commit
 `7af0d90b4d532ffa4b041937b560c6df4e7b1e95`, unmodified.

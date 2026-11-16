@@ -131,6 +131,7 @@ typedef struct {
     float dpi;
     float explorer_w, observer_w, chat_w;
     float side_shown; /* the right pane's width as drawn: glides to observer_w or 0 (ui/motion.h) */
+    bool focus_mode;  /* the page alone (⌘\\); for the session, not saved */
     bool observer_open;
     int dragging;
     int focus;
@@ -467,6 +468,10 @@ void fonts_panel_open(App *app);
 void fonts_panel_draw(App *app, Rectangle screen);
 /* Its keys and typing, in the frame's update phase. */
 void fonts_panel_update(App *app);
+/* The palette and the editor's writing aids from app->appearance (at launch and on every change in the panel). */
+void app_apply_look(App *app);
+/* Focus mode on or off: the page alone. Typing focus moves to the document. */
+void app_set_focus_mode(App *app, bool on);
 int app_init_jobs(App *app, const char *script_path);
 int app_open_window(App *app, const char *script_path);
 int app_start_models(App *app, const char *script_path);

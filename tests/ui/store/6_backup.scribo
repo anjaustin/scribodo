@@ -6,12 +6,12 @@ dialog "$DIR/book"
 click_element WelcomeOpen
 expect explorer_has "remember the lighthouse"
 click_element AppMenu
-click_element MenuItem2
+click_element MenuItem3
 wait_status "Backed up to" 1800
 expect files "$DIR/backups" "book-" 1
 dialog_latest "$DIR/backups"
 click_element AppMenu
-click_element MenuItem3
+click_element MenuItem4
 wait_status "Restored as" 1800
 # The restored folder is a legacy-format copy: its move into the store also
 # runs on the import worker. Clicking before it finishes can be hit-tested

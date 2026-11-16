@@ -5,10 +5,18 @@ and launch the app, see the [README](../README.md#quick-start). To set up the
 project store, see [SERVICES](SERVICES.md). The settings you can override are
 listed in [CONFIGURATION](CONFIGURATION.md).
 
-## Fonts
+## Appearance
 
-Choose **Scribodo ▸ Fonts…** in the toolbar, or press **⌘,**. Each part of
-the app has its own typeface and size:
+Choose **Scribodo ▸ Appearance…** in the toolbar, or press **⌘,**.
+
+- **Theme:** Dark (the default), Light, or Paper, a warm sepia page. Every text colour in each meets the WCAG contrast levels against what it is drawn on (`tests/test_theme_contrast.py`).
+- **Writing:** *Typewriter scrolling* keeps the line you are writing at the middle of the page; *Dim the other paragraphs* draws every paragraph but the one with the caret faint. Both are off by default.
+- **Focus mode** (**⌘\\**, or **Scribodo ▸ Focus mode**) hides the Explorer, the chat and the side pane, leaving the page between the toolbar and the status bar; the same keys bring them back. It lasts for the session.
+- Panes glide open and shut, the document's scroll glides, and a new finding fades in. With macOS's **Reduce motion** turned on (System Settings ▸ Accessibility ▸ Display) all of it is immediate.
+
+### Fonts
+
+Each part of the app has its own typeface and size:
 
 | Role | Default | Used for |
 |---|---|---|
@@ -20,7 +28,7 @@ the app has its own typeface and size:
 - Click a role's face to choose another. The list holds the fonts in macOS's font folders, `/Library/Fonts` and `~/Library/Fonts` (and one folder below each), collections included, that draw Latin letters with outlines; fonts macOS downloads on demand are not listed. Type to filter it, use the arrow keys and Enter, or click; **Default** returns to the bundled face, and Esc or **Back** returns to the roles without choosing.
 - A font from outside macOS's own folders is first opened by a separate, short-lived process. One that would crash Scribodo is refused, the role keeps its face, and the status bar says so. A saved font that has since gone missing is replaced by the default when Scribodo opens, with the same message.
 - **−** and **+** change the size. Each row previews its role in the face and size chosen.
-- Changes show at once. **Done** (or Enter) keeps them; **Cancel** (or Esc) puts back what the panel opened with; **Defaults** returns every role to its default.
+- Changes show at once. **Done** (or Enter) keeps them; **Cancel** (or Esc) puts back what the panel opened with; **Defaults** returns the theme, the writing aids and every font to their defaults.
 - Interface and Figures sizes stop at 16 for now, while the toolbar, lists and status bar have fixed heights.
 - The Share faces cover Western European letters. A letter a face lacks, such as ř in *Dvořák*, comes from Arial at the same height and on the same baseline. The bundled faces and their licence are listed in `assets/fonts/README.md`.
 

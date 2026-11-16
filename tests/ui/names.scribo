@@ -3,7 +3,7 @@
 # finding in chats.
 open "$DIR/chapter.md"
 click_element AppMenu
-click_element MenuItem4
+click_element MenuItem5
 key A cmd
 type "Tripp"
 key ENTER

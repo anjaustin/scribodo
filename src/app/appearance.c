@@ -11,6 +11,7 @@
 
 #include "core/file_text.h"
 #include "core/json.h"
+#include "ui/theme.h"
 
 static const AppearanceRoleInfo k_roles[APPEARANCE_ROLE_COUNT] = {
     { "interface", "Interface", "menus, lists, buttons and labels", "ShareTech-Regular.ttf", "Share Tech", 14.0f, 11.0f, 16.0f, 1.45f },
@@ -33,6 +34,7 @@ const AppearanceRoleInfo *appearance_role_info(int role)
 void appearance_defaults(Appearance *a)
 {
     memset(a, 0, sizeof(*a));
+    a->theme = THEME_DARK;
     for (int r = 0; r < APPEARANCE_ROLE_COUNT; r++) a->role[r].size = k_roles[r].default_size;
 }
 
@@ -64,6 +66,10 @@ void appearance_load(Appearance *a)
     fclose(f);
     buf[n] = '\0';
     cJSON *j = json_parse(buf);
+    const cJSON *theme = cJSON_GetObjectItemCaseSensitive(j, "theme");
+    if (cJSON_IsString(theme) && theme_by_name(theme->valuestring) >= 0) a->theme = theme_by_name(theme->valuestring);
+    a->typewriter = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(j, "typewriter"));
+    a->dim_paragraphs = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(j, "dim_paragraphs"));
     for (int r = 0; r < APPEARANCE_ROLE_COUNT; r++) {
         const cJSON *o = cJSON_GetObjectItemCaseSensitive(j, k_roles[r].key);
         if (!cJSON_IsObject(o)) continue;
@@ -92,6 +98,10 @@ bool appearance_save(const Appearance *a)
         mkdir(dir, 0700);
     }
     cJSON *j = cJSON_CreateObject();
+    const ThemePalette *pal = theme_palette(a->theme);
+    cJSON_AddStringToObject(j, "theme", pal ? pal->name : "dark");
+    cJSON_AddBoolToObject(j, "typewriter", a->typewriter);
+    cJSON_AddBoolToObject(j, "dim_paragraphs", a->dim_paragraphs);
     for (int r = 0; r < APPEARANCE_ROLE_COUNT; r++) {
         Appearance c = *a;
         appearance_set_size(&c, r, a->role[r].size);

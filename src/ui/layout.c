@@ -411,16 +411,20 @@ Clay_RenderCommandArray build_layout(App *app)
         layout_toolbar(app);
 
         CLAY({ .id = CLAY_ID("Main"), .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } } }) {
-            layout_explorer(app);
-            splitter(CLAY_ID("SplitLeft"), app->dragging == DRAG_EXPLORER);
+            /* Focus mode (⌘\\): the page alone, between the toolbar and the status bar. */
+            if (!app->focus_mode) {
+                layout_explorer(app);
+                splitter(CLAY_ID("SplitLeft"), app->dragging == DRAG_EXPLORER);
+            }
 
             CLAY({ .id = CLAY_ID("Editor"), .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } },
                    .backgroundColor = COL_BG }) {}
 
-            splitter(CLAY_ID("SplitChat"), app->dragging == DRAG_CHAT);
-
-            layout_chat(app);
-            layout_side_panel(app);
+            if (!app->focus_mode) {
+                splitter(CLAY_ID("SplitChat"), app->dragging == DRAG_CHAT);
+                layout_chat(app);
+                layout_side_panel(app);
+            }
         }
 
         layout_status_bar(app);

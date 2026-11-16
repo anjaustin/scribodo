@@ -1,0 +1,42 @@
+# Writing modes (step 4 of the interface plan, 2026-11-16): the Paper and Light palettes, typewriter scrolling,
+# dimming the other paragraphs, and focus mode (the page alone). All are in the Appearance panel except focus mode,
+# which is ⌘\ or Scribodo ▸ Focus mode, and is not saved.
+open "$DIR/long.md"
+key COMMA cmd
+click_element FontsTheme2
+shot paper-panel
+click_element FontsTypewriter
+click_element FontsDim
+click_element FontsDone
+expect status "Appearance saved"
+expect lines "$DIR/appearance.json" "\"theme\":\"paper\",\"typewriter\":true,\"dim_paragraphs\":true" 1
+# The caret's line glides to the middle: after jumping to the end the view is scrolled.
+click_element Editor
+key END cmd
+expect scrolled yes
+shot paper-typewriter
+# Light, from the panel; Cancel puts Paper back.
+key COMMA cmd
+click_element FontsTheme1
+shot light-panel
+click_element FontsCancel
+expect lines "$DIR/appearance.json" "\"theme\":\"paper\"" 1
+# Focus mode: the Explorer and the chat go; typing still reaches the document.
+key BACKSLASH cmd
+expect status "Focus mode"
+expect element_w Explorer 0 0
+expect element_w Chat 0 0
+expect element_w Editor 1200 1500
+type "!"
+expect dirty yes
+shot focus
+# From the menu, back again; the panes return at their widths.
+click_element AppMenu
+click_element MenuItem1
+expect element_w Explorer 205 215
+expect element_w Chat 410 430
+# Dark again, and nothing but the palette changed.
+key COMMA cmd
+click_element FontsTheme0
+click_element FontsDone
+expect lines "$DIR/appearance.json" "\"theme\":\"dark\",\"typewriter\":true" 1

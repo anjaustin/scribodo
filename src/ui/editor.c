@@ -84,6 +84,8 @@ struct Editor {
     float scroll_y;
     float scroll_goal; /* where a wheel scroll is gliding to (ui/motion.h) */
     bool gliding;
+    bool typewriter;  /* the caret's line kept at the middle of the view */
+    bool dim_others;  /* paragraphs other than the caret's drawn faint */
     bool want_cursor_visible;
     double blink_t0;
 
@@ -885,6 +887,13 @@ static void scroll_to_cursor(Editor *e)
     float y = (float)r * lh;
     float margin = lh;
     e->gliding = false;
+    if (e->typewriter && !e->single_line) { /* the caret's line glides to the middle of the view */
+        e->scroll_goal = y + lh * 0.5f - e->view_h * 0.5f;
+        e->gliding = true;
+        clamp_scroll(e);
+        glide(e);
+        return;
+    }
     if (y - margin < e->scroll_y) e->scroll_y = y - margin;
     if (y + lh + margin > e->scroll_y + e->view_h) e->scroll_y = y + lh + margin - e->view_h;
     clamp_scroll(e);
@@ -1103,6 +1112,18 @@ void editor_draw(Editor *e, Rectangle b, bool focused)
     sel_range(e, &sel_lo, &sel_hi);
     bool sel = sel_lo != sel_hi;
 
+    /* The caret's paragraph (between line breaks) stays at full strength; the rest are faint. */
+    size_t para_lo = 0, para_hi = tb_len(&e->buf);
+    bool dim = e->dim_others && !e->single_line && !sel && tb_len(&e->buf) > 0;
+    if (dim) {
+        size_t c = (size_t)e->st.cursor;
+        para_lo = c;
+        while (para_lo > 0 && tb_get(&e->buf, para_lo - 1) != '\n') para_lo--;
+        para_hi = c;
+        while (para_hi < tb_len(&e->buf) && tb_get(&e->buf, para_hi) != '\n') para_hi++;
+    }
+    Color faint = ColorAlpha(COL_TEXT, 0.36f);
+
     for (size_t r = first; r < last; r++) {
         const WrapRow *row = &e->layout.rows[r];
         float y = e->text_y + (float)r * lh - e->scroll_y;
@@ -1127,9 +1148,10 @@ void editor_draw(Editor *e, Rectangle b, bool focused)
         }
 
         float x = e->text_x;
+        Color ink = dim && (row->start < para_lo || row->start > para_hi) ? faint : COL_TEXT; /* a row's start places it */
         for (size_t i = row->start; i < end; i++) {
             uint32_t c = tb_get(&e->buf, i);
-            sfont_draw(f, c, x, y, COL_TEXT);
+            sfont_draw(f, c, x, y, ink);
             x += sfont_advance(f, c);
         }
     }
@@ -1396,6 +1418,13 @@ bool editor_set_text_utf8(Editor *e, const char *utf8)
     e->gliding = false;
     mark_changed(e);
     return true;
+}
+
+void editor_set_writing_aids(Editor *e, bool typewriter, bool dim_others)
+{
+    if (e->typewriter != typewriter && typewriter) e->want_cursor_visible = true; /* centre the caret now */
+    e->typewriter = typewriter;
+    e->dim_others = dim_others;
 }
 
 void editor_set_layout(Editor *e, float side_pad, float top_pad, float max_col)

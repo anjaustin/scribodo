@@ -54,3 +54,4 @@ Color ColorBrightness(Color c, float f) { (void)f; return c; }
 void DrawLineEx(Vector2 a, Vector2 b, float t, Color c) { (void)a; (void)b; (void)t; (void)c; }
 void DrawRectangleRoundedLinesEx(Rectangle r, float rf, int s, float t, Color c) { (void)r; (void)rf; (void)s; (void)t; (void)c; }
 bool IsMouseButtonReleased(int b) { (void)b; return false; }
+Color ColorAlpha(Color c, float a) { c.a = (unsigned char)(a * 255.0f); return c; }

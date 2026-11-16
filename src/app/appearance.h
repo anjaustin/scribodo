@@ -1,4 +1,5 @@
-/* The author's fonts: one face and size per role, chosen in the Fonts panel (⌘,). App-wide:
+/* The author's appearance, chosen in the Appearance panel (⌘,): a palette (Dark, Light, Paper), two writing aids
+ * (typewriter scrolling, dimming the paragraphs other than the caret's) and one face and size per font role. App-wide:
  * ~/Library/Application Support/Scribodo/appearance.json (or $SCRIBODO_APPEARANCE; a UI test keeps its own,
  * startup_env). A role with no chosen face uses the bundled default (assets/fonts: Share Tech for the interface,
  * Share for documents and chat, Share Tech Mono for figures); sizes are clamped to the role's range on load and when
@@ -22,6 +23,9 @@ typedef struct {
 
 typedef struct {
     AppearanceFont role[APPEARANCE_ROLE_COUNT];
+    int theme;           /* ui/theme.h: THEME_DARK (default), THEME_LIGHT, THEME_PAPER */
+    bool typewriter;     /* the caret's line stays at the middle of the document while you write */
+    bool dim_paragraphs; /* paragraphs other than the caret's are drawn faint */
 } Appearance;
 
 typedef struct {

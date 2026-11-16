@@ -535,6 +535,7 @@ static void draw_rows(ChatView *v, const MsgCache *c, float x, float y, Color co
 
 void chat_view_draw(ChatView *v, Rectangle list, Rectangle input, bool input_focused)
 {
+    if (list.width <= 0 && input.width <= 0) return; /* the chat is not laid out (focus mode) */
     Rectangle outer = list;
     chat_lock(v->chat);
     ChatWindowInfo info = chat_window_info(v->chat);

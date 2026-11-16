@@ -1249,11 +1249,12 @@ static void frame_app_menu(App *app, bool modal)
 {
     if (modal || !IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || !Clay_PointerOver(CLAY_ID("AppMenu"))) return;
     /* The app's settings, then the open project's own: back up, restore, names (once in the Explorer). */
-    const char *items[] = { "Fonts\xE2\x80\xA6          \xE2\x8C\x98,", "Model settings\xE2\x80\xA6",
+    const char *items[] = { "Appearance\xE2\x80\xA6     \xE2\x8C\x98,", app->focus_mode ? "Leave focus mode  \xE2\x8C\x98\\" : "Focus mode        \xE2\x8C\x98\\",
+                            "Model settings\xE2\x80\xA6",
                             backup_job_busy(&app->backup) ? "Backing up\xE2\x80\xA6" : "Back up now",
                             "Restore from a backup\xE2\x80\xA6", "Names\xE2\x80\xA6" };
     Rectangle r = ELEMENT_RECT("AppMenu");
-    menu_open(&app->menu, MT_APP, 0, (Vector2){ r.x, r.y + r.height + 4 }, items, app->project_dir[0] ? 5 : 2);
+    menu_open(&app->menu, MT_APP, 0, (Vector2){ r.x, r.y + r.height + 4 }, items, app->project_dir[0] ? 6 : 3);
 }
 
 static void frame_model_picker(App *app, bool modal)
@@ -1366,6 +1367,7 @@ static void frame_shortcuts(App *app, bool modal)
         accept_proposal(app);
     if (primary && shortcut_pressed('o')) choose_project(app, false);
     if (primary && IsKeyPressed(KEY_COMMA)) fonts_panel_open(app);
+    if (primary && IsKeyPressed(KEY_BACKSLASH)) app_set_focus_mode(app, !app->focus_mode);
     if (primary && !shift && shortcut_pressed('n')) begin_new_document(app);
     if (!modal && app->focus == FOCUS_CHAT && IsKeyPressed(KEY_ESCAPE)) {
         if (app->history_pending) {
@@ -1652,10 +1654,11 @@ static void frame_draw_overlays(App *app, MainLoop *loop, int empty_act, bool mo
             chat_controller_mark_attachments_changed(&app->chat_controller);
         }
         if (pick == 0 && app->menu.tag == MT_APP) fonts_panel_open(app);
-        if (pick == 1 && app->menu.tag == MT_APP) open_model_settings(app);
-        if (pick == 2 && app->menu.tag == MT_APP) begin_backup(app);
-        if (pick == 3 && app->menu.tag == MT_APP) begin_restore(app);
-        if (pick == 4 && app->menu.tag == MT_APP) begin_names(app);
+        if (pick == 1 && app->menu.tag == MT_APP) app_set_focus_mode(app, !app->focus_mode);
+        if (pick == 2 && app->menu.tag == MT_APP) open_model_settings(app);
+        if (pick == 3 && app->menu.tag == MT_APP) begin_backup(app);
+        if (pick == 4 && app->menu.tag == MT_APP) begin_restore(app);
+        if (pick == 5 && app->menu.tag == MT_APP) begin_names(app);
         if (pick >= 0 && app->menu.tag == MT_MODEL && pick == app->model_menu_settings) {
             open_model_settings(app);
         } else if (pick >= 0 && app->menu.tag == MT_MODEL) {

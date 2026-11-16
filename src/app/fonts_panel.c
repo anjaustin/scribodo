@@ -5,6 +5,8 @@
 #include "ui/theme.h"
 #include "ui/widgets.h"
 
+_Static_assert(THEME_COUNT == sizeof(((FontsPanel *)0)->theme) / sizeof(Rectangle), "a theme slot per palette");
+
 static const char *const k_samples[APPEARANCE_ROLE_COUNT] = {
     "Documents \xC2\xB7 Chats \xC2\xB7 History \xC2\xB7 Open\xE2\x80\xA6",
     "The fog came in off the fjord. Zo\xC3\xAB \xC3\x85ngstr\xC3\xB6m, Dvo\xC5\x99\xC3\xA1k, 1897.",
@@ -66,8 +68,9 @@ static void show(App *app, const Appearance *next)
 {
     Appearance before = app->appearance;
     unsigned roles = changed_roles(&before, next);
-    if (!roles) return;
     app->appearance = *next;
+    app_apply_look(app); /* the palette and writing aids show at once */
+    if (!roles) return;
     char why[PATH_MAX + 128];
     unsigned failed = app_fonts_apply(app, roles, why, sizeof(why));
     if (!failed) return;
@@ -91,8 +94,8 @@ static void close_panel(App *app, bool keep)
 {
     FontsPanel *p = &app->fonts_panel;
     if (keep) {
-        if (appearance_save(&app->appearance)) set_status(app, "Fonts saved");
-        else set_status(app, "Couldn't save the fonts; they apply until Scribodo quits");
+        if (appearance_save(&app->appearance)) set_status(app, "Appearance saved");
+        else set_status(app, "Couldn't save the appearance; it applies until Scribodo quits");
     } else {
         show(app, &p->saved);
     }
@@ -238,6 +241,8 @@ static void draw_list(App *app, Rectangle d)
 
 /* --- the roles ------------------------------------------------------------------------------------------------- */
 
+#define THEME_ROW_H 44.0f /* the Theme and Writing rows */
+
 /* A role's row: its label, then (when the window has room) a line in the role's own font. */
 static float role_row_height(const App *app, int r, bool previews)
 {
@@ -248,11 +253,29 @@ static void draw_roles(App *app, Rectangle d, bool previews)
 {
     FontsPanel *p = &app->fonts_panel;
     const SFont *ui = &app->fonts[FONT_UI];
-    widget_text(ui, "Fonts", d.x + SP_6, d.y + SP_5, 0, THEME_TEXT);
-    widget_text(ui, "A typeface and size for each part of Scribodo. Changes show at once; Done keeps them.",
+    widget_text(ui, "Appearance", d.x + SP_6, d.y + SP_5, 0, THEME_TEXT_STRONG);
+    widget_text(ui, "Colours, writing aids and a typeface for each part of Scribodo. Changes show at once; Done keeps them.",
                 d.x + SP_6, d.y + SP_5 + ui->line_height + 2, d.width - 2 * SP_6, THEME_TEXT_MUTED);
     float y = d.y + 76;
     Appearance next = app->appearance;
+
+    /* The palette: one of three, side by side. */
+    DrawRectangle((int)(d.x + SP_6), (int)y, (int)(d.width - 2 * SP_6), 1, THEME_BORDER);
+    widget_text(ui, "Theme", d.x + SP_6, y + SP_2 + (28 - ui->line_height) / 2, 0, THEME_TEXT);
+    for (int t = 0; t < THEME_COUNT; t++) {
+        p->theme[t] = (Rectangle){ d.x + d.width - SP_6 - (float)(THEME_COUNT - t) * 100, y + SP_2, 96, 28 };
+        if (widget_toggle(p->theme[t], theme_palette(t)->label, ui, next.theme == t)) next.theme = t;
+    }
+    y += THEME_ROW_H;
+
+    /* The writing aids. */
+    DrawRectangle((int)(d.x + SP_6), (int)y, (int)(d.width - 2 * SP_6), 1, THEME_BORDER);
+    widget_text(ui, "Writing", d.x + SP_6, y + SP_2 + (28 - ui->line_height) / 2, 0, THEME_TEXT);
+    p->typewriter = (Rectangle){ d.x + 180, y + SP_2, 220, 28 };
+    p->dim = (Rectangle){ d.x + 420, y + SP_2, 250, 28 };
+    widget_checkbox(p->typewriter, "Typewriter scrolling", ui, &next.typewriter);
+    widget_checkbox(p->dim, "Dim the other paragraphs", ui, &next.dim_paragraphs);
+    y += THEME_ROW_H;
     for (int r = 0; r < APPEARANCE_ROLE_COUNT; r++) {
         const AppearanceRoleInfo *in = appearance_role_info(r);
         const SFont *rf = &app->fonts[r];
@@ -319,7 +342,7 @@ static void draw_roles(App *app, Rectangle d, bool previews)
 
 static float roles_height(const App *app, bool previews)
 {
-    float h = 76 + 70;
+    float h = 76 + 70 + 2 * THEME_ROW_H;
     for (int r = 0; r < APPEARANCE_ROLE_COUNT; r++) h += role_row_height(app, r, previews);
     return h;
 }
@@ -356,6 +379,12 @@ Rectangle fonts_panel_element(const FontsPanel *p, const char *name)
         return none;
     }
     if (!strcmp(name, "FontsDone")) return p->done;
+    if (!strcmp(name, "FontsTypewriter")) return p->typewriter;
+    if (!strcmp(name, "FontsDim")) return p->dim;
+    if (!strncmp(name, "FontsTheme", 10) && name[10]) {
+        int t = atoi(name + 10);
+        return t >= 0 && t < THEME_COUNT ? p->theme[t] : none;
+    }
     if (!strcmp(name, "FontsCancel")) return p->cancel;
     if (!strcmp(name, "FontsDefaults")) return p->defaults;
     static const char *const kinds[] = { "FontsPick", "FontsMinus", "FontsPlus" };

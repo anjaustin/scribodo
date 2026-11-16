@@ -228,7 +228,7 @@ $(BUILD)/test_widgets: tests/test_widgets.c src/ui/widgets.c src/ui/theme.c src/
 $(BUILD)/test_motion: $(CORE_OBJS) $(BUILD)/tests/test_motion.o
 	$(CC) $(CFLAGS) $^ -o $@
 
-APPEARANCE_TEST_SRCS := tests/test_appearance.c src/app/appearance.c src/core/file_text.c src/core/json.c src/core/json_vendor.c
+APPEARANCE_TEST_SRCS := tests/test_appearance.c src/app/appearance.c src/ui/theme.c src/core/file_text.c src/core/json.c src/core/json_vendor.c
 $(BUILD)/test_appearance: $(APPEARANCE_TEST_SRCS) src/app/appearance.h src/ui/font.h
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(INCLUDES) $(APPEARANCE_TEST_SRCS) -o $@ -lpthread

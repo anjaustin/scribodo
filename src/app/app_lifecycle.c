@@ -104,6 +104,19 @@ unsigned app_fonts_apply(App *app, unsigned roles, char *why, size_t whylen)
     return failed;
 }
 
+void app_apply_look(App *app)
+{
+    theme_select(app->appearance.theme);
+    if (app->editor) editor_set_writing_aids(app->editor, app->appearance.typewriter, app->appearance.dim_paragraphs);
+}
+
+void app_set_focus_mode(App *app, bool on)
+{
+    app->focus_mode = on;
+    if (on) app->focus = FOCUS_DOC;
+    set_status(app, on ? "Focus mode: the page alone (\xE2\x8C\x98\\ to come back)" : "Focus mode off");
+}
+
 static bool load_fonts(App *app, float dpi)
 {
     app->dpi = dpi;
@@ -395,6 +408,7 @@ int app_create_views(App *app, const char *script_path)
     profile_load(&app->profile);
     apply_profile(app);
     apply_model_settings(app, false);
+    app_apply_look(app); /* the saved palette and writing aids, now that the editor exists */
     if (app->mem_msg[0]) set_status(app, app->mem_msg);
     if (!app->profile.asked && !script_path) begin_names(app); /* asked once, on first launch */
     return 0;

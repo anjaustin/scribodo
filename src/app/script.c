@@ -257,7 +257,7 @@ static int key_code(const char *name)
         { "LEFT", KEY_LEFT }, { "RIGHT", KEY_RIGHT }, { "UP", KEY_UP }, { "DOWN", KEY_DOWN },
         { "HOME", KEY_HOME }, { "END", KEY_END }, { "PGUP", KEY_PAGE_UP }, { "PGDN", KEY_PAGE_DOWN },
         { "BACKSPACE", KEY_BACKSPACE }, { "DELETE", KEY_DELETE }, { "ENTER", KEY_ENTER },
-        { "TAB", KEY_TAB }, { "ESC", KEY_ESCAPE }, { "SPACE", KEY_SPACE }, { "COMMA", KEY_COMMA },
+        { "TAB", KEY_TAB }, { "ESC", KEY_ESCAPE }, { "SPACE", KEY_SPACE }, { "COMMA", KEY_COMMA }, { "BACKSLASH", KEY_BACKSLASH },
     };
     for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++)
         if (strcmp(name, keys[i].n) == 0) return keys[i].k;

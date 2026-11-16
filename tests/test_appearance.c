@@ -6,6 +6,7 @@
 #include <unistd.h>
 
 #include "app/appearance.h"
+#include "ui/theme.h"
 #include "test_util.h"
 
 static char g_dir[PATH_MAX];
@@ -31,6 +32,24 @@ static void test_defaults(void)
     CHECK(!strcmp(appearance_role_info(APPEARANCE_CHAT)->default_file, "Share-Regular.ttf"));
     CHECK(!strcmp(appearance_role_info(APPEARANCE_MONO)->default_file, "ShareTechMono-Regular.ttf"));
     CHECK(appearance_role_info(APPEARANCE_ROLE_COUNT) == NULL && appearance_role_info(-1) == NULL);
+    CHECK(a.theme == THEME_DARK && !a.typewriter && !a.dim_paragraphs);
+}
+
+static void test_theme_and_writing_aids(void)
+{
+    Appearance a;
+    appearance_defaults(&a);
+    a.theme = THEME_PAPER;
+    a.typewriter = true;
+    CHECK(appearance_save(&a));
+    Appearance b;
+    appearance_load(&b);
+    CHECK(b.theme == THEME_PAPER && b.typewriter && !b.dim_paragraphs);
+    write_file("{\"theme\":\"neon\",\"typewriter\":1,\"dim_paragraphs\":true}");
+    appearance_load(&b);
+    CHECK(b.theme == THEME_DARK);   /* an unknown palette: the default */
+    CHECK(!b.typewriter);           /* only JSON true turns an aid on */
+    CHECK(b.dim_paragraphs);
 }
 
 static void test_missing_file_is_the_defaults(void)
@@ -172,6 +191,7 @@ int main(void)
         { "missing_file_is_the_defaults", test_missing_file_is_the_defaults },
         { "round_trip", test_round_trip },
         { "clamping", test_clamping },
+        { "theme_and_writing_aids", test_theme_and_writing_aids },
         { "malformed", test_malformed },
         { "sources", test_sources },
         { "assets_dir", test_assets_dir },

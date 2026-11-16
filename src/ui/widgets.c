@@ -126,7 +126,7 @@ bool widget_clicked(Rectangle r) { return press_rule(r, "", true, NULL); }
 static bool draw_button(Rectangle r, const char *label, const SFont *f, WidgetKind kind, bool enabled, bool on)
 {
     if (!f) f = g_font;
-    if (!f) return false;
+    if (!f || r.width <= 0 || r.height <= 0) return false; /* not laid out this frame (focus mode, a closed pane) */
     bool inside = CheckCollisionPointRec(GetMousePosition(), r) && !g_locked;
     bool held = false;
     bool clicked = press_rule(r, label, enabled, &held);
@@ -170,7 +170,7 @@ bool widget_toggle(Rectangle r, const char *label, const SFont *f, bool on)
 bool widget_checkbox(Rectangle r, const char *label, const SFont *f, bool *value)
 {
     if (!f) f = g_font;
-    if (!f) return false;
+    if (!f || r.width <= 0 || r.height <= 0) return false;
     bool clicked = press_rule(r, label, true, NULL);
     if (clicked) *value = !*value;
     float s = 14;

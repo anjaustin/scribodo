@@ -130,6 +130,9 @@ bool editor_set_path(Editor *e, const char *path);
 void editor_set_placeholder(Editor *e, const char *placeholder);
 /* Replace the whole text (scratch editors): no undo step, not dirty. */
 bool editor_set_text_utf8(Editor *e, const char *utf8);
+/* Writing aids (the Appearance panel): typewriter scrolling keeps the caret's line at the middle of the view; dimming
+ * draws the paragraphs other than the caret's faint. Both off by default. */
+void editor_set_writing_aids(Editor *e, bool typewriter, bool dim_others);
 /* Padding and maximum text-column width (defaults suit the prose view: a column of 34 ems of the editor's font, a
  * comfortable measure in any face; 0 keeps that). */
 void editor_set_layout(Editor *e, float side_pad, float top_pad, float max_col);

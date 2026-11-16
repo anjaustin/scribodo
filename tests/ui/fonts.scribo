@@ -14,15 +14,15 @@ shot fonts-panel
 click_element FontsPlus1
 click_element FontsPlus1
 click_element FontsDone
-expect status "Fonts saved"
+expect status "Appearance saved"
 expect element_w FontsDone 0 0
-expect file "$DIR/appearance.json" "{\"interface\":{\"size\":14},\"document\":{\"size\":20},\"chat\":{\"size\":15},\"monospace\":{\"size\":13}}"
+expect file "$DIR/appearance.json" "{\"theme\":\"dark\",\"typewriter\":false,\"dim_paragraphs\":false,\"interface\":{\"size\":14},\"document\":{\"size\":20},\"chat\":{\"size\":15},\"monospace\":{\"size\":13}}"
 # From the Scribodo menu: a change, then Cancel, leaves the saved file and the font as they were.
 click_element AppMenu
 click_element MenuItem0
 click_element FontsMinus0
 click_element FontsCancel
-expect file "$DIR/appearance.json" "{\"interface\":{\"size\":14},\"document\":{\"size\":20},\"chat\":{\"size\":15},\"monospace\":{\"size\":13}}"
+expect file "$DIR/appearance.json" "{\"theme\":\"dark\",\"typewriter\":false,\"dim_paragraphs\":false,\"interface\":{\"size\":14},\"document\":{\"size\":20},\"chat\":{\"size\":15},\"monospace\":{\"size\":13}}"
 # Choosing an installed face: Georgia for documents, found by typing.
 key COMMA cmd
 click_element FontsPick1
@@ -57,7 +57,7 @@ click_element FontsDefaults
 expect font 1 "Share Regular"
 expect font 3 "Share Tech Mono Regular"
 click_element FontsDone
-expect file "$DIR/appearance.json" "{\"interface\":{\"size\":14},\"document\":{\"size\":18},\"chat\":{\"size\":15},\"monospace\":{\"size\":13}}"
+expect file "$DIR/appearance.json" "{\"theme\":\"dark\",\"typewriter\":false,\"dim_paragraphs\":false,\"interface\":{\"size\":14},\"document\":{\"size\":18},\"chat\":{\"size\":15},\"monospace\":{\"size\":13}}"
 # The document still edits and saves with the fonts changed under it.
 click_element Editor
 key END cmd
