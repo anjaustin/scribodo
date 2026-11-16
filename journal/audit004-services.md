@@ -236,3 +236,28 @@ nonzero, which this rule turns into a failure, so none of them was cut short.
 3). The shim test covers both modes' commands, but a real MariaDB runs them only in `backuptest`, `uitest-db`
 (`testdb create`/`drop`) and the restore path, which this stream was told not to run. Those are the gates that
 confirm item 3 against the real server.
+
+# Red-team remediation (same day)
+
+The coordinator's red team reviewed `remed/services` and found six problems. Each fix below is one commit. Gates for
+each: `make test`, `make sanitize`, and `make analyze` only when `pgrep -fl "clang --analyze"` showed nothing else
+running; `make dbtest` and `make servicestest` once at the end.
+
+## RT1 — Compose's required variables made direct callers pass vacuously (medium)
+
+Item 2 made `docker/compose.yml` require `SCRIBODO_MARIADB_SERVER_FLAGS` and the ports (`:?`). Only
+`services_lib.sh` exports them, so every bare `docker compose` elsewhere failed at parse time:
+- `servicestest.sh`'s three "containers stopped" checks read empty output and passed;
+- its cleanup `down -v` failed silently;
+- `backuptest.sh`'s Docker-mode shell-escape probe (`! incontainer 'test -e …'`) was true whenever Compose failed.
+
+Fix: both scripts call Compose through the library (`bash -c '. tools/services_lib.sh; compose …'`).
+`containers_down PROJECT` is true only when Compose exited 0 *and* listed nothing. The cleanup reports a failed
+removal. The probe must print `absent`, so a probe that cannot run fails the step. Tests added to
+`tests/test_services_docker.sh`:
+- a static check that no script, Makefile recipe or workflow calls `docker compose` except through the library. Run
+  against the pre-fix scripts, it lists all five sites (`backuptest.sh:67`, `servicestest.sh:41,183,190,236`);
+- a check that `up` runs Compose with the server flags exported (the shim records what Compose would have
+  interpolated).
+
+**Gates (RT1):** `make test` exit 0; `make analyze` exit 0 (no other analyze running); `make sanitize` exit 0.

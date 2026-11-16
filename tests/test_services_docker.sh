@@ -21,7 +21,7 @@ check() { # check NAME STATUS
 mkdir -p "$T/home" "$T/run/secrets" "$T/clients" "$T/secrets"
 export HOME="$T/home"
 for k in $(env | sed -n 's/^\(SCRIBODO_[A-Z_]*\)=.*/\1/p'); do unset "$k"; done
-export SHIM_LOG="$T/docker.log" SHIM_RUN="$T/run/secrets" SHIM_CLIENTS="$T/clients" CLIENT_LOG="$T/client.log"
+export SHIM_ENV="$T/compose.env" SHIM_LOG="$T/docker.log" SHIM_RUN="$T/run/secrets" SHIM_CLIENTS="$T/clients" CLIENT_LOG="$T/client.log"
 export SCRIBODO_SECRETS="$T/secrets" SCRIBODO_LOGS="$T/logs" SCRIBODO_COMPOSE_PROJECT=scribodo-test-shim
 export SCRIBODO_DB_PORT=33099 SCRIBODO_QDRANT_PORT=6399
 chmod 700 "$T/secrets"
@@ -54,6 +54,7 @@ printf '#!/bin/sh\nexit 1\n' > "$T/qdrant"; chmod 755 "$T/qdrant"
 docker() {
     { printf 'docker'; printf ' [%s]' "$@"; printf '\n'; } >> "$SHIM_LOG"
     case "$1" in info) return "${SHIM_DOCKER_INFO:-0}" ;; compose) ;; *) return 0 ;; esac
+    printf '%s\n' "${SCRIBODO_MARIADB_SERVER_FLAGS:-}" > "$SHIM_ENV" # what Compose would interpolate
     shift 5 # compose -p PROJECT -f FILE
     case "$1" in
         exec) # exec -T mariadb sh -c SCRIPT sh ARGS...: the container's half, run here
@@ -140,6 +141,8 @@ out="$(tools/services.sh up 2>&1)"; r=$?
     [ "$(sed -n 3p "$SHIM_LOG")" = "$compose_prefix [ps] [--format] [table {{.Service}}\t{{.Status}}\t{{.Ports}}]" ] &&
     [ "$(grep -c . "$SHIM_LOG")" = 3 ]
 check "up: docker info, compose up --wait, compose ps" $?
+[ "$(cat "$SHIM_ENV")" = "$(. tools/services.defaults; printf '%s' "$SCRIBODO_MARIADB_SERVER_FLAGS")" ] && [ -n "$(cat "$SHIM_ENV")" ]
+check "up: Compose runs with the server flags it requires exported" $?
 [ "$(stat -f %Lp "$T/secrets/db_password")" = 644 ] && [ "$(stat -f %Lp "$T/secrets")" = 700 ] &&
     grep -q '^QDRANT__SERVICE__API_KEY=qkey-test$' "$T/secrets/qdrant.env" && [ ! -e "$T/secrets/mode" ]
 check "up: the containers' secrets readable inside the 0700 folder; a forced mode is not remembered" $?
@@ -171,6 +174,15 @@ reset
 tools/services.sh testdb create scribodo_test_x >/dev/null 2>&1; r=$?
 [ "$r" = 0 ] && [ "$(cat "$CLIENT_LOG")" = "mariadb|-uroot|pw=rootpw-docker|stdin=CREATE DATABASE IF NOT EXISTS \`scribodo_test_x\` CHARACTER SET utf8mb4; GRANT ALL ON \`scribodo_test_x\`.* TO 'scribodo'@'%';" ]
 check "testdb create: the database and its grant, as root in the container" $?
+
+# ---- Compose is called only through the library ------------------------------------------------------------------
+# docker/compose.yml requires variables only services_lib.sh exports: a direct `docker compose` elsewhere fails at parse
+# time, and a check reading its (empty) output passes vacuously (the red-team finding on servicestest and backuptest).
+direct="$(grep -nE '(^|[^#]*[;&|({ ]|^[[:space:]]*)docker compose' tools/*.sh tests/*.sh Makefile .github/workflows/*.yml 2>/dev/null |
+          grep -v '^tools/services_lib.sh:' | grep -v '^tests/test_services_docker.sh:' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#')"
+[ -z "$direct" ] || printf '      %s\n' "$direct"
+[ -z "$direct" ]
+check "no script calls docker compose except through services_lib.sh's compose" $?
 
 # ---- migrate-from-docker's refusals --------------------------------------------------------------------------------
 reset

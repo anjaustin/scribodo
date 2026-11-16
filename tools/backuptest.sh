@@ -64,12 +64,14 @@ tools/restore.sh "$bk-craft" --db $other --replace --to "$work/c3" >/dev/null 2>
 tools/services.sh testdb drop scribodo_test_pwned >/dev/null 2>&1
 # (\! would run where the loading client runs: inside the database container, or on this Mac with the native
 # services; that's where to look.)
-incontainer() { if [ "$(tools/services.sh mode)" = native ]; then sh -c "$1"; else docker compose -p "${SCRIBODO_COMPOSE_PROJECT:-scribodo}" -f docker/compose.yml exec -T mariadb sh -c "$1"; fi; }
+# Compose through the library (it exports what docker/compose.yml requires); the probe must answer "absent", so a
+# Compose that cannot run fails the step instead of passing it.
+incontainer() { if [ "$(tools/services.sh mode)" = native ]; then sh -c "$1"; else bash -c '. tools/services_lib.sh; compose exec -T mariadb sh -c "$1"' lib "$1"; fi; }
 incontainer 'rm -f /tmp/scribodo_pwned'
 craft; printf -- '-- MariaDB dump 10.19\n\\! touch /tmp/scribodo_pwned\n-- Dump completed\n' | gzip > "$bk-craft/db.sql.gz"; resum
 step "a dump with a shell escape is refused"
 tools/restore.sh "$bk-craft" --db $other --replace --to "$work/c3b" >/dev/null 2>&1; r=$?
-[ $r != 0 ] && ! incontainer 'test -e /tmp/scribodo_pwned' && [ ! -e "$work/c3b" ]; ok $?
+[ $r != 0 ] && [ "$(incontainer 'if test -e /tmp/scribodo_pwned; then echo present; else echo absent; fi')" = absent ] && [ ! -e "$work/c3b" ]; ok $?
 craft; printf -- 'DROP TABLE projects;\n' | gzip > "$bk-craft/db.sql.gz"; resum
 step "a dump that isn't mariadb-dump output is refused"; tools/restore.sh "$bk-craft" --db $other --replace --to "$work/c4" >/dev/null 2>&1; r=$?; [ $r != 0 ]; ok $?
 step "a database other than scribodo[_test_*] is refused"; tools/restore.sh "$bk" --db mysql --replace --to "$work/c5" >/dev/null 2>&1; r=$?; [ $r != 0 ]; ok $?

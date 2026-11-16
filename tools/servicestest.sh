@@ -30,6 +30,14 @@ store() { # store NAME DBPORT QPORT: the environment of one throwaway store
     export SCRIBODO_SERVICES=native SCRIBODO_COMPOSE_PROJECT="scribodo-st-$1"
 }
 svc() { tools/services.sh "$@"; }
+# Compose through the library, which exports what docker/compose.yml requires (the server flags, the ports): a bare
+# `docker compose` fails at parse time and its empty output would pass a "no containers" check (RED-TEAM, AUDIT-004).
+lib_compose() { bash -c '. tools/services_lib.sh; compose "$@"' lib "$@"; }
+containers_down() { # containers_down PROJECT: true only when Compose answered and listed no container
+    local out
+    out="$(SCRIBODO_COMPOSE_PROJECT="$1" lib_compose ps -q 2>/dev/null)" || return 1
+    [ -z "$out" ]
+}
 mdb() { MYSQL_PWD="$1" "$MB/mariadb" --no-defaults --skip-ssl-verify-server-cert -N "${@:2}"; }
 cleanup() {
     while IFS= read -r d; do
@@ -38,7 +46,11 @@ cleanup() {
     done < <(find "$root" -type d -path '*/mariadb/data' 2>/dev/null)
     [ -n "${sleeper:-}" ] && kill "$sleeper" 2>/dev/null
     if docker info >/dev/null 2>&1; then   # an interrupted step 10 leaves its containers and volumes
-        for p in e g h; do docker compose -p "scribodo-st-$p" -f docker/compose.yml down -v >/dev/null 2>&1; done
+        for p in e g h; do
+            [ -d "$root/$p" ] || continue
+            SCRIBODO_SECRETS="$root/$p" SCRIBODO_COMPOSE_PROJECT="scribodo-st-$p" lib_compose down -v >/dev/null 2>&1 ||
+                echo "cleanup: the containers of scribodo-st-$p could not be removed" >&2
+        done
     fi
     rm -rf "$keep_logs"; mkdir -p "$keep_logs"
     find "$root" -maxdepth 1 -type d -name 'logs-*' -exec cp -R {} "$keep_logs/" \; 2>/dev/null
@@ -180,14 +192,14 @@ SQL
     got="$(SCRIBODO_SERVICES=native svc rootsql -N scribodo -e "SELECT t FROM probe" 2>/dev/null)"
     [ "$r" = 0 ] && [ "$got" = "the author's words" ] && [ "$(cat "$SCRIBODO_SECRETS/mode")" = native ] &&
         ls "$SCRIBODO_SECRETS"/migration-*.sql.gz >/dev/null 2>&1 &&
-        [ -z "$(docker compose -p scribodo-st-e -f docker/compose.yml ps -q 2>/dev/null)" ]; ok $?
+        containers_down scribodo-st-e; ok $?
     [ "$r" = 0 ] && [ "$got" = "the author's words" ] || { echo "      exit $r, read back [$got]"; echo "$out" | tail -5 | sed 's/^/      /'; }
     step "    a second migration over the native store is refused and changes nothing"
     before="$(SCRIBODO_SERVICES=native svc status)"
     r=0; svc migrate-from-docker >/dev/null 2>&1 || r=$?
     got="$(SCRIBODO_SERVICES=native svc rootsql -N scribodo -e "SELECT COUNT(*) FROM probe" 2>/dev/null)"
     [ "$r" = 2 ] && [ "$got" = 1 ] && [ "$(cat "$SCRIBODO_SECRETS/mode")" = native ] && [ "$(SCRIBODO_SERVICES=native svc status)" = "$before" ] &&
-        [ -z "$(docker compose -p scribodo-st-e -f docker/compose.yml ps -q 2>/dev/null)" ]; ok $?
+        containers_down scribodo-st-e; ok $?
     SCRIBODO_SERVICES=native svc down >/dev/null 2>&1
     SCRIBODO_SERVICES=docker SCRIBODO_PURGE_CONFIRM=1 svc purge >/dev/null 2>&1
 
@@ -233,7 +245,7 @@ SQL
     [ "$r" = 1 ] && echo "$out" | grep -q "kept the native store's previous contents" && echo "$out" | grep -q "both stores are as they were" &&
         [ "$got" = "native original" ] && [ "$other" = 0 ] && [ "$(cat "$SCRIBODO_SECRETS/mode")" = native ] &&
         [ "$(SCRIBODO_SERVICES=native svc status | grep -c running)" = 2 ] &&
-        [ -z "$(docker compose -p scribodo-st-h -f docker/compose.yml ps -q 2>/dev/null)" ]; ok $?
+        containers_down scribodo-st-h; ok $?
     [ "$r" = 1 ] && [ "$got" = "native original" ] || echo "$out" | tail -6 | sed 's/^/      /'
     SCRIBODO_SERVICES=native svc down >/dev/null 2>&1
     SCRIBODO_SERVICES=docker SCRIBODO_PURGE_CONFIRM=1 svc purge >/dev/null 2>&1
