@@ -2,7 +2,8 @@
 
 **Date:** 2026-11-15. **Base:** `ed95681` (branch `remed/text`). **Scope:** AUDIT-004 F11 (the chat-title archive in
 the file store), F10 (the relation check's splitter defect, then one home for the text rules), F12 (records ids).
-Evidence: `build/audit004-text/` (gate logs with their exit status, measurement outputs).
+Evidence: the gate logs (with their exit status) and measurement outputs cited in each section below, each in an
+evidence archive (docs/EVIDENCE.md).
 
 ## Item 1: F11, the chat-title archive survives the file store
 
@@ -528,7 +529,7 @@ ambiguous project's line names the receipt and says not retried, and nothing is 
 **(c) Off the frame thread.** It ran on the frame thread at open (`store_finish_import`), 0.9 s once for 20,000 title
 lines. It now runs on the existing import worker: `import_job_start_backfill` (`src/app/import_job.c`, the worker
 that runs imports, one run at a time with them), and the frame thread does only `store_backfill_pending`, one receipt
-lookup. Measured (`SCRIBODO_TITLE_BACKFILL_TIMING=200 build/test_db`, an old-imported project of 200 chats x 100 title
+lookup. Measured (the `test_db` binary with `SCRIBODO_TITLE_BACKFILL_TIMING=200`, an old-imported project of 200 chats x 100 title
 lines, three runs): the frame thread's part 0.12 to 0.16 ms, the worker's 1,143 to 1,237 ms. Test: the backfill
 started on an `ImportJob` completes, its poll says it was the backfill, and the archive is filled.
 
@@ -574,9 +575,11 @@ and stay where they are used. Every moved list was compared with its old copy el
 (`pre`) and after (`post`) for flag off and every arm (`SCRIBODO_OBSERVER_SENTENCES=attributes`, `=subject`,
 `SCRIBODO_OBSERVER_CONFLICT_GATE=1`, gate with `subject`): all fifteen outputs byte-identical before and after.
 Flag off is 717 / 348 / 948 lines, byte-identical with `build/observer/judgelog-{pp,mars,heights}.txt` in the main
-checkout; `=attributes` is identical with step 8's `build/observer/senton-*`, `=subject` with
-`build/wt-observer/build/observer/base-sent-*`, the gate with `base-gate-*` and gate with `subject` with
-`base-both-*`, as `journal/audit004-observer.md` pairs them. Runs: `build/audit004-text/r4-a/`.
+checkout; `=attributes` is identical with step 8's `build/observer/senton-{pp,mars,heights}.txt`, `=subject` with
+`build/wt-observer/build/observer/base-sent-{pp,mars,heights}.txt`, the gate with
+`build/wt-observer/build/observer/base-gate-{pp,mars,heights}.txt` and gate with `subject` with
+`build/wt-observer/build/observer/base-both-{pp,mars,heights}.txt`, as `journal/audit004-observer.md` pairs them. Runs:
+`build/audit004-text/r4-a/`.
 
 ### B. The observer handles an exhausted id draw
 
@@ -600,3 +603,19 @@ version, hiding it. The read and the write are not under one lock; a writer in b
 recorded in item 4). Test: `test_llm` writes the next three ids of a fixed second as "another process's" notes and
 sees `records_new_id_checked` land past them, then sees it give no id under forced exhaustion and with the log made
 unreadable.
+
+### Evidence and final gates
+
+The stream's evidence not in an earlier archive is in `scribodo-evidence-2026-11-15-audit004e.tar.gz` (manifest and
+`SHA256SUMS` entry beside it): `build/audit004-text/r3-2`, `build/audit004-text/r3-3`,
+`build/audit004-text/r3-measure`, `build/audit004-text/r4-a`, `build/audit004-text/r4-gates`, and the nine observer
+references cited in item A (`build/wt-observer/build/observer/base-{sent,gate,both}-{pp,mars,heights}.txt`).
+
+Gates on the final tree (`build/audit004-text/r4-gates`): `make dbtest` 0; `make analyze` 0 (started when `pgrep -x
+clang` found no analyzer); `make crashtest` 0 (141 rows, 1,583 checks, 0 failures, 533 s; started when `pgrep -x
+test_crash_points` and `pgrep -x test_db` were empty). `make test` and `make sanitize` first exited 2 at
+`evidencecheck` (`test-attempt1.log`, `sanitize-attempt1.log`): this journal cited the parent folder of the evidence,
+so every new log under it was unarchived; it now cites the archived subdirectories. A run before that, with the same
+cause, was discarded rather than kept (its logs were removed when the gate folder was recreated). With the citation
+fixed and the archive rebuilt, `make test` and `make sanitize` were run again on the final tree; their logs are kept
+uncited in the folder beside the gate logs, so the run that checks the evidence does not cite its own log.
