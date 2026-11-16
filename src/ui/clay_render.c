@@ -61,7 +61,15 @@ void clay_render(Clay_RenderCommandArray commands, SFont *const *fonts)
             EndScissorMode();
             break;
 
-        case CLAY_RENDER_COMMAND_TYPE_IMAGE:
+        case CLAY_RENDER_COMMAND_TYPE_IMAGE: {
+            /* An icon (ui/icons.h): a white mask, tinted with the element's colour. */
+            Clay_ImageRenderData *d = &cmd->renderData.image;
+            const Texture2D *t = d->imageData;
+            if (t && t->id)
+                DrawTexturePro(*t, (Rectangle){ 0, 0, (float)t->width, (float)t->height }, (Rectangle){ b.x, b.y, b.width, b.height },
+                               (Vector2){ 0, 0 }, 0, to_color(d->backgroundColor));
+        } break;
+
         case CLAY_RENDER_COMMAND_TYPE_CUSTOM:
         default:
             break;

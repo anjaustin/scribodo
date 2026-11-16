@@ -19,6 +19,7 @@ void DrawRectangleRounded(Rectangle r, float a, int s, Color c) { (void)r, (void
 void DrawRectangleRoundedLinesEx(Rectangle r, float a, int s, float t, Color c) { (void)r, (void)a, (void)s, (void)t, (void)c; }
 void DrawLineEx(Vector2 a, Vector2 b, float t, Color c) { (void)a, (void)b, (void)t, (void)c; }
 Color ColorBrightness(Color c, float f) { (void)f; return c; }
+void DrawTexturePro(Texture2D t, Rectangle s, Rectangle d, Vector2 o, float r, Color c) { (void)t, (void)s, (void)d, (void)o, (void)r, (void)c; }
 float sfont_measure_utf8(const SFont *f, const char *s, int n) { (void)f, (void)s; return (float)n * 7; }
 void sfont_draw_utf8(const SFont *f, const char *s, int n, float x, float y, Color c) { (void)f, (void)s, (void)n, (void)x, (void)y, (void)c; }
 size_t utf8_decode_one(const uint8_t *p, size_t n, uint32_t *cp) { (void)n; *cp = *p; return 1; }

@@ -15,6 +15,7 @@
 
 #include "app/app_internal.h"
 #include "ui/widgets.h"
+#include "ui/icons.h"
 #include "ui/mac_window.h"
 #include "ui/motion.h"
 #include "ui/backdrop.h"
@@ -1562,7 +1563,9 @@ static int frame_draw_panes(App *app, Clay_RenderCommandArray cmds, const FrameR
     clay_render(cmds, app->font_ptrs);
     widget_frame_begin();
     widget_set_locked(modal); /* nothing behind a prompt or menu reacts */
-    if (widget_button(rects->open_rect, "Open\xE2\x80\xA6", NULL, WIDGET_QUIET, true)) choose_project(app, false);
+    if (widget_icon_button(rects->open_rect, &(WidgetIcon){ icon_texture(ICON_OPEN), icon_size(ICON_OPEN) }, "Open\xE2\x80\xA6", NULL,
+                           WIDGET_QUIET, true, false))
+        choose_project(app, false);
     if (editor_path(app->editor)) editor_draw(app->editor, app->editor_rect, app->focus == FOCUS_DOC);
     int empty_act = editor_path(app->editor) ? 0 : draw_empty(app, app->editor_rect);
     if (review_active(app->review)) {
@@ -1589,13 +1592,18 @@ static void frame_draw_toolbar(App *app, const FrameRects *rects)
 {
     bool can_save = (editor_is_dirty(app->editor) || editor_overwrite_armed(app->editor)) &&
                     !editor_is_read_only(app->editor);
-    if (widget_button(rects->save_rect, "Save", NULL, WIDGET_QUIET, can_save)) save(app);
-    if (widget_toggle(rects->obs_rect, app->observer_button[0] ? app->observer_button : "Observer", NULL, app->observer_open)) {
+    if (widget_icon_button(rects->save_rect, &(WidgetIcon){ icon_texture(ICON_SAVE), icon_size(ICON_SAVE) }, "Save", NULL, WIDGET_QUIET,
+                           can_save, false))
+        save(app);
+    if (widget_icon_button(rects->obs_rect, &(WidgetIcon){ icon_texture(ICON_OBSERVER), icon_size(ICON_OBSERVER) },
+                           app->observer_button[0] ? app->observer_button : "Observer", NULL, WIDGET_QUIET, true, app->observer_open)) {
         if (app->focus_mode) app_set_focus_mode(app, false); /* a pane is not shown in focus mode */
         app->observer_open = !app->observer_open;
         if (app->observer_open && app->recall_open) toggle_recall(app);
     }
-    if (widget_toggle(ELEMENT_RECT("RecallToggle"), "Recall", NULL, app->recall_open)) toggle_recall(app);
+    if (widget_icon_button(ELEMENT_RECT("RecallToggle"), &(WidgetIcon){ icon_texture(ICON_RECALL), icon_size(ICON_RECALL) }, "Recall",
+                           NULL, WIDGET_QUIET, true, app->recall_open))
+        toggle_recall(app);
     /* Whether the observer reads the open chat (the author's choice). */
     if (open_chat_stored(app)) {
         Rectangle orr = ELEMENT_RECT("ObserverReads");
@@ -1612,7 +1620,9 @@ static void frame_draw_chat_controls(App *app, const FrameRects *rects)
         if (widget_button(ELEMENT_RECT("NameSave"), "Save", NULL, WIDGET_PRIMARY, true)) names_answer(app, true);
         else if (widget_button(ELEMENT_RECT("NameSkip"), "Not now", NULL, WIDGET_QUIET, true)) names_answer(app, false);
     }
-    if (widget_button(rects->new_rect, "New chat", NULL, WIDGET_QUIET, !chat_busy(app->chat))) new_chat(app);
+    if (widget_icon_button(rects->new_rect, &(WidgetIcon){ icon_texture(ICON_NEW_CHAT), icon_size(ICON_NEW_CHAT) }, "New chat", NULL,
+                           WIDGET_QUIET, !chat_busy(app->chat), false))
+        new_chat(app);
     if (app->edit_mode) {
         if (widget_button(ELEMENT_RECT("CancelEdit"), "Cancel", NULL, WIDGET_OUTLINE, true)) {
             leave_edit_mode(app);

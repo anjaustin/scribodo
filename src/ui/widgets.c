@@ -123,7 +123,8 @@ static bool press_rule(Rectangle r, const char *label, bool enabled, bool *held)
 
 bool widget_clicked(Rectangle r) { return press_rule(r, "", true, NULL); }
 
-static bool draw_button(Rectangle r, const char *label, const SFont *f, WidgetKind kind, bool enabled, bool on)
+static bool draw_button(Rectangle r, const char *label, const SFont *f, WidgetKind kind, bool enabled, bool on,
+                        const WidgetIcon *icon)
 {
     if (!f) f = g_font;
     if (!f || r.width <= 0 || r.height <= 0) return false; /* not laid out this frame (focus mode, a closed pane) */
@@ -152,20 +153,35 @@ static bool draw_button(Rectangle r, const char *label, const SFont *f, WidgetKi
     if (fill.a) widget_round_rect(r, RADIUS_S, fill);
     if (kind == WIDGET_OUTLINE) widget_round_outline(r, RADIUS_S, 1.0f, enabled ? THEME_BORDER_STRONG : THEME_BORDER);
     float w = sfont_measure_utf8(f, label, (int)strlen(label));
-    float x = r.x + (r.width - w) * 0.5f;
+    bool has_icon = icon && icon->texture && icon->texture->id && icon->size.x > 0;
+    float iw = has_icon ? icon->size.x + (label[0] ? 6.0f : 0.0f) : 0.0f;
+    float x = r.x + (r.width - w - iw) * 0.5f;
     if (x < r.x + SP_2) x = r.x + SP_2;
-    widget_text(f, label, roundf(x), roundf(r.y + (r.height - f->line_height) * 0.5f), r.width - SP_4, text);
+    if (has_icon) { /* the symbol, then its label, centred together; the icon in the label's colour */
+        const Texture2D *t = icon->texture;
+        DrawTexturePro(*t, (Rectangle){ 0, 0, (float)t->width, (float)t->height },
+                       (Rectangle){ roundf(x), roundf(r.y + (r.height - icon->size.y) * 0.5f), icon->size.x, icon->size.y },
+                       (Vector2){ 0, 0 }, 0, text);
+        x += iw;
+    }
+    widget_text(f, label, roundf(x), roundf(r.y + (r.height - f->line_height) * 0.5f), r.x + r.width - SP_2 - x, text);
     return clicked;
+}
+
+bool widget_icon_button(Rectangle r, const WidgetIcon *icon, const char *label, const SFont *f, WidgetKind kind,
+                        bool enabled, bool on)
+{
+    return draw_button(r, label, f, kind, enabled, on, icon);
 }
 
 bool widget_button(Rectangle r, const char *label, const SFont *f, WidgetKind kind, bool enabled)
 {
-    return draw_button(r, label, f, kind, enabled, false);
+    return draw_button(r, label, f, kind, enabled, false, NULL);
 }
 
 bool widget_toggle(Rectangle r, const char *label, const SFont *f, bool on)
 {
-    return draw_button(r, label, f, WIDGET_QUIET, true, on);
+    return draw_button(r, label, f, WIDGET_QUIET, true, on, NULL);
 }
 
 bool widget_checkbox(Rectangle r, const char *label, const SFont *f, bool *value)

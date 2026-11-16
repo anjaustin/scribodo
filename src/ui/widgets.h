@@ -28,6 +28,14 @@ bool widget_locked(void);
 
 /* Draws the button; true on the frame it is clicked (never when disabled or locked). `f` NULL: the default font. */
 bool widget_button(Rectangle r, const char *label, const SFont *f, WidgetKind kind, bool enabled);
+/* A symbol beside a label (ui/icons.h). */
+typedef struct {
+    const Texture2D *texture; /* NULL: no icon */
+    Vector2 size;             /* points */
+} WidgetIcon;
+/* A button with an icon before its label (`label` may be ""); `on` as for widget_toggle. */
+bool widget_icon_button(Rectangle r, const WidgetIcon *icon, const char *label, const SFont *f, WidgetKind kind,
+                        bool enabled, bool on);
 /* A quiet button that stays filled while `on` (Observer, Recall). */
 bool widget_toggle(Rectangle r, const char *label, const SFont *f, bool on);
 /* A check box with its label to the right; flips *value and returns true on a click. */

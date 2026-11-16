@@ -2,7 +2,8 @@
  * fonts folder, /System/Library/Fonts (and its Supplemental folder), /Library/Fonts and ~/Library/Fonts, named by
  * the face's own family and style (core/font_file). Left out: faces without drawable outlines (emoji bitmaps), faces
  * that map no Latin capital A (symbol and CJK-only faces would draw the interface as fallbacks), and hidden system
- * faces (a family beginning with "."). A family and style seen twice is listed once, the first folder winning, so
+ * faces (a family beginning with "."), except macOS's own interface faces, listed by Apple's public names: San
+ * Francisco, SF Rounded, SF Compact, SF Mono and New York. A family and style seen twice is listed once, the first folder winning, so
  * the bundled Share faces come before an installed copy.
  *
  * Files are mapped, not read: only the pages holding the directory, the names and the cmap are touched, so a scan of

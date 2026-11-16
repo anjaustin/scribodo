@@ -110,6 +110,12 @@ static void test_system_scan(void)
     }
     if (access("/System/Library/Fonts/Supplemental/Georgia.ttf", R_OK) == 0) CHECK(georgia >= 0);
     if (access("/System/Library/Fonts/Helvetica.ttc", R_OK) == 0) CHECK(helvetica_bold >= 0 && c.items[helvetica_bold].index > 0);
+    if (access("/System/Library/Fonts/SFNS.ttf", R_OK) == 0) { /* the system face, under its public name */
+        long sf = -1;
+        for (size_t i = 0; i < c.count; i++)
+            if (!strcmp(c.items[i].display, "San Francisco")) sf = (long)i;
+        CHECK(sf >= 0 && !strcmp(c.items[sf].path, "/System/Library/Fonts/SFNS.ttf"));
+    }
     size_t idx[4];
     CHECK(font_catalog_filter(&c, "apple color emoji", idx, 4) == 0); /* bitmaps: not offered */
     font_catalog_free(&c);

@@ -82,7 +82,7 @@ LLM_SRCS += src/llm/rerank.c src/llm/answer_pipeline.c src/llm/answer_receipt.c
 LLM_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(LLM_SRCS)) $(BUILD)/third_party/cJSON/cJSON.o
 APP_SRCS  := src/main.c src/app/app_lifecycle.c src/app/chat_workflow.c src/app/document_workflow.c src/app/record_workflow.c src/app/script_host_app.c src/ui/layout.c src/app/script.c src/app/script_host.c src/app/startup_env.c src/app/draft_controller.c src/app/chat_controller.c src/app/reviewed_edit_controller.c src/ui/font.c src/ui/clay_render.c src/ui/editor.c src/ui/input.c src/ui/recall_view.c \
              src/ui/chat_view.c src/ui/review_view.c src/ui/record_view.c src/ui/findings_view.c src/ui/prompt_view.c src/ui/menu_view.c src/ui/vendor_impl.c \
-             src/ui/widgets.c src/app/fonts_panel.c src/ui/motion_system.c src/ui/mac_window.c src/ui/backdrop.c
+             src/ui/widgets.c src/app/fonts_panel.c src/ui/motion_system.c src/ui/mac_window.c src/ui/backdrop.c src/ui/icons.c
 CORE_OBJS := $(patsubst %.c,$(BUILD)/%.o,$(CORE_SRCS))
 APP_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(APP_SRCS))
 # Native dialogs (Objective-C on macOS).

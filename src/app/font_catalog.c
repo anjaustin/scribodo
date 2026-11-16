@@ -52,6 +52,27 @@ static void on_bus(int sig)
     raise(SIGBUS);
 }
 
+/* macOS's own interface faces carry an internal family name ("System Font", ".SF NS Mono", hidden by its leading dot),
+ * so they are listed by the names Apple uses for them, keeping each file's own style (SF Mono's default weight is
+ * Light); other hidden faces stay hidden. */
+static const struct { const char *file, *family; } k_apple[] = {
+    { "SFNS.ttf", "San Francisco" },  { "SFNSItalic.ttf", "San Francisco" }, { "SFNSRounded.ttf", "SF Rounded" },
+    { "SFCompact.ttf", "SF Compact" }, { "SFNSMono.ttf", "SF Mono" },        { "SFNSMonoItalic.ttf", "SF Mono" },
+    { "NewYork.ttf", "New York" },     { "NewYorkItalic.ttf", "New York" },
+};
+
+static bool apple_name(const char *path, FontFaceName *fn)
+{
+    static const char sys[] = "/System/Library/Fonts/";
+    if (strncmp(path, sys, sizeof(sys) - 1) || strchr(path + sizeof(sys) - 1, '/')) return false;
+    for (size_t i = 0; i < sizeof(k_apple) / sizeof(k_apple[0]); i++)
+        if (!strcmp(path + sizeof(sys) - 1, k_apple[i].file)) {
+            snprintf(fn->family, sizeof(fn->family), "%s", k_apple[i].family);
+            return true;
+        }
+    return false;
+}
+
 static void add_faces(Scan *s, const char *path, bool bundled)
 {
     /* Non-blocking: a FIFO named *.ttf must not stall the scan; it is refused as not a regular file below. */
@@ -75,7 +96,9 @@ static void add_faces(Scan *s, const char *path, bool bundled)
     int faces = font_file_face_count(d, len);
     for (int i = 0; i < faces && !s->oom; i++) {
         FontFaceName fn;
-        if (!font_file_face_name(d, len, i, &fn) || fn.family[0] == '.' || !font_file_has_outlines(d, len, i) ||
+        if (!font_file_face_name(d, len, i, &fn)) continue;
+        if (faces == 1) (void)apple_name(path, &fn); /* a renamed system face, else unchanged */
+        if (fn.family[0] == '.' || !font_file_has_outlines(d, len, i) ||
             !font_file_has_codepoint(d, len, i, 'A') || seen(s->c, fn.family, fn.style))
             continue;
         if (s->c->count == s->cap) {

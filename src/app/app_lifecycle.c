@@ -4,6 +4,7 @@
 
 #include <mach-o/dyld.h>
 
+#include "ui/icons.h"
 #include "ui/mac_window.h"
 #include "ui/motion.h"
 #include "ui/widgets.h"
@@ -72,7 +73,10 @@ unsigned app_fonts_apply(App *app, unsigned roles, char *why, size_t whylen)
         app->fonts[r] = next;
     }
     for (int i = 0; i < FONT_COUNT; i++) app->font_ptrs[i] = &app->fonts[i];
-    if (app->fonts[FONT_UI].nfaces) widget_set_font(&app->fonts[FONT_UI]);
+    if (app->fonts[FONT_UI].nfaces) {
+        widget_set_font(&app->fonts[FONT_UI]);
+        icons_load(app->fonts[FONT_UI].size + 1.0f, app->dpi); /* the symbols grow with the interface text */
+    }
     if (app->clay_buf) Clay_ResetMeasureTextCache();
     return failed;
 }
@@ -184,6 +188,7 @@ void app_destroy(App *app)
     explorer_snapshot_destroy(&app->explorer);
     project_session_destroy(&app->session);
     fonts_panel_destroy(&app->fonts_panel);
+    if (app->window_ready) icons_unload();
     for (int i = 0; i < FONT_COUNT; i++) sfont_unload(&app->fonts[i]);
     free(app->clay_buf);
     app->clay_buf = NULL;

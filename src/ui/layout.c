@@ -1,10 +1,11 @@
 /* The frame's Clay layout: every CLAY( element of the window, pane by pane, and the strings it shows. Moved from src/main.c (AUDIT-004 F3). */
 #define _DARWIN_C_SOURCE
 #include "app/app_internal.h"
+#include "ui/icons.h"
 #include "ui/mac_window.h"
 
 static Clay_String cstr(FrameViewModel *frame, const char *s);
-static void section_header(App *app, const char *s);
+static void section_header(App *app, const char *s, int icon);
 static void list_item(App *app, Clay_ElementId id, const char *s, bool active);
 static void coming_soon(App *app, const char *s);
 static void splitter(Clay_ElementId id, bool active);
@@ -30,9 +31,24 @@ void label(App *app, const char *s, int font, Clay_Color color)
                                          .wrapMode = CLAY_TEXT_WRAP_NONE }));
 }
 
-static void section_header(App *app, const char *s)
+/* A section's name with its symbol (ui/icons.h; -1: none), in the muted colour. */
+static void section_header(App *app, const char *s, int icon)
 {
-    CLAY({ .layout = { .padding = { 0, 0, 10, 4 } } }) { label(app, s, FONT_UI, COL_MUTED); }
+    CLAY({ .layout = { .padding = { 0, 0, 10, 4 }, .childGap = 6, .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } } }) {
+        const Texture2D *t = icon >= 0 ? icon_texture((IconId)icon) : NULL;
+        if (t) {
+            Vector2 sz = icon_size((IconId)icon);
+            float k = 0.8f; /* a header's symbol a little smaller than a button's */
+            /* A cell as wide as the interface text is tall, the symbol centred in it, so every label starts in line. */
+            float cell = roundf(app->fonts[FONT_UI].size * 1.5f);
+            CLAY({ .layout = { .sizing = { CLAY_SIZING_FIXED(cell), CLAY_SIZING_FIT(0) },
+                               .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER } } }) {
+                CLAY({ .layout = { .sizing = { CLAY_SIZING_FIXED(fminf(roundf(sz.x * k), cell)), CLAY_SIZING_FIXED(roundf(sz.y * k)) } },
+                       .image = { .imageData = (void *)t }, .backgroundColor = COL_MUTED }) {}
+            }
+        }
+        label(app, s, FONT_UI, COL_MUTED);
+    }
 }
 
 /* A clickable list row. */
@@ -158,9 +174,9 @@ static void layout_toolbar(App *app)
                .cornerRadius = CLAY_CORNER_RADIUS(4) }) {
             label(app, "Scribodo", FONT_UI, COL_TEXT);
         }
-        slot(CLAY_ID("OpenButton"), 64, 24);
+        slot(CLAY_ID("OpenButton"), 88, 26);
         label(app, app->doc_label, FONT_UI, COL_MUTED);
-        slot(CLAY_ID("SaveButton"), 64, 24);
+        slot(CLAY_ID("SaveButton"), 84, 26);
         grow();
         if (app->store_label[0]) label(app, app->store_label, FONT_UI, app->store_color);
         /* The model in use; click to choose (when a remote is configured). */
@@ -171,8 +187,8 @@ static void layout_toolbar(App *app)
                .cornerRadius = CLAY_CORNER_RADIUS(4) }) {
             label(app, app->model_label, FONT_UI, app->model_color);
         }
-        slot(CLAY_ID("RecallToggle"), 72, 24);
-        slot(CLAY_ID("ObserverToggle"), 96, 24);
+        slot(CLAY_ID("RecallToggle"), 100, 26);
+        slot(CLAY_ID("ObserverToggle"), 132, 26);
     }
 }
 
@@ -183,7 +199,7 @@ static void layout_entities(App *app)
     memset(app->drawn_row_finding, 0, sizeof(app->drawn_row_finding));
     memset(app->drawn_row_other, 0, sizeof(app->drawn_row_other));
     if (app->store_inspection.capabilities & PROJECT_STORE_CAP_ENTITIES) {
-        section_header(app, "ENTITIES");
+        section_header(app, "ENTITIES", ICON_ENTITIES);
         if (app->nents == 0) coming_soon(app, "The observer lists who and what appears here");
         for (size_t i = 0; i < app->nents && i < ENT_SHOW; i++) {
             bool open = !strcmp(app->ent_open, app->ents[i].id);
@@ -236,7 +252,7 @@ static void layout_explorer(App *app)
             list_item(app, CLAY_ID("StoreFixItem"), "Restore it from its saved files", false);
         } else if (app->store_inspection.blocked_by != PROJECT_STORE_BLOCK_NONE)
             coming_soon(app, "Project store offline: notes, canon, chats and History are paused");
-        section_header(app, "DOCUMENTS");
+        section_header(app, "DOCUMENTS", ICON_DOCUMENTS);
         const char *cur = editor_path(app->editor) ? base_name(editor_path(app->editor)) : "";
         if (!app->project_dir[0]) coming_soon(app, "Open a folder (\xE2\x8C\x98O)");
         else if (app->ndocs == 0) coming_soon(app, "No .md or .txt files yet");
@@ -246,25 +262,25 @@ static void layout_explorer(App *app)
             list_item(app, CLAY_ID("NewDocItem"), "+ New document", false);
             list_item(app, CLAY_ID("ImportItem"), "Import\xE2\x80\xA6", false);
         }
-        section_header(app, "CHATS");
+        section_header(app, "CHATS", ICON_CHATS);
         list_item(app, CLAY_ID("NewChatItem"), "+ New chat", false);
         for (size_t i = 0; i < app->nchats; i++)
             list_item(app, CLAY_IDI("ChatItem", (uint32_t)i), app->chat_labels ? app->chat_labels[i] : app->chats[i].title,
                       !strcmp(app->chat_id, app->chats[i].id));
         if (!app->project_dir[0]) coming_soon(app, "Open a project to save chats");
-        section_header(app, "HISTORY");
+        section_header(app, "HISTORY", ICON_HISTORY);
         if (app->nrevs == 0) coming_soon(app, editor_path(app->editor) ? "No revisions yet" : "Open a document");
         for (size_t i = 0; i < app->nrevs && i < REV_SHOW; i++)
             list_item(app, CLAY_IDI("RevItem", (uint32_t)i), app->rev_labels[i], false);
         if (app->nrevs > REV_SHOW) coming_soon(app, "Older revisions are in .scribodo/revisions");
-        section_header(app, "NOTES");
+        section_header(app, "NOTES", ICON_NOTES);
         const char *open_id = record_view_active(app->record) ? record_view_id(app->record) : "";
         if (app->project_dir[0]) list_item(app, CLAY_ID("NewNoteItem"), "+ New note", false);
         else coming_soon(app, "Open a project to keep notes");
         for (size_t i = 0; i < app->nnotes && i < REC_SHOW; i++)
             if (app->note_labels[i][0])
                 list_item(app, CLAY_IDI("NoteItem", (uint32_t)i), app->note_labels[i], !strcmp(open_id, app->notes[i].id));
-        section_header(app, "CANON");
+        section_header(app, "CANON", ICON_CANON);
         if (app->project_dir[0] && app->ncanon == 0) coming_soon(app, "Select a passage, then \xE2\x8C\x98\xE2\x87\xA7" "C");
         for (size_t i = 0; i < app->ncanon && i < REC_SHOW; i++)
             list_item(app, CLAY_IDI("CanonItem", (uint32_t)i), app->canon_labels[i], !strcmp(open_id, app->canon[i].id));
@@ -295,7 +311,7 @@ static void layout_chat(App *app)
             if (app->remote_badge[0]) label(app, app->remote_badge, FONT_UI, COL_WARN);
             grow();
             if (open_chat_stored(app)) slot(CLAY_ID("ObserverReads"), 190, 24);
-            slot(CLAY_ID("NewChatButton"), 80, 24);
+            slot(CLAY_ID("NewChatButton"), 108, 26);
         }
         if (app->memory_experiment && app->memory_label[0]) {
             CLAY({ .id = CLAY_ID("MemoryStatus"),
@@ -354,7 +370,7 @@ static void layout_side_panel(App *app)
                            .padding = CLAY_PADDING_ALL(12), .childGap = 8,
                            .layoutDirection = CLAY_TOP_TO_BOTTOM },
                .backgroundColor = COL_PANEL, .clip = { .horizontal = true, .vertical = true } }) {
-            section_header(app, "RECALL");
+            section_header(app, "RECALL", ICON_RECALL);
             label(app, "Your committed canon and verified original text", FONT_UI, COL_DIM);
             CLAY({ .id = CLAY_ID("RecallBody"),
                    .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } } }) {}
@@ -366,7 +382,7 @@ static void layout_side_panel(App *app)
                            .padding = CLAY_PADDING_ALL(12), .childGap = 8,
                            .layoutDirection = CLAY_TOP_TO_BOTTOM },
                .backgroundColor = COL_PANEL, .clip = { .horizontal = true, .vertical = true } }) {
-            section_header(app, "OBSERVER");
+            section_header(app, "OBSERVER", ICON_OBSERVER);
             label(app, app->observer_label, FONT_UI, COL_DIM);
             if (app->store_inspection.capabilities & PROJECT_STORE_CAP_SEMANTIC)
                 list_item(app, CLAY_ID("RebuildIndex"), "Rebuild the index", false);
