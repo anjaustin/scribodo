@@ -726,7 +726,7 @@ static bool job_judge_pair(JobRun *r, bool sentence, size_t i, size_t c, const c
     if (atomic_load(&r->o->cancel)) { free(replies[0]); free(replies[1]); return false; }
     /* A sentence conflict is co-signed by software that never sees the model: the two texts must state different
      * values of one kind (SCRIBODO_OBSERVER_SENTENCES=attributes, step 8: 6 true of 42 shown and 5 of 18, end to end)
-     * and, at the level =subject (or =1), also be about the same someone (step 9, scored on step 8's recorded replies:
+     * and, at the level =subject, also be about the same someone (step 9, scored on step 8's recorded replies:
      * 4 of 5 and 5 of 7). Both co-signers are always computed and logged, so either arm can be scored from one run. */
     const bool attributes = sentence && obs_attributes_differ(v->content, stmt);
     const bool subject = sentence && obs_same_subject(v->content, stmt);

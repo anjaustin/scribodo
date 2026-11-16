@@ -4,6 +4,8 @@
  * (.scribodo/ records and observer state), so run it on a copy.
  *
  * usage: observer_replay <project-dir> [seconds] [--canon TEXT]... [--note TEXT]... [--chat TEXT]... [--real] [--judge-log FILE]
+ *        observer_replay --print-flags: the observer flags as parsed and their arm on stdout; exit 3 when a flag's value
+ *        names no level (the warning on stderr), else 0
  *        --canon and --note seed committed canon and active notes before the run (the conflict and overlap paths);
  *        --chat appends an author message to one chat, "20261112-120000-ab12" (the chat job path);
  *        --real starts the pinned local model (the app's default configuration, 16K context over two slots, its run
@@ -42,12 +44,17 @@ static int cmp_lines(const void *a, const void *b) { return strcmp(*(char *const
 int main(int argc, char **argv)
 {
     if (argc < 2) { fprintf(stderr, "usage: observer_replay <project-dir> [seconds]\n"); return 1; }
+    if (!strcmp(argv[1], "--print-flags")) { /* the arm as parsed, for tools/observer_replay_run.sh's flags file */
+        const Experiments *ex = experiments();
+        printf("SCRIBODO_OBSERVER_CONFLICT_GATE=%s SCRIBODO_OBSERVER_SENTENCES=%s arm=\"%s\"\n", ex->observer_conflict_gate ? "1" : "off",
+               observer_sentences_name(ex->observer_sentences), observer_arm(ex)->name);
+        return experiments_warnings()[0] ? 3 : 0; /* the warning itself is already on stderr */
+    }
     fprintf(stderr, "%s\n", OBSERVER_FINDING_LINES_MARKER); /* on stderr: stdout stays byte-comparable (observer_formats.h) */
     /* The arm, read from the run itself (AUDIT-004 F4): the observer flags as the experiments table holds them. */
     const Experiments *ex = experiments();
-    static const char *const sentence_levels[] = { "off", "attributes", "subject" };
     fprintf(stderr, "# observer flags: SCRIBODO_OBSERVER_CONFLICT_GATE=%s SCRIBODO_OBSERVER_SENTENCES=%s\n",
-            ex->observer_conflict_gate ? "1" : "off", sentence_levels[ex->observer_sentences]);
+            ex->observer_conflict_gate ? "1" : "off", observer_sentences_name(ex->observer_sentences));
     fprintf(stderr, "# observer arm: %s; measured: %s\n", observer_arm(ex)->name, observer_arm(ex)->measured);
     const char *project = argv[1];
     double limit = argc > 2 && argv[2][0] != '-' ? atof(argv[2]) : 600.0;

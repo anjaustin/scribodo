@@ -163,22 +163,41 @@ static void test_experiments_read_once_and_reload(void)
     experiments_reload();
 }
 
-/* SCRIBODO_OBSERVER_SENTENCES has one level per measured arm (AUDIT-004 F2): attributes is step 8, subject is step 9,
- * and "1" names the latest measured arm (subject), what it meant when step 9 landed; anything else is off. */
+/* SCRIBODO_OBSERVER_SENTENCES has one level per measured arm (AUDIT-004 F2): attributes is step 8 and so is "1" (the
+ * value step 8's real runs set), subject is step 9. Off without a word: unset, empty, "0", "off". Anything else is off
+ * with a warning: values match exactly, case and spaces included (red-team 2026-11-15). The gate likewise. */
 static void test_observer_sentence_levels(void)
 {
-    const struct { const char *value; ObserverSentencesArm arm; } cases[] = {
-        { NULL, OBSERVER_SENTENCES_OFF },          { "attributes", OBSERVER_SENTENCES_ATTRIBUTES },
-        { "subject", OBSERVER_SENTENCES_SUBJECT }, { "1", OBSERVER_SENTENCES_SUBJECT },
-        { "0", OBSERVER_SENTENCES_OFF },           { "on", OBSERVER_SENTENCES_OFF },
-        { "Attributes", OBSERVER_SENTENCES_OFF },  { "", OBSERVER_SENTENCES_OFF },
+    const struct { const char *value; ObserverSentencesArm arm; bool warns; } cases[] = {
+        { NULL, OBSERVER_SENTENCES_OFF, false },          { "attributes", OBSERVER_SENTENCES_ATTRIBUTES, false },
+        { "subject", OBSERVER_SENTENCES_SUBJECT, false }, { "1", OBSERVER_SENTENCES_ATTRIBUTES, false },
+        { "0", OBSERVER_SENTENCES_OFF, false },           { "off", OBSERVER_SENTENCES_OFF, false },
+        { "", OBSERVER_SENTENCES_OFF, false },            { "on", OBSERVER_SENTENCES_OFF, true },
+        { "Attributes", OBSERVER_SENTENCES_OFF, true },   { "true", OBSERVER_SENTENCES_OFF, true },
+        { "attributes ", OBSERVER_SENTENCES_OFF, true },  { "SUBJECT", OBSERVER_SENTENCES_OFF, true },
     };
+    unsetenv("SCRIBODO_OBSERVER_CONFLICT_GATE");
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         if (cases[i].value) setenv("SCRIBODO_OBSERVER_SENTENCES", cases[i].value, 1);
         else unsetenv("SCRIBODO_OBSERVER_SENTENCES");
         experiments_reload();
         CHECK(experiments()->observer_sentences == cases[i].arm);
+        CHECK((strstr(experiments_warnings(), "SCRIBODO_OBSERVER_SENTENCES") != NULL) == cases[i].warns);
     }
+    CHECK(!strcmp(observer_sentences_name(OBSERVER_SENTENCES_ATTRIBUTES), "attributes") &&
+          !strcmp(observer_sentences_name(OBSERVER_SENTENCES_SUBJECT), "subject") && !strcmp(observer_sentences_name(OBSERVER_SENTENCES_OFF), "off"));
+    unsetenv("SCRIBODO_OBSERVER_SENTENCES");
+    const struct { const char *value; bool on, warns; } gates[] = {
+        { "1", true, false }, { "0", false, false }, { "off", false, false }, { "", false, false },
+        { "on", false, true }, { "true", false, true }, { "1 ", false, true },
+    };
+    for (size_t i = 0; i < sizeof(gates) / sizeof(gates[0]); i++) {
+        setenv("SCRIBODO_OBSERVER_CONFLICT_GATE", gates[i].value, 1);
+        experiments_reload();
+        CHECK(experiments()->observer_conflict_gate == gates[i].on);
+        CHECK((experiments_warnings()[0] != '\0') == gates[i].warns);
+    }
+    unsetenv("SCRIBODO_OBSERVER_CONFLICT_GATE");
     unsetenv("SCRIBODO_OBSERVER_SENTENCES");
     experiments_reload();
     CHECK(!experiments()->observer_sentences);

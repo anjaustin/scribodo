@@ -37,20 +37,23 @@ typedef struct {
                                      for conversations with memory on; SCRIBODO_ANSWER_PIPELINE=off selects the plain composer */
     bool memory_presentation_compact; /* SCRIBODO_MEMORY_PRESENTATION=compact: archived presentation (MEMORY-011: failed, kept for the harness) */
     bool memory_presentation_episode; /* SCRIBODO_MEMORY_PRESENTATION=episode: archived presentation (MEMORY-011: failed, kept for the harness) */
-    bool observer_conflict_gate;  /* SCRIBODO_OBSERVER_CONFLICT_GATE=1: the canon candidate step ignores shared titles and the judge must name
-                                     the two disagreeing values (journal/observer-cycle2_quality.md step 5: measured 2026-11-14, off-fault
-                                     conflicts rose on both novels; kept gated, default off) */
+    bool observer_conflict_gate;  /* SCRIBODO_OBSERVER_CONFLICT_GATE=1: the canon candidate steps ignore shared titles and the judge must
+                                     name the two disagreeing values (journal/observer-cycle2_quality.md step 5: measured 2026-11-14,
+                                     off-fault conflicts rose on both novels; kept gated, default off). off, 0, unset or empty: off;
+                                     any other value is off with a warning */
     /* SCRIBODO_OBSERVER_SENTENCES: a document's source sentences, not the model's statements, are paired with canon
      * (obs_overlap at least 3, the two best entries) and a sentence conflict needs the judge's two votes and software
      * co-signers. One level per measured arm (MEMORY-015 §5); default off (the default path stays at step 4's 7 in 92):
      *   =attributes  co-signer obs_attributes_differ (journal/observer-cycle2_quality.md step 8, measured end to end on
      *                the corrected planted copies: Mars 6 true of 42 shown, P&P 5 of 18; recall 11 of 20)
+     *   =1           the same arm, =attributes: the only real-model runs ever made with "1" were step 8's
+     *                (build/observer/sentence-cycle/chain.sh); "1" selected step 9 for seven minutes, with no run
      *   =subject     and also obs_same_subject (step 9, scored offline on step 8's recorded judge replies, the C equal to
      *                the Python on every call: Mars 4 of 5, P&P 5 of 7; recall 9 of 20; not yet run end to end)
-     *   =1           the latest measured arm, =subject: what "1" selected when step 9 landed (12ed760), so the runs and
-     *                scripts recorded since keep their meaning. Levels of one variable rather than a second flag because
-     *                step 9 adds a co-signer to step 8's mechanism; the subject check without sentence pairing is not an
-     *                arm anyone measured, and one variable cannot name it. */
+     *   off, 0, unset or empty: off. Any other value is off with a warning on stderr (experiments_warnings); values
+     *   match exactly, case and spaces included. Levels of one variable rather than a second flag because step 9 adds
+     *   a co-signer to step 8's mechanism; the subject check without sentence pairing is not an arm anyone measured,
+     *   and one variable cannot name it. Scripts name the level ("attributes", "subject"), never "1". */
     ObserverSentencesArm observer_sentences;
     /* Test hooks, not experiments: read once here like the flags so no module reads the environment per call
      * (AUDIT-004 F12); never set for a measurement (tools/observer_replay_run.sh unsets them). */
@@ -61,5 +64,9 @@ typedef struct {
 
 const Experiments *experiments(void);
 void experiments_reload(void);
+/* The warnings of the last read: one line per observer flag whose value names no level, "" when none. */
+const char *experiments_warnings(void);
+/* "off", "attributes" or "subject": the level's name, as run logs record it. */
+const char *observer_sentences_name(ObserverSentencesArm arm);
 
 #endif

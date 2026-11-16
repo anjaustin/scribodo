@@ -296,7 +296,7 @@ static void test_observer_arm_table(void)
     setenv("SCRIBODO_OBSERVER_SENTENCES", "attributes", 1);
     experiments_reload();
     CHECK(strstr(observer_arm(experiments())->measured, "step 8") != NULL);
-    setenv("SCRIBODO_OBSERVER_SENTENCES", "1", 1);
+    setenv("SCRIBODO_OBSERVER_SENTENCES", "subject", 1);
     setenv("SCRIBODO_OBSERVER_CONFLICT_GATE", "1", 1);
     experiments_reload();
     CHECK(!strcmp(observer_arm(experiments())->measured, "not measured"));

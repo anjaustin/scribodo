@@ -1573,13 +1573,13 @@ static void test_observer_judge_log(void)
     free(text);
 }
 
-/* Sentence pairing (SCRIBODO_OBSERVER_SENTENCES=1): the document's own sentence is judged against canon and, with the
+/* Sentence pairing (SCRIBODO_OBSERVER_SENTENCES=subject): the document's own sentence is judged against canon and, with the
  * judge's votes, the same subject and a differing attribute, recorded as the conflict, sourced at that sentence; a sentence the judge
  * might call a conflict but that states the same colour is co-signed by no attribute and dropped; the flag off restores
  * the statement path. */
 static void test_observer_sentence_pairs(void)
 {
-    setenv("SCRIBODO_OBSERVER_SENTENCES", "1", 1);
+    setenv("SCRIBODO_OBSERVER_SENTENCES", "subject", 1);
     experiments_reload();
     char proj[700], doc[800], logpath[800];
     snprintf(proj, sizeof(proj), "%s/obs-sentences", g_dir);
@@ -1729,8 +1729,8 @@ static ArmRun run_observer_arm(const char *name, const char *sentences, const ch
     return out;
 }
 
-/* Step 8's arm stays selectable beside step 9's (AUDIT-004 F2): =attributes records a sentence conflict on a
- * differing attribute alone, =subject (and "1", the latest measured arm) also needs the same subject. */
+/* Step 8's arm stays selectable beside step 9's (AUDIT-004 F2): =attributes (and "1", what step 8's real runs set)
+ * records a sentence conflict on a differing attribute alone, =subject also needs the same subject. */
 static void test_observer_sentence_arms(void)
 {
     ArmRun a = run_observer_arm("attributes", "attributes", NULL);
@@ -1738,7 +1738,7 @@ static void test_observer_sentence_arms(void)
     ArmRun s = run_observer_arm("subject", "subject", NULL);
     CHECK(s.ran && s.conflicts == 1 && !s.zoe && s.sola && s.sentence_calls == a.sentence_calls && s.statement_calls == 0);
     ArmRun one = run_observer_arm("one", "1", NULL);
-    CHECK(one.ran && one.conflicts == 1 && !one.zoe && one.sola && one.sentence_calls == s.sentence_calls);
+    CHECK(one.ran && one.conflicts == 2 && one.zoe && one.sola && one.sentence_calls == a.sentence_calls);
     CHECK(!experiments()->observer_sentences);
 }
 
