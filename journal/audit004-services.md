@@ -525,3 +525,23 @@ was made.
 Removed by exact name only: `docker volume rm scribodo-st-h_mariadb scribodo-st-h_qdrant` (exit 0;
 `C-stale-volumes.log`). The author's pre-move volumes `scribodo_mariadb` and `scribodo_qdrant` (created
 2026-11-04T20:32:49Z) are untouched, before and after.
+
+## B — the rehearsal's Docker hygiene
+
+`fresh_project X` removes, by exact name, the containers labelled with Compose project `scribodo-st-X`, its network,
+and its two volumes `scribodo-st-X_mariadb` / `_qdrant`. It refuses any name that is not a single letter, so it
+cannot reach `scribodo_mariadb` or `scribodo_qdrant`.
+- Each Docker store (e, g, h, i) calls it before its setup.
+- The cleanup calls it for all four whether or not this run created their secrets folder (the old cleanup skipped
+  any store without one, which is how the 2026-11-15 volume survived).
+- Every Docker step's setup (the `up`, the `rootsql` heredocs, h's `down`, native `up` and native `rootsql`) is now
+  checked: a failed setup fails its case and prints "setup failed: the case below is not what it claims", so a broken
+  setup can no longer pass for the case under test.
+
+**Verified with a deliberate stale state.** `B-planted-stale.log`: a `scribodo-st-h` store was brought up through
+`services.sh` with a throwaway secrets folder on 33078/6348, taken down, and its secrets folder deleted, which is
+exactly an interrupted run's leftovers. Then two `SCRIBODO_SERVICESTEST_DOCKER=1 make servicestest` runs back to back
+on this tree (`B-servicestest-run1.log` and `-run2.log`, with `.exit` files):
+- both exit 0, 22 checks ok each (all 10 steps, five Docker cases), no "setup failed", no cleanup complaint;
+- after each run only `scribodo_mariadb` and `scribodo_qdrant` exist, with no rehearsal container or volume
+  (`B-after-run{1,2}.state`).

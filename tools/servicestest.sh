@@ -39,6 +39,19 @@ containers_down() { # containers_down PROJECT: true only when Compose answered a
     out="$(SCRIBODO_COMPOSE_PROJECT="$1" lib_compose ps -aq 2>/dev/null)" || return 1
     [ -z "$out" ]
 }
+# fresh_project X: nothing of the rehearsal's Compose project scribodo-st-X survives from an earlier, interrupted run:
+# its containers, its network and its two volumes, by exact name (a stale volume keeps the root password of a deleted
+# secrets folder, and every later run inherits it: 2026-11-16). Nothing else is touched: the author's pre-move store
+# (scribodo_mariadb, scribodo_qdrant) must survive.
+fresh_project() {
+    [[ "$1" =~ ^[a-z]$ ]] || { echo "fresh_project: not a rehearsal store: $1" >&2; return 1; }
+    local p="scribodo-st-$1" c v
+    for c in $(docker ps -aq --filter "label=com.docker.compose.project=$p"); do docker rm -f "$c" >/dev/null || return 1; done
+    for v in "${p}_mariadb" "${p}_qdrant"; do
+        if docker volume inspect "$v" >/dev/null 2>&1; then docker volume rm "$v" >/dev/null || return 1; fi
+    done
+    if docker network inspect "${p}_default" >/dev/null 2>&1; then docker network rm "${p}_default" >/dev/null || return 1; fi
+}
 mdb() { MYSQL_PWD="$1" "$MB/mariadb" --no-defaults --skip-ssl-verify-server-cert -N "${@:2}"; }
 cleanup() {
     while IFS= read -r d; do
@@ -46,12 +59,8 @@ cleanup() {
         SCRIBODO_SECRETS="$d" SCRIBODO_SERVICES=native tools/services.sh down >/dev/null 2>&1
     done < <(find "$root" -type d -path '*/mariadb/data' 2>/dev/null)
     [ -n "${sleeper:-}" ] && kill "$sleeper" 2>/dev/null
-    if docker info >/dev/null 2>&1; then   # an interrupted step 10 leaves its containers and volumes
-        for p in e g h i; do
-            [ -d "$root/$p" ] || continue
-            SCRIBODO_SECRETS="$root/$p" SCRIBODO_COMPOSE_PROJECT="scribodo-st-$p" lib_compose down -v >/dev/null 2>&1 ||
-                echo "cleanup: the containers of scribodo-st-$p could not be removed" >&2
-        done
+    if docker info >/dev/null 2>&1; then   # step 10's containers and volumes, whether or not its secrets folder exists
+        for p in e g h i; do fresh_project "$p" || echo "cleanup: scribodo-st-$p could not be removed" >&2; done
     fi
     rm -rf "$keep_logs"; mkdir -p "$keep_logs"
     find "$root" -maxdepth 1 -type d -name 'logs-*' -exec cp -R {} "$keep_logs/" \; 2>/dev/null
@@ -184,14 +193,16 @@ if docker info >/dev/null 2>&1; then
     store e 33075 6345
     unset SCRIBODO_SERVICES
     step "10. migrate-from-docker moves a store and keeps the dump"
-    SCRIBODO_SERVICES=docker svc up >/dev/null 2>&1 || SCRIBODO_SERVICES=docker svc up >/dev/null 2>&1  # Docker's first start after launch can fail its health check
-    SCRIBODO_SERVICES=docker svc rootsql scribodo <<'SQL' >/dev/null 2>&1
+    setup=0; fresh_project e || setup=1
+    SCRIBODO_SERVICES=docker svc up >/dev/null 2>&1 || SCRIBODO_SERVICES=docker svc up >/dev/null 2>&1 || setup=1  # Docker's first start after launch can fail its health check
+    SCRIBODO_SERVICES=docker svc rootsql scribodo <<'SQL' >/dev/null 2>&1 || setup=1
 CREATE TABLE schema_migrations (version INT PRIMARY KEY); INSERT INTO schema_migrations VALUES (18);
 CREATE TABLE probe (t TEXT); INSERT INTO probe VALUES ('the author''s words');
 SQL
+    [ "$setup" = 0 ] || echo "      (setup failed: the case below is not what it claims)"
     out="$(svc migrate-from-docker 2>&1)"; r=$?
     got="$(SCRIBODO_SERVICES=native svc rootsql -N scribodo -e "SELECT t FROM probe" 2>/dev/null)"
-    [ "$r" = 0 ] && [ "$got" = "the author's words" ] && [ "$(cat "$SCRIBODO_SECRETS/mode")" = native ] &&
+    [ "$setup" = 0 ] && [ "$r" = 0 ] && [ "$got" = "the author's words" ] && [ "$(cat "$SCRIBODO_SECRETS/mode")" = native ] &&
         ls "$SCRIBODO_SECRETS"/migration-*.sql.gz >/dev/null 2>&1 &&
         containers_down scribodo-st-e; ok $?
     [ "$r" = 0 ] && [ "$got" = "the author's words" ] || { echo "      exit $r, read back [$got]"; echo "$out" | tail -5 | sed 's/^/      /'; }
@@ -207,18 +218,20 @@ SQL
     store g 33077 6347
     unset SCRIBODO_SERVICES
     step "    a migration whose load fails puts both stores back as they were"
-    SCRIBODO_SERVICES=docker svc up >/dev/null 2>&1 || SCRIBODO_SERVICES=docker svc up >/dev/null 2>&1
+    setup=0; fresh_project g || setup=1
+    SCRIBODO_SERVICES=docker svc up >/dev/null 2>&1 || SCRIBODO_SERVICES=docker svc up >/dev/null 2>&1 || setup=1
     # A view whose definer the restore user may not impersonate: the load fails part-way, as any dump the sandboxed
     # restore user cannot load would.
-    SCRIBODO_SERVICES=docker svc rootsql scribodo <<'SQL' >/dev/null 2>&1
+    SCRIBODO_SERVICES=docker svc rootsql scribodo <<'SQL' >/dev/null 2>&1 || setup=1
 CREATE TABLE schema_migrations (version INT PRIMARY KEY); INSERT INTO schema_migrations VALUES (18);
 CREATE TABLE probe (t TEXT); INSERT INTO probe VALUES ('kept');
 CREATE DEFINER = 'root'@'%' SQL SECURITY DEFINER VIEW probe_view AS SELECT t FROM probe;
 SQL
+    [ "$setup" = 0 ] || echo "      (setup failed: the case below is not what it claims)"
     r=0; out="$(svc migrate-from-docker 2>&1)" || r=$?
     got="$(SCRIBODO_SERVICES=docker svc rootsql -N scribodo -e "SELECT t FROM probe" 2>/dev/null)"
     # It failed at the load, not earlier: the containers' dump was taken and the sandboxed user was refused the view.
-    [ "$r" = 1 ] && echo "$out" | grep -q "dumped the containers'" && echo "$out" | grep -q "Access denied" &&
+    [ "$setup" = 0 ] && [ "$r" = 1 ] && echo "$out" | grep -q "dumped the containers'" && echo "$out" | grep -q "Access denied" &&
         echo "$out" | grep -q "both stores are as they were" && [ "$(cat "$SCRIBODO_SECRETS/mode")" = docker ] &&
         [ "$got" = kept ] && [ ! -d "$SCRIBODO_SECRETS/mariadb" ] && [ ! -d "$SCRIBODO_SECRETS/qdrant" ] &&
         ! pgrep -f -- "--datadir=$SCRIBODO_SECRETS/mariadb/data" >/dev/null &&
@@ -229,21 +242,23 @@ SQL
     store h 33078 6348
     unset SCRIBODO_SERVICES
     step "    a replacing migration whose load fails leaves the native store exactly as it was"
-    SCRIBODO_SERVICES=docker svc up >/dev/null 2>&1 || SCRIBODO_SERVICES=docker svc up >/dev/null 2>&1
-    SCRIBODO_SERVICES=docker svc rootsql scribodo <<'SQL' >/dev/null 2>&1
+    setup=0; fresh_project h || setup=1
+    SCRIBODO_SERVICES=docker svc up >/dev/null 2>&1 || SCRIBODO_SERVICES=docker svc up >/dev/null 2>&1 || setup=1
+    SCRIBODO_SERVICES=docker svc rootsql scribodo <<'SQL' >/dev/null 2>&1 || setup=1
 CREATE TABLE schema_migrations (version INT PRIMARY KEY); INSERT INTO schema_migrations VALUES (18);
 CREATE TABLE docker_only (t TEXT); INSERT INTO docker_only VALUES ('from the containers');
 CREATE DEFINER = 'root'@'%' SQL SECURITY DEFINER VIEW probe_view AS SELECT t FROM docker_only;
 SQL
-    SCRIBODO_SERVICES=docker svc down >/dev/null 2>&1   # the containers were down before the migration
-    SCRIBODO_SERVICES=native SCRIBODO_NATIVE_FRESH=1 svc up >/dev/null 2>&1
-    SCRIBODO_SERVICES=native svc rootsql scribodo <<'SQL' >/dev/null 2>&1
+    SCRIBODO_SERVICES=docker svc down >/dev/null 2>&1 || setup=1   # the containers were down before the migration
+    SCRIBODO_SERVICES=native SCRIBODO_NATIVE_FRESH=1 svc up >/dev/null 2>&1 || setup=1
+    SCRIBODO_SERVICES=native svc rootsql scribodo <<'SQL' >/dev/null 2>&1 || setup=1
 CREATE TABLE probe (t TEXT); INSERT INTO probe VALUES ('native original');
 SQL
+    [ "$setup" = 0 ] || echo "      (setup failed: the case below is not what it claims)"
     r=0; out="$(SCRIBODO_MIGRATE_REPLACE=1 svc migrate-from-docker 2>&1)" || r=$?
     got="$(SCRIBODO_SERVICES=native svc rootsql -N scribodo -e "SELECT t FROM probe" 2>/dev/null)"
     other="$(SCRIBODO_SERVICES=native svc rootsql -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='scribodo' AND table_name IN ('docker_only','schema_migrations')" 2>/dev/null)"
-    [ "$r" = 1 ] && echo "$out" | grep -q "kept the native store's previous contents" && echo "$out" | grep -q "both stores are as they were" &&
+    [ "$setup" = 0 ] && [ "$r" = 1 ] && echo "$out" | grep -q "kept the native store's previous contents" && echo "$out" | grep -q "both stores are as they were" &&
         [ "$got" = "native original" ] && [ "$other" = 0 ] && [ "$(cat "$SCRIBODO_SECRETS/mode")" = native ] &&
         [ "$(SCRIBODO_SERVICES=native svc status | grep -c running)" = 2 ] &&
         containers_down scribodo-st-h; ok $?
@@ -258,7 +273,7 @@ SQL
     # rotated after the volume was made): the containers come up, but root cannot dump them. The native store is
     # running and holds data, so the restore must stop the containers before the native services come back on the
     # same ports (verification of AUDIT-004, 2026-11-16).
-    setup=0
+    setup=0; fresh_project i || setup=1
     SCRIBODO_SERVICES=docker svc up >/dev/null 2>&1 || SCRIBODO_SERVICES=docker svc up >/dev/null 2>&1 || setup=1
     SCRIBODO_SERVICES=docker svc down >/dev/null 2>&1 || setup=1
     openssl rand -hex 24 > "$SCRIBODO_SECRETS/db_root_password.new" && mv "$SCRIBODO_SECRETS/db_root_password.new" "$SCRIBODO_SECRETS/db_root_password" || setup=1
