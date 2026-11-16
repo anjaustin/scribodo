@@ -262,19 +262,23 @@ void store_begin(App *app)
  * runs on an owned worker (MEMORY-019 measured 0.8 s of blocked frames for a
  * 100K-word project when it ran here); the store makes every other thread see
  * the project as paused meanwhile, and import_poll() applies the outcome.
- * Returns true when a move for the current project was started now. */
+ * Returns true when the observer must wait: a move for the current project was
+ * started now, or it is due and waits for the worker (import_job_next). */
 static bool store_adopt_project(App *app)
 {
     if (!app->project_dir[0] || !store_online(app->store)) return false;
     /* A move that died after its marker is finished here, once, on open (GAP-004 matrix, import row). */
     if (store_finish_import(app->store, app->project_dir)) set_status(app, "Finished moving this project into the project store (its old files are in .scribodo/legacy-\xE2\x80\xA6)");
-    if (!store_needs_import(app->store, app->project_dir)) {
-        /* Chat titles an older import left in .scribodo/legacy-*: copied once, on the import worker (AUDIT-004 F11). */
-        if (app->import_job_initialized && !import_job_busy(&app->import_job) && store_backfill_pending(app->store, app->project_dir))
-            import_job_start_backfill(&app->import_job, app->project_dir);
-        return false;
+    if (!app->import_job_initialized) return false;
+    bool needs = store_needs_import(app->store, app->project_dir);
+    /* Chat titles an older import left in .scribodo/legacy-*: copied once, on the import worker (AUDIT-004 F11). */
+    bool backfill = !needs && store_backfill_pending(app->store, app->project_dir);
+    switch (import_job_next(needs, backfill, import_job_busy(&app->import_job))) {
+    case IMPORT_NEXT_NONE: return false;
+    case IMPORT_NEXT_DEFER: return true; /* started by import_poll when the worker frees */
+    case IMPORT_NEXT_BACKFILL: import_job_start_backfill(&app->import_job, app->project_dir); return false;
+    case IMPORT_NEXT_IMPORT: break;
     }
-    if (!app->import_job_initialized || import_job_busy(&app->import_job)) return false; /* one at a time; retried when it ends */
     if (!import_job_start(&app->import_job, app->project_dir)) {
         set_status(app, "Could not start moving the project into the store");
         return false;
@@ -289,11 +293,9 @@ static void import_poll(App *app)
     bool ok = false;
     if (!app->import_job_initialized || !import_job_poll(&app->import_job, dir, sizeof(dir), &ok, why, sizeof(why))) return;
     bool current = strcmp(dir, app->project_dir) == 0;
-    if (current && import_job_last_was_backfill(&app->import_job)) { /* the chat-title backfill: a line only if it failed or skipped */
-        if (why[0]) set_status(app, why);
-        return;
-    }
-    if (current) {
+    bool backfill = import_job_last_was_backfill(&app->import_job);
+    if (current && backfill && why[0]) set_status(app, why); /* the chat-title backfill: a line only if it failed or skipped */
+    if (current && !backfill) {
         if (ok) {
             app->store_just_moved = true;
             set_status_after(app, "This project is now kept in the project store (its old files are in .scribodo/legacy-\xE2\x80\xA6)");
@@ -303,11 +305,15 @@ static void import_poll(App *app)
         if (app->observer_project_deferred && app->observer) observer_set_project(app->observer, app->project_dir);
         app->observer_project_deferred = false;
         if (app->observer) observer_poke(app->observer);
-    } else if (store_needs_import(app->store, app->project_dir)) {
-        /* The author moved on while the old project was being moved: start the current one now. */
-        if (store_adopt_project(app) && app->observer) {
+    } else if (!(current && !ok)) { /* a failed backfill of this project waits for its next open */
+        /* The worker is free: the current project's deferred move, or its waiting backfill, starts now (the author moved
+         * on while another project was moved or backfilled; AUDIT-004 final verification 2a). */
+        if (store_adopt_project(app)) {
             app->observer_project_deferred = true;
-            observer_set_project(app->observer, "");
+            if (app->observer) observer_set_project(app->observer, "");
+        } else if (app->observer_project_deferred) { /* deferred, and nothing to wait for any more */
+            app->observer_project_deferred = false;
+            if (app->observer) observer_set_project(app->observer, app->project_dir);
         }
     }
 }

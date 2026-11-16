@@ -2266,6 +2266,7 @@ static void test_chat_title_backfill(void)
               store_mode(g_store, proj, pid_g, sizeof(pid_g), NULL) == STORE_DB);
         CHECK(db_run(db, "DELETE t FROM conversation_titles t JOIN conversations c ON c.id = t.conversation_id WHERE c.project_id = ?",
                      (DbArg[1]){ DB_S(pid_g) }, 1, NULL));
+        CHECK(db_run(db, "DELETE FROM project_backfills WHERE project_id = ?", (DbArg[1]){ DB_S(pid_g) }, 1, NULL));
     }
     CHECK(chat_store_rename(g_store, proj, v, "B") && chat_store_rename(g_store, proj, v, "Q"));
     archive_of(db, pid_g, got, sizeof(got));
@@ -2315,6 +2316,123 @@ static void test_chat_title_backfill(void)
     system(cmd);
 }
 
+static double now_ms(void);
+
+/* Final verification 2: the worker's next move (a), the importer's receipt (b), and a rename during a backfill (c). */
+static void test_chat_title_backfill_worker(void)
+{
+    char why[256] = "", root[PATH_MAX], p_dir[PATH_MAX + 32], q_dir[PATH_MAX + 32], r_dir[PATH_MAX + 32], pid[40] = "",
+         qid[40] = "", rid[40] = "", status[400], dir[PATH_MAX];
+    CHECK(store_start(g_store, g_name, why, sizeof(why)));
+    Db *db = store_db(g_store);
+    snprintf(root, sizeof(root), "%sscribodo-title-worker-XXXXXX", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp/");
+    CHECK(mkdtemp(root) != NULL);
+
+    /* (b) An import writes the backfill's receipt in its own transaction: nothing is pending after it. */
+    CHECK(old_import(root, "p", "20261115-170000-abcd", "Worker P", p_dir, sizeof(p_dir), pid, sizeof(pid)));
+    CHECK(store_backfill_pending(g_store, p_dir)); /* old_import removed the receipt, as an older importer left it */
+    snprintf(q_dir, sizeof(q_dir), "%s/q", root);
+    CHECK(mkdir(q_dir, 0755) == 0);
+    {
+        ChatMessage u = { .role = CHAT_USER, .content = "Worker Q" };
+        CHECK(chat_store_append(g_store, q_dir, "20261115-170100-abcd", "First", &u) &&
+              chat_store_title_line_files(q_dir, "20261115-170100-abcd", "Second", 1700000000));
+    }
+    snprintf(r_dir, sizeof(r_dir), "%s/r", root);
+    CHECK(mkdir(r_dir, 0755) == 0);
+    {
+        ChatMessage u = { .role = CHAT_USER, .content = "Worker R" };
+        CHECK(chat_store_append(g_store, r_dir, "20261115-170200-abcd", "First", &u) && store_import(g_store, r_dir, why, sizeof(why)) &&
+              store_mode(g_store, r_dir, rid, sizeof(rid), NULL) == STORE_DB);
+    }
+    CHECK(!store_backfill_pending(g_store, r_dir));
+    DbRows r;
+    CHECK(db_query(db, "SELECT detail FROM project_backfills WHERE project_id = ? AND name = 'chat-titles-legacy'",
+                   (DbArg[1]){ DB_S(rid) }, 1, &r) && r.nrows == 1 && db_cell(&r, 0, 0) && strstr(db_cell(&r, 0, 0), "written by the import"));
+    db_rows_free(&r);
+
+    /* (a) While P's backfill holds the worker, Q (needing an import) is deferred, and its import starts when the
+     * worker frees; a project needing only a backfill starts it then too. main.c asks import_job_next. */
+    ImportJob job;
+    CHECK(import_job_init(&job, g_store));
+    CHECK(import_job_start_backfill(&job, p_dir));
+    CHECK(import_job_next(store_needs_import(g_store, q_dir), false, import_job_busy(&job)) == IMPORT_NEXT_DEFER);
+    CHECK(import_job_next(false, true, true) == IMPORT_NEXT_NONE); /* a waiting backfill: started when the worker frees */
+    bool done = false, ok = false;
+    for (int spin = 0; !done && spin < 3000; spin++) {
+        done = import_job_poll(&job, dir, sizeof(dir), &ok, status, sizeof(status));
+        if (!done) usleep(2000);
+    }
+    CHECK(done && ok && import_job_last_was_backfill(&job));
+    CHECK(import_job_next(store_needs_import(g_store, q_dir), false, import_job_busy(&job)) == IMPORT_NEXT_IMPORT);
+    CHECK(import_job_start(&job, q_dir));
+    done = false;
+    for (int spin = 0; !done && spin < 3000; spin++) {
+        done = import_job_poll(&job, dir, sizeof(dir), &ok, status, sizeof(status));
+        if (!done) usleep(2000);
+    }
+    CHECK(done && ok && !import_job_last_was_backfill(&job) && store_mode(g_store, q_dir, qid, sizeof(qid), NULL) == STORE_DB);
+    CHECK(import_job_next(false, store_backfill_pending(g_store, q_dir), import_job_busy(&job)) == IMPORT_NEXT_NONE);
+    CHECK(db_run(db, "DELETE FROM project_backfills WHERE project_id = ?", (DbArg[1]){ DB_S(qid) }, 1, NULL));
+    CHECK(import_job_next(false, store_backfill_pending(g_store, q_dir), import_job_busy(&job)) == IMPORT_NEXT_BACKFILL);
+    import_job_destroy(&job);
+
+    /* (c) A rename on this thread while the worker backfills 60 chats: one transaction per conversation, so each
+     * rename waits at most for one conversation's rows, succeeds, and lands after that chat's earlier titles. */
+    char s_dir[PATH_MAX + 32], sid[40] = "";
+    snprintf(s_dir, sizeof(s_dir), "%s/s", root);
+    CHECK(mkdir(s_dir, 0755) == 0);
+    for (int c = 0; c < 60; c++) {
+        char id[40], body[40];
+        snprintf(id, sizeof(id), "20261115-18%04d-abcd", c);
+        snprintf(body, sizeof(body), "Busy chat %d", c);
+        ChatMessage u = { .role = CHAT_USER, .content = body };
+        CHECK(chat_store_append(g_store, s_dir, id, "T0", &u));
+        for (int t = 1; t <= 20; t++) {
+            char title[16];
+            snprintf(title, sizeof(title), "T%d", t);
+            CHECK(chat_store_title_line_files(s_dir, id, title, 1700000000 + t));
+        }
+    }
+    CHECK(store_import(g_store, s_dir, why, sizeof(why)) && store_mode(g_store, s_dir, sid, sizeof(sid), NULL) == STORE_DB);
+    CHECK(db_run(db, "DELETE t FROM conversation_titles t JOIN conversations c ON c.id = t.conversation_id WHERE c.project_id = ?",
+                 (DbArg[1]){ DB_S(sid) }, 1, NULL) &&
+          db_run(db, "DELETE FROM project_backfills WHERE project_id = ?", (DbArg[1]){ DB_S(sid) }, 1, NULL));
+    CHECK(import_job_init(&job, g_store));
+    CHECK(import_job_start_backfill(&job, s_dir));
+    double worst = 0;
+    int renamed = 0;
+    for (int k = 0; k < 6; k++) {
+        char id[40], title[16];
+        snprintf(id, sizeof(id), "20261115-18%04d-abcd", 10 * k + 5);
+        snprintf(title, sizeof(title), "Renamed %d", k);
+        double t0 = now_ms();
+        renamed += chat_store_rename(g_store, s_dir, id, title);
+        double dt = now_ms() - t0;
+        if (dt > worst) worst = dt;
+    }
+    done = false;
+    for (int spin = 0; !done && spin < 5000; spin++) {
+        done = import_job_poll(&job, dir, sizeof(dir), &ok, status, sizeof(status));
+        if (!done) usleep(2000);
+    }
+    import_job_destroy(&job);
+    CHECK(renamed == 6 && done && ok);
+    printf("    rename during the backfill: 6 of 6 succeeded, worst wait %.1f ms\n", worst);
+    CHECK(worst < 1000);
+    for (int k = 0; k < 6; k++) { /* each renamed chat: its 20 earlier titles, then the title the rename replaced */
+        char id[40];
+        snprintf(id, sizeof(id), "20261115-18%04d-abcd", 10 * k + 5);
+        CHECK(db_query(db, "SELECT COUNT(*), MAX(CASE WHEN seq = (SELECT MAX(seq) FROM conversation_titles WHERE conversation_id = ?) THEN title END)"
+                           " FROM conversation_titles WHERE conversation_id = ?", (DbArg[2]){ DB_S(id), DB_S(id) }, 2, &r) &&
+              r.nrows == 1 && !strcmp(db_cell(&r, 0, 0), "21") && db_cell(&r, 0, 1) && !strcmp(db_cell(&r, 0, 1), "T20"));
+        db_rows_free(&r);
+    }
+    char cmd[PATH_MAX + 20];
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root);
+    system(cmd);
+}
+
 /* Round 3 (c), measured, not a gate: SCRIBODO_TITLE_BACKFILL_TIMING=1 builds an old-imported project of 200 chats with
  * 100 title lines each (20,000 lines) and times the open's frame-thread part (store_backfill_pending) and the
  * worker's part (store_backfill_chat_titles). Recorded in journal/audit004-text.md. */
@@ -2351,6 +2469,7 @@ static void test_chat_title_backfill_timing(void)
     Db *db = store_db(g_store);
     CHECK(db_run(db, "DELETE t FROM conversation_titles t JOIN conversations c ON c.id = t.conversation_id WHERE c.project_id = ?",
                  (DbArg[1]){ DB_S(pid) }, 1, NULL));
+    CHECK(db_run(db, "DELETE FROM project_backfills WHERE project_id = ?", (DbArg[1]){ DB_S(pid) }, 1, NULL));
     double t0 = now_ms();
     bool pending = store_backfill_pending(g_store, proj);
     double t1 = now_ms();
@@ -2513,6 +2632,7 @@ int main(void)
                           { "chat_title_backfill", test_chat_title_backfill },
                           { "chat_title_contents", test_chat_title_contents },
                           { "chat_title_backfill_timing", test_chat_title_backfill_timing },
+                          { "chat_title_backfill_worker", test_chat_title_backfill_worker },
                          { "entities_redteam", test_entities_redteam }, { "semantic", test_semantic } };
     int rc = run_db_core_tests();
     if (run_tests(tests, sizeof(tests) / sizeof(tests[0])) != 0) rc = 1;

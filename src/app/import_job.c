@@ -101,3 +101,9 @@ void import_job_destroy(ImportJob *job)
     pthread_mutex_destroy(&job->mu);
     atomic_store(&job->state, 0);
 }
+
+ImportNext import_job_next(bool needs_import, bool backfill_pending, bool job_busy)
+{
+    if (needs_import) return job_busy ? IMPORT_NEXT_DEFER : IMPORT_NEXT_IMPORT;
+    return backfill_pending && !job_busy ? IMPORT_NEXT_BACKFILL : IMPORT_NEXT_NONE;
+}

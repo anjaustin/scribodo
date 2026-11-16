@@ -651,3 +651,31 @@ manuscript paragraph of the three novels) identical. C and arm agree on all 670 
 replies (three seeds, with the new name shapes, particles, multi-dot initials, labels, titles after names and runs of
 spaces and tabs among the tokens). The 230-row fixture is unchanged on both sides; the novels' sentence counts are
 unchanged (the splitter did not change). Evidence: `build/audit004-text/f1/`.
+
+### 2. Backfill: the worker's next move, the importer's receipt, renames during a backfill
+
+**(a) Deferred, not handed to the observer.** While one project's backfill held the import worker, opening a project
+that needed an import made `store_adopt_project` return false, and the observer was given the files the import was
+about to set aside. The decision is now `import_job_next` (`src/app/import_job.c`): an import that is due waits as
+"deferred" while the worker is busy (the observer waits too), and starts when the worker frees; a backfill that is due
+starts when the worker frees, not at the next open. `import_poll` (main.c) asks again after every run it polls, except
+after this project's failed backfill (which waits for the next open, as before); a project deferred with nothing left
+to wait for gets its observer back.
+
+**(b) The importer writes the receipt.** Every import reads every title line, so it now writes the
+`chat-titles-legacy` receipt in its own transaction ("written by the import, which archived every title line"); a
+resumed import finds it there (`INSERT IGNORE`). No new import runs the backfill, and untimed titles are never matched
+on a file time a copy or sync tool may have changed.
+
+**(c) One transaction per conversation.** The backfill held every conversation's title rows (`FOR UPDATE`) until one
+commit at the end. Now each conversation is its own transaction and the receipt is written last in its own, so a
+rename on the frame thread waits at most for one conversation; a death between two leaves the earlier ones done and the
+next run recognises them (the archive starts with the file's titles and times). The crash matrix row now accepts, at a
+death, the conversation untouched or whole (never half) with no receipt, and still requires one complete, undoubled
+archive and one receipt after the next open.
+
+**Tests.** `test_db` `chat_title_backfill_worker`: (b) a fresh import leaves nothing pending and its receipt says it
+was written by the import; (a) with P's backfill holding the worker, Q (needing an import) is deferred, then imported
+when the worker frees, and a project needing only a backfill is started then; (c) six renames on the test thread while
+the worker backfills 60 chats of 20 title lines each all succeed, each renamed chat ending with its 20 earlier titles
+and then the replaced one.

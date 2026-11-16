@@ -32,6 +32,13 @@ bool import_job_start(ImportJob *job, const char *project_dir);
 bool import_job_start_backfill(ImportJob *job, const char *project_dir);
 /* The run the last import_job_poll returned was a backfill. */
 bool import_job_last_was_backfill(const ImportJob *job);
+
+/* What the open project needs from the worker (AUDIT-004 final verification 2a): its import, now or, while the worker
+ * runs another project's job, deferred (the observer must not read the files the import will set aside, so it waits
+ * too); else its chat-title backfill when the worker is free; else nothing. Re-asked whenever a run is polled, so a
+ * deferred import or a waiting backfill starts as soon as the worker frees. */
+typedef enum { IMPORT_NEXT_NONE, IMPORT_NEXT_IMPORT, IMPORT_NEXT_DEFER, IMPORT_NEXT_BACKFILL } ImportNext;
+ImportNext import_job_next(bool needs_import, bool backfill_pending, bool job_busy);
 /* True once per run; copies the project folder, success and reason out. */
 bool import_job_poll(ImportJob *job, char *project_dir, size_t dirlen, bool *succeeded, char *why, size_t whylen);
 bool import_job_busy(const ImportJob *job);

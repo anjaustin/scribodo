@@ -60,6 +60,10 @@ typedef struct {
     size_t n, cap;
 } IdMaps;
 
+/* The receipt of the chat-title backfill (project_backfills, migration 020): written by the backfill, and by every
+ * import since the final verification, whose own titles are complete (store_import.c, bottom). */
+#define TITLE_BACKFILL "chat-titles-legacy"
+
 static const char *mapped(const IdMaps *maps, const char *id)
 {
     for (size_t i = 0; maps && i < maps->n; i++)
@@ -667,6 +671,14 @@ static bool import_once(Db *db, const char *project_dir, const char *data_dir, c
     ok = ok && import_revisions(db, data_dir, pid, &map, &nmap);
     ok = ok && import_saved_files(db, project_dir, pid);
     ok = ok && import_chats(db, data_dir, pid, &chats);
+    /* This import read every title line, so the backfill has nothing to do here; its receipt, in this transaction,
+     * says so, and spares the next open the scan (and the time-matching of untimed titles a copy or sync tool can have
+     * restamped; AUDIT-004 final verification). A resumed import finds it there already. */
+    if (ok)
+        ok = db_run(db, "INSERT IGNORE INTO project_backfills (project_id, name, done_at, detail) VALUES (?,?,?,?)",
+                    (DbArg[4]){ DB_S(pid), DB_S(TITLE_BACKFILL), DB_D((double)time(NULL)),
+                                DB_S("written by the import, which archived every title line") },
+                    4, NULL);
     /* notes and canon before findings: findings name them as related */
     ok = ok && import_records(db, data_dir, pid, REC_NOTE, map, nmap, &recs, &chats);
     ok = ok && import_records(db, data_dir, pid, REC_CANON, map, nmap, &recs, &chats);
@@ -1366,7 +1378,6 @@ bool store_restore(StoreManager *manager, const char *project_dir, char *why, si
  * seq order, the file's titles into the lowest keys and the store's renames after them. Every title and time is kept;
  * only which key holds it changes, in the same transaction. */
 
-#define TITLE_BACKFILL "chat-titles-legacy"
 
 typedef struct {
     char file[PATH_MAX + 128];
@@ -1531,7 +1542,7 @@ bool store_backfill_chat_titles_db(Db *db, const char *pid, const char *project_
     if (done && db_rows_has_columns(&r, 1) && db_cell(&r, 0, 0)) snprintf(detail, detaillen, "%s", db_cell(&r, 0, 0));
     db_rows_free(&r);
     if (done) return true;
-    if (db_in_transaction(db) || !db_begin(db)) return false;
+    if (db_in_transaction(db)) return false; /* its own transactions, one per conversation, never nested */
     char **dirs = NULL;
     size_t nd = 0;
     bool ok = legacy_dirs(project_dir, &dirs, &nd);
@@ -1629,11 +1640,17 @@ bool store_backfill_chat_titles_db(Db *db, const char *pid, const char *project_
             detail_add(detail, detaillen, "%s and %s: ambiguous (one conversation, two histories); ", claims[i].label, claims[j].label);
         }
     for (size_t i = 0; i < nclaims; i++) skipped += claims[i].ambiguous;
+    /* One transaction per conversation, so a rename on the frame thread waits at most for one conversation's rows
+     * (FOR UPDATE), never for the whole project; each is whole, and a death between two leaves the earlier ones done,
+     * which the next run recognises (the archive already starts with the file's titles and times). */
     for (size_t i = 0; ok && i < nclaims; i++) {
         if (claims[i].skip) continue;
         bool applied = false;
-        ok = title_claim_apply(db, &claims[i], &applied);
-        if (applied) {
+        ok = db_begin(db);
+        if (ok) ok = title_claim_apply(db, &claims[i], &applied);
+        if (ok) ok = db_commit(db);
+        else db_rollback(db);
+        if (ok && applied) {
             applied_n++;
             titles_n += claims[i].n - 1;
         }
@@ -1646,17 +1663,18 @@ bool store_backfill_chat_titles_db(Db *db, const char *pid, const char *project_
         memmove(detail + sl, detail, dl + 1);
         memcpy(detail, summary, sl);
     } else snprintf(detail, detaillen, "%s", summary);
-    if (ok) {
+    if (ok) { /* the receipt last, on its own: written only when every conversation is done */
         DbArg a[4] = { DB_S(pid), DB_S(TITLE_BACKFILL), DB_D((double)time(NULL)), DB_S(detail) };
-        ok = db_run(db, "INSERT INTO project_backfills (project_id, name, done_at, detail) VALUES (?,?,?,?)", a, 4, NULL);
+        ok = db_begin(db);
+        if (ok) ok = db_run(db, "INSERT INTO project_backfills (project_id, name, done_at, detail) VALUES (?,?,?,?)", a, 4, NULL);
         if (ok) crash_point("titles.statement");
+        if (ok) ok = db_commit(db);
+        else db_rollback(db);
     }
     for (size_t i = 0; i < nclaims; i++) chat_store_titles_free(claims[i].titles, claims[i].n);
     free(claims);
     for (size_t d = 0; d < nd; d++) free(dirs[d]);
     free(dirs);
-    if (ok) ok = db_commit(db);
-    if (!ok) db_rollback(db);
     if (ran) *ran = true;
     if (skipped_out) *skipped_out = skipped;
     return ok;

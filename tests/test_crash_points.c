@@ -460,7 +460,7 @@ static void titles_state(StoreManager *manager, const char *pid, char *titles, s
 }
 
 /* A project imported before migration 019 (its archive empty, no receipt), renamed once in the store since: the
- * backfill rewrites one row and inserts two, then writes the receipt, all in one transaction. A death after any of
+ * backfill rewrites one row and inserts two in the conversation's transaction, then writes the receipt in its own. A death after any of
  * those statements, then the next open, must leave the file's titles before the store's rename, each once. */
 static void test_titles_points(void)
 {
@@ -482,6 +482,7 @@ static void test_titles_points(void)
         Db *db = store_db(manager);
         CHECK(db && db_run(db, "DELETE t FROM conversation_titles t JOIN conversations c ON c.id = t.conversation_id WHERE c.project_id = ?",
                            (DbArg[1]){ DB_S(pid) }, 1, NULL));
+        CHECK(db_run(db, "DELETE FROM project_backfills WHERE project_id = ?", (DbArg[1]){ DB_S(pid) }, 1, NULL)); /* an old import's state */
         CHECK(chat_store_rename(manager, dir, chat_id, "In the store"));
         long receipts;
         titles_state(manager, pid, got, sizeof(got), &receipts);
@@ -509,11 +510,14 @@ static void test_titles_points(void)
         store_backfill_chat_titles(manager, dir, NULL, 0); /* the next open */
         store_backfill_chat_titles(manager, dir, NULL, 0); /* and the one after: nothing more */
         titles_state(manager, pid, got, sizeof(got), &receipts);
-        bool held = !strcmp(at_death, "Renamed twice") && receipts_at_death == 0 && !strcmp(got, want) && receipts == 1;
+        /* One transaction per conversation, then the receipt's (final verification 2c): at death the conversation is
+         * either untouched or whole, never half, and there is no receipt yet. */
+        bool held = (!strcmp(at_death, "Renamed twice") || !strcmp(at_death, want)) && receipts_at_death == 0 && !strcmp(got, want) &&
+                    receipts == 1;
         CHECK(held);
         if (!held) fprintf(stderr, "    %s#%ld: at death [%s] %ld, after [%s] %ld\n", point, k, at_death, receipts_at_death, got, receipts);
         fprintf(g_matrix, "%s\t%ld\tSIGKILL\tarchive [%s], receipts %ld\trecovered at the next open\tarchive [%s], receipts %ld\t%s\n",
-                point, k, at_death, receipts_at_death, got, receipts, held ? "rolled back whole, then once in order" : "INVARIANT BROKEN");
+                point, k, at_death, receipts_at_death, got, receipts, held ? "each conversation whole, then once in order" : "INVARIANT BROKEN");
         g_rows++;
         store_manager_destroy(manager);
         admin_name("DROP DATABASE %s", name);
