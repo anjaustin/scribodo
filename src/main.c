@@ -1725,6 +1725,13 @@ static void draft_tick(App *app)
     const char *path = editor_path(app->editor);
     bool dirty = path && editor_is_dirty(app->editor);
     (void)draft_controller_tick(&app->draft, path, dirty, GetTime(), draft_editor_text, app->editor);
+    int error = 0;
+    if (draft_controller_take_failure(&app->draft, &error)) {
+        char msg[300];
+        snprintf(msg, sizeof(msg), "Couldn't keep a draft of the unsaved text beside the document (%s); save to keep it",
+                 error ? strerror(error) : "write failed");
+        set_status(app, msg);
+    }
 }
 
 /* ---- chat ---------------------------------------------------------------------- */

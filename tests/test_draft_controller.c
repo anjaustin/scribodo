@@ -299,6 +299,31 @@ static void test_load_while_writing(void)
     draft_controller_destroy(&d);
 }
 
+/* A failed write is reported once per run of failures; a success re-arms it. */
+static void test_failure_reported_once(void)
+{
+    char doc[700], missing[700];
+    make_doc(doc, sizeof(doc), "k.md");
+    snprintf(missing, sizeof(missing), "%s/no-such-dir/k.md", g_dir);
+    DraftController d;
+    draft_controller_init(&d);
+    int error = 0;
+    CHECK(!draft_controller_take_failure(&d, &error));
+    TextSource src = { "a", 0 };
+    CHECK(tick_wait(&d, missing, true, 10.0, &src));
+    CHECK(draft_controller_take_failure(&d, &error) && error != 0);
+    CHECK(!draft_controller_take_failure(&d, &error)); /* once */
+    src.text = "b";
+    CHECK(tick_wait(&d, missing, true, 20.0, &src));
+    CHECK(!draft_controller_take_failure(&d, &error)); /* the same run of failures */
+    CHECK(tick_wait(&d, doc, true, 30.0, &src) && d.path[0]); /* a success */
+    draft_controller_discard(&d);
+    src.text = "c";
+    CHECK(tick_wait(&d, missing, true, 40.0, &src));
+    CHECK(draft_controller_take_failure(&d, &error));
+    draft_controller_destroy(&d);
+}
+
 static void rm_rf(const char *dir)
 {
     DIR *d = opendir(dir);
@@ -333,6 +358,7 @@ int main(void)
         { "switch_while_writing", test_switch_while_writing },
         { "quit_while_writing", test_quit_while_writing },
         { "load_while_writing", test_load_while_writing },
+        { "failure_reported_once", test_failure_reported_once },
     };
     int rc = run_tests(tests, sizeof(tests) / sizeof(tests[0]));
     rm_rf(g_dir);

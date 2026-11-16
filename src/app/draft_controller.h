@@ -28,6 +28,7 @@ typedef struct {
     uint64_t hash;
     /* Written by the worker; read by the frame thread after the join. */
     bool ok;
+    int error; /* errno of a failed write */
     char out[PATH_MAX];
 } DraftWrite;
 
@@ -45,6 +46,9 @@ typedef struct {
     pthread_t thread;
     atomic_bool done;
     DraftWrite write;
+    bool failing;          /* the last write failed (reset by a write that succeeds, or a discard) */
+    bool failure_unread;   /* a failure the app has not reported yet (draft_controller_take_failure) */
+    int failure_error;     /* its errno */
     DraftWriteHook write_hook;
     void *write_hook_ctx;
 } DraftController;
@@ -71,6 +75,9 @@ void draft_controller_wait(DraftController *draft);
  * tick's rule at once: the draft is removed unless it holds unsaved text of `doc` (the open document, NULL for none),
  * in which case it stays complete and the load keeps it as a recovered copy, as before the worker. */
 void draft_controller_before_load(DraftController *draft, const char *doc, bool dirty);
+/* A failed draft write not yet reported: true once per run of failures (a success or a discard re-arms it), with
+ * the write's errno in *error. */
+bool draft_controller_take_failure(DraftController *draft, int *error);
 /* Tests only. */
 void draft_controller_set_write_hook(DraftController *draft, DraftWriteHook hook, void *ctx);
 /* 64-bit FNV-1a of a NUL-terminated string (the draft's change check). */

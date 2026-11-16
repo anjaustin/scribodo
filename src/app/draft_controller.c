@@ -1,5 +1,6 @@
 #include "app/draft_controller.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,7 +26,9 @@ static void run_write(DraftController *draft)
 {
     DraftWrite *w = &draft->write;
     if (draft->write_hook) draft->write_hook(draft->write_hook_ctx);
+    errno = 0;
     w->ok = doc_write_draft(w->doc, w->text, w->len, w->previous, w->out, sizeof(w->out));
+    w->error = w->ok ? 0 : errno;
 }
 
 static void *write_worker(void *arg)
@@ -54,9 +57,23 @@ static void adopt(DraftController *draft)
     if (w->ok) {
         snprintf(draft->path, sizeof(draft->path), "%s", w->out);
         draft->hash = w->hash;
-    } else if (!draft->path[0]) {
-        draft->doc[0] = '\0'; /* no draft and none coming: the document owns nothing yet */
+        draft->failing = false;
+        return;
     }
+    if (!draft->failing) { /* reported once per run of failures */
+        draft->failing = true;
+        draft->failure_unread = true;
+        draft->failure_error = w->error;
+    }
+    if (!draft->path[0]) draft->doc[0] = '\0'; /* no draft and none coming: the document owns nothing yet */
+}
+
+bool draft_controller_take_failure(DraftController *draft, int *error)
+{
+    if (!draft->failure_unread) return false;
+    draft->failure_unread = false;
+    if (error) *error = draft->failure_error;
+    return true;
 }
 
 void draft_controller_set_write_hook(DraftController *draft, DraftWriteHook hook, void *ctx)
@@ -97,6 +114,7 @@ void draft_controller_discard(DraftController *draft)
     if (draft->path[0]) unlink(draft->path);
     draft->path[0] = draft->doc[0] = '\0';
     draft->hash = 0;
+    draft->failing = false;
     if (draft->busy) draft->discard_pending = true;
 }
 
