@@ -1,5 +1,6 @@
 # Cited build/ paths that are not evidence (tools/evidence_check.py, AUDIT-004 F1). One per line:
-# PATH<TAB>REASON. PATH may be a directory (covers what is under it) or a glob. Evidence never goes here: a cited
+# PATH<TAB>REASON. PATH names exactly one cited path; a glob's * and ? stay within one path component, and only a
+# trailing /** covers what is under a directory. Evidence never goes here: a cited
 # run, log or result that exists is archived (docs/EVIDENCE.md); one that exists nowhere goes in evidence_lost.txt.
 # A path under a directory a gate deletes is excused only by an entry naming exactly that path.
 #
@@ -27,6 +28,8 @@ build/redteam017-mariadb-clean	a clean Connector/C build tree; its log and resul
 build/redteam017-shallow	the clean shallow checkout itself; its logs are archived (2026-11-09-audit)
 build/wt-ca908bd	a git worktree of commit ca908bd used to build a baseline
 build/unit	prose for make's unit suites ("build/unit/database matrices"), not a directory
+build/unit/database	prose for make's unit and database suites ("build/unit/database matrices"), not a directory
+build/headless/sanitizer	prose for the headless and sanitizer jobs, not a directory
 build/headless	prose for the headless suites ("build/headless/sanitizer jobs"), not a directory
 build/test/DB	prose for make all/test/dbtest ("build/test/DB"), not a directory
 build/hangs/NAME-<time>.txt	the watchdog's file-name format (docs/TESTING.md)

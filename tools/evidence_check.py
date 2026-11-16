@@ -19,7 +19,6 @@ Without the archive folder (hosted CI) the check is skipped, and says so. Exit 1
     tools/evidence_check.py [--root DIR] [--evidence DIR] [--build DIR] [--list]
 """
 import argparse
-import fnmatch
 import os
 import re
 import sys
@@ -245,14 +244,37 @@ def load_list(path, fields):
     return entries
 
 
+def entry_regex(pattern):
+    """A list entry as a regular expression: "*" and "?" stay inside one path component, "<name>" is one component,
+    and only a trailing "/**" reaches below (the entry's directory and everything under it)."""
+    subtree = pattern.endswith("/**")
+    if subtree:
+        pattern = pattern[:-3]
+    out = []
+    i = 0
+    while i < len(pattern):
+        c = pattern[i]
+        if c == "<" and ">" in pattern[i:]:
+            out.append(r"[^/]+")
+            i = pattern.index(">", i)
+        elif c == "*":
+            out.append(r"[^/]*")
+        elif c == "?":
+            out.append(r"[^/]")
+        else:
+            out.append(re.escape(c))
+        i += 1
+    return re.compile("".join(out) + (r"(/.*)?" if subtree else "") + r"\Z")
+
+
 def listed(path, entries):
-    """The entry naming the path itself, else the first naming a directory above it or a glob matching it."""
+    """The entry naming exactly this path (a citation's own text, globs included), else the first whose pattern
+    matches it under entry_regex. A plain directory entry does not cover what is under it; "DIR/**" does."""
     for e in entries:
         if e[0].rstrip("/") == path:
             return e
     for e in entries:
-        pat = e[0].rstrip("/")
-        if path == pat or path.startswith(pat + "/") or fnmatch.fnmatchcase(path, pat):
+        if entry_regex(e[0].rstrip("/") if not e[0].endswith("/**") else e[0]).match(path):
             return e
     return None
 

@@ -1,5 +1,5 @@
 # Cited build/ paths that existed nowhere, neither in build/ nor in an archive, when AUDIT-004 ran (2026-11-15).
-# PATH<TAB>CITED BY<TAB>NOTE. tools/evidence_check.py accepts these and fails if one reappears under build/
+# PATH<TAB>CITED BY<TAB>NOTE. PATH matches as in evidence_not_archived.txt (exact; * within a component; /** below). tools/evidence_check.py accepts these and fails if one reappears under build/
 # unarchived. The list only shrinks: a new citation of a missing path is a violation, not an entry here.
 #
 # evidence lost (AUDIT-004 F1)

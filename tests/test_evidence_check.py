@@ -185,10 +185,39 @@ class CheckTests(unittest.TestCase):
 
     def test_not_evidence_entries_cover_paths_dirs_and_globs(self):
         t = self.tree(docs="`build/scribodo` `build/venv-a/lib/x` `build/live-1/scribodo`\n",
-                      allow="build/scribodo\tthe app\nbuild/venv-a\tenv\nbuild/live-*/scribodo\tfrozen binary\n")
+                      allow="build/scribodo\tthe app\nbuild/venv-a/**\tenv\nbuild/live-*/scribodo\tfrozen binary\n")
         code, out = t.run()
         self.assertEqual(code, 0, out)
         self.assertIn("3 not-evidence", out)
+
+    def test_entries_do_not_excuse_what_is_under_them(self):
+        # The red-team's crafted cases: each passed as "not-evidence" under a plain directory entry.
+        allow = ("build/ui\tthe gate root, named\nbuild/wt-ca908bd\ta worktree\nbuild/sanitize\ta build tree\n"
+                 "build/test/DB\tprose\nbuild/answer-live-*/scribodo\tfrozen binary\n")
+        for cited in ("build/ui/fit-on3/result.json", "build/wt-ca908bd/build/observer/run1/judge.log",
+                      "build/sanitize/run/result.json", "build/test/DB/x.log", "build/answer-live-1/run/scribodo"):
+            with self.subTest(cited=cited):
+                t = self.tree(docs="`%s`\n" % cited, allow=allow)
+                code, out = t.run()
+                self.assertEqual(code, 1, out)
+                self.assertIn(cited, out)
+                self.assertNotIn("not-evidence)", out.splitlines()[-1])
+
+    def test_a_star_stays_in_one_component(self):
+        self.assertTrue(ec.entry_regex("build/memory-continuity-*").match("build/memory-continuity-ui.log"))
+        self.assertFalse(ec.entry_regex("build/memory-continuity-*").match("build/memory-continuity-x/run/a.log"))
+        self.assertTrue(ec.entry_regex("build/x/**").match("build/x"))
+        self.assertTrue(ec.entry_regex("build/x/**").match("build/x/a/b"))
+        self.assertFalse(ec.entry_regex("build/x/**").match("build/xy"))
+        self.assertTrue(ec.entry_regex("build/ui/<script>/work").match("build/ui/smoke/work"))
+
+    def test_lost_entries_are_exact_too(self):
+        t = self.tree(docs="`build/gone/run/result.json` `build/old-a/run.log`\n",
+                      lost="build/gone/run\tdocs/REPORT.md\tlost\nbuild/old-*\tdocs/REPORT.md\tlost\n")
+        code, out = t.run()
+        self.assertEqual(code, 1)
+        self.assertIn("build/gone/run/result.json is in no archive", out)
+        self.assertIn("build/old-a/run.log is in no archive", out)
 
     def test_lost_entries_are_accepted_until_the_path_reappears(self):
         t = self.tree(docs="`build/gone/run` `build/old-x.log`\n",
