@@ -334,13 +334,26 @@ static void test_tools_dir(void)
     CHECK(tools_dir_resolve(app, shorter, need));
 }
 
-/* --list-fds: this binary as the child, printing its open descriptors on one line ("fds 0 1 2"). */
+/* --list-fds: this binary as the child. It prints which of 0-2 are open and how many of its other descriptors are one
+ * of the parent's held files ("fds 0 1 2 leaks 0"). Held files are named by device and inode in SCRIBODO_TEST_HELD,
+ * so a descriptor a sanitizer runtime opens for itself at start (seen on hosted CI under ASan) is not counted, and a
+ * leaked descriptor is counted whatever number it has. */
 static int list_fds_main(void)
 {
-    char line[1024] = "fds";
+    char line[256] = "fds";
     size_t n = strlen(line);
-    for (int fd = 0; fd < 1024 && n + 8 < sizeof(line); fd++)
+    for (int fd = 0; fd < 3; fd++)
         if (fcntl(fd, F_GETFD) != -1) n += (size_t)snprintf(line + n, sizeof(line) - n, " %d", fd);
+    const char *held = getenv("SCRIBODO_TEST_HELD");
+    int leaks = 0;
+    for (int fd = 3; fd < 4096; fd++) {
+        struct stat st;
+        if (fcntl(fd, F_GETFD) == -1 || fstat(fd, &st) != 0) continue;
+        char id[64];
+        snprintf(id, sizeof(id), ",%llu:%llu,", (unsigned long long)st.st_dev, (unsigned long long)st.st_ino);
+        if (!held || strstr(held, id)) leaks++; /* no list: every extra descriptor counts */
+    }
+    snprintf(line + n, sizeof(line) - n, " leaks %d", leaks);
     fprintf(stdout, "%s\n", line);
     fprintf(stderr, "%s\n", line);
     return 1;
@@ -357,12 +370,21 @@ static void hold_leaky_descriptors(int held[3])
     held[1] = p[0];
     held[2] = p[1];
     for (int i = 0; i < 3; i++) CHECK(held[i] > 2 && !(fcntl(held[i], F_GETFD) & FD_CLOEXEC));
+    char ids[256] = ",";
+    for (int i = 0; i < 3; i++) {
+        struct stat st;
+        if (held[i] >= 0 && fstat(held[i], &st) == 0)
+            snprintf(ids + strlen(ids), sizeof(ids) - strlen(ids), "%llu:%llu,", (unsigned long long)st.st_dev,
+                     (unsigned long long)st.st_ino);
+    }
+    setenv("SCRIBODO_TEST_HELD", ids, 1); /* read by --list-fds in the children */
 }
 
 static void release(int held[3])
 {
     for (int i = 0; i < 3; i++)
         if (held[i] >= 0) close(held[i]);
+    unsetenv("SCRIBODO_TEST_HELD");
 }
 
 /* Each spawn site hands its child 0-2 and nothing else (AUDIT-004; the register's "spawned tools inherit the app's
@@ -387,7 +409,7 @@ static void test_child_descriptors(void)
     close(out[0]);
     int st = 0;
     CHECK(waitpid(pid, &st, 0) == pid && WIFEXITED(st));
-    CHECK(!strcmp(buf, "fds 0 1 2\n"));
+    CHECK(!strcmp(buf, "fds 0 1 2 leaks 0\n"));
 
     /* The supervisor: the script is the child, and execs the lister with its stderr (the supervisor's pipe). */
     char dir[PATH_MAX], script[PATH_MAX + 32], text[PATH_MAX + 64];
@@ -396,7 +418,7 @@ static void test_child_descriptors(void)
     snprintf(text, sizeof(text), "#!/bin/sh\nexec '%s' --list-fds\n", g_self);
     write_file(script, text, 0700);
     ServiceSupervisorResult r = run_up(dir);
-    CHECK(r.exit_code == 1 && !strcmp(r.reason, "fds 0 1 2"));
+    CHECK(r.exit_code == 1 && !strcmp(r.reason, "fds 0 1 2 leaks 0"));
 
     /* The backup pipeline: backup.sh is the child, the lister's stderr is the error line. */
     snprintf(script, sizeof(script), "%s/backup.sh", dir);
@@ -407,7 +429,7 @@ static void test_child_descriptors(void)
     CHECK(mkdir(project, 0700) == 0);
     setenv("SCRIBODO_BACKUPS", backups, 1);
     CHECK(!backup_project(g_store, dir, project, dest, sizeof(dest), why, sizeof(why)));
-    CHECK(strstr(why, ": fds 0 1 2") && why[strlen(why) - 1] == '2');
+    CHECK(strstr(why, ": fds 0 1 2 leaks 0") && why[strlen(why) - 1] == '0');
     unsetenv("SCRIBODO_BACKUPS");
     release(held);
 

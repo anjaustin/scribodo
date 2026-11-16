@@ -190,7 +190,38 @@ The tooling remediation stream's gate logs (`journal/audit004-tooling.md`) are i
 `scribodo-evidence-2026-11-15-audit004-tooling.tar.gz` (15 files), with its manifest and `SHA256SUMS` entry.
 Archive SHA-256: `8333d169392724b61a11f2c55ac6fe8d39ce1ad1fe40f6d4f4630916f470e5b2`.
 
+The 33 files the remediation's red team found under cited directories and in no archive (32 under
+`build/gap003`: the gates-exit files, the hosted CI and acceptance logs, `restart-fake-3`, `restart-real-2`,
+`series-real-3`, the soak and restart logs, `sysmem`; and `build/hangs/crash-points-183626.txt`) are in
+`scribodo-evidence-2026-11-15-audit004c.tar.gz`, with its manifest and `SHA256SUMS` entry. Archive SHA-256:
+`b3c358881bd7f3dd905348dfbb4d70fff7cc3cff4c977ff2e3fb61dbaf463939`.
+
+The tooling stream's red-team and verification gate logs are in
+`scribodo-evidence-2026-11-15-audit004-tooling-r.tar.gz` (12 files; SHA-256
+`da7913a063ca00fbfaceb699142bc6f8c24060eee7a6d797eaaa497bdcca6d78`) and
+`scribodo-evidence-2026-11-15-audit004-tooling-v.tar.gz` (12 files; SHA-256
+`2141f13738b812f0800210cc175f045df363e10fa8c6096fd885c5e6645f3fe3`), each with its manifest and `SHA256SUMS` entry.
+
+The remediation streams' gate evidence is in `scribodo-evidence-2026-11-15-audit004d.tar.gz` (1,195 files, 9.7 MB
+compressed), with its manifest and `SHA256SUMS` entry:
+- the observer stream's per-commit gate logs, exit files, gate scripts and yardstick runs
+  (`build/wt-observer/build/audit004-gates`, including `yard-runs/`);
+- the data/text stream's gate logs, exit files and red-team probes through its second round
+  (`build/audit004-text/backfill`, `build/audit004-text/r1b`, `build/audit004-text/r2b`,
+  `build/audit004-text/redteam` and the per-item logs beside them);
+- the merge gates of `705415e` and `d419986` (`build/merge-gates/main-705415e`, `build/merge-gates/main-d419986`);
+- the gate outputs left in the other worktrees (`build/wt-main/build/uitest-coord.log` and `build/wt-main/build/ui`,
+  `build/wt-services/build/servicestest-logs`, `build/wt-text/build/crash/matrix.tsv`).
+
+Binaries, objects and debug symbols are excluded. The journals keep citing the worktree paths. The archive holds
+them under those same paths, so the citations stay checkable after the worktrees are removed. Archive SHA-256:
+`df1c9555ab506d91f943ebf1788c47c41433472bb248bea45e2ceea516957d1e`.
+
 Since 2026-11-15 `make test` runs `tools/evidence_check.py`. Every cited `build/` path must be one of:
-- archived (checked against each tarball's real file list);
-- declared not evidence (`tests/fixtures/evidence_not_archived.txt`);
-- recorded lost (`tests/fixtures/evidence_lost.txt`).
+- archived: checked against each tarball's real file list, so a cited directory counts only when every file under
+  it is archived, and a file stem (`build/recover/gates2`) resolves to its files;
+- declared not evidence (`tests/fixtures/evidence_not_archived.txt`), by exact entry, with `DIR/**` for a subtree;
+- recorded lost (`tests/fixtures/evidence_lost.txt`). A lost path that reappears on disk fails.
+
+A missing archive folder fails, except on a GitHub-hosted runner (`CI` and `RUNNER_ENVIRONMENT=github-hosted`) or
+with `SCRIBODO_EVIDENCE_SKIP` set.
