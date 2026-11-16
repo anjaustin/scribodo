@@ -364,80 +364,95 @@ static void show(char *out, size_t cap, const char *label, const char *v)
     snprintf(out + o, cap - o, "\"");
 }
 
-static void run_expect(Script *s, ScriptHost *h, Tokens *t)
+/* The editor and the pane geometry: text, selection, length, dirty and read-only state, scrolling, widths. Returns ok (0 or 1), or -1 when `what` is not one of these. */
+static int expect_editor(Script *s, ScriptHost *h, Tokens *t, const char *what, char *detail, size_t detail_cap)
 {
-    char detail[1200] = "";
     bool ok = false;
-    const char *what = t->n > 1 ? t->tok[1] : "";
     Editor *e = h->editor;
-
+    (void)s;
     if (!strcmp(what, "text") && t->n == 3) {
         char *txt = editor_text_utf8(e);
         ok = txt && !strcmp(txt, t->tok[2]);
-        if (!ok) show(detail, sizeof(detail), "got", txt);
+        if (!ok) show(detail, detail_cap, "got", txt);
         free(txt);
     } else if (!strcmp(what, "selection") && t->n == 4) {
         size_t a, c;
         editor_get_selection(e, &a, &c);
         ok = a == strtoul(t->tok[2], NULL, 10) && c == strtoul(t->tok[3], NULL, 10);
-        snprintf(detail, sizeof(detail), "got anchor %zu cursor %zu", a, c);
+        snprintf(detail, detail_cap, "got anchor %zu cursor %zu", a, c);
     } else if (!strcmp(what, "cursor") && t->n == 3) {
         size_t a, c;
         editor_get_selection(e, &a, &c);
         ok = c == strtoul(t->tok[2], NULL, 10);
-        snprintf(detail, sizeof(detail), "got cursor %zu", c);
+        snprintf(detail, detail_cap, "got cursor %zu", c);
     } else if (!strcmp(what, "anchor") && t->n == 3) {
         size_t a, c;
         editor_get_selection(e, &a, &c);
         ok = a == strtoul(t->tok[2], NULL, 10);
-        snprintf(detail, sizeof(detail), "got anchor %zu", a);
+        snprintf(detail, detail_cap, "got anchor %zu", a);
     } else if (!strcmp(what, "cursor_range") && t->n == 4) {
         size_t a, c;
         editor_get_selection(e, &a, &c);
         ok = c >= strtoul(t->tok[2], NULL, 10) && c <= strtoul(t->tok[3], NULL, 10);
-        snprintf(detail, sizeof(detail), "got cursor %zu", c);
+        snprintf(detail, detail_cap, "got cursor %zu", c);
     } else if (!strcmp(what, "length") && t->n == 4) {
         size_t n = editor_length(e);
         ok = n >= strtoul(t->tok[2], NULL, 10) && n <= strtoul(t->tok[3], NULL, 10);
-        snprintf(detail, sizeof(detail), "got length %zu", n);
-    } else if (!strcmp(what, "chat_count") && t->n == 3 && h->chat) {
+        snprintf(detail, detail_cap, "got length %zu", n);
+    } else if (!strcmp(what, "element_w") && t->n == 5 && h->element) {
+        Rectangle r = h->element(h->ctx, t->tok[2]);
+        ok = r.width >= strtof(t->tok[3], NULL) && r.width <= strtof(t->tok[4], NULL);
+        snprintf(detail, detail_cap, "got %.1f", r.width);
+    } else if (!strcmp(what, "element_y") && t->n == 5 && h->element) {
+        /* Where a click on the element would land, after any scroll the lookup applied. */
+        Rectangle r = h->element(h->ctx, t->tok[2]);
+        float y = r.y + r.height / 2;
+        ok = r.width > 0 && y >= strtof(t->tok[3], NULL) && y <= strtof(t->tok[4], NULL);
+        snprintf(detail, detail_cap, "got %.1f", y);
+    } else if (!strcmp(what, "dirty") && t->n == 3) {
+        ok = editor_is_dirty(e) == yes(t->tok[2]);
+    } else if (!strcmp(what, "readonly") && t->n == 3) {
+        ok = editor_is_read_only(e) == yes(t->tok[2]);
+    } else if (!strcmp(what, "visible") && t->n == 4) {
+        ok = editor_index_visible(e, strtoul(t->tok[2], NULL, 10)) == yes(t->tok[3]);
+        snprintf(detail, detail_cap, "scroll_y %.1f", editor_scroll_y(e));
+    } else if (!strcmp(what, "scrolled") && t->n == 3) {
+        ok = (editor_scroll_y(e) > 0.5f) == yes(t->tok[2]);
+        snprintf(detail, detail_cap, "scroll_y %.1f", editor_scroll_y(e));
+    } else if ((!strcmp(what, "explorer_w") || !strcmp(what, "observer_w") || !strcmp(what, "editor_w")) && t->n == 4) {
+        float v = !strcmp(what, "explorer_w") ? *h->explorer_w
+                : !strcmp(what, "observer_w") ? *h->observer_w : h->editor_rect->width;
+        ok = v >= strtof(t->tok[2], NULL) && v <= strtof(t->tok[3], NULL);
+        snprintf(detail, detail_cap, "got %.1f", v);
+    } else {
+        return -1;
+    }
+    return ok;
+}
+
+/* The chat session: counts, sequence receipts, the cache, the last message, busy states. Returns ok (0 or 1), or -1 when `what` is not one of these. */
+static int expect_chat(Script *s, ScriptHost *h, Tokens *t, const char *what, char *detail, size_t detail_cap)
+{
+    bool ok = false;
+    (void)s;
+    if (!strcmp(what, "chat_count") && t->n == 3 && h->chat) {
         chat_lock(h->chat);
         size_t n = chat_count(h->chat);
         chat_unlock(h->chat);
         ok = n == strtoul(t->tok[2], NULL, 10);
-        snprintf(detail, sizeof(detail), "got %zu", n);
+        snprintf(detail, detail_cap, "got %zu", n);
     } else if ((!strcmp(what, "chat_first_seq") || !strcmp(what, "chat_last_seq") || !strcmp(what, "chat_excerpt_start")) && t->n == 3 && h->chat) {
         chat_lock(h->chat);
         size_t n = chat_count(h->chat);
         const ChatMessage *m = n ? chat_message(h->chat, !strcmp(what, "chat_first_seq") ? 0 : n - 1) : NULL;
         int64_t value = m ? (!strcmp(what, "chat_excerpt_start") ? (int64_t)m->excerpt_start : m->sequence) : -1;
         ok = m && m->sequence_known && value == strtoll(t->tok[2], NULL, 10);
-        snprintf(detail, sizeof(detail), "got %lld", (long long)value);
+        snprintf(detail, detail_cap, "got %lld", (long long)value);
         chat_unlock(h->chat);
     } else if (!strcmp(what, "chat_cache_max") && t->n == 3 && h->history_cache_bytes) {
         size_t bytes = h->history_cache_bytes(h->ctx);
         ok = bytes <= strtoull(t->tok[2], NULL, 10);
-        snprintf(detail, sizeof(detail), "got %zu cache bytes", bytes);
-    } else if (!strcmp(what, "memory_enabled") && t->n == 3 && h->memory_enabled) {
-        ok = h->memory_enabled(h->ctx) == yes(t->tok[2]);
-    } else if (!strcmp(what, "memory_sources_none") && t->n == 2 && h->memory_sources) {
-        /* No sources at all (memory off for the conversation, or no reply): distinct from "sources without X". */
-        char *sources = h->memory_sources(h->ctx);
-        ok = !sources || !sources[0];
-        show(detail, sizeof(detail), "memory_sources", sources ? sources : "");
-        free(sources);
-    } else if ((!strcmp(what, "memory_sources") || !strcmp(what, "memory_sources_not")) && t->n == 3 && h->memory_sources) {
-        char *sources = h->memory_sources(h->ctx);
-        bool found = sources && strstr(sources, t->tok[2]);
-        ok = !strcmp(what, "memory_sources") ? found : (sources && !found); /* no reply is not "sources without X" */
-        show(detail, sizeof(detail), "memory_sources", sources ? sources : "");
-        free(sources);
-    } else if ((!strcmp(what, "recall") || !strcmp(what, "recall_not")) && t->n == 3 && h->recall_text) {
-        char *text = h->recall_text(h->ctx);
-        bool found = text && strstr(text, t->tok[2]);
-        ok = !strcmp(what, "recall") ? found : (text && !found);
-        show(detail, sizeof(detail), "recall", text ? text : "");
-        free(text);
+        snprintf(detail, detail_cap, "got %zu cache bytes", bytes);
     } else if (!strcmp(what, "history_busy") && t->n == 3 && h->history_busy) {
         ok = h->history_busy(h->ctx) == yes(t->tok[2]);
     } else if (!strcmp(what, "chat_unsaved") && t->n == 3 && h->chat) {
@@ -450,50 +465,125 @@ static void run_expect(Script *s, ScriptHost *h, Tokens *t)
         for (size_t i = 0; i < n; i++) notes += chat_message(h->chat, i)->is_note;
         chat_unlock(h->chat);
         ok = notes == strtoul(t->tok[2], NULL, 10);
-        snprintf(detail, sizeof(detail), "got %zu", notes);
+        snprintf(detail, detail_cap, "got %zu", notes);
     } else if (!strcmp(what, "chat_last") && t->n == 3 && h->chat) {
         chat_lock(h->chat);
         size_t n = chat_count(h->chat);
         const ChatMessage *m = n ? chat_message(h->chat, n - 1) : NULL;
         ok = m && strstr(m->content, t->tok[2]);
-        show(detail, sizeof(detail), "last", m ? m->content : "(none)");
+        show(detail, detail_cap, "last", m ? m->content : "(none)");
         chat_unlock(h->chat);
     } else if (!strcmp(what, "chat_last_not") && t->n == 3 && h->chat) {
         chat_lock(h->chat);
         size_t n = chat_count(h->chat);
         const ChatMessage *m = n ? chat_message(h->chat, n - 1) : NULL;
         ok = m && !strstr(m->content, t->tok[2]);
-        show(detail, sizeof(detail), "last", m ? m->content : "(none)");
+        show(detail, detail_cap, "last", m ? m->content : "(none)");
         chat_unlock(h->chat);
-    } else if (!strcmp(what, "element_w") && t->n == 5 && h->element) {
-        Rectangle r = h->element(h->ctx, t->tok[2]);
-        ok = r.width >= strtof(t->tok[3], NULL) && r.width <= strtof(t->tok[4], NULL);
-        snprintf(detail, sizeof(detail), "got %.1f", r.width);
-    } else if (!strcmp(what, "element_y") && t->n == 5 && h->element) {
-        /* Where a click on the element would land, after any scroll the lookup applied. */
-        Rectangle r = h->element(h->ctx, t->tok[2]);
-        float y = r.y + r.height / 2;
-        ok = r.width > 0 && y >= strtof(t->tok[3], NULL) && y <= strtof(t->tok[4], NULL);
-        snprintf(detail, sizeof(detail), "got %.1f", y);
     } else if (!strcmp(what, "chat_busy") && t->n == 3 && h->chat) {
         ok = chat_busy(h->chat) == yes(t->tok[2]);
-    } else if (!strcmp(what, "dirty") && t->n == 3) {
-        ok = editor_is_dirty(e) == yes(t->tok[2]);
-    } else if (!strcmp(what, "readonly") && t->n == 3) {
-        ok = editor_is_read_only(e) == yes(t->tok[2]);
-    } else if ((!strcmp(what, "status") || !strcmp(what, "status_not")) && t->n == 3) {
+    } else {
+        return -1;
+    }
+    return ok;
+}
+
+/* Local memory and recall: whether memory is on, the as-of sources, the recall result. Returns ok (0 or 1), or -1 when `what` is not one of these. */
+static int expect_memory(Script *s, ScriptHost *h, Tokens *t, const char *what, char *detail, size_t detail_cap)
+{
+    bool ok = false;
+    (void)s;
+    if (!strcmp(what, "memory_enabled") && t->n == 3 && h->memory_enabled) {
+        ok = h->memory_enabled(h->ctx) == yes(t->tok[2]);
+    } else if (!strcmp(what, "memory_sources_none") && t->n == 2 && h->memory_sources) {
+        /* No sources at all (memory off for the conversation, or no reply): distinct from "sources without X". */
+        char *sources = h->memory_sources(h->ctx);
+        ok = !sources || !sources[0];
+        show(detail, detail_cap, "memory_sources", sources ? sources : "");
+        free(sources);
+    } else if ((!strcmp(what, "memory_sources") || !strcmp(what, "memory_sources_not")) && t->n == 3 && h->memory_sources) {
+        char *sources = h->memory_sources(h->ctx);
+        bool found = sources && strstr(sources, t->tok[2]);
+        ok = !strcmp(what, "memory_sources") ? found : (sources && !found); /* no reply is not "sources without X" */
+        show(detail, detail_cap, "memory_sources", sources ? sources : "");
+        free(sources);
+    } else if ((!strcmp(what, "recall") || !strcmp(what, "recall_not")) && t->n == 3 && h->recall_text) {
+        char *text = h->recall_text(h->ctx);
+        bool found = text && strstr(text, t->tok[2]);
+        ok = !strcmp(what, "recall") ? found : (text && !found);
+        show(detail, detail_cap, "recall", text ? text : "");
+        free(text);
+    } else {
+        return -1;
+    }
+    return ok;
+}
+
+/* What the views show: the status line, the clipboard, findings, attachments, the Explorer, the record panel. Returns ok (0 or 1), or -1 when `what` is not one of these. */
+static int expect_panels(Script *s, ScriptHost *h, Tokens *t, const char *what, char *detail, size_t detail_cap)
+{
+    bool ok = false;
+    (void)s;
+    if ((!strcmp(what, "status") || !strcmp(what, "status_not")) && t->n == 3) {
         const char *st = h->status(h->ctx);
         bool has = st && strstr(st, t->tok[2]);
         ok = !strcmp(what, "status") ? has : (st && !has);
-        show(detail, sizeof(detail), "status", st);
+        show(detail, detail_cap, "status", st);
     } else if (!strcmp(what, "clipboard") && t->n == 3) {
         const char *c = input_get_clipboard();
         ok = c && !strcmp(c, t->tok[2]);
-        show(detail, sizeof(detail), "clipboard", c);
-    } else if (!strcmp(what, "file") && t->n == 4) {
+        show(detail, detail_cap, "clipboard", c);
+    } else if ((!strcmp(what, "findings_has") || !strcmp(what, "findings_not")) && t->n == 3 && h->findings_text) {
+        char *c = h->findings_text(h->ctx);
+        bool has = c && strstr(c, t->tok[2]);
+        ok = !strcmp(what, "findings_has") ? has : (c && !has);
+        show(detail, detail_cap, "findings", c);
+        free(c);
+    } else if (!strcmp(what, "attached") && t->n == 3 && h->attached_text) {
+        char *c = h->attached_text(h->ctx);
+        ok = c && !strcmp(c, t->tok[2]);
+        show(detail, detail_cap, "attached", c);
+        free(c);
+    } else if (!strcmp(what, "observer_status") && t->n == 3 && h->observer_status) {
+        char *c = h->observer_status(h->ctx);
+        ok = c && strstr(c, t->tok[2]);
+        show(detail, detail_cap, "observer", c);
+        free(c);
+    } else if (!strcmp(what, "explorer_has") && t->n == 3 && h->explorer_text) {
+        char *c = h->explorer_text(h->ctx);
+        ok = false;
+        for (char *save = NULL, *l = c ? strtok_r(c, "\n", &save) : NULL; l && !ok; l = strtok_r(NULL, "\n", &save))
+            ok = !strcmp(l, t->tok[2]);
+        snprintf(detail, detail_cap, "not listed");
+        free(c);
+    } else if (!strcmp(what, "findings_count") && t->n == 3 && h->findings_text) {
+        char *c = h->findings_text(h->ctx);
+        int count = 0;
+        for (char *p = c; p && *p; p++) count += *p == '\n';
+        ok = c && count == atoi(t->tok[2]);
+        snprintf(detail, detail_cap, "found %d", count);
+        free(c);
+    } else if (!strcmp(what, "record") && t->n == 3 && h->record_text) {
+        /* The open note/canon panel: its header and text ("" when closed). */
+        char *c = h->record_text(h->ctx);
+        ok = c && strstr(c, t->tok[2]);
+        show(detail, detail_cap, "record", c);
+        free(c);
+    } else {
+        return -1;
+    }
+    return ok;
+}
+
+/* Files on disk: whole contents, matching lines, directory entries. Returns ok (0 or 1), or -1 when `what` is not one of these. */
+static int expect_files(Script *s, ScriptHost *h, Tokens *t, const char *what, char *detail, size_t detail_cap)
+{
+    bool ok = false;
+    (void)s;
+    if (!strcmp(what, "file") && t->n == 4) {
         char *c = slurp(t->tok[2]);
         ok = c && !strcmp(c, t->tok[3]);
-        show(detail, sizeof(detail), "file", c);
+        show(detail, detail_cap, "file", c);
         free(c);
     } else if (!strcmp(what, "lines") && t->n == 5) {
         /* Lines of a file containing a substring (e.g. versions in a log). */
@@ -507,43 +597,7 @@ static void run_expect(Script *s, ScriptHost *h, Tokens *t)
         }
         free(c);
         ok = count == atoi(t->tok[4]);
-        snprintf(detail, sizeof(detail), "found %d", count);
-    } else if ((!strcmp(what, "findings_has") || !strcmp(what, "findings_not")) && t->n == 3 && h->findings_text) {
-        char *c = h->findings_text(h->ctx);
-        bool has = c && strstr(c, t->tok[2]);
-        ok = !strcmp(what, "findings_has") ? has : (c && !has);
-        show(detail, sizeof(detail), "findings", c);
-        free(c);
-    } else if (!strcmp(what, "attached") && t->n == 3 && h->attached_text) {
-        char *c = h->attached_text(h->ctx);
-        ok = c && !strcmp(c, t->tok[2]);
-        show(detail, sizeof(detail), "attached", c);
-        free(c);
-    } else if (!strcmp(what, "observer_status") && t->n == 3 && h->observer_status) {
-        char *c = h->observer_status(h->ctx);
-        ok = c && strstr(c, t->tok[2]);
-        show(detail, sizeof(detail), "observer", c);
-        free(c);
-    } else if (!strcmp(what, "explorer_has") && t->n == 3 && h->explorer_text) {
-        char *c = h->explorer_text(h->ctx);
-        ok = false;
-        for (char *save = NULL, *l = c ? strtok_r(c, "\n", &save) : NULL; l && !ok; l = strtok_r(NULL, "\n", &save))
-            ok = !strcmp(l, t->tok[2]);
-        snprintf(detail, sizeof(detail), "not listed");
-        free(c);
-    } else if (!strcmp(what, "findings_count") && t->n == 3 && h->findings_text) {
-        char *c = h->findings_text(h->ctx);
-        int count = 0;
-        for (char *p = c; p && *p; p++) count += *p == '\n';
-        ok = c && count == atoi(t->tok[2]);
-        snprintf(detail, sizeof(detail), "found %d", count);
-        free(c);
-    } else if (!strcmp(what, "record") && t->n == 3 && h->record_text) {
-        /* The open note/canon panel: its header and text ("" when closed). */
-        char *c = h->record_text(h->ctx);
-        ok = c && strstr(c, t->tok[2]);
-        show(detail, sizeof(detail), "record", c);
-        free(c);
+        snprintf(detail, detail_cap, "found %d", count);
     } else if (!strcmp(what, "files") && t->n == 5) {
         int count = 0;
         DIR *d = opendir(t->tok[2]);
@@ -552,28 +606,41 @@ static void run_expect(Script *s, ScriptHost *h, Tokens *t)
             if (strstr(ent->d_name, t->tok[3])) count++;
         if (d) closedir(d);
         ok = count == atoi(t->tok[4]);
-        snprintf(detail, sizeof(detail), "found %d", count);
-    } else if (!strcmp(what, "visible") && t->n == 4) {
-        ok = editor_index_visible(e, strtoul(t->tok[2], NULL, 10)) == yes(t->tok[3]);
-        snprintf(detail, sizeof(detail), "scroll_y %.1f", editor_scroll_y(e));
-    } else if (!strcmp(what, "scrolled") && t->n == 3) {
-        ok = (editor_scroll_y(e) > 0.5f) == yes(t->tok[2]);
-        snprintf(detail, sizeof(detail), "scroll_y %.1f", editor_scroll_y(e));
-    } else if ((!strcmp(what, "explorer_w") || !strcmp(what, "observer_w") || !strcmp(what, "editor_w")) && t->n == 4) {
-        float v = !strcmp(what, "explorer_w") ? *h->explorer_w
-                : !strcmp(what, "observer_w") ? *h->observer_w : h->editor_rect->width;
-        ok = v >= strtof(t->tok[2], NULL) && v <= strtof(t->tok[3], NULL);
-        snprintf(detail, sizeof(detail), "got %.1f", v);
-    } else if (!strcmp(what, "running") && t->n == 3 && !yes(t->tok[2])) {
+        snprintf(detail, detail_cap, "found %d", count);
+    } else {
+        return -1;
+    }
+    return ok;
+}
+
+/* "expect running no", reached while the app is still running: the close did not exit. Returns ok (0 or 1), or -1 when `what` is not one of these. */
+static int expect_exit(Script *s, ScriptHost *h, Tokens *t, const char *what, char *detail, size_t detail_cap)
+{
+    bool ok = false;
+    if (!strcmp(what, "running") && t->n == 3 && !yes(t->tok[2])) {
         /* Reached while the app is still running: the close did not exit. */
         s->expect_exit = true;
         s->expect_exit_line = s->pc;
         ok = false;
-        snprintf(detail, sizeof(detail), "app is still running");
+        snprintf(detail, detail_cap, "app is still running");
     } else {
-        snprintf(detail, sizeof(detail), "malformed expect");
+        return -1;
     }
-    report(s, ok, detail);
+    return ok;
+}
+
+static void run_expect(Script *s, ScriptHost *h, Tokens *t)
+{
+    char detail[1200] = "";
+    const char *what = t->n > 1 ? t->tok[1] : "";
+    static int (*const groups[])(Script *, ScriptHost *, Tokens *, const char *, char *, size_t) = {
+        expect_editor, expect_chat, expect_memory, expect_panels, expect_files, expect_exit,
+    };
+    int ok = -1;
+    for (size_t i = 0; ok < 0 && i < sizeof(groups) / sizeof(groups[0]); i++)
+        ok = groups[i](s, h, t, what, detail, sizeof(detail));
+    if (ok < 0) snprintf(detail, sizeof(detail), "malformed expect");
+    report(s, ok > 0, detail);
 }
 
 /* Execute one command. Returns true if it consumed frames (queued events or
@@ -868,6 +935,104 @@ static bool run_line(Script *s, ScriptHost *h)
     return false;
 }
 
+/* What a pending wait did this frame. */
+typedef enum { WAIT_NONE, WAIT_YIELD, WAIT_SETTLED } WaitStep;
+
+/* A condition wait: settled when `done`, or failed after its last frame; either way the next command follows in a
+ * new batch. */
+static WaitStep settle(Script *s, int *frames, bool done, const char *failure)
+{
+    if (done || --*frames == 0) {
+        *frames = 0;
+        report(s, done, done ? NULL : failure);
+        s->pc++;
+        new_batch(s);
+        return WAIT_SETTLED;
+    }
+    return WAIT_YIELD;
+}
+
+static WaitStep step_wait_ready(Script *s, ScriptHost *h)
+{
+    if (h->model_ready && h->model_ready(h->ctx)) {
+        s->wait_ready = 0;
+        report(s, true, NULL);
+        s->pc++;
+        return WAIT_SETTLED;
+    }
+    if (--s->wait_ready == 0) {
+        char detail[640] = "model did not become ready";
+        char *why = h->model_status ? h->model_status(h->ctx) : NULL;
+        if (why && *why) snprintf(detail, sizeof(detail), "model did not become ready: %s", why);
+        free(why);
+        report(s, false, detail);
+        s->pc++;
+        return WAIT_SETTLED;
+    }
+    return WAIT_YIELD;
+}
+
+static WaitStep step_wait_observer(Script *s, ScriptHost *h)
+{
+    /* Idle on two consecutive checks a few frames apart, so a poke
+     * that is about to be picked up isn't mistaken for idleness. */
+    if (h->observer_idle(h->ctx) && s->wait_observer % 5 == 0) {
+        s->wait_observer = 0;
+        report(s, true, NULL);
+        s->pc++;
+        new_batch(s);
+        return WAIT_SETTLED;
+    }
+    if (--s->wait_observer == 0) {
+        report(s, false, "observer did not finish");
+        s->pc++;
+        return WAIT_SETTLED;
+    }
+    return WAIT_YIELD;
+}
+
+static WaitStep step_wait_chat(Script *s, ScriptHost *h)
+{
+    s->wait_chat--;
+    if (chat_busy(h->chat) && s->wait_chat > 0) return WAIT_YIELD;
+    bool done = !chat_busy(h->chat);
+    s->wait_chat = 0;
+    if (!done) { s->pc--; report(s, false, "chat did not finish"); s->pc++; } /* its own line, not the next command's (red-team 2026-11-14) */
+    new_batch(s); /* one more frame so chat_poll publishes completion */
+    return WAIT_SETTLED;
+}
+
+/* The first pending wait, in the order they are checked; WAIT_NONE when nothing waits. */
+static WaitStep step_waits(Script *s, ScriptHost *h)
+{
+    if (s->wait > 0) {
+        s->wait--;
+        return WAIT_YIELD;
+    }
+    if (s->wait_ready > 0) return step_wait_ready(s, h);
+    if (s->wait_observer > 0) return step_wait_observer(s, h);
+    if (s->wait_status > 0) {
+        const char *st = h->status(h->ctx);
+        return settle(s, &s->wait_status, st && strstr(st, s->wait_text), "status never showed it");
+    }
+    if (s->wait_memory_briefs > 0)
+        return settle(s, &s->wait_memory_briefs, h->memory_briefs_ready(h->ctx, s->memory_briefs_count),
+                      "source-linked T1 brief did not publish");
+    if (s->wait_memory_documents > 0)
+        return settle(s, &s->wait_memory_documents, h->memory_documents_settled(h->ctx, s->memory_documents_count),
+                      "saved document ingestion/outbox did not settle");
+    if (s->wait_memory > 0)
+        return settle(s, &s->wait_memory, h->memory_settled(h->ctx, s->memory_sequence),
+                      "memory ingestion/outbox did not settle");
+    if (s->wait_recall > 0) return settle(s, &s->wait_recall, !h->recall_busy(h->ctx), "recall did not finish");
+    if (s->wait_history > 0)
+        return settle(s, &s->wait_history,
+                      !h->history_busy(h->ctx) && (!h->history_worker_busy || !h->history_worker_busy(h->ctx)),
+                      "history load did not finish");
+    if (s->wait_chat > 0) return step_wait_chat(s, h);
+    return WAIT_NONE;
+}
+
 bool script_frame(Script *s, ScriptHost *h)
 {
     /* Once per invocation, never once per command in the dispatch loop. */
@@ -881,115 +1046,9 @@ bool script_frame(Script *s, ScriptHost *h)
             play_next_batch(s);
             return true;
         }
-        if (s->wait > 0) {
-            s->wait--;
-            return true;
-        }
-        if (s->wait_ready > 0) {
-            if (h->model_ready && h->model_ready(h->ctx)) {
-                s->wait_ready = 0;
-                report(s, true, NULL);
-                s->pc++;
-                continue;
-            }
-            if (--s->wait_ready == 0) {
-                char detail[640] = "model did not become ready";
-                char *why = h->model_status ? h->model_status(h->ctx) : NULL;
-                if (why && *why) snprintf(detail, sizeof(detail), "model did not become ready: %s", why);
-                free(why);
-                report(s, false, detail);
-                s->pc++;
-                continue;
-            }
-            return true;
-        }
-        if (s->wait_observer > 0) {
-            /* Idle on two consecutive checks a few frames apart, so a poke
-             * that is about to be picked up isn't mistaken for idleness. */
-            if (h->observer_idle(h->ctx) && s->wait_observer % 5 == 0) {
-                s->wait_observer = 0;
-                report(s, true, NULL);
-                s->pc++;
-                new_batch(s);
-                continue;
-            }
-            if (--s->wait_observer == 0) {
-                report(s, false, "observer did not finish");
-                s->pc++;
-                continue;
-            }
-            return true;
-        }
-        if (s->wait_status > 0) {
-            const char *st = h->status(h->ctx);
-            bool found = st && strstr(st, s->wait_text);
-            if (found || --s->wait_status == 0) {
-                s->wait_status = 0;
-                report(s, found, found ? NULL : "status never showed it");
-                s->pc++;
-                new_batch(s);
-                continue;
-            }
-            return true;
-        }
-        if (s->wait_memory_briefs > 0) {
-            bool done = h->memory_briefs_ready(h->ctx, s->memory_briefs_count);
-            if (done || --s->wait_memory_briefs == 0) {
-                s->wait_memory_briefs = 0;
-                report(s, done, done ? NULL : "source-linked T1 brief did not publish");
-                s->pc++; new_batch(s); continue;
-            }
-            return true;
-        }
-        if (s->wait_memory_documents > 0) {
-            bool done = h->memory_documents_settled(h->ctx, s->memory_documents_count);
-            if (done || --s->wait_memory_documents == 0) {
-                s->wait_memory_documents = 0;
-                report(s, done, done ? NULL : "saved document ingestion/outbox did not settle");
-                s->pc++; new_batch(s); continue;
-            }
-            return true;
-        }
-        if (s->wait_memory > 0) {
-            bool done = h->memory_settled(h->ctx, s->memory_sequence);
-            if (done || --s->wait_memory == 0) {
-                s->wait_memory = 0;
-                report(s, done, done ? NULL : "memory ingestion/outbox did not settle");
-                s->pc++; new_batch(s); continue;
-            }
-            return true;
-        }
-        if (s->wait_recall > 0) {
-            bool done = !h->recall_busy(h->ctx);
-            if (done || --s->wait_recall == 0) {
-                s->wait_recall = 0;
-                report(s, done, done ? NULL : "recall did not finish");
-                s->pc++;
-                new_batch(s);
-                continue;
-            }
-            return true;
-        }
-        if (s->wait_history > 0) {
-            bool done = !h->history_busy(h->ctx) && (!h->history_worker_busy || !h->history_worker_busy(h->ctx));
-            if (done || --s->wait_history == 0) {
-                s->wait_history = 0;
-                report(s, done, done ? NULL : "history load did not finish");
-                s->pc++;
-                new_batch(s);
-                continue;
-            }
-            return true;
-        }
-        if (s->wait_chat > 0) {
-            s->wait_chat--;
-            if (chat_busy(h->chat) && s->wait_chat > 0) return true;
-            bool done = !chat_busy(h->chat);
-            s->wait_chat = 0;
-            if (!done) { s->pc--; report(s, false, "chat did not finish"); s->pc++; } /* its own line, not the next command's (red-team 2026-11-14) */
-            new_batch(s); /* one more frame so chat_poll publishes completion */
-            continue;
-        }
+        WaitStep step = step_waits(s, h);
+        if (step == WAIT_YIELD) return true;
+        if (step == WAIT_SETTLED) continue;
         if (s->pc >= s->nlines) return false;
         bool yielded = run_line(s, h);
         s->pc++;
