@@ -135,7 +135,8 @@ static bool draw_button(Rectangle r, const char *label, const SFont *f, WidgetKi
     switch (kind) {
     case WIDGET_PRIMARY:
         fill = enabled ? THEME_ACCENT : THEME_CARD;
-        if (enabled && (inside || held)) fill = ColorBrightness(THEME_ACCENT, held ? -0.15f : 0.12f);
+        /* Darker under the pointer, never lighter: the text on it keeps its contrast in every palette. */
+        if (enabled && (inside || held)) fill = ColorBrightness(THEME_ACCENT, held ? -0.18f : -0.08f);
         if (enabled) text = THEME_ON_ACCENT;
         break;
     case WIDGET_OUTLINE:

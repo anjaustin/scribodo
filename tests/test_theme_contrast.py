@@ -2,8 +2,9 @@
 
 WCAG 2.1 contrast: 7:1 (AAA) for the author's words and interface text; 4.5:1 (AA) for secondary text, quotes, links
 and errors; 3:1 for placeholders and coloured labels (findings' kinds, ok and warning marks), and for text on the
-accent at 4.5:1. The surfaces are the ones text sits on: the panels, the page, cards, dialogs, inputs and the selected
-row."""
+accent at 4.5:1 (a primary button darkens under the pointer, never lightens, so that holds there too). The surfaces
+are the ones text sits on: the panels, the page, cards, dialogs, inputs, the selected row, the selection and a
+highlighted menu item. Dimmed paragraphs are faint by design and not held to these."""
 from pathlib import Path
 import re
 import unittest
@@ -56,6 +57,11 @@ class ThemeContrastTests(unittest.TestCase):
                     failures.append(f"{name}: {fg} on the selected row")
             if contrast(pal["on_accent"], pal["accent"]) < 4.5:
                 failures.append(f"{name}: text on the accent")
+            # Selected text is still the author's words; a highlighted menu item is still a label (red team).
+            if contrast(pal["text_prose"], pal["selection"]) < 7:
+                failures.append(f"{name}: prose on the selection {contrast(pal['text_prose'], pal['selection']):.2f}")
+            if contrast(pal["text_strong"], pal["accent_soft"]) < 7:
+                failures.append(f"{name}: a highlighted menu item")
         self.assertEqual(failures, [])
 
     def test_the_check_would_catch_a_bad_pair(self):

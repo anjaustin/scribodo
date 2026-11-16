@@ -112,6 +112,10 @@ void app_apply_look(App *app)
 
 void app_set_focus_mode(App *app, bool on)
 {
+    if (on && app->edit_mode) { /* a chat edit needs the chat: it ends, its passage marker with it */
+        leave_edit_mode(app);
+        editor_anchor_clear(app->editor);
+    }
     app->focus_mode = on;
     if (on) app->focus = FOCUS_DOC;
     set_status(app, on ? "Focus mode: the page alone (\xE2\x8C\x98\\ to come back)" : "Focus mode off");

@@ -85,6 +85,7 @@ struct Editor {
     float scroll_goal; /* where a wheel scroll is gliding to (ui/motion.h) */
     bool gliding;
     bool typewriter;  /* the caret's line kept at the middle of the view */
+    bool pointer_caret; /* the caret was placed by the mouse this frame: never re-centred under the pointer */
     bool dim_others;  /* paragraphs other than the caret's drawn faint */
     bool want_cursor_visible;
     double blink_t0;
@@ -887,7 +888,9 @@ static void scroll_to_cursor(Editor *e)
     float y = (float)r * lh;
     float margin = lh;
     e->gliding = false;
-    if (e->typewriter && !e->single_line) { /* the caret's line glides to the middle of the view */
+    /* The caret's line glides to the middle of the view, for keyboard moves and typing only: centring a caret the mouse
+     * just placed would slide other text under the pointer (a drag ran away; a double-click hit another word). */
+    if (e->typewriter && !e->single_line && !e->pointer_caret) {
         e->scroll_goal = y + lh * 0.5f - e->view_h * 0.5f;
         e->gliding = true;
         clamp_scroll(e);
@@ -948,6 +951,7 @@ static void handle_mouse(Editor *e, Rectangle b)
     }
 
     if (inside && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        e->pointer_caret = true;
         double now = GetTime();
         bool near = fabsf(m.x - e->last_click_pos.x) < 4 && fabsf(m.y - e->last_click_pos.y) < 4;
         e->click_count = (now - e->last_click_time < CLICK_INTERVAL_S && near) ? e->click_count % 3 + 1 : 1;
@@ -981,6 +985,7 @@ static void handle_mouse(Editor *e, Rectangle b)
             clamp_scroll(e);
             ly = m.y - e->text_y + e->scroll_y;
             if (m.x != e->last_drag_pos.x || m.y != e->last_drag_pos.y || m.y < top || m.y > bottom) {
+                e->pointer_caret = true;
                 move_to(e, hit_test(e, lx, ly), true);
                 e->st.has_preferred_x = 0;
                 e->last_drag_pos = m;
@@ -1086,6 +1091,7 @@ void editor_update(Editor *e, Rectangle bounds, bool focused)
         scroll_to_cursor(e);
         e->want_cursor_visible = false;
     }
+    e->pointer_caret = false;
     clamp_scroll(e);
 }
 

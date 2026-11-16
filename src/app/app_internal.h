@@ -131,6 +131,8 @@ typedef struct {
     float dpi;
     float explorer_w, observer_w, chat_w;
     float side_shown; /* the right pane's width as drawn: glides to observer_w or 0 (ui/motion.h) */
+    float side_target; /* the width it was heading for last frame */
+    bool side_gliding; /* opening or shutting */
     bool focus_mode;  /* the page alone (⌘\\); for the session, not saved */
     bool observer_open;
     int dragging;

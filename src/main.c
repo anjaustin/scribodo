@@ -972,6 +972,7 @@ void empty_action(App *app, int act, const char *sample)
 
 static void toggle_recall(App *app)
 {
+    if (app->focus_mode) app_set_focus_mode(app, false); /* a pane is not shown in focus mode */
     app->recall_open = !app->recall_open;
     if (app->recall_open) {
         app->observer_open = false;
@@ -1335,10 +1336,15 @@ static void frame_pane_widths(App *app, Vector2 mouse, bool mouse_down)
         else if (pass == 2) app->explorer_w = fmaxf(140.0f, app->explorer_w - deficit);
         else if (pass == 3) app->observer_open = app->recall_open = false;
     }
-    /* The right pane glides open and shut; a drag or a window resize places it at once. */
+    /* The right pane glides when it opens or shuts (the target crosses zero); otherwise, a splitter drag or a window
+     * resize, it is placed at once. The glide runs until the pane reaches its target (red team: a check of "already
+     * open" ended it after one frame). */
     float target = app->observer_open || app->recall_open ? app->observer_w : 0.0f;
-    bool placed = app->dragging == DRAG_OBSERVER || (app->side_shown > 0.0f && target > 0.0f);
-    app->side_shown = placed ? target : motion_approach(app->side_shown, target, GetFrameTime(), MOTION_PANE_MS);
+    if ((target > 0.0f) != (app->side_target > 0.0f)) app->side_gliding = true;
+    app->side_target = target;
+    if (app->dragging == DRAG_OBSERVER) app->side_gliding = false;
+    app->side_shown = app->side_gliding ? motion_approach(app->side_shown, target, GetFrameTime(), MOTION_PANE_MS) : target;
+    if (app->side_shown == target) app->side_gliding = false;
 }
 
 static void frame_shortcuts(App *app, bool modal)
@@ -1358,6 +1364,8 @@ static void frame_shortcuts(App *app, bool modal)
     if (primary && shift && shortcut_pressed('c') && app->focus == FOCUS_DOC) canon_from_selection(app);
     if (!modal && app->focus == FOCUS_RECORD && IsKeyPressed(KEY_ESCAPE)) app->focus = FOCUS_DOC;
     if (!modal && app->focus == FOCUS_RECALL && IsKeyPressed(KEY_ESCAPE)) app->focus = FOCUS_DOC;
+    /* The chat is not on screen in focus mode: reaching for it leaves focus mode first. */
+    if (primary && (shortcut_pressed('l') || shortcut_pressed('k')) && app->focus_mode) app_set_focus_mode(app, false);
     if (primary && shortcut_pressed('l')) app->focus = FOCUS_CHAT;
     if (primary && shortcut_pressed('k')) begin_edit(app);
     /* Cmd+Enter accepts only outside the chat box, where it also sends the
@@ -1436,6 +1444,8 @@ static void frame_update_views(App *app, bool modal)
         }
     }
     bool idle = app->dragging == DRAG_NONE && !modal;
+    /* In focus mode only the document (and a note or canon panel under it) take the keyboard. */
+    if (app->focus_mode && app->focus != FOCUS_DOC && app->focus != FOCUS_RECORD) app->focus = FOCUS_DOC;
     editor_update(app->editor, app->editor_rect, idle && app->focus == FOCUS_DOC);
     memory_document_names(app); /* dirty-buffer transitions fence preparation immediately */
     chat_view_set_can_apply(app->chat_view, editor_path(app->editor) != NULL && !editor_is_read_only(app->editor));
@@ -1555,6 +1565,7 @@ static void frame_draw_toolbar(App *app, const FrameRects *rects)
                     !editor_is_read_only(app->editor);
     if (widget_button(rects->save_rect, "Save", NULL, WIDGET_QUIET, can_save)) save(app);
     if (widget_toggle(rects->obs_rect, app->observer_button[0] ? app->observer_button : "Observer", NULL, app->observer_open)) {
+        if (app->focus_mode) app_set_focus_mode(app, false); /* a pane is not shown in focus mode */
         app->observer_open = !app->observer_open;
         if (app->observer_open && app->recall_open) toggle_recall(app);
     }

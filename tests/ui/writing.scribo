@@ -15,6 +15,15 @@ click_element Editor
 key END cmd
 expect scrolled yes
 shot paper-typewriter
+# A caret the mouse places is not re-centred under the pointer (red team): a drag of one line selects that line, and
+# a double-click selects the word clicked.
+wait 30
+drag_index 15323 15410
+expect selection 15323 15410
+wait 30
+click_index 15324 2
+expect selection 15323 15327
+key END cmd
 # Light, from the panel; Cancel puts Paper back.
 key COMMA cmd
 click_element FontsTheme1
@@ -35,6 +44,16 @@ click_element AppMenu
 click_element MenuItem1
 expect element_w Explorer 205 215
 expect element_w Chat 410 430
+# Reaching for the chat or a pane leaves focus mode (red team: typing went to inputs no one could see).
+key BACKSLASH cmd
+expect element_w Chat 0 0
+key L cmd
+expect element_w Chat 410 430
+key BACKSLASH cmd
+click_element RecallToggle
+expect element_w Recall 255 265
+expect element_w Explorer 205 215
+click_element RecallToggle
 # Dark again, and nothing but the palette changed.
 key COMMA cmd
 click_element FontsTheme0

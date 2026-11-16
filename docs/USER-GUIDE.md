@@ -9,10 +9,10 @@ listed in [CONFIGURATION](CONFIGURATION.md).
 
 Choose **Scribodo ▸ Appearance…** in the toolbar, or press **⌘,**.
 
-- **Theme:** Dark (the default), Light, or Paper, a warm sepia page. Every text colour in each meets the WCAG contrast levels against what it is drawn on (`tests/test_theme_contrast.py`).
+- **Theme:** Dark (the default), Light, or Paper, a warm sepia page. Text in each meets the WCAG contrast levels against the surfaces it is drawn on, selections and highlighted menu items included (`tests/test_theme_contrast.py`); dimmed paragraphs (below) are faint by design.
 - **Writing:** *Typewriter scrolling* keeps the line you are writing at the middle of the page; *Dim the other paragraphs* draws every paragraph but the one with the caret faint. Both are off by default.
 - **Focus mode** (**⌘\\**, or **Scribodo ▸ Focus mode**) hides the Explorer, the chat and the side pane, leaving the page between the toolbar and the status bar; the same keys bring them back. It lasts for the session.
-- Panes glide open and shut, the document's scroll glides, and a new finding fades in. With macOS's **Reduce motion** turned on (System Settings ▸ Accessibility ▸ Display) all of it is immediate.
+- Panes glide open and shut, the document's scroll glides, and a new finding fades in. With macOS's **Reduce motion** turned on (System Settings ▸ Accessibility ▸ Display) all of it is immediate. The setting is read when Scribodo opens.
 
 ### Fonts
 

@@ -1,5 +1,6 @@
-/* The three palettes. See theme.h. tests/test_theme_contrast.py reads this table and checks every text colour against
- * every surface it is drawn on (WCAG 2.1: 7:1 for the author's words and interface text, 4.5:1 for secondary text,
+/* The three palettes. See theme.h. tests/test_theme_contrast.py reads this table and checks each text colour against
+ * the surfaces it is drawn on (panels, page, cards, dialogs, inputs, the selected row, the selection, a highlighted menu
+ * item, the accent) (WCAG 2.1: 7:1 for the author's words and interface text, 4.5:1 for secondary text,
  * links and errors, 3:1 for placeholders and coloured labels). */
 #include "ui/theme.h"
 
@@ -19,8 +20,8 @@ static const ThemePalette k_palettes[THEME_COUNT] = {
         .border = C(0x2B2B2B), .border_strong = C(0x45474D), .scrollbar = CA(0x797979, 0x66),
         .text_strong = C(0xE0E0E0), .text_prose = C(0xD4D4D4), .text = C(0xCCCCCC), .text_quote = C(0xB8B8B8),
         .caret = C(0xAEAFAD), .text_muted = C(0x909090), .text_dim = C(0x757575),
-        .accent = C(0x0078D4), .on_accent = C(0xFFFFFF), .accent_soft = C(0x0E639C), .accent_edge = C(0x3D6FA8),
-        .link = C(0x6CA8E0), .selection = C(0x264F78), .ok = C(0x4EC98B), .warn = C(0xE6B450), .err = C(0xF28B82),
+        .accent = C(0x0078D4), .on_accent = C(0xFFFFFF), .accent_soft = C(0x094470), .accent_edge = C(0x3D6FA8),
+        .link = C(0x6CA8E0), .selection = C(0x1D3D5E), .ok = C(0x4EC98B), .warn = C(0xE6B450), .err = C(0xF28B82),
         .insert = C(0x8CE0A4), .insert_bg = C(0x1F3A2A), .canon_edge = C(0xB08A3E), .note_edge = C(0x5A7F5A),
         .relation = C(0xB49CE8),
     },
