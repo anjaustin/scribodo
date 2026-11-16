@@ -456,3 +456,21 @@ unset-variable bug in `up` would have read as success to the app.
 - `make dbtest`: exit 0 (12 suites, each "0 failures").
 - `make servicestest`: exit 0, run once (no other run found), with the main checkout's pinned Qdrant: 17 checks ok
   across steps 1-9 (every native `up`/`down`/`purge` now ending through `leave`); step 10 skipped, Docker not running.
+
+# Rebased onto main 467ac7f (the main.c split)
+
+`git rebase main`, resolved per commit; one commit per item kept. Five commits conflicted only in `src/main.c` (and
+the Makefile's TESTS list in item 1). Each was resolved by taking main's file and re-applying the commit's own hunks
+where that code now lives:
+- the App fields (`services_headline`, `services_warning`) in `src/app/app_internal.h`, outside the unions;
+- the offline badge sentence in `src/ui/layout.c`;
+- the supervisor's reason, warning, store-start and backup/restore tools-dir checks in `src/main.c`, which still holds
+  `store_try_later`, `tools_dir` and the poll loop.
+
+Every file this stream owns outside those three is byte-identical to the pre-rebase tree (`git diff` against it is
+empty, apart from main's own new file). The spawn-hygiene and environment checks pass against main's new files.
+
+**Gates on the final tree:** `make test` exit 0 (including `test_env_writes`, `test_env_symbols`,
+`test_spawn_hygiene`, and the services tests); `make analyze` exit 0 (0 warnings, 99 files; no real clang analyzer
+was running); `make sanitize` exit 0; `make dbtest` exit 0 (12 suites, 0 failures); `make servicestest` exit 0, run
+once (17 checks ok across steps 1-9, step 10 skipped without Docker).
