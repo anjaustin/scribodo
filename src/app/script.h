@@ -117,6 +117,9 @@ typedef struct {
     bool (*memory_briefs_ready)(void *ctx, long count);
     char *(*recall_text)(void *ctx); /* owned: "busy|idle" then the deterministic recall result */
     bool (*recall_busy)(void *ctx);
+    /* The face a font role loaded first, "Family Style" (owned): `expect font <role> <text>`, roles as in
+     * app/appearance.h (0 interface, 1 documents, 2 chat, 3 figures). */
+    char *(*font_name)(void *ctx, int role);
     /* The model supervisor's status line (owned), so a wait_ready that times
      * out reports why ("Another Scribodo window is using the model", a crash
      * loop, a missing model) instead of only that it did. */
@@ -126,7 +129,7 @@ typedef struct {
 /* Every ScriptHost member is one pointer, and every one is required. The count is checked against the struct's size
  * at build time (app/script_host.c), so a new member fails the build until it is counted and named there; main()
  * refuses to run a script with a member left NULL (AUDIT-004 F3: the initialiser was positional). */
-#define SCRIPT_HOST_MEMBERS 32
+#define SCRIPT_HOST_MEMBERS 33
 /* The name of the first member left NULL, or NULL when the host is complete. */
 const char *script_host_missing(const ScriptHost *h);
 

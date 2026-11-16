@@ -1,0 +1,56 @@
+# The Fonts panel (the author's request, 2026-11-16): Share Tech for the interface, Share for documents and chat,
+# Share Tech Mono for figures by default; a face and a size for each, shown at once; Done saves, Cancel puts back
+# what was saved; any installed font can be chosen from the list, which filters as you type.
+open "$DIR/chapter.md"
+expect font 0 "Share Tech Regular"
+expect font 1 "Share Regular"
+expect font 2 "Share Regular"
+expect font 3 "Share Tech Mono Regular"
+shot fonts-default
+# Opened with ⌘, : two sizes up for documents, then Done saves.
+key COMMA cmd
+expect element_w FontsDone 50 200
+shot fonts-panel
+click_element FontsPlus1
+click_element FontsPlus1
+click_element FontsDone
+expect status "Fonts saved"
+expect element_w FontsDone 0 0
+expect file "$DIR/appearance.json" "{\"interface\":{\"size\":14},\"document\":{\"size\":20},\"chat\":{\"size\":15},\"monospace\":{\"size\":13}}"
+# From the Scribodo menu: a change, then Cancel, leaves the saved file and the font as they were.
+click_element AppMenu
+click_element MenuItem0
+click_element FontsMinus0
+click_element FontsCancel
+expect file "$DIR/appearance.json" "{\"interface\":{\"size\":14},\"document\":{\"size\":20},\"chat\":{\"size\":15},\"monospace\":{\"size\":13}}"
+# Choosing an installed face: Georgia for documents, found by typing.
+key COMMA cmd
+click_element FontsPick1
+expect element_w FontsBack 50 200
+type "georgia"
+shot fonts-list
+expect element_w FontsItem1 100 1000
+click_element FontsItem1
+expect font 1 "Georgia"
+expect font 2 "Share Regular"
+click_element FontsDone
+expect lines "$DIR/appearance.json" "Georgia.ttf" 1
+shot fonts-georgia
+# A face from a collection (.ttc): Menlo for figures.
+key COMMA cmd
+click_element FontsPick3
+type "menlo regular"
+click_element FontsItem1
+expect font 3 "Menlo Regular"
+# Back to the defaults; Esc on the panel is Cancel, so Done keeps them.
+click_element FontsDefaults
+expect font 1 "Share Regular"
+expect font 3 "Share Tech Mono Regular"
+click_element FontsDone
+expect file "$DIR/appearance.json" "{\"interface\":{\"size\":14},\"document\":{\"size\":18},\"chat\":{\"size\":15},\"monospace\":{\"size\":13}}"
+# The document still edits and saves with the fonts changed under it.
+click_element Editor
+key END cmd
+type "!"
+key S cmd
+expect dirty no

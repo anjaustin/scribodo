@@ -59,6 +59,7 @@ static Rectangle host_element(void *ctx, const char *name)
     if (!strncmp(name, "Record", 6)) return record_view_element(app->record, name);
     if (!strncmp(name, "Prompt", 6)) return prompt_element(app->prompt, name);
     if (!strcmp(name, "AttachAdd")) return app->attach_add;
+    if (!strncmp(name, "Fonts", 5)) return fonts_panel_element(&app->fonts_panel, name);
     if (!strncmp(name, "Set", 3) && app->settings_open) { /* the model settings panel */
         if (!strcmp(name, "SetApply")) return app->set_apply;
         if (!strcmp(name, "SetCancel")) return app->set_cancel;
@@ -118,6 +119,12 @@ static Rectangle host_element(void *ctx, const char *name)
         }
     }
     return r;
+}
+
+static char *host_font_name(void *ctx, int role)
+{
+    App *app = ctx;
+    return strdup(role >= 0 && role < FONT_COUNT ? sfont_primary_name(&app->fonts[role]) : "");
 }
 
 static const char *host_status(void *ctx)
@@ -293,6 +300,7 @@ int script_host_setup(App *app, MainLoop *loop, const StartupEnv *env, const cha
         .observer_w = &app->observer_w,
         .editor_rect = &app->editor_rect,
         .status = host_status,
+        .font_name = host_font_name,
         .open = host_open,
         .drop = host_drop,
         .ctx = app,

@@ -14,7 +14,7 @@ static const struct {
     MEMBER(explorer_text), MEMBER(observer_status), MEMBER(history_cache_bytes), MEMBER(store_offline),
     MEMBER(history_busy), MEMBER(history_hold), MEMBER(history_worker_busy), MEMBER(store_restart),
     MEMBER(memory_settled), MEMBER(memory_enabled), MEMBER(memory_sources), MEMBER(memory_documents_settled),
-    MEMBER(memory_briefs_ready), MEMBER(recall_text), MEMBER(recall_busy), MEMBER(model_status),
+    MEMBER(memory_briefs_ready), MEMBER(recall_text), MEMBER(recall_busy), MEMBER(font_name), MEMBER(model_status),
 };
 #undef MEMBER
 

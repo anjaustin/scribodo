@@ -193,8 +193,10 @@ covers every target, how the UI tests work, and what they can't cover.
 | [cJSON](https://github.com/DaveGamble/cJSON) | v1.7.19-6-g6d9f244 | MIT | JSON parsing and building |
 | [llama.cpp](https://github.com/ggml-org/llama.cpp) | b12111-5-g5851a8e50 | MIT | Local BF16 inference server (`llama-server`) |
 | [MariaDB Connector/C](https://github.com/mariadb-corporation/mariadb-connector-c) | 3.4.11 | LGPL-2.1 | MariaDB client, statically linked |
+| [Share, Share Tech, Share Tech Mono](https://fonts.google.com/?query=Share) | google/fonts `7af0d90` | OFL-1.1 | The default interface, document and figure faces, bundled in `assets/fonts` |
 
-Every library is a pinned git submodule; raylib is compiled from source.
+Every library is a pinned git submodule; raylib is compiled from source. The fonts are the upstream files, pinned by
+SHA-256 (`tests/test_bundled_fonts.py`).
 `make dependency-report` verifies the pinned inventory and container digests.
 The local services are MariaDB 11.4.13 (GPLv2) and Qdrant v1.20.0
 (Apache-2.0), pinned by digest in `docker/compose.yml`; the native MariaDB is

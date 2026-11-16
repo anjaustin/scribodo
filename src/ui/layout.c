@@ -149,7 +149,14 @@ static void layout_toolbar(App *app)
                        .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
            .backgroundColor = COL_PANEL,
            .border = { .color = COL_BORDER, .width = { .bottom = 1 } } }) {
-        label(app, "Scribodo", FONT_UI, COL_TEXT);
+        /* Scribodo: the app's menu (Fonts, Model settings). */
+        CLAY({ .id = CLAY_ID("AppMenu"),
+               .layout = { .sizing = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(26) }, .padding = { 8, 8, 0, 0 },
+                           .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
+               .backgroundColor = Clay_PointerOver(CLAY_ID("AppMenu")) ? COL_HOVER : (Clay_Color){ 0 },
+               .cornerRadius = CLAY_CORNER_RADIUS(4) }) {
+            label(app, "Scribodo", FONT_UI, COL_TEXT);
+        }
         slot(CLAY_ID("OpenButton"), 64, 24);
         label(app, app->doc_label, FONT_UI, COL_MUTED);
         slot(CLAY_ID("SaveButton"), 64, 24);
@@ -382,7 +389,7 @@ static void layout_status_bar(App *app)
                        .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
            .backgroundColor = COL_PANEL,
            .border = { .color = COL_BORDER, .width = { .top = 1 } } }) {
-        label(app, app->status_left, FONT_UI, COL_MUTED);
+        label(app, app->status_left, FONT_MONO, COL_MUTED); /* position, words, encoding: figures */
         grow();
         if (app->status[0] && GetTime() - app->status_time < 6.0)
             label(app, app->status, FONT_UI, editor_path(app->editor) && editor_is_read_only(app->editor) ? COL_WARN : COL_TEXT);

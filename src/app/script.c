@@ -257,7 +257,7 @@ static int key_code(const char *name)
         { "LEFT", KEY_LEFT }, { "RIGHT", KEY_RIGHT }, { "UP", KEY_UP }, { "DOWN", KEY_DOWN },
         { "HOME", KEY_HOME }, { "END", KEY_END }, { "PGUP", KEY_PAGE_UP }, { "PGDN", KEY_PAGE_DOWN },
         { "BACKSPACE", KEY_BACKSPACE }, { "DELETE", KEY_DELETE }, { "ENTER", KEY_ENTER },
-        { "TAB", KEY_TAB }, { "ESC", KEY_ESCAPE }, { "SPACE", KEY_SPACE },
+        { "TAB", KEY_TAB }, { "ESC", KEY_ESCAPE }, { "SPACE", KEY_SPACE }, { "COMMA", KEY_COMMA },
     };
     for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++)
         if (strcmp(name, keys[i].n) == 0) return keys[i].k;
@@ -529,6 +529,11 @@ static int expect_panels(Script *s, ScriptHost *h, Tokens *t, const char *what, 
         bool has = st && strstr(st, t->tok[2]);
         ok = !strcmp(what, "status") ? has : (st && !has);
         show(detail, detail_cap, "status", st);
+    } else if (!strcmp(what, "font") && t->n == 4) {
+        char *f = h->font_name(h->ctx, atoi(t->tok[2]));
+        ok = f && strstr(f, t->tok[3]);
+        show(detail, detail_cap, "font", f);
+        free(f);
     } else if (!strcmp(what, "clipboard") && t->n == 3) {
         const char *c = input_get_clipboard();
         ok = c && !strcmp(c, t->tok[2]);

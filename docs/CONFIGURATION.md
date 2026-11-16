@@ -21,8 +21,9 @@ Where Scribodo finds its models and configuration files.
 | `SCRIBODO_REMOTE_CONFIG` | `~/Library/Application Support/Scribodo/remote.json` | Optional remote provider configuration. |
 | `SCRIBODO_MODEL_SETTINGS` | `~/Library/Application Support/Scribodo/model-settings.json` | Sampling and context settings saved from the toolbar. |
 | `SCRIBODO_PROFILE` | `~/Library/Application Support/Scribodo/profile.json` | Author profile. |
+| `SCRIBODO_APPEARANCE` | `~/Library/Application Support/Scribodo/appearance.json` | The fonts chosen in the **Fonts** panel: a face and size per role ([USER-GUIDE](USER-GUIDE.md#fonts)). |
 | `SCRIBODO_BACKUPS` | `~/Library/Application Support/Scribodo/backups` | Where **Back up now** writes. |
-| `SCRIBODO_PROSE_FONT` | system fonts | A font file tried first for prose text. |
+| `SCRIBODO_PROSE_FONT` | unset | A font file tried first for document and chat text, ahead of the Fonts panel's choice, for this run only (never saved). |
 | `SCRIBODO_TOOLS_DIR` | the bundle's `Resources/tools`, else `../tools` beside the app | Where the app finds `services.sh` and `backup.sh`. |
 
 ## Services

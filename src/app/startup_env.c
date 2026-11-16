@@ -62,6 +62,7 @@ bool startup_env_prepare(StartupEnv *env)
     ok = startup_env_unset("SSLKEYLOGFILE") && ok;
     ok = redirect(env, "SCRIBODO_REMOTE_CONFIG", "remote.json") && ok;
     ok = redirect(env, "SCRIBODO_PROFILE", "profile.json") && ok;
+    ok = redirect(env, "SCRIBODO_APPEARANCE", "appearance.json") && ok;
     startup_env_seal();
     return ok;
 }

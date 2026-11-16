@@ -5,6 +5,23 @@ and launch the app, see the [README](../README.md#quick-start). To set up the
 project store, see [SERVICES](SERVICES.md). The settings you can override are
 listed in [CONFIGURATION](CONFIGURATION.md).
 
+## Fonts
+
+Choose **Scribodo ▸ Fonts…** in the toolbar, or press **⌘,**. Each part of
+the app has its own typeface and size:
+
+| Role | Default | Used for |
+|---|---|---|
+| Interface | Share Tech, 14 | menus, lists, buttons and labels |
+| Documents | Share, 18 | the text you write |
+| Chat | Share, 15 | messages and replies |
+| Figures | Share Tech Mono, 13 | the status bar, counts and positions |
+
+- Click a role's face to choose another from every font installed on this Mac (the system's fonts and those in `/Library/Fonts` and `~/Library/Fonts`, collections included). Type to filter the list; **Default** returns to the bundled face.
+- **−** and **+** change the size. Each row previews its role in the face and size chosen.
+- Changes show at once. **Done** keeps them; **Cancel** or Esc puts back what was saved; **Defaults** returns every role to its default.
+- The Share faces cover Western European letters. A letter a face lacks, such as ř in *Dvořák*, comes from Arial at the same height and on the same baseline. The bundled faces and their licence are listed in `assets/fonts/README.md`.
+
 ## Projects and documents
 
 A project is a folder of `.md` and `.txt` files.

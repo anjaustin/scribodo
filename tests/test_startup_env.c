@@ -21,6 +21,7 @@ static void test_prepare_scripted(void)
     unsetenv("SCRIBODO_MODEL_SETTINGS");
     setenv("SCRIBODO_REMOTE_CONFIG", "/run/own-remote.json", 1); /* named by the run: kept */
     unsetenv("SCRIBODO_PROFILE");
+    unsetenv("SCRIBODO_APPEARANCE");
     setenv("SSLKEYLOGFILE", "/tmp/keys", 1);
     CHECK(!startup_env_sealed());
     StartupEnv env;
@@ -34,6 +35,8 @@ static void test_prepare_scripted(void)
     CHECK(v && !strcmp(v, "/run/own-remote.json"));
     v = getenv("SCRIBODO_PROFILE");
     CHECK(v && !strcmp(v, "/fixture/profile.json"));
+    v = getenv("SCRIBODO_APPEARANCE");
+    CHECK(v && !strcmp(v, "/fixture/appearance.json"));
     CHECK(getenv("SSLKEYLOGFILE") == NULL);
 }
 

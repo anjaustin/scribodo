@@ -1239,6 +1239,15 @@ static void frame_left_click(App *app, Vector2 mouse, bool modal, bool trace)
     }
 }
 
+/* Scribodo in the toolbar: the app's own settings. */
+static void frame_app_menu(App *app, bool modal)
+{
+    if (modal || !IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || !Clay_PointerOver(CLAY_ID("AppMenu"))) return;
+    static const char *const items[] = { "Fonts\xE2\x80\xA6          \xE2\x8C\x98,", "Model settings\xE2\x80\xA6" };
+    Rectangle r = ELEMENT_RECT("AppMenu");
+    menu_open(&app->menu, MT_APP, 0, (Vector2){ r.x, r.y + r.height + 4 }, items, 2);
+}
+
 static void frame_model_picker(App *app, bool modal)
 {
     if (!modal && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && Clay_PointerOver(CLAY_ID("ModelPicker"))) {
@@ -1344,6 +1353,7 @@ static void frame_shortcuts(App *app, bool modal)
         (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER)))
         accept_proposal(app);
     if (primary && shortcut_pressed('o')) choose_project(app, false);
+    if (primary && IsKeyPressed(KEY_COMMA)) fonts_panel_open(app);
     if (primary && !shift && shortcut_pressed('n')) begin_new_document(app);
     if (!modal && app->focus == FOCUS_CHAT && IsKeyPressed(KEY_ESCAPE)) {
         if (app->history_pending) {
@@ -1423,6 +1433,7 @@ static void frame_update_views(App *app, bool modal)
     if (record_view_active(app->record)) record_view_update(app->record, app->record_rect, idle && app->focus == FOCUS_RECORD);
     if (app->observer_open && !modal) findings_view_update(app->findings, app->findings_rect);
     if (app->recall_open && !modal) recall_view_update(app->recall, app->recall_rect, idle && app->focus == FOCUS_RECALL);
+    fonts_panel_update(app);
     input_discard_chars(); /* after both views: nothing typed now may appear later */
     recall_frame(app);
 }
@@ -1634,6 +1645,8 @@ static void frame_draw_overlays(App *app, MainLoop *loop, int empty_act, bool mo
             if (!found) attach(app, nm);
             chat_controller_mark_attachments_changed(&app->chat_controller);
         }
+        if (pick == 0 && app->menu.tag == MT_APP) fonts_panel_open(app);
+        if (pick == 1 && app->menu.tag == MT_APP) open_model_settings(app);
         if (pick >= 0 && app->menu.tag == MT_MODEL && pick == app->model_menu_settings) {
             open_model_settings(app);
         } else if (pick >= 0 && app->menu.tag == MT_MODEL) {
@@ -1668,6 +1681,7 @@ static void frame_draw_overlays(App *app, MainLoop *loop, int empty_act, bool mo
             else reveal_document(app, app->menu_doc);
         }
         if (app->settings_open) draw_model_settings(app, screen);
+        if (app->fonts_panel.open) fonts_panel_draw(app, screen);
         if (app->memory_sources_open) draw_memory_sources(app);
         if (prompt_active(app->prompt)) {
             PromptResult pr = prompt_draw(app->prompt, screen);
@@ -1723,9 +1737,11 @@ static bool frame_step(App *app, MainLoop *loop)
     Clay_SetLayoutDimensions((Clay_Dimensions){ (float)GetScreenWidth(), (float)GetScreenHeight() });
 
     /* A prompt or menu takes all input until it closes. */
-    bool modal = prompt_active(app->prompt) || app->menu.active || app->settings_open || app->memory_sources_open;
+    bool modal = prompt_active(app->prompt) || app->menu.active || app->settings_open || app->memory_sources_open ||
+                 app->fonts_panel.open;
     input_block_mouse(modal);
     frame_left_click(app, mouse, modal, loop->trace);
+    frame_app_menu(app, modal);
     frame_model_picker(app, modal);
     frame_explorer_menu(app, mouse, modal);
     frame_pane_widths(app, mouse, mouse_down);

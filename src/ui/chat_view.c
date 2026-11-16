@@ -26,6 +26,7 @@ typedef struct {
     uint64_t src_hash;
     float width;
     float height;      /* text height */
+    unsigned font_version; /* the text font's load (SFont.version): a new font reflows */
     bool valid, markdown, preview;
 } MsgCache;
 
@@ -196,7 +197,9 @@ static MsgCache *refresh(ChatView *v, size_t i, const char *content, bool markdo
     }
     memcpy(clipped, content, len); clipped[len] = '\0';
     uint64_t h = hash_str(clipped, len);
-    if (c->valid && c->src_len == len && c->src_hash == h && c->width == width && c->markdown == markdown && c->preview == preview) return c;
+    if (c->valid && c->src_len == len && c->src_hash == h && c->width == width && c->markdown == markdown && c->preview == preview &&
+        c->font_version == v->text->version)
+        return c;
     /* Replies saved with speaker labels ("Tripp: ") are shown without them. */
     char *unlabelled = markdown ? llm_strip_speaker_labels(clipped, v->author_name, v->assistant_name) : NULL;
     char *shown = markdown ? llm_markdown_display(unlabelled ? unlabelled : clipped) : NULL;
@@ -223,6 +226,7 @@ static MsgCache *refresh(ChatView *v, size_t i, const char *content, bool markdo
     c->src_len = len;
     c->src_hash = h;
     c->width = width;
+    c->font_version = v->text->version;
     c->height = (float)c->layout.count * v->text->line_height;
     c->valid = true; c->markdown = markdown; c->preview = preview;
     v->layout_revision++;

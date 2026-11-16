@@ -1,0 +1,34 @@
+/* Small drawn controls in the theme (ui/theme.h), with text in the app's own fonts (so any letter the font chain
+ * covers shows, unlike raygui's single-face labels).
+ *
+ * A button is clicked when the mouse is pressed and released inside it, the same rule as raygui's, so a scripted
+ * click (press frame, release frame) works. */
+#ifndef SCRIBODO_WIDGETS_H
+#define SCRIBODO_WIDGETS_H
+
+#include <stdbool.h>
+
+#include "raylib.h"
+#include "ui/font.h"
+
+typedef enum {
+    WIDGET_QUIET,   /* text only; a soft fill under the pointer */
+    WIDGET_OUTLINE, /* a thin outline */
+    WIDGET_PRIMARY, /* filled with the accent */
+} WidgetKind;
+
+/* Draws the button; true on the frame it is clicked (never when disabled). */
+bool widget_button(Rectangle r, const char *label, const SFont *f, WidgetKind kind, bool enabled);
+
+/* One line of text, cut with an ellipsis to fit `max_w` (0: no limit). Returns the width drawn. */
+float widget_text(const SFont *f, const char *s, float x, float y, float max_w, Color c);
+
+/* Text centred vertically in `r`, cut to its width. */
+void widget_text_in(const SFont *f, const char *s, Rectangle r, Color c);
+
+/* A rounded rectangle with radius in pixels (raylib's takes a fraction of the shorter side), and enough segments
+ * that the corner stays round on a Retina screen. */
+void widget_round_rect(Rectangle r, float radius, Color fill);
+void widget_round_outline(Rectangle r, float radius, float thick, Color line);
+
+#endif

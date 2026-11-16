@@ -35,27 +35,66 @@ static void style_raygui(const SFont *ui)
     }
 }
 
+/* One role's font: the author's choice (SCRIBODO_PROSE_FONT first for documents and chat), else the bundled default,
+ * then the fallbacks. A choice that does not load falls back to the default and says so in `why`. */
+static bool load_role(App *app, int role, SFont *out, char *why, size_t whylen)
+{
+    const AppearanceRoleInfo *in = appearance_role_info(role);
+    float size = app->appearance.role[role].size;
+    SFontSource src[SFONT_MAX_FACES + 1];
+    char paths[SFONT_MAX_FACES][PATH_MAX];
+    const char *prose = (role == FONT_PROSE || role == FONT_CHAT) ? getenv("SCRIBODO_PROSE_FONT") : NULL;
+    for (int pass = 0; pass < 2; pass++) {
+        bool with_choice = pass == 0;
+        int n = 0;
+        if (prose && prose[0]) src[n++] = (SFontSource){ prose, 0 };
+        SFontSource rest[SFONT_MAX_FACES];
+        int m = appearance_sources(&app->appearance, role, with_choice, app->assets_dir, rest, paths);
+        for (int i = 0; i < m && n < SFONT_MAX_FACES; i++) src[n++] = rest[i];
+        bool ok = sfont_load(out, src, n, size, in->line_height, app->dpi);
+        int chosen = prose && prose[0] ? 1 : 0; /* where the saved choice sits in src */
+        if (ok && (!with_choice || !appearance_has_choice(&app->appearance, role) || out->primary_source <= chosen))
+            return true;
+        if (ok) sfont_unload(out);
+        if (with_choice && appearance_has_choice(&app->appearance, role) && why && !why[0])
+            snprintf(why, whylen, "The %s font could not be loaded (%s); using the default", in->label,
+                     app->appearance.role[role].path);
+    }
+    return false;
+}
+
+/* Every role's font from app->appearance. Each loads into a scratch SFont and replaces the old one only when it
+ * loaded, so a failure keeps what is on screen; the SFont addresses never change (views and Clay hold them).
+ * Afterwards raygui and Clay's text-measurement cache follow; views reflow because each load has a new version. */
+bool app_fonts_apply(App *app, unsigned roles, char *why, size_t whylen)
+{
+    if (why && whylen) why[0] = '\0';
+    bool all = true;
+    for (int r = 0; r < FONT_COUNT; r++) {
+        if (!(roles & (1u << r))) continue;
+        SFont next;
+        if (!load_role(app, r, &next, why, whylen)) {
+            all = false;
+            continue;
+        }
+        if (app->fonts[r].nfaces) sfont_unload(&app->fonts[r]);
+        app->fonts[r] = next;
+    }
+    for (int i = 0; i < FONT_COUNT; i++) app->font_ptrs[i] = &app->fonts[i];
+    if (app->fonts[FONT_UI].nfaces) style_raygui(&app->fonts[FONT_UI]);
+    if (app->clay_buf) Clay_ResetMeasureTextCache();
+    return all;
+}
+
 static bool load_fonts(App *app, float dpi)
 {
-    static const char *const ui_paths[] = {
-        "/System/Library/Fonts/Supplemental/Verdana.ttf",
-        "/System/Library/Fonts/Supplemental/Arial.ttf",
-        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-    };
-    static const char *const prose_paths[] = {
-        "/System/Library/Fonts/Supplemental/Georgia.ttf",
-        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-    };
-    const char *override = getenv("SCRIBODO_PROSE_FONT");
-    const char *prose_list[4];
-    int np = 0;
-    if (override) prose_list[np++] = override;
-    for (size_t i = 0; i < sizeof(prose_paths) / sizeof(prose_paths[0]); i++) prose_list[np++] = prose_paths[i];
-
-    bool ok = sfont_load(&app->fonts[FONT_UI], ui_paths, 3, 13.0f, 1.45f, dpi) &&
-              sfont_load(&app->fonts[FONT_PROSE], prose_list, np, 18.0f, 1.6f, dpi) &&
-              sfont_load(&app->fonts[FONT_CHAT], prose_list, np, 15.0f, 1.5f, dpi);
-    for (int i = 0; i < FONT_COUNT; i++) app->font_ptrs[i] = &app->fonts[i];
+    app->dpi = dpi;
+    appearance_load(&app->appearance);
+    if (!assets_dir_resolve(GetApplicationDirectory(), app->assets_dir, sizeof(app->assets_dir)))
+        fprintf(stderr, "scribodo: the bundled fonts were not found beside the app; using the system fallbacks\n");
+    char why[PATH_MAX + 128];
+    bool ok = app_fonts_apply(app, APP_FONTS_ALL, why, sizeof(why));
+    if (why[0]) fprintf(stderr, "scribodo: %s\n", why);
     return ok;
 }
 
@@ -111,6 +150,7 @@ void app_destroy(App *app)
     editor_destroy(app->editor);
     explorer_snapshot_destroy(&app->explorer);
     project_session_destroy(&app->session);
+    fonts_panel_destroy(&app->fonts_panel);
     for (int i = 0; i < FONT_COUNT; i++) sfont_unload(&app->fonts[i]);
     free(app->clay_buf);
     app->clay_buf = NULL;
@@ -182,10 +222,9 @@ int app_open_window(App *app, const char *script_path)
 
     float dpi = GetWindowScaleDPI().x;
     if (!load_fonts(app, dpi)) {
-        fprintf(stderr, "scribodo: no usable font found (set SCRIBODO_PROSE_FONT)\n");
+        fprintf(stderr, "scribodo: no usable font found (the bundled fonts in assets/fonts, or SCRIBODO_PROSE_FONT)\n");
         return 1;
     }
-    style_raygui(&app->fonts[FONT_UI]);
 
     uint32_t clay_mem = Clay_MinMemorySize();
     void *clay_buf = malloc(clay_mem);

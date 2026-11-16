@@ -19,8 +19,8 @@ typedef struct {
 } StartupEnv;
 
 /* Reads SCRIBODO_SCRIPT, SCRIBODO_SCRIPT_DIR and SCRIBODO_SHOT_DIR once. A UI test keeps its own model settings,
- * remote configuration and profile in its fixture folder (SCRIBODO_MODEL_SETTINGS, SCRIBODO_REMOTE_CONFIG,
- * SCRIBODO_PROFILE, each only when not already set), so the author's never reach a run's artefacts; TLS secrets are
+ * remote configuration, profile and fonts in its fixture folder (SCRIBODO_MODEL_SETTINGS, SCRIBODO_REMOTE_CONFIG,
+ * SCRIBODO_PROFILE, SCRIBODO_APPEARANCE, each only when not already set), so the author's never reach a run's artefacts; TLS secrets are
  * never written out for a remote model's traffic (SSLKEYLOGFILE removed). Then seals the environment. False when a
  * write failed. Called a second time it asserts (with NDEBUG: returns false). */
 bool startup_env_prepare(StartupEnv *env);

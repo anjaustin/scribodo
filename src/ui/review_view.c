@@ -24,6 +24,7 @@ struct ReviewView {
     size_t style_cap;
     WrapLayout layout;
     float layout_w;
+    unsigned layout_font_version;
     float scroll;
     int removed, added;
     char header[256];
@@ -143,9 +144,10 @@ bool review_set(ReviewView *v, const char *original, const char *replacement, co
 
 static void relayout(ReviewView *v, float width)
 {
-    if (v->layout_w == width) return;
+    if (v->layout_w == width && v->layout_font_version == v->text->version) return;
     wrap_compute(&v->layout, &v->buf, width > 40 ? width : 40, adv, v->text);
     v->layout_w = width;
+    v->layout_font_version = v->text->version;
 }
 
 float review_height(ReviewView *v, float width, float max_h)

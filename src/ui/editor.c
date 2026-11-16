@@ -40,6 +40,7 @@ struct Editor {
     WrapLayout layout;
     bool layout_dirty;
     float layout_width;
+    unsigned layout_font_version; /* SFont.version the layout was wrapped with */
 
     SFont *font;
     STB_TexteditState st;
@@ -102,7 +103,7 @@ static float adv_cb(uint32_t cp, void *ctx) { return sfont_advance((const SFont 
 static void ensure_layout(Editor *e)
 {
     float w = e->text_w > 1.0f ? e->text_w : 600.0f;
-    if (!e->layout_dirty && e->layout_width == w) return;
+    if (!e->layout_dirty && e->layout_width == w && e->layout_font_version == e->font->version) return;
     WrapLayout fresh = { 0 };
     if (wrap_compute(&fresh, &e->buf, w, adv_cb, e->font) < 0) {
         /* Out of memory mid-wrap: the rows do not tile the buffer, so the previous layout stays in use and the
@@ -116,6 +117,7 @@ static void ensure_layout(Editor *e)
     e->layout = fresh;
     e->layout_dirty = false;
     e->layout_width = w;
+    e->layout_font_version = e->font->version;
 }
 
 static void anchor_op(void *ctx, bool insert, size_t pos, size_t n)

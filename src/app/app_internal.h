@@ -23,6 +23,8 @@
 #include <string.h>
 #include "clay.h"
 #include "core/experiments.h"
+#include "app/appearance.h"
+#include "app/fonts_panel.h"
 #include "raygui.h"
 #include "raylib.h"
 #include "rlgl.h"
@@ -83,11 +85,14 @@
  * close request. GLFWwindow is opaque; raylib hands us the pointer. */
 void glfwSetWindowShouldClose(void *window, int value);
 
-enum { FONT_UI = 0, FONT_PROSE = 1, FONT_CHAT = 2, FONT_COUNT };
+enum { FONT_UI = 0, FONT_PROSE = 1, FONT_CHAT = 2, FONT_MONO = 3, FONT_COUNT };
+/* Each font slot is the appearance role of the same number (app/appearance.h). */
+_Static_assert(FONT_UI == APPEARANCE_INTERFACE && FONT_PROSE == APPEARANCE_DOCUMENT && FONT_CHAT == APPEARANCE_CHAT &&
+               FONT_MONO == APPEARANCE_MONO && FONT_COUNT == APPEARANCE_ROLE_COUNT, "font slots follow the roles");
 enum { FOCUS_NONE, FOCUS_DOC, FOCUS_CHAT, FOCUS_RECORD, FOCUS_RECALL };
 enum { DRAG_NONE, DRAG_EXPLORER, DRAG_OBSERVER, DRAG_CHAT };
 enum { PT_NEW_DOC = 1, PT_RENAME_DOC, PT_RENAME_CHAT, PT_ATTACH_NAME, PT_NAME_AUTHOR, PT_NAME_ASSISTANT };  /* what the name prompt is for */
-enum { MT_DOC = 1, MT_CHAT, MT_ATTACH, MT_MODEL };  /* what a context menu is for */
+enum { MT_DOC = 1, MT_CHAT, MT_ATTACH, MT_MODEL, MT_APP };  /* what a context menu is for */
 #define MAX_ATTACH CHAT_CONTROLLER_MAX_ATTACH
 
 #define RGB(r, g, b) ((Clay_Color){ r, g, b, 255 })
@@ -119,6 +124,10 @@ typedef struct {
     Editor *editor;
     SFont fonts[FONT_COUNT];
     SFont *font_ptrs[FONT_COUNT];
+    Appearance appearance;         /* the author's fonts, as shown (app/appearance.h); the panel saves them */
+    FontsPanel fonts_panel;
+    char assets_dir[PATH_MAX];     /* holds fonts/ ("" when not found: the fallbacks alone) */
+    float dpi;
     float explorer_w, observer_w, chat_w;
     bool observer_open;
     int dragging;
@@ -446,6 +455,16 @@ int script_host_setup(App *app, MainLoop *loop, const StartupEnv *env, const cha
 
 /* src/app/app_lifecycle.c */
 void app_destroy(App *app);
+/* Reloads the fonts of `roles` (a bit per FONT_ slot) from app->appearance (the Fonts panel); false when a role failed
+ * to load at all (it keeps its old font). A chosen face that did not load is replaced by the default and `why` says
+ * so. */
+#define APP_FONTS_ALL ((1u << FONT_COUNT) - 1u)
+bool app_fonts_apply(App *app, unsigned roles, char *why, size_t whylen);
+void fonts_panel_open(App *app);
+/* Draws the Fonts panel over everything and handles its input (app/fonts_panel.h). */
+void fonts_panel_draw(App *app, Rectangle screen);
+/* Its keys and typing, in the frame's update phase. */
+void fonts_panel_update(App *app);
 int app_init_jobs(App *app, const char *script_path);
 int app_open_window(App *app, const char *script_path);
 int app_start_models(App *app, const char *script_path);
