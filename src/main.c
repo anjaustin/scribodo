@@ -1661,8 +1661,11 @@ static void import_documents(App *app)
         int fd = in ? open(dst, O_WRONLY | O_CREAT | O_EXCL, 0644) : -1;
         bool ok = in && fd >= 0;
         char buf[65536];
-        size_t r;
-        while (ok && (r = fread(buf, 1, sizeof(buf), in)) > 0) ok = write(fd, buf, r) == (ssize_t)r;
+        /* A short read is the end of the file or an error (ferror below): no read after it. */
+        for (size_t r = sizeof(buf); ok && r == sizeof(buf);) {
+            r = fread(buf, 1, sizeof(buf), in);
+            if (r > 0) ok = write(fd, buf, r) == (ssize_t)r;
+        }
         ok = ok && !ferror(in) && fsync(fd) == 0; /* a read error is not the end of the file */
         if (fd >= 0) ok = close(fd) == 0 && ok;
         if (in) fclose(in);
@@ -3068,6 +3071,256 @@ static void update_labels(App *app)
     snprintf(app->chat_header, sizeof(app->chat_header), "%s", app->chat_title[0] ? app->chat_title : "New chat");
 }
 
+/* The toolbar: open, the document, save, the store and model badges, recall and observer toggles. */
+static void layout_toolbar(App *app)
+{
+    /* Toolbar */
+    CLAY({ .id = CLAY_ID("Toolbar"),
+           .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(40) },
+                       .padding = { 14, 14, 0, 0 }, .childGap = 14,
+                       .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
+           .backgroundColor = COL_PANEL,
+           .border = { .color = COL_BORDER, .width = { .bottom = 1 } } }) {
+        label(app, "Scribodo", FONT_UI, COL_TEXT);
+        slot(CLAY_ID("OpenButton"), 64, 24);
+        label(app, app->doc_label, FONT_UI, COL_MUTED);
+        slot(CLAY_ID("SaveButton"), 64, 24);
+        grow();
+        if (app->store_label[0]) label(app, app->store_label, FONT_UI, app->store_color);
+        /* The model in use; click to choose (when a remote is configured). */
+        CLAY({ .id = CLAY_ID("ModelPicker"),
+               .layout = { .sizing = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(26) }, .padding = { 8, 8, 0, 0 },
+                           .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
+               .backgroundColor = Clay_PointerOver(CLAY_ID("ModelPicker")) ? COL_HOVER : (Clay_Color){ 0 },
+               .cornerRadius = CLAY_CORNER_RADIUS(4) }) {
+            label(app, app->model_label, FONT_UI, app->model_color);
+        }
+        slot(CLAY_ID("RecallToggle"), 72, 24);
+        slot(CLAY_ID("ObserverToggle"), 96, 24);
+    }
+}
+
+/* The Explorer's entity graph (store projects), recording what each row held when it was laid out. */
+static void layout_entities(App *app)
+{
+    memset(app->drawn_ent, 0, sizeof(app->drawn_ent));
+    memset(app->drawn_row_finding, 0, sizeof(app->drawn_row_finding));
+    memset(app->drawn_row_other, 0, sizeof(app->drawn_row_other));
+    if (app->store_inspection.capabilities & PROJECT_STORE_CAP_ENTITIES) {
+        section_header(app, "ENTITIES");
+        if (app->nents == 0) coming_soon(app, "The observer lists who and what appears here");
+        for (size_t i = 0; i < app->nents && i < ENT_SHOW; i++) {
+            bool open = !strcmp(app->ent_open, app->ents[i].id);
+            snprintf(app->drawn_ent[i], sizeof(app->drawn_ent[i]), "%s", app->ents[i].id);
+            list_item(app, CLAY_IDI("EntityItem", (uint32_t)i), app->ent_labels[i], open);
+            if (!open) continue;
+            /* Its relationships (click: the passage; \xE2\x80\xBA: go to the other one)
+             * and mentions (click: the passage). */
+            for (size_t k = 0; k < app->ent.nrows && k < ENT_ROWS; k++) {
+                snprintf(app->drawn_row_finding[k], sizeof(app->drawn_row_finding[k]), "%s", app->ent.rows[k].finding_id);
+                snprintf(app->drawn_row_other[k], sizeof(app->drawn_row_other[k]), "%s",
+                         app->ent.rows[k].is_link ? app->ent.rows[k].other_id : "");
+                if (!app->ent.rows[k].is_link) {
+                    list_item(app, CLAY_IDI("EntRow", (uint32_t)k), app->ent_row_labels[k], false);
+                    continue;
+                }
+                CLAY({ .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) } } }) {
+                    list_item(app, CLAY_IDI("EntRow", (uint32_t)k), app->ent_row_labels[k], false);
+                    bool hover = Clay_PointerOver(CLAY_IDI("EntGo", (uint32_t)k));
+                    CLAY({ .id = CLAY_IDI("EntGo", (uint32_t)k),
+                           .layout = { .sizing = { CLAY_SIZING_FIXED(24), CLAY_SIZING_FIXED(24) },
+                                       .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER } },
+                           .backgroundColor = hover ? COL_HOVER : (Clay_Color){ 0 },
+                           .cornerRadius = CLAY_CORNER_RADIUS(4) }) {
+                        label(app, "\xE2\x80\xBA", FONT_UI, COL_MUTED);
+                    }
+                }
+            }
+            if (app->ent.nrows == 0) coming_soon(app, "  No relationships or mentions left");
+        }
+    }
+}
+
+/* The Explorer: documents, chats, History, notes, canon, the project actions and entities. */
+static void layout_explorer(App *app)
+{
+    /* Explorer */
+    CLAY({ .id = CLAY_ID("Explorer"),
+           .layout = { .sizing = { CLAY_SIZING_FIXED(app->explorer_w), CLAY_SIZING_GROW(0) },
+                       .padding = CLAY_PADDING_ALL(12), .childGap = 2,
+                       .layoutDirection = CLAY_TOP_TO_BOTTOM },
+           .backgroundColor = COL_PANEL, .clip = { .horizontal = true, .vertical = true, .childOffset = Clay_GetScrollOffset() } }) {
+        if (app->store_problem == STORE_PROBLEM_COPY) {
+            coming_soon(app, "This folder is a copy of a project in the store.");
+            coming_soon(app, "Notes, canon, chats and History are paused.");
+            list_item(app, CLAY_ID("StoreFixItem"), "Make it its own project", false);
+        } else if (app->store_problem == STORE_PROBLEM_MISSING) {
+            coming_soon(app, "This project is missing from the store.");
+            coming_soon(app, "Notes, canon, chats and History are paused.");
+            list_item(app, CLAY_ID("StoreFixItem"), "Restore it from its saved files", false);
+        } else if (app->store_inspection.blocked_by != PROJECT_STORE_BLOCK_NONE)
+            coming_soon(app, "Project store offline: notes, canon, chats and History are paused");
+        section_header(app, "DOCUMENTS");
+        const char *cur = editor_path(app->editor) ? base_name(editor_path(app->editor)) : "";
+        if (!app->project_dir[0]) coming_soon(app, "Open a folder (\xE2\x8C\x98O)");
+        else if (app->ndocs == 0) coming_soon(app, "No .md or .txt files yet");
+        for (size_t i = 0; i < app->ndocs; i++)
+            list_item(app, CLAY_IDI("DocItem", (uint32_t)i), app->docs[i], !strcmp(cur, app->docs[i]));
+        if (app->project_dir[0]) {
+            list_item(app, CLAY_ID("NewDocItem"), "+ New document", false);
+            list_item(app, CLAY_ID("ImportItem"), "Import\xE2\x80\xA6", false);
+        }
+        section_header(app, "CHATS");
+        list_item(app, CLAY_ID("NewChatItem"), "+ New chat", false);
+        for (size_t i = 0; i < app->nchats; i++)
+            list_item(app, CLAY_IDI("ChatItem", (uint32_t)i), app->chat_labels ? app->chat_labels[i] : app->chats[i].title,
+                      !strcmp(app->chat_id, app->chats[i].id));
+        if (!app->project_dir[0]) coming_soon(app, "Open a project to save chats");
+        section_header(app, "HISTORY");
+        if (app->nrevs == 0) coming_soon(app, editor_path(app->editor) ? "No revisions yet" : "Open a document");
+        for (size_t i = 0; i < app->nrevs && i < REV_SHOW; i++)
+            list_item(app, CLAY_IDI("RevItem", (uint32_t)i), app->rev_labels[i], false);
+        if (app->nrevs > REV_SHOW) coming_soon(app, "Older revisions are in .scribodo/revisions");
+        section_header(app, "NOTES");
+        const char *open_id = record_view_active(app->record) ? record_view_id(app->record) : "";
+        if (app->project_dir[0]) list_item(app, CLAY_ID("NewNoteItem"), "+ New note", false);
+        else coming_soon(app, "Open a project to keep notes");
+        for (size_t i = 0; i < app->nnotes && i < REC_SHOW; i++)
+            if (app->note_labels[i][0])
+                list_item(app, CLAY_IDI("NoteItem", (uint32_t)i), app->note_labels[i], !strcmp(open_id, app->notes[i].id));
+        section_header(app, "CANON");
+        if (app->project_dir[0] && app->ncanon == 0) coming_soon(app, "Select a passage, then \xE2\x8C\x98\xE2\x87\xA7" "C");
+        for (size_t i = 0; i < app->ncanon && i < REC_SHOW; i++)
+            list_item(app, CLAY_IDI("CanonItem", (uint32_t)i), app->canon_labels[i], !strcmp(open_id, app->canon[i].id));
+        if (app->project_dir[0]) {
+            section_header(app, "PROJECT");
+            list_item(app, CLAY_ID("BackupItem"), backup_job_busy(&app->backup) ? "Backing up\xE2\x80\xA6" : "Back up now", false);
+            list_item(app, CLAY_ID("RestoreItem"), "Restore from a backup\xE2\x80\xA6", false);
+            list_item(app, CLAY_ID("NamesItem"), "Names\xE2\x80\xA6", false);
+            if (app->backup_label[0]) coming_soon(app, app->backup_label);
+        }
+        layout_entities(app);
+    }
+}
+
+/* The chat pane: header, memory line, messages, a name to confirm, footer and input. */
+static void layout_chat(App *app)
+{
+    /* Chat */
+    float input_h = chat_view_input_height(app->chat_view, app->chat_w);
+    CLAY({ .id = CLAY_ID("Chat"),
+           .layout = { .sizing = { CLAY_SIZING_FIXED(app->chat_w), CLAY_SIZING_GROW(0) },
+                       .padding = { 0, 0, 0, 10 }, .layoutDirection = CLAY_TOP_TO_BOTTOM },
+           .backgroundColor = COL_PANEL }) {
+        CLAY({ .id = CLAY_ID("ChatHeader"),
+               .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(36) },
+                           .padding = { 14, 10, 0, 0 }, .childGap = 10,
+                           .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
+               .border = { .color = COL_BORDER, .width = { .bottom = 1 } },
+               .clip = { .horizontal = true } }) {
+            label(app, "CHAT", FONT_UI, COL_MUTED);
+            label(app, app->chat_header, FONT_UI, COL_TEXT);
+            if (app->remote_badge[0]) label(app, app->remote_badge, FONT_UI, COL_WARN);
+            grow();
+            if (open_chat_stored(app)) slot(CLAY_ID("ObserverReads"), 190, 24);
+            slot(CLAY_ID("NewChatButton"), 80, 24);
+        }
+        if (app->memory_experiment) {
+            CLAY({ .id = CLAY_ID("MemoryStatus"),
+                   .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(24) }, .padding = { 12, 8, 4, 0 } },
+                   .clip = { .horizontal = true } }) { label(app, app->memory_label, FONT_UI, COL_MUTED); }
+        }
+        CLAY({ .id = CLAY_ID("ChatMessages"),
+               .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } } }) {}
+        if (app->suggest_text[0]) { /* a name noticed in chat, to confirm */
+            CLAY({ .id = CLAY_ID("NameSuggest"),
+                   .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(34) },
+                               .padding = { 12, 10, 0, 0 }, .childGap = 8,
+                               .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
+                   .backgroundColor = COL_PANEL, .border = { .color = COL_BORDER, .width = { .top = 1 } } }) {
+                CLAY({ .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
+                                   .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
+                       .clip = { .horizontal = true } }) {
+                    label(app, app->suggest_text, FONT_UI, COL_TEXT);
+                }
+                slot(CLAY_ID("NameSave"), 64, 24);
+                slot(CLAY_ID("NameSkip"), 72, 24);
+            }
+        }
+        CLAY({ .id = CLAY_ID("ChatFooter"),
+               .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(30) },
+                           .padding = { 12, 10, 0, 0 }, .childGap = 8,
+                           .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } } }) {
+            if (app->edit_mode) {
+                CLAY({ .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
+                                   .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
+                       .clip = { .horizontal = true } }) {
+                    label(app, app->edit_banner, FONT_UI, COL_WARN);
+                }
+                slot(CLAY_ID("CancelEdit"), 64, 24);
+            } else {
+                CLAY({ .id = CLAY_ID("AttachRow"),
+                       .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } } }) {}
+            }
+            slot(CLAY_ID("SendButton"), 72, 24);
+        }
+        CLAY({ .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(input_h) },
+                           .padding = { 10, 10, 0, 0 } } }) {
+            CLAY({ .id = CLAY_ID("ChatInput"),
+                   .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } } }) {}
+        }
+    }
+}
+
+/* The right pane: recall or the observer, whichever is open. */
+static void layout_side_panel(App *app)
+{
+    if (app->recall_open) {
+        splitter(CLAY_ID("SplitRight"), app->dragging == DRAG_OBSERVER);
+        CLAY({ .id = CLAY_ID("Recall"),
+               .layout = { .sizing = { CLAY_SIZING_FIXED(app->observer_w), CLAY_SIZING_GROW(0) },
+                           .padding = CLAY_PADDING_ALL(12), .childGap = 8,
+                           .layoutDirection = CLAY_TOP_TO_BOTTOM },
+               .backgroundColor = COL_PANEL, .clip = { .vertical = true } }) {
+            section_header(app, "RECALL");
+            label(app, "Your committed canon and verified original text", FONT_UI, COL_DIM);
+            CLAY({ .id = CLAY_ID("RecallBody"),
+                   .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } } }) {}
+        }
+    } else if (app->observer_open) {
+        splitter(CLAY_ID("SplitRight"), app->dragging == DRAG_OBSERVER);
+        CLAY({ .id = CLAY_ID("Observer"),
+               .layout = { .sizing = { CLAY_SIZING_FIXED(app->observer_w), CLAY_SIZING_GROW(0) },
+                           .padding = CLAY_PADDING_ALL(12), .childGap = 8,
+                           .layoutDirection = CLAY_TOP_TO_BOTTOM },
+               .backgroundColor = COL_PANEL, .clip = { .vertical = true } }) {
+            section_header(app, "OBSERVER");
+            label(app, app->observer_label, FONT_UI, COL_DIM);
+            if (app->store_inspection.capabilities & PROJECT_STORE_CAP_SEMANTIC)
+                list_item(app, CLAY_ID("RebuildIndex"), "Rebuild the index", false);
+            CLAY({ .id = CLAY_ID("Findings"),
+                   .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } } }) {}
+        }
+    }
+}
+
+/* The status bar. */
+static void layout_status_bar(App *app)
+{
+    /* Status bar */
+    CLAY({ .id = CLAY_ID("StatusBar"),
+           .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(26) },
+                       .padding = { 14, 14, 0, 0 }, .childGap = 16,
+                       .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
+           .backgroundColor = COL_PANEL,
+           .border = { .color = COL_BORDER, .width = { .top = 1 } } }) {
+        label(app, app->status_left, FONT_UI, COL_MUTED);
+        grow();
+        if (app->status[0] && GetTime() - app->status_time < 6.0)
+            label(app, app->status, FONT_UI, editor_path(app->editor) && editor_is_read_only(app->editor) ? COL_WARN : COL_TEXT);
+    }
+}
+
 static Clay_RenderCommandArray build_layout(App *app)
 {
     app->drawn_explorer_generation = app->explorer.generation;
@@ -3079,124 +3332,10 @@ static Clay_RenderCommandArray build_layout(App *app)
                        .layoutDirection = CLAY_TOP_TO_BOTTOM },
            .backgroundColor = COL_BG }) {
 
-        /* Toolbar */
-        CLAY({ .id = CLAY_ID("Toolbar"),
-               .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(40) },
-                           .padding = { 14, 14, 0, 0 }, .childGap = 14,
-                           .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
-               .backgroundColor = COL_PANEL,
-               .border = { .color = COL_BORDER, .width = { .bottom = 1 } } }) {
-            label(app, "Scribodo", FONT_UI, COL_TEXT);
-            slot(CLAY_ID("OpenButton"), 64, 24);
-            label(app, app->doc_label, FONT_UI, COL_MUTED);
-            slot(CLAY_ID("SaveButton"), 64, 24);
-            grow();
-            if (app->store_label[0]) label(app, app->store_label, FONT_UI, app->store_color);
-            /* The model in use; click to choose (when a remote is configured). */
-            CLAY({ .id = CLAY_ID("ModelPicker"),
-                   .layout = { .sizing = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(26) }, .padding = { 8, 8, 0, 0 },
-                               .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
-                   .backgroundColor = Clay_PointerOver(CLAY_ID("ModelPicker")) ? COL_HOVER : (Clay_Color){ 0 },
-                   .cornerRadius = CLAY_CORNER_RADIUS(4) }) {
-                label(app, app->model_label, FONT_UI, app->model_color);
-            }
-            slot(CLAY_ID("RecallToggle"), 72, 24);
-            slot(CLAY_ID("ObserverToggle"), 96, 24);
-        }
+        layout_toolbar(app);
 
         CLAY({ .id = CLAY_ID("Main"), .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } } }) {
-            /* Explorer */
-            CLAY({ .id = CLAY_ID("Explorer"),
-                   .layout = { .sizing = { CLAY_SIZING_FIXED(app->explorer_w), CLAY_SIZING_GROW(0) },
-                               .padding = CLAY_PADDING_ALL(12), .childGap = 2,
-                               .layoutDirection = CLAY_TOP_TO_BOTTOM },
-                   .backgroundColor = COL_PANEL, .clip = { .horizontal = true, .vertical = true, .childOffset = Clay_GetScrollOffset() } }) {
-                if (app->store_problem == STORE_PROBLEM_COPY) {
-                    coming_soon(app, "This folder is a copy of a project in the store.");
-                    coming_soon(app, "Notes, canon, chats and History are paused.");
-                    list_item(app, CLAY_ID("StoreFixItem"), "Make it its own project", false);
-                } else if (app->store_problem == STORE_PROBLEM_MISSING) {
-                    coming_soon(app, "This project is missing from the store.");
-                    coming_soon(app, "Notes, canon, chats and History are paused.");
-                    list_item(app, CLAY_ID("StoreFixItem"), "Restore it from its saved files", false);
-                } else if (app->store_inspection.blocked_by != PROJECT_STORE_BLOCK_NONE)
-                    coming_soon(app, "Project store offline: notes, canon, chats and History are paused");
-                section_header(app, "DOCUMENTS");
-                const char *cur = editor_path(app->editor) ? base_name(editor_path(app->editor)) : "";
-                if (!app->project_dir[0]) coming_soon(app, "Open a folder (\xE2\x8C\x98O)");
-                else if (app->ndocs == 0) coming_soon(app, "No .md or .txt files yet");
-                for (size_t i = 0; i < app->ndocs; i++)
-                    list_item(app, CLAY_IDI("DocItem", (uint32_t)i), app->docs[i], !strcmp(cur, app->docs[i]));
-                if (app->project_dir[0]) {
-                    list_item(app, CLAY_ID("NewDocItem"), "+ New document", false);
-                    list_item(app, CLAY_ID("ImportItem"), "Import\xE2\x80\xA6", false);
-                }
-                section_header(app, "CHATS");
-                list_item(app, CLAY_ID("NewChatItem"), "+ New chat", false);
-                for (size_t i = 0; i < app->nchats; i++)
-                    list_item(app, CLAY_IDI("ChatItem", (uint32_t)i), app->chat_labels ? app->chat_labels[i] : app->chats[i].title,
-                              !strcmp(app->chat_id, app->chats[i].id));
-                if (!app->project_dir[0]) coming_soon(app, "Open a project to save chats");
-                section_header(app, "HISTORY");
-                if (app->nrevs == 0) coming_soon(app, editor_path(app->editor) ? "No revisions yet" : "Open a document");
-                for (size_t i = 0; i < app->nrevs && i < REV_SHOW; i++)
-                    list_item(app, CLAY_IDI("RevItem", (uint32_t)i), app->rev_labels[i], false);
-                if (app->nrevs > REV_SHOW) coming_soon(app, "Older revisions are in .scribodo/revisions");
-                section_header(app, "NOTES");
-                const char *open_id = record_view_active(app->record) ? record_view_id(app->record) : "";
-                if (app->project_dir[0]) list_item(app, CLAY_ID("NewNoteItem"), "+ New note", false);
-                else coming_soon(app, "Open a project to keep notes");
-                for (size_t i = 0; i < app->nnotes && i < REC_SHOW; i++)
-                    if (app->note_labels[i][0])
-                        list_item(app, CLAY_IDI("NoteItem", (uint32_t)i), app->note_labels[i], !strcmp(open_id, app->notes[i].id));
-                section_header(app, "CANON");
-                if (app->project_dir[0] && app->ncanon == 0) coming_soon(app, "Select a passage, then \xE2\x8C\x98\xE2\x87\xA7" "C");
-                for (size_t i = 0; i < app->ncanon && i < REC_SHOW; i++)
-                    list_item(app, CLAY_IDI("CanonItem", (uint32_t)i), app->canon_labels[i], !strcmp(open_id, app->canon[i].id));
-                if (app->project_dir[0]) {
-                    section_header(app, "PROJECT");
-                    list_item(app, CLAY_ID("BackupItem"), backup_job_busy(&app->backup) ? "Backing up\xE2\x80\xA6" : "Back up now", false);
-                    list_item(app, CLAY_ID("RestoreItem"), "Restore from a backup\xE2\x80\xA6", false);
-                    list_item(app, CLAY_ID("NamesItem"), "Names\xE2\x80\xA6", false);
-                    if (app->backup_label[0]) coming_soon(app, app->backup_label);
-                }
-                memset(app->drawn_ent, 0, sizeof(app->drawn_ent));
-                memset(app->drawn_row_finding, 0, sizeof(app->drawn_row_finding));
-                memset(app->drawn_row_other, 0, sizeof(app->drawn_row_other));
-                if (app->store_inspection.capabilities & PROJECT_STORE_CAP_ENTITIES) {
-                    section_header(app, "ENTITIES");
-                    if (app->nents == 0) coming_soon(app, "The observer lists who and what appears here");
-                    for (size_t i = 0; i < app->nents && i < ENT_SHOW; i++) {
-                        bool open = !strcmp(app->ent_open, app->ents[i].id);
-                        snprintf(app->drawn_ent[i], sizeof(app->drawn_ent[i]), "%s", app->ents[i].id);
-                        list_item(app, CLAY_IDI("EntityItem", (uint32_t)i), app->ent_labels[i], open);
-                        if (!open) continue;
-                        /* Its relationships (click: the passage; \xE2\x80\xBA: go to the other one)
-                         * and mentions (click: the passage). */
-                        for (size_t k = 0; k < app->ent.nrows && k < ENT_ROWS; k++) {
-                            snprintf(app->drawn_row_finding[k], sizeof(app->drawn_row_finding[k]), "%s", app->ent.rows[k].finding_id);
-                            snprintf(app->drawn_row_other[k], sizeof(app->drawn_row_other[k]), "%s",
-                                     app->ent.rows[k].is_link ? app->ent.rows[k].other_id : "");
-                            if (!app->ent.rows[k].is_link) {
-                                list_item(app, CLAY_IDI("EntRow", (uint32_t)k), app->ent_row_labels[k], false);
-                                continue;
-                            }
-                            CLAY({ .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) } } }) {
-                                list_item(app, CLAY_IDI("EntRow", (uint32_t)k), app->ent_row_labels[k], false);
-                                bool hover = Clay_PointerOver(CLAY_IDI("EntGo", (uint32_t)k));
-                                CLAY({ .id = CLAY_IDI("EntGo", (uint32_t)k),
-                                       .layout = { .sizing = { CLAY_SIZING_FIXED(24), CLAY_SIZING_FIXED(24) },
-                                                   .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER } },
-                                       .backgroundColor = hover ? COL_HOVER : (Clay_Color){ 0 },
-                                       .cornerRadius = CLAY_CORNER_RADIUS(4) }) {
-                                    label(app, "\xE2\x80\xBA", FONT_UI, COL_MUTED);
-                                }
-                            }
-                        }
-                        if (app->ent.nrows == 0) coming_soon(app, "  No relationships or mentions left");
-                    }
-                }
-            }
+            layout_explorer(app);
             splitter(CLAY_ID("SplitLeft"), app->dragging == DRAG_EXPLORER);
 
             CLAY({ .id = CLAY_ID("Editor"), .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } },
@@ -3204,112 +3343,11 @@ static Clay_RenderCommandArray build_layout(App *app)
 
             splitter(CLAY_ID("SplitChat"), app->dragging == DRAG_CHAT);
 
-            /* Chat */
-            float input_h = chat_view_input_height(app->chat_view, app->chat_w);
-            CLAY({ .id = CLAY_ID("Chat"),
-                   .layout = { .sizing = { CLAY_SIZING_FIXED(app->chat_w), CLAY_SIZING_GROW(0) },
-                               .padding = { 0, 0, 0, 10 }, .layoutDirection = CLAY_TOP_TO_BOTTOM },
-                   .backgroundColor = COL_PANEL }) {
-                CLAY({ .id = CLAY_ID("ChatHeader"),
-                       .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(36) },
-                                   .padding = { 14, 10, 0, 0 }, .childGap = 10,
-                                   .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
-                       .border = { .color = COL_BORDER, .width = { .bottom = 1 } },
-                       .clip = { .horizontal = true } }) {
-                    label(app, "CHAT", FONT_UI, COL_MUTED);
-                    label(app, app->chat_header, FONT_UI, COL_TEXT);
-                    if (app->remote_badge[0]) label(app, app->remote_badge, FONT_UI, COL_WARN);
-                    grow();
-                    if (open_chat_stored(app)) slot(CLAY_ID("ObserverReads"), 190, 24);
-                    slot(CLAY_ID("NewChatButton"), 80, 24);
-                }
-                if (app->memory_experiment) {
-                    CLAY({ .id = CLAY_ID("MemoryStatus"),
-                           .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(24) }, .padding = { 12, 8, 4, 0 } },
-                           .clip = { .horizontal = true } }) { label(app, app->memory_label, FONT_UI, COL_MUTED); }
-                }
-                CLAY({ .id = CLAY_ID("ChatMessages"),
-                       .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } } }) {}
-                if (app->suggest_text[0]) { /* a name noticed in chat, to confirm */
-                    CLAY({ .id = CLAY_ID("NameSuggest"),
-                           .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(34) },
-                                       .padding = { 12, 10, 0, 0 }, .childGap = 8,
-                                       .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
-                           .backgroundColor = COL_PANEL, .border = { .color = COL_BORDER, .width = { .top = 1 } } }) {
-                        CLAY({ .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
-                                           .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
-                               .clip = { .horizontal = true } }) {
-                            label(app, app->suggest_text, FONT_UI, COL_TEXT);
-                        }
-                        slot(CLAY_ID("NameSave"), 64, 24);
-                        slot(CLAY_ID("NameSkip"), 72, 24);
-                    }
-                }
-                CLAY({ .id = CLAY_ID("ChatFooter"),
-                       .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(30) },
-                                   .padding = { 12, 10, 0, 0 }, .childGap = 8,
-                                   .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } } }) {
-                    if (app->edit_mode) {
-                        CLAY({ .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
-                                           .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
-                               .clip = { .horizontal = true } }) {
-                            label(app, app->edit_banner, FONT_UI, COL_WARN);
-                        }
-                        slot(CLAY_ID("CancelEdit"), 64, 24);
-                    } else {
-                        CLAY({ .id = CLAY_ID("AttachRow"),
-                               .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } } }) {}
-                    }
-                    slot(CLAY_ID("SendButton"), 72, 24);
-                }
-                CLAY({ .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(input_h) },
-                                   .padding = { 10, 10, 0, 0 } } }) {
-                    CLAY({ .id = CLAY_ID("ChatInput"),
-                           .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } } }) {}
-                }
-            }
-
-            if (app->recall_open) {
-                splitter(CLAY_ID("SplitRight"), app->dragging == DRAG_OBSERVER);
-                CLAY({ .id = CLAY_ID("Recall"),
-                       .layout = { .sizing = { CLAY_SIZING_FIXED(app->observer_w), CLAY_SIZING_GROW(0) },
-                                   .padding = CLAY_PADDING_ALL(12), .childGap = 8,
-                                   .layoutDirection = CLAY_TOP_TO_BOTTOM },
-                       .backgroundColor = COL_PANEL, .clip = { .vertical = true } }) {
-                    section_header(app, "RECALL");
-                    label(app, "Your committed canon and verified original text", FONT_UI, COL_DIM);
-                    CLAY({ .id = CLAY_ID("RecallBody"),
-                           .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } } }) {}
-                }
-            } else if (app->observer_open) {
-                splitter(CLAY_ID("SplitRight"), app->dragging == DRAG_OBSERVER);
-                CLAY({ .id = CLAY_ID("Observer"),
-                       .layout = { .sizing = { CLAY_SIZING_FIXED(app->observer_w), CLAY_SIZING_GROW(0) },
-                                   .padding = CLAY_PADDING_ALL(12), .childGap = 8,
-                                   .layoutDirection = CLAY_TOP_TO_BOTTOM },
-                       .backgroundColor = COL_PANEL, .clip = { .vertical = true } }) {
-                    section_header(app, "OBSERVER");
-                    label(app, app->observer_label, FONT_UI, COL_DIM);
-                    if (app->store_inspection.capabilities & PROJECT_STORE_CAP_SEMANTIC)
-                        list_item(app, CLAY_ID("RebuildIndex"), "Rebuild the index", false);
-                    CLAY({ .id = CLAY_ID("Findings"),
-                           .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } } }) {}
-                }
-            }
+            layout_chat(app);
+            layout_side_panel(app);
         }
 
-        /* Status bar */
-        CLAY({ .id = CLAY_ID("StatusBar"),
-               .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(26) },
-                           .padding = { 14, 14, 0, 0 }, .childGap = 16,
-                           .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
-               .backgroundColor = COL_PANEL,
-               .border = { .color = COL_BORDER, .width = { .top = 1 } } }) {
-            label(app, app->status_left, FONT_UI, COL_MUTED);
-            grow();
-            if (app->status[0] && GetTime() - app->status_time < 6.0)
-                label(app, app->status, FONT_UI, editor_path(app->editor) && editor_is_read_only(app->editor) ? COL_WARN : COL_TEXT);
-        }
+        layout_status_bar(app);
     }
     Clay_RenderCommandArray commands = Clay_EndLayout();
     frame_view_model_seal(&app->frame);
@@ -3755,41 +3793,51 @@ static void app_destroy(App *app)
     memset(app, 0, sizeof(*app));
 }
 
-int main(int argc, char **argv)
-{
-    static App app;
-    /* Before any thread: the environment is read and rewritten here only (app/startup_env.h). */
-    static StartupEnv env;
-    (void)startup_env_prepare(&env);
-    atomic_init(&app.history_hold, false);
-    app.store = store_manager_create();
-    if (!app.store) return 1;
-    frame_view_model_init(&app.frame);
-    project_session_init(&app.session);
-    explorer_snapshot_init(&app.explorer);
-    chat_controller_init(&app.chat_controller);
-    reviewed_edit_controller_init(&app.reviewed_edit);
-    draft_controller_init(&app.draft);
-    if (!entity_backfill_job_init(&app.graph_job, app.store)) {
-        app_destroy(&app);
-        return 1;
-    }
-    app.graph_job_initialized = true;
-    app.import_job_initialized = import_job_init(&app.import_job, app.store);
-    if (!name_detection_job_init(&app.names_job, NULL)) {
-        app_destroy(&app);
-        return 1;
-    }
-    app.names_job_initialized = true;
-    const char *path = argc > 1 ? argv[1] : NULL;
+/* ---- main(): startup phases, the frame loop and shutdown (AUDIT-004 F3) ------------------------------------- */
 
-    /* UI test mode: SCRIBODO_SCRIPT=file.scribo runs a scripted session in a
-     * hidden window (no focus stealing, immune to the real mouse) and exits
-     * non-zero if any expectation fails. See src/app/script.h. */
-    const char *script_path = env.scripted ? env.script_path : NULL;
-    app.history_job = script_path ? chat_history_job_create_with_reader(app.store, scripted_history_read, &app)
-                                  : chat_history_job_create(app.store);
-    if (!app.history_job) { app_destroy(&app); return 1; }
+/* What lives across frames of the loop, besides App. */
+typedef struct {
+    ScriptHost host;
+    char sample[2048];           /* the bundled sample, the welcome screen's fallback */
+    const char *screenshot_path; /* SCRIBODO_SCREENSHOT: render a few frames, save the framebuffer, exit */
+    int frame;
+    bool trace;                  /* SCRIBODO_INPUT_TRACE */
+    int cursor_shape;
+    bool closed_by_window;
+} MainLoop;
+
+/* The screen rects of raygui controls drawn over the layout this frame. */
+typedef struct {
+    Rectangle save_rect, open_rect, obs_rect, new_rect, send_rect, attach_rect;
+} FrameRects;
+
+/* Controllers and the store-backed workers that need no window. 0, or the exit code. */
+static int app_init_jobs(App *app, const char *script_path)
+{
+    frame_view_model_init(&app->frame);
+    project_session_init(&app->session);
+    explorer_snapshot_init(&app->explorer);
+    chat_controller_init(&app->chat_controller);
+    reviewed_edit_controller_init(&app->reviewed_edit);
+    draft_controller_init(&app->draft);
+    if (!entity_backfill_job_init(&app->graph_job, app->store)) {
+        return 1;
+    }
+    app->graph_job_initialized = true;
+    app->import_job_initialized = import_job_init(&app->import_job, app->store);
+    if (!name_detection_job_init(&app->names_job, NULL)) {
+        return 1;
+    }
+    app->names_job_initialized = true;
+    app->history_job = script_path ? chat_history_job_create_with_reader(app->store, scripted_history_read, app)
+                                  : chat_history_job_create(app->store);
+    if (!app->history_job) { return 1; }
+    return 0;
+}
+
+/* The window, the services and backup workers, fonts and the Clay arena. 0, or the exit code. */
+static int app_open_window(App *app, const char *script_path)
+{
     unsigned flags = FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_HIGHDPI | FLAG_VSYNC_HINT;
     if (script_path) {
         flags |= FLAG_WINDOW_HIDDEN;
@@ -3800,172 +3848,182 @@ int main(int argc, char **argv)
     InitWindow(1440, 860, "Scribodo");
     if (!IsWindowReady()) {
         fprintf(stderr, "scribodo: could not create a window (is a display available?)\n");
-        app_destroy(&app);
         return 3;
     }
-    app.window_ready = true;
+    app->window_ready = true;
     SetWindowMinSize(900, 480);
     SetExitKey(KEY_NULL); /* Esc must never quit a writing app */
     SetTargetFPS(60);
 
-    if (!backup_job_init(&app.backup, app.store)) {
+    if (!backup_job_init(&app->backup, app->store)) {
         fprintf(stderr, "scribodo: couldn't initialise the backup worker\n");
-        app_destroy(&app);
         return 1;
     }
-    app.backup_initialized = true;
-    if (!service_supervisor_init(&app.services, app.store)) {
+    app->backup_initialized = true;
+    if (!service_supervisor_init(&app->services, app->store)) {
         fprintf(stderr, "scribodo: couldn't initialise the service supervisor\n");
-        app_destroy(&app);
         return 1;
     }
-    app.services_initialized = true;
-    app.explorer_w = 210;
-    app.observer_w = 260;
-    app.chat_w = 420;
-    app.focus = FOCUS_DOC;
+    app->services_initialized = true;
+    app->explorer_w = 210;
+    app->observer_w = 260;
+    app->chat_w = 420;
+    app->focus = FOCUS_DOC;
 
     float dpi = GetWindowScaleDPI().x;
-    if (!load_fonts(&app, dpi)) {
+    if (!load_fonts(app, dpi)) {
         fprintf(stderr, "scribodo: no usable font found (set SCRIBODO_PROSE_FONT)\n");
-        app_destroy(&app);
         return 1;
     }
-    style_raygui(&app.fonts[FONT_UI]);
+    style_raygui(&app->fonts[FONT_UI]);
 
     uint32_t clay_mem = Clay_MinMemorySize();
     void *clay_buf = malloc(clay_mem);
     if (!clay_buf) {
         fprintf(stderr, "scribodo: out of memory\n");
-        app_destroy(&app);
         return 1;
     }
-    app.clay_buf = clay_buf;
+    app->clay_buf = clay_buf;
     Clay_Arena arena = Clay_CreateArenaWithCapacityAndMemory(clay_mem, clay_buf);
     Clay_Initialize(arena, (Clay_Dimensions){ (float)GetScreenWidth(), (float)GetScreenHeight() },
                     (Clay_ErrorHandler){ clay_error, 0 });
-    Clay_SetMeasureTextFunction(clay_measure_text, app.font_ptrs);
+    Clay_SetMeasureTextFunction(clay_measure_text, app->font_ptrs);
+    return 0;
+}
 
+/* The model settings, the local model servers (UI scripts use a fake model unless SCRIBODO_LLM=real), the semantic
+ * client, the reranker and the memory experiment. 0, or the exit code. */
+static int app_start_models(App *app, const char *script_path)
+{
     /* The local model. UI scripts use a fake model unless SCRIBODO_LLM=real. */
     /* The author's model settings (UI scripts keep their own: startup_env_prepare). */
-    model_settings_load(&app.model);
+    model_settings_load(&app->model);
     /* The verified-answer pipeline (default on since 2026-11-14) runs for conversations with memory on; it needs the
      * memory experiment and, with a real model, the pinned reranker file. */
     const char *llm_mode = getenv("SCRIBODO_LLM");
     bool fake = (llm_mode && !strcmp(llm_mode, "fake")) || (script_path && !(llm_mode && !strcmp(llm_mode, "real")));
     /* With the fake backend nothing can extract a span, so the pipeline runs only when a test asks for its fixture. */
-    app.answer_pipeline = experiments()->answer_pipeline && experiments()->memory_experiment &&
+    app->answer_pipeline = experiments()->answer_pipeline && experiments()->memory_experiment &&
                           (!fake || experiments()->answer_pipeline_requested);
     if (!fake) {
         LlmServerConfig cfg, ecfg, rcfg;
         llm_server_default_config(&cfg, GetApplicationDirectory());
         llm_server_embed_config(&ecfg, GetApplicationDirectory());
         llm_server_rerank_config(&rcfg, GetApplicationDirectory());
-        if (app.answer_pipeline && !local_models_reranker_present(&rcfg)) app.answer_pipeline = false;
+        if (app->answer_pipeline && !local_models_reranker_present(&rcfg)) app->answer_pipeline = false;
         /* The author's context per conversation, as far as memory allows
          * (the other servers are about to start). */
         const ModelSettingInfo *ci = model_setting_info(7);
         long long others = llm_server_mem_need(&ecfg, ecfg.ctx_total) +
-                           (app.answer_pipeline ? llm_server_mem_need(&rcfg, rcfg.ctx_total) : 0);
-        (void)local_models_reap_orphans(&cfg, &ecfg, app.answer_pipeline ? &rcfg : NULL);
-        MemFit fit = memfit_context(sysmem_available(), others, &cfg, app.model.context, (int)ci->min, (int)ci->step);
-        memfit_message(&fit, app.model.context, app.mem_msg, sizeof(app.mem_msg));
-        if (app.mem_msg[0]) fprintf(stderr, "scribodo: %s\n", app.mem_msg);
+                           (app->answer_pipeline ? llm_server_mem_need(&rcfg, rcfg.ctx_total) : 0);
+        (void)local_models_reap_orphans(&cfg, &ecfg, app->answer_pipeline ? &rcfg : NULL);
+        MemFit fit = memfit_context(sysmem_available(), others, &cfg, app->model.context, (int)ci->min, (int)ci->step);
+        memfit_message(&fit, app->model.context, app->mem_msg, sizeof(app->mem_msg));
+        if (app->mem_msg[0]) fprintf(stderr, "scribodo: %s\n", app->mem_msg);
         cfg.ctx_total = fit.slot_ctx * (cfg.slots > 0 ? cfg.slots : 1);
-        app.llm = llm_server_create(&cfg);
-        if (app.llm) llm_server_start(app.llm);
+        app->llm = llm_server_create(&cfg);
+        if (app->llm) llm_server_start(app->llm);
         /* Embeddings for the semantic index (a second, small server). */
-        app.embed = llm_server_create(&ecfg);
-        if (app.embed) llm_server_start(app.embed);
-        if (app.answer_pipeline) {
-            app.rerank = llm_server_create(&rcfg);
-            if (app.rerank) llm_server_start(app.rerank);
+        app->embed = llm_server_create(&ecfg);
+        if (app->embed) llm_server_start(app->embed);
+        if (app->answer_pipeline) {
+            app->rerank = llm_server_create(&rcfg);
+            if (app->rerank) llm_server_start(app->rerank);
         }
-        if (!app.llm || !app.embed || (app.answer_pipeline && !app.rerank)) {
+        if (!app->llm || !app->embed || (app->answer_pipeline && !app->rerank)) {
             fprintf(stderr, "scribodo: could not allocate the pinned local model supervisors (no fake fallback)\n");
-            app_destroy(&app); return 1;
+            return 1;
         }
     }
-    app.semantic = semantic_client_create(app.store, app.embed);
-    if (app.answer_pipeline) {
+    app->semantic = semantic_client_create(app->store, app->embed);
+    if (app->answer_pipeline) {
         /* With the fake backend there is no reranker server: a deterministic fixture scores instead. */
-        app.rerank_client = rerank_client_create(app.rerank);
-        if (!app.rerank_client) { app_destroy(&app); return 1; }
+        app->rerank_client = rerank_client_create(app->rerank);
+        if (!app->rerank_client) { return 1; }
     }
-    app.memory_experiment = experiments()->memory_experiment;
-    app.memory_briefs_experiment = app.memory_experiment && experiments()->memory_briefs;
-    if (app.memory_experiment) {
-        app.memory_document_cache = memory_document_cache_create();
-        app.generative_gate = generative_gate_create();
-        app.memory_job = memory_job_create(app.store, app.semantic, app.llm);
-        if (!app.memory_job || !app.memory_document_cache || !app.generative_gate ||
-            !memory_job_set_document_cache(app.memory_job, app.memory_document_cache) ||
-            !memory_job_set_generative_gate(app.memory_job, app.generative_gate) ||
-            !memory_job_set_briefs_enabled(app.memory_job, app.memory_briefs_experiment)) { app_destroy(&app); return 1; }
+    app->memory_experiment = experiments()->memory_experiment;
+    app->memory_briefs_experiment = app->memory_experiment && experiments()->memory_briefs;
+    if (app->memory_experiment) {
+        app->memory_document_cache = memory_document_cache_create();
+        app->generative_gate = generative_gate_create();
+        app->memory_job = memory_job_create(app->store, app->semantic, app->llm);
+        if (!app->memory_job || !app->memory_document_cache || !app->generative_gate ||
+            !memory_job_set_document_cache(app->memory_job, app->memory_document_cache) ||
+            !memory_job_set_generative_gate(app->memory_job, app->generative_gate) ||
+            !memory_job_set_briefs_enabled(app->memory_job, app->memory_briefs_experiment)) { return 1; }
     }
-    ChatSession *owned_chat = chat_create(app.llm);
+    return 0;
+}
+
+/* The chat session, the remote model, the editor and every view; the profile and model settings applied.
+ * 0, or the exit code. */
+static int app_create_views(App *app, const char *script_path)
+{
+    ChatSession *owned_chat = chat_create(app->llm);
     if (owned_chat) {
-        chat_memory_set_document_cache(owned_chat, app.memory_document_cache);
-        chat_set_generative_gate(owned_chat, app.generative_gate);
-        chat_memory_set_briefs_enabled(owned_chat, app.memory_briefs_experiment);
-        chat_answer_pipeline_configure(owned_chat, app.rerank_client, app.answer_pipeline);
-        if (app.memory_experiment && experiments()->memory_presentation_compact)
+        chat_memory_set_document_cache(owned_chat, app->memory_document_cache);
+        chat_set_generative_gate(owned_chat, app->generative_gate);
+        chat_memory_set_briefs_enabled(owned_chat, app->memory_briefs_experiment);
+        chat_answer_pipeline_configure(owned_chat, app->rerank_client, app->answer_pipeline);
+        if (app->memory_experiment && experiments()->memory_presentation_compact)
             chat_memory_set_presentation(owned_chat, CHAT_MEMORY_COMPACT);
-        else if (app.memory_experiment && experiments()->memory_presentation_episode)
+        else if (app->memory_experiment && experiments()->memory_presentation_episode)
             chat_memory_set_presentation(owned_chat, CHAT_MEMORY_EPISODE);
     }
-    name_detection_job_set_server(&app.names_job, app.llm);
+    name_detection_job_set_server(&app->names_job, app->llm);
     /* A remote model only if the author configured one; never selected here. TLS secrets are never written out for
      * its traffic, and UI scripts never read the author's remote configuration (its provider name and host would
      * reach a run's artefacts); they keep their own, normally absent, in the fixture folder (startup_env_prepare). */
-    app.remote_ok = remote_load(&app.remote, app.remote_why, sizeof(app.remote_why));
-    if (!app.remote_ok && app.remote_why[0]) {
+    app->remote_ok = remote_load(&app->remote, app->remote_why, sizeof(app->remote_why));
+    if (!app->remote_ok && app->remote_why[0]) {
         char msg[300];
-        snprintf(msg, sizeof(msg), "The remote model isn't available: %s", app.remote_why);
-        set_status(&app, msg);
+        snprintf(msg, sizeof(msg), "The remote model isn't available: %s", app->remote_why);
+        set_status(app, msg);
     }
-    app.editor = editor_create(&app.fonts[FONT_PROSE]);
-    editor_on_will_change(app.editor, memory_editor_will_change, &app);
-    ChatView *chat_view = owned_chat ? chat_view_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI], owned_chat) : NULL;
-    ReviewView *review = review_create(&app.fonts[FONT_PROSE], &app.fonts[FONT_UI]);
-    if (!chat_controller_adopt(&app.chat_controller, owned_chat, chat_view)) {
+    app->editor = editor_create(&app->fonts[FONT_PROSE]);
+    editor_on_will_change(app->editor, memory_editor_will_change, app);
+    ChatView *chat_view = owned_chat ? chat_view_create(&app->fonts[FONT_CHAT], &app->fonts[FONT_UI], owned_chat) : NULL;
+    ReviewView *review = review_create(&app->fonts[FONT_PROSE], &app->fonts[FONT_UI]);
+    if (!chat_controller_adopt(&app->chat_controller, owned_chat, chat_view)) {
         chat_view_destroy(chat_view);
         chat_destroy(owned_chat);
     }
-    app.memory_sources_editor = editor_create(&app.fonts[FONT_CHAT]);
-    if (!app.memory_sources_editor) { app_destroy(&app); return 1; }
-    editor_set_modal_owner(app.memory_sources_editor, true);
-    if (!reviewed_edit_controller_adopt(&app.reviewed_edit, app.editor, review)) review_destroy(review);
-    app.record = record_view_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI]);
-    app.prompt = prompt_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI]);
-    app.observer = observer_create(app.store, app.llm, app.semantic);
-    if (app.observer) observer_set_generative_gate(app.observer, app.generative_gate);
-    app.findings = findings_view_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI]);
-    app.recall = recall_view_create(&app.fonts[FONT_CHAT], &app.fonts[FONT_UI]);
-    app.recall_job_initialized = recall_job_init(&app.recall_job, app.store);
-    app.findings_version = UINT64_MAX;
+    app->memory_sources_editor = editor_create(&app->fonts[FONT_CHAT]);
+    if (!app->memory_sources_editor) { return 1; }
+    editor_set_modal_owner(app->memory_sources_editor, true);
+    if (!reviewed_edit_controller_adopt(&app->reviewed_edit, app->editor, review)) review_destroy(review);
+    app->record = record_view_create(&app->fonts[FONT_CHAT], &app->fonts[FONT_UI]);
+    app->prompt = prompt_create(&app->fonts[FONT_CHAT], &app->fonts[FONT_UI]);
+    app->observer = observer_create(app->store, app->llm, app->semantic);
+    if (app->observer) observer_set_generative_gate(app->observer, app->generative_gate);
+    app->findings = findings_view_create(&app->fonts[FONT_CHAT], &app->fonts[FONT_UI]);
+    app->recall = recall_view_create(&app->fonts[FONT_CHAT], &app->fonts[FONT_UI]);
+    app->recall_job_initialized = recall_job_init(&app->recall_job, app->store);
+    app->findings_version = UINT64_MAX;
     /* UI scripts start with the observer off (deterministic files); a
      * script turns it on with "observer on". */
-    if (app.observer && script_path) observer_set_enabled(app.observer, false);
-    if (!app.chat || !app.editor || !app.chat_view || !app.review || !app.record || !app.observer || !app.semantic ||
-        !app.findings || !app.prompt || !app.recall || !app.recall_job_initialized) {
+    if (app->observer && script_path) observer_set_enabled(app->observer, false);
+    if (!app->chat || !app->editor || !app->chat_view || !app->review || !app->record || !app->observer || !app->semantic ||
+        !app->findings || !app->prompt || !app->recall || !app->recall_job_initialized) {
         fprintf(stderr, "scribodo: out of memory\n");
-        app_destroy(&app);
         return 1;
     }
-    chat_on_message_done(app.chat, on_message_done, &app);
+    chat_on_message_done(app->chat, on_message_done, app);
     /* Who is who. UI scripts keep their own profile, never the author's (startup_env_prepare). */
-    profile_load(&app.profile);
-    apply_profile(&app);
-    apply_model_settings(&app, false);
-    if (app.mem_msg[0]) set_status(&app, app.mem_msg);
-    if (!app.profile.asked && !script_path) begin_names(&app); /* asked once, on first launch */
+    profile_load(&app->profile);
+    apply_profile(app);
+    apply_model_settings(app, false);
+    if (app->mem_msg[0]) set_status(app, app->mem_msg);
+    if (!app->profile.asked && !script_path) begin_names(app); /* asked once, on first launch */
+    return 0;
+}
 
+static int app_load_recents(App *app, MainLoop *loop, const StartupEnv *env, const char *script_path)
+{
     /* Default to the bundled sample, located relative to the executable
      * (build/scribodo) rather than the working directory, which is "/" when
      * launched from Finder. */
-    char sample[2048];
-    snprintf(sample, sizeof(sample), "%s../assets/sample/sample.md", GetApplicationDirectory());
+    snprintf(loop->sample, sizeof(loop->sample), "%s../assets/sample/sample.md", GetApplicationDirectory());
     /* Recent projects live in the app's support folder; a script keeps its
      * own list in its fixture folder. */
     {
@@ -3975,27 +4033,32 @@ int main(int argc, char **argv)
             struct passwd *pw = getpwuid(getuid());
             home = pw ? pw->pw_dir : "/tmp";
         }
-        if (script_path) snprintf(state, sizeof(state), "%s/.scribodo-state", env.script_dir);
+        if (script_path) snprintf(state, sizeof(state), "%s/.scribodo-state", env->script_dir);
         else snprintf(state, sizeof(state), "%s/Library/Application Support/Scribodo", home ? home : ".");
-        app.recent_store = recent_store_create(state);
-        if (!app.recent_store) {
+        app->recent_store = recent_store_create(state);
+        if (!app->recent_store) {
             fprintf(stderr, "scribodo: out of memory\n");
-            app_destroy(&app);
             return 1;
         }
-        app.nrecents = recent_store_load(app.recent_store, app.recents, RECENT_MAX);
+        app->nrecents = recent_store_load(app->recent_store, app->recents, RECENT_MAX);
     }
+    return 0;
+}
+
+/* The scripted host every UI test drives (app/script.h), and the script itself. 0, or the exit code. */
+static int script_host_setup(App *app, MainLoop *loop, const StartupEnv *env, const char *script_path)
+{
     dialogs_script_mode(script_path != NULL);
-    ScriptHost host = {
-        .editor = app.editor,
-        .explorer_w = &app.explorer_w,
-        .observer_w = &app.observer_w,
-        .editor_rect = &app.editor_rect,
+    loop->host = (ScriptHost){
+        .editor = app->editor,
+        .explorer_w = &app->explorer_w,
+        .observer_w = &app->observer_w,
+        .editor_rect = &app->editor_rect,
         .status = host_status,
         .open = host_open,
         .drop = host_drop,
-        .ctx = &app,
-        .chat = app.chat,
+        .ctx = app,
+        .chat = app->chat,
         .element = host_element,
         .model_ready = host_model_ready,
         .record_text = host_record_text,
@@ -4021,66 +4084,793 @@ int main(int argc, char **argv)
         .model_status = host_model_status,
     };
     if (script_path) {
-        const char *missing = script_host_missing(&host);
+        const char *missing = script_host_missing(&loop->host);
         if (missing) {
             fprintf(stderr, "scribodo: the script host has no %s\n", missing);
-            app_destroy(&app);
             return 2;
         }
         char err[256];
-        app.script = script_load(script_path, env.has_script_dir ? env.script_dir : NULL,
-                                 env.has_shot_dir ? env.shot_dir : NULL, err, sizeof(err));
-        if (!app.script) {
+        app->script = script_load(script_path, env->has_script_dir ? env->script_dir : NULL,
+                                 env->has_shot_dir ? env->shot_dir : NULL, err, sizeof(err));
+        if (!app->script) {
             fprintf(stderr, "scribodo: %s\n", err);
-            app_destroy(&app);
             return 2;
         }
         printf("script %s\n", script_path);
     }
+    return 0;
+}
+
+static void app_open_initial(App *app, const char *path, const char *script_path, const char *sample)
+{
     /* The project store: on for the app (SCRIBODO_STORE=off disables it);
      * UI scripts use files unless SCRIBODO_STORE=db. */
     {
         const char *sm = getenv("SCRIBODO_STORE");
-        app.store_wanted = script_path ? (sm && !strcmp(sm, "db")) : !(sm && !strcmp(sm, "off"));
-        if (app.store_wanted) store_begin(&app);
+        app->store_wanted = script_path ? (sm && !strcmp(sm, "db")) : !(sm && !strcmp(sm, "off"));
+        if (app->store_wanted) store_begin(app);
     }
     if (!script_path) {
         struct stat pst;
         if (path && stat(path, &pst) == 0 && S_ISDIR(pst.st_mode)) {
-            open_project(&app, path);
+            open_project(app, path);
         } else if (path) {
-            open_path(&app, path);
-        } else if (app.nrecents) { /* where the author left off */
-            empty_action(&app, 10, sample);
+            open_path(app, path);
+        } else if (app->nrecents) { /* where the author left off */
+            empty_action(app, 10, sample);
         }
         /* otherwise: the welcome screen */
     }
+}
 
-    bool closed_by_window = false;
-
-    /* Debug hook: SCRIBODO_SCREENSHOT=out.png renders a few frames, saves the
-     * framebuffer, and exits. */
-    const char *screenshot_path = getenv("SCRIBODO_SCREENSHOT");
-    int frame = 0;
-    bool trace = getenv("SCRIBODO_INPUT_TRACE") != NULL;
-
-    int cursor_shape = MOUSE_CURSOR_DEFAULT;
-    /* Asked to quit by a signal (kill, logout, a terminal's ^C): leave the
-     * loop so the model servers are stopped below, not left running. */
+/* Asked to quit by a signal (kill, logout, a terminal's ^C): leave the
+ * loop so the model servers are stopped below, not left running. */
+static void install_quit_signals(void)
+{
     struct sigaction sa = { 0 };
     sa.sa_handler = on_quit_signal;
     sigemptyset(&sa.sa_mask);
     sigaction(SIGTERM, &sa, NULL);
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGHUP, &sa, NULL);
-    bool running = true;
-    while (running) {
+}
+
+/* The frame's worker polls and timers, after the service supervisor's. */
+static void frame_poll_workers(App *app)
+{
+    backup_poll(app);
+    draft_tick(app);
+    names_tick(app);
+    names_poll(app);
+    import_poll(app);
+    /* A context size chosen while a reply was being written: now. */
+    if (app->llm && app->ctx_pending && !chat_busy(app->chat) && !name_detection_job_busy(&app->names_job)) {
+        app->ctx_pending = false;
+        fit_context(app, false);
+    }
+    bool graph_succeeded = false;
+    if (entity_backfill_job_poll(&app->graph_job, &graph_succeeded)) { /* the graph is built: show it */
+        app->lists_dirty = true;
+    }
+    chat_poll(app->chat);
+    if (chat_trim_saved(app->chat)) chat_view_history_changed(app->chat_view);
+    /* The observer shares the model: it yields whenever chat is active. */
+    observer_set_chat_active(app->observer, chat_busy(app->chat));
+    if (!history_read_busy(app) && observer_version(app->observer) != app->findings_version) {
+        app->findings_version = observer_version(app->observer);
+        refresh_findings(app);
+    }
+    {
+        char st[200];
+        observer_status(app->observer, st, sizeof(st));
+        snprintf(app->observer_label, sizeof(app->observer_label), "%s", st);
+    }
+    const char *cn = chat_take_notice(app->chat);
+    if (cn) set_status(app, cn);
+    if (app->clear_chat_when_idle && !chat_busy(app->chat)) {
+        app->clear_chat_when_idle = false;
+        chat_lock(app->chat);
+        size_t nmsg = chat_count(app->chat);
+        chat_unlock(app->chat);
+        if (!app->chat_project[0] && nmsg > 0 && app->project_dir[0]) {
+            adopt_chat(app);
+        } else if (strcmp(app->chat_project, app->project_dir) != 0) {
+            if (unsaved_chat(app)) {
+                set_status(app, "Unsaved chat kept with the previous project; copy it or explicitly start a new chat");
+            } else {
+                chat_clear(app->chat);
+                chat_view_history_changed(app->chat_view);
+                project_session_clear_chat(&app->session);
+                attach_reset(app); /* the old project's documents aren't this one's */
+            }
+        }
+    }
+    history_poll(app);
+    memory_tick(app);
+    /* Changes made here mark the lists at once; this catches the rest
+     * (files added in Finder, other windows). Store queries cost more
+     * than a directory read, so they're polled less often. */
+    double every = (app->store_inspection.capabilities & PROJECT_STORE_CAP_SLOW_REFRESH) ? 10.0 : 3.0;
+    if (GetTime() - app->lists_refreshed > every) app->lists_dirty = true;
+}
+
+/* True when the window may close now. */
+static bool frame_close_requested(App *app)
+{
+    /* Close requests: never lose unsaved prose silently. */
+    if (WindowShouldClose()) {
+        /* Notes save themselves; uncommitted canon text counts as unsaved. */
+        bool note_lost = record_view_active(app->record) && record_view_kind(app->record) == REC_NOTE &&
+                         record_view_dirty(app->record) && !save_note(app);
+        bool unsaved = editor_is_dirty(app->editor) || record_unsaved_canon(app) || note_lost || unsaved_chat(app) || memory_controls_pending(app);
+        if (!unsaved || (app->close_armed && GetTime() - app->close_armed_at < 5.0)) {
+            return true;
+        }
+        glfwSetWindowShouldClose(GetWindowHandle(), 0);
+        app->close_armed = true;
+        app->close_armed_at = GetTime();
+        set_status(app, memory_controls_pending(app)
+            ? "Memory settings are not committed yet; wait, or close again to discard pending settings and other unsaved changes"
+            : "Unsaved changes — save or copy what you need, or close again to discard");
+    }
+    return false;
+}
+
+static void frame_take_dropped(App *app)
+{
+    if (IsFileDropped()) {
+        FilePathList dropped = LoadDroppedFiles();
+        if (dropped.count > 0 && !prompt_active(app->prompt) && !app->menu.active) drop_path(app, dropped.paths[0]);
+        UnloadDroppedFiles(dropped);
+    }
+}
+
+static void frame_left_click(App *app, Vector2 mouse, bool modal, bool trace)
+{
+    /* Clicks (pointer state reflects last frame's layout). */
+    if (!modal && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        if (trace) fprintf(stderr, "trace: click (%.0f, %.0f) focus=%d\n", mouse.x, mouse.y, app->focus);
+        if (Clay_PointerOver(CLAY_ID("SplitLeft"))) app->dragging = DRAG_EXPLORER;
+        else if (Clay_PointerOver(CLAY_ID("SplitChat"))) app->dragging = DRAG_CHAT;
+        else if ((app->observer_open || app->recall_open) && Clay_PointerOver(CLAY_ID("SplitRight"))) app->dragging = DRAG_OBSERVER;
+        else if (app->recall_open && CheckCollisionPointRec(mouse, recall_view_input_rect(app->recall))) app->focus = FOCUS_RECALL;
+        else if (record_view_active(app->record) && CheckCollisionPointRec(mouse, record_view_editor_rect(app->record)))
+            app->focus = FOCUS_RECORD;
+        else if (record_view_active(app->record) && CheckCollisionPointRec(mouse, app->record_rect)) {
+            /* panel buttons and links: handled when it draws */
+        } else if (Clay_PointerOver(CLAY_ID("Editor"))) app->focus = FOCUS_DOC;
+        else if (Clay_PointerOver(CLAY_ID("ChatInput"))) app->focus = FOCUS_CHAT;
+        else if (Clay_PointerOver(CLAY_ID("NewChatItem"))) new_chat(app);
+        else if (app->observer_open && Clay_PointerOver(CLAY_ID("RebuildIndex"))) {
+            observer_request_rebuild(app->observer);
+            set_status(app, "Rebuilding the semantic index from the project store\xE2\x80\xA6");
+        }
+        else if (app->store_problem && Clay_PointerOver(CLAY_ID("StoreFixItem"))) store_resolve_problem(app);
+        else if (Clay_PointerOver(CLAY_ID("NewDocItem"))) begin_new_document(app);
+        else if (Clay_PointerOver(CLAY_ID("BackupItem"))) begin_backup(app);
+        else if (Clay_PointerOver(CLAY_ID("RestoreItem"))) begin_restore(app);
+        else if (Clay_PointerOver(CLAY_ID("NamesItem"))) begin_names(app);
+        else if (Clay_PointerOver(CLAY_ID("ImportItem"))) import_documents(app);
+        else if (Clay_PointerOver(CLAY_ID("NewNoteItem"))) {
+            if (close_record(app, false) && record_view_open(app->record, REC_NOTE, NULL, "", NULL, 0))
+                app->focus = FOCUS_RECORD;
+        }
+        else if (Clay_PointerOver(CLAY_ID("Explorer"))) {
+            app->focus = FOCUS_NONE;
+            char full[PATH_MAX + 256];
+            for (size_t i = 0; i < app->ndocs; i++)
+                if (Clay_PointerOver(CLAY_IDI("DocItem", (uint32_t)i))) {
+                    const char *doc = explorer_snapshot_doc(&app->explorer, app->drawn_explorer_generation,
+                                                            app->session.generation, i);
+                    if (doc) {
+                        snprintf(full, sizeof(full), "%s/%s", app->project_dir, doc);
+                        drop_path(app, full);
+                        app->focus = FOCUS_DOC;
+                    }
+                    break;
+                }
+            for (size_t i = 0; i < app->nchats; i++)
+                if (Clay_PointerOver(CLAY_IDI("ChatItem", (uint32_t)i))) {
+                    const ChatSummary *chat = explorer_snapshot_chat(&app->explorer, app->drawn_explorer_generation,
+                                                                     app->session.generation, i);
+                    if (chat) {
+                        open_chat(app, chat);
+                        app->focus = FOCUS_CHAT;
+                    }
+                    break;
+                }
+            for (size_t i = 0; i < app->nrevs && i < REV_SHOW; i++)
+                if (Clay_PointerOver(CLAY_IDI("RevItem", (uint32_t)i))) {
+                    Revision r = app->revs[i];
+                    restore_revision(app, &r);
+                    app->focus = FOCUS_DOC;
+                    break;
+                }
+            /* (Lists are only refreshed after click handling, so these
+             * records stay valid while the panel copies them.) */
+            for (size_t i = 0; i < app->nnotes && i < REC_SHOW; i++)
+                if (app->note_labels[i][0] && Clay_PointerOver(CLAY_IDI("NoteItem", (uint32_t)i))) {
+                    show_record(app, REC_NOTE, &app->notes[i], NULL, NULL, 0);
+                    break;
+                }
+            for (size_t i = 0; i < app->ncanon && i < REC_SHOW; i++)
+                if (Clay_PointerOver(CLAY_IDI("CanonItem", (uint32_t)i))) {
+                    show_record(app, REC_CANON, &app->canon[i], NULL, NULL, 0);
+                    break;
+                }
+            /* Entities: copy what's needed first (opening refreshes the lists). */
+            for (size_t i = 0; i < ENT_SHOW; i++)
+                if (app->drawn_ent[i][0] && Clay_PointerOver(CLAY_IDI("EntityItem", (uint32_t)i))) {
+                    char id[40];
+                    snprintf(id, sizeof(id), "%s", app->drawn_ent[i]);
+                    toggle_entity(app, id);
+                    break;
+                }
+            for (size_t k = 0; app->ent_open[0] && k < ENT_ROWS; k++) {
+                char id[40];
+                if (app->drawn_row_other[k][0] && Clay_PointerOver(CLAY_IDI("EntGo", (uint32_t)k))) {
+                    snprintf(id, sizeof(id), "%s", app->drawn_row_other[k]);
+                    toggle_entity(app, id);
+                    break;
+                }
+                if (app->drawn_row_finding[k][0] && Clay_PointerOver(CLAY_IDI("EntRow", (uint32_t)k))) {
+                    snprintf(id, sizeof(id), "%s", app->drawn_row_finding[k]);
+                    open_finding_source(app, id);
+                    break;
+                }
+            }
+        }
+        /* Toolbar, chat header/footer and message list keep the focus. */
+    }
+}
+
+static void frame_model_picker(App *app, bool modal)
+{
+    if (!modal && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && Clay_PointerOver(CLAY_ID("ModelPicker"))) {
+        static char items[3][240];
+        const char *list[3];
+        int n = 0;
+        if (app->remote_ok) {
+            snprintf(items[0], sizeof(items[0]), "%s Local \xC2\xB7 LFM3-1.7B BF16 (nothing leaves this Mac)",
+                     chat_remote_selected(app->chat) ? "  " : "\xE2\x9C\x93");
+            snprintf(items[1], sizeof(items[1]), "%s Remote \xC2\xB7 %s (sends chat and attached documents to %s)",
+                     chat_remote_selected(app->chat) ? "\xE2\x9C\x93" : "  ", app->remote.name, app->remote.host);
+            list[0] = items[0];
+            list[1] = items[1];
+            n = 2;
+        } else if (app->remote_why[0]) {
+            set_status(app, app->remote_why); /* a remote is configured but unusable: say why */
+        }
+        snprintf(items[2], sizeof(items[2]), "   Model settings\xE2\x80\xA6");
+        app->model_menu_settings = n;
+        list[n++] = items[2];
+        Rectangle pr = ELEMENT_RECT("ModelPicker");
+        menu_open(&app->menu, MT_MODEL, 0, (Vector2){ pr.x, pr.y + pr.height + 4 }, list, n);
+    }
+}
+
+static void frame_explorer_menu(App *app, Vector2 mouse, bool modal)
+{
+    if (!modal && IsMouseButtonPressed(MOUSE_BUTTON_RIGHT) && Clay_PointerOver(CLAY_ID("Explorer"))) {
+        for (size_t i = 0; i < app->nchats; i++)
+            if (Clay_PointerOver(CLAY_IDI("ChatItem", (uint32_t)i))) {
+                const ChatSummary *chat = explorer_snapshot_chat(&app->explorer, app->drawn_explorer_generation,
+                                                                 app->session.generation, i);
+                if (!chat) break;
+                static char reads_item[64];
+                snprintf(reads_item, sizeof(reads_item), "%s Observer reads this chat",
+                         chat->observer_ignore ? "  " : "\xE2\x9C\x93");
+                const char *items[] = { "Rename\xE2\x80\xA6", reads_item, "Enable local memory (experimental)",
+                                        "Disable local memory", "Rebuild local memory" };
+                snprintf(app->menu_chat, sizeof(app->menu_chat), "%s", chat->id);
+                menu_open(&app->menu, MT_CHAT, (int)i, mouse, items, app->memory_experiment ? 5 : 2);
+                break;
+            }
+        for (size_t i = 0; i < app->ndocs; i++)
+            if (Clay_PointerOver(CLAY_IDI("DocItem", (uint32_t)i))) {
+                const char *doc = explorer_snapshot_doc(&app->explorer, app->drawn_explorer_generation,
+                                                        app->session.generation, i);
+                if (!doc) break;
+                static const char *const items[] = { "Rename\xE2\x80\xA6", "Reveal in Finder" };
+                snprintf(app->menu_doc, sizeof(app->menu_doc), "%s", doc); /* copied: later snapshots may re-sort */
+                menu_open(&app->menu, MT_DOC, (int)i, mouse, items, 2);
+                break;
+            }
+    }
+}
+
+static void frame_pane_widths(App *app, Vector2 mouse, bool mouse_down)
+{
+    if (!mouse_down) app->dragging = DRAG_NONE;
+    float sw = (float)GetScreenWidth();
+    float right = sw - (app->observer_open || app->recall_open ? app->observer_w + SPLITTER_W : 0);
+    if (app->dragging == DRAG_EXPLORER) app->explorer_w = mouse.x - SPLITTER_W / 2.0f;
+    if (app->dragging == DRAG_OBSERVER) app->observer_w = sw - mouse.x - SPLITTER_W / 2.0f;
+    if (app->dragging == DRAG_CHAT) app->chat_w = right - mouse.x - SPLITTER_W / 2.0f;
+    /* Re-clamp every frame so shrinking the window never squeezes the editor. */
+    app->explorer_w = fmaxf(140.0f, fminf(app->explorer_w, sw * 0.25f));
+    app->observer_w = fmaxf(180.0f, fminf(app->observer_w, sw * 0.25f));
+    app->chat_w = fmaxf(280.0f, fminf(app->chat_w, sw * 0.45f));
+    /* Keep the document at least 320 px wide: shrink chat, then the
+     * observer, then the explorer, and finally close the observer. */
+    for (int pass = 0; pass < 4; pass++) {
+        float side = app->explorer_w + app->chat_w + (app->observer_open || app->recall_open ? app->observer_w + SPLITTER_W : 0) + 2 * SPLITTER_W;
+        float deficit = 320.0f - (sw - side);
+        if (deficit <= 0) break;
+        if (pass == 0) app->chat_w = fmaxf(280.0f, app->chat_w - deficit);
+        else if (pass == 1 && (app->observer_open || app->recall_open)) app->observer_w = fmaxf(180.0f, app->observer_w - deficit);
+        else if (pass == 2) app->explorer_w = fmaxf(140.0f, app->explorer_w - deficit);
+        else if (pass == 3) app->observer_open = app->recall_open = false;
+    }
+}
+
+static void frame_shortcuts(App *app, bool modal)
+{
+    bool primary = !modal && (IsKeyDown(KEY_LEFT_SUPER) || IsKeyDown(KEY_RIGHT_SUPER));
+    bool shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+    if (primary && shortcut_pressed('s')) {
+        if (app->focus == FOCUS_RECORD && record_view_kind(app->record) == REC_NOTE) save_note(app);
+        else if (app->focus == FOCUS_RECORD)
+            set_status(app, "Canon is kept with Commit or Revise \xC2\xB7 \xE2\x8C\x98S saves notes and documents");
+        else save(app);
+    }
+    /* From the document only: the chat box has no selection to quote. */
+    if (primary && shift && shortcut_pressed('n') && app->focus == FOCUS_DOC) note_from_selection(app);
+    /* In the composer the same keys toggle the Note mark (red-team 2026-11-14: it was mouse-only). */
+    if (primary && shift && shortcut_pressed('n') && app->focus == FOCUS_CHAT && !app->edit_mode) chat_view_toggle_note(app->chat_view);
+    if (primary && shift && shortcut_pressed('c') && app->focus == FOCUS_DOC) canon_from_selection(app);
+    if (!modal && app->focus == FOCUS_RECORD && IsKeyPressed(KEY_ESCAPE)) app->focus = FOCUS_DOC;
+    if (!modal && app->focus == FOCUS_RECALL && IsKeyPressed(KEY_ESCAPE)) app->focus = FOCUS_DOC;
+    if (primary && shortcut_pressed('l')) app->focus = FOCUS_CHAT;
+    if (primary && shortcut_pressed('k')) begin_edit(app);
+    /* Cmd+Enter accepts only outside the chat box, where it also sends the
+     * message being typed (red-team 004: one key did both). */
+    if (primary && review_active(app->review) && app->focus != FOCUS_CHAT &&
+        (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER)))
+        accept_proposal(app);
+    if (primary && shortcut_pressed('o')) choose_project(app, false);
+    if (primary && !shift && shortcut_pressed('n')) begin_new_document(app);
+    if (!modal && app->focus == FOCUS_CHAT && IsKeyPressed(KEY_ESCAPE)) {
+        if (app->history_pending) {
+            cancel_history(app);
+            set_status(app, "History loading cancelled; the current window was kept");
+        }
+        if (app->edit_mode) {
+            leave_edit_mode(app);
+            if (!app->pending.active) editor_anchor_clear(app->editor);
+        }
+        app->focus = FOCUS_DOC;
+    }
+}
+
+/* The layout for this frame, and the rects the views and controls take from it. */
+static Clay_RenderCommandArray frame_layout(App *app, FrameRects *rects)
+{
+    const char *notice = editor_take_notice(app->editor);
+    if (notice) set_status(app, notice);
+
+    /* Refresh lists only now: clicks above were hit-tested against the
+     * lists as last drawn, so a re-sort can never redirect a click. */
+    if (app->lists_dirty && !history_read_busy(app)) {
+        if (refresh_lists(app)) app->lists_dirty = false;
+    }
+    Clay_RenderCommandArray cmds = build_layout(app);
+    app->editor_rect = ELEMENT_RECT("Editor");
+    if (record_view_active(app->record)) {
+        /* Dock the note/canon panel at the bottom of the document pane. */
+        Rectangle er = app->editor_rect;
+        float h = record_view_height(app->record, er.width - 24, er.height * 0.45f);
+        app->record_rect = (Rectangle){ er.x + 12, er.y + er.height - h - 12, er.width - 24, h };
+        app->editor_rect.height = app->record_rect.y - er.y - 8 + 12;
+    }
+    if (review_active(app->review)) {
+        /* Dock the review panel at the bottom of the document pane (above
+         * the note/canon panel, if open). */
+        Rectangle er = app->editor_rect;
+        float h = review_height(app->review, er.width - 24, er.height * 0.5f);
+        app->review_rect = (Rectangle){ er.x + 12, er.y + er.height - h - 12, er.width - 24, h };
+        app->editor_rect.height = app->review_rect.y - er.y - 8;
+    }
+    app->chat_list_rect = ELEMENT_RECT("ChatMessages");
+    app->findings_rect = app->observer_open ? ELEMENT_RECT("Findings") : (Rectangle){ 0 };
+    app->recall_rect = app->recall_open ? ELEMENT_RECT("RecallBody") : (Rectangle){ 0 };
+    app->chat_input_rect = ELEMENT_RECT("ChatInput");
+    rects->save_rect = ELEMENT_RECT("SaveButton");
+    rects->open_rect = ELEMENT_RECT("OpenButton");
+    rects->obs_rect = ELEMENT_RECT("ObserverToggle");
+    rects->new_rect = ELEMENT_RECT("NewChatButton");
+    rects->send_rect = ELEMENT_RECT("SendButton");
+    rects->attach_rect = ELEMENT_RECT("AttachRow");
+    return cmds;
+}
+
+static void frame_update_views(App *app, bool modal)
+{
+    /* Always update both so queued keystrokes are consumed or discarded. */
+    if (prompt_active(app->prompt)) {
+        PromptResult pr = prompt_update(app->prompt, (Rectangle){ 0, 0, (float)GetScreenWidth(), (float)GetScreenHeight() });
+        if (pr == PR_CANCEL) prompt_close(app->prompt);
+        if (pr == PR_OK) {
+            char *t = prompt_text(app->prompt);
+            if (t && finish_prompt(app, t)) prompt_close(app->prompt);
+            free(t);
+        }
+    }
+    bool idle = app->dragging == DRAG_NONE && !modal;
+    editor_update(app->editor, app->editor_rect, idle && app->focus == FOCUS_DOC);
+    memory_document_names(app); /* dirty-buffer transitions fence preparation immediately */
+    chat_view_set_can_apply(app->chat_view, editor_path(app->editor) != NULL && !editor_is_read_only(app->editor));
+    chat_view_set_note_disabled(app->chat_view, app->edit_mode); /* before the frame's hit test and draw */
+    chat_view_update(app->chat_view, app->chat_list_rect, app->chat_input_rect, idle && app->focus == FOCUS_CHAT);
+    ChatPageAction page_action = chat_view_take_page(app->chat_view);
+    if (idle && page_action.kind != CHAT_PAGE_NONE) page_chat(app, page_action);
+    if (review_active(app->review) && !modal) review_update(app->review, app->review_rect);
+    if (record_view_active(app->record)) record_view_update(app->record, app->record_rect, idle && app->focus == FOCUS_RECORD);
+    if (app->observer_open && !modal) findings_view_update(app->findings, app->findings_rect);
+    if (app->recall_open && !modal) recall_view_update(app->recall, app->recall_rect, idle && app->focus == FOCUS_RECALL);
+    input_discard_chars(); /* after both views: nothing typed now may appear later */
+    recall_frame(app);
+}
+
+static void frame_apply_reply(App *app)
+{
+    long apply = chat_view_take_apply(app->chat_view);
+    if (apply >= 0) {
+        /* "Apply to document": propose a reply as a replacement for the
+         * selection, or as an insertion at the cursor. */
+        chat_lock(app->chat);
+        const ChatMessage *m = chat_message(app->chat, (size_t)apply);
+        char *reply = m && !m->excerpt ? strdup(m->content) : NULL;
+        bool reply_cut = m && (m->truncated || m->stopped);
+        bool reply_edit = m && m->is_edit;
+        chat_unlock(app->chat);
+        size_t a, c;
+        editor_get_selection(app->editor, &a, &c);
+        size_t lo = a < c ? a : c, hi = a < c ? c : a;
+        if (!reply) {
+        } else if (!editor_path(app->editor) || editor_is_read_only(app->editor)) {
+            set_status(app, "Open an editable document to apply a reply");
+        } else if (app->pending.active) {
+            set_status(app, "Wait for the current edit to finish (or stop it) before applying a reply");
+        } else if (reply_edit && hi == lo) {
+            /* An edit reply rewrites a passage; inserting it would duplicate the text. */
+            set_status(app, "Select the passage this rewrite replaces, then Apply");
+        } else {
+            leave_edit_mode(app);
+            char *orig = editor_range_utf8(app->editor, lo, hi - lo);
+            char *clean = llm_clean_edit(reply, orig ? orig : "");
+            char where[64];
+            if (hi > lo) snprintf(where, sizeof(where), "replace selection");
+            else snprintf(where, sizeof(where), "insert at line %d", editor_stats(app->editor).line);
+            if (orig && clean) propose(app, lo, hi - lo, orig, clean, where, reply_cut);
+            free(orig);
+            free(clean);
+        }
+        free(reply);
+    }
+}
+
+static void frame_chat_requests(App *app)
+{
+    bool rec_canon = false;
+    long rec_index = chat_view_take_record(app->chat_view, &rec_canon);
+    if (rec_index >= 0) record_from_reply(app, rec_index, rec_canon);
+    long sources_index = chat_view_take_sources(app->chat_view);
+    if (sources_index >= 0) show_memory_sources(app, sources_index);
+    char *submitted = chat_view_take_submit(app->chat_view);
+    if (submitted) send_chat(app, submitted);
+    if (chat_view_take_copied(app->chat_view)) set_status(app, "Reply copied to the clipboard");
+}
+
+static void frame_cursor(App *app, MainLoop *loop, Vector2 mouse)
+{
+    int want = MOUSE_CURSOR_DEFAULT;
+    if (app->dragging || Clay_PointerOver(CLAY_ID("SplitLeft")) || Clay_PointerOver(CLAY_ID("SplitChat")) ||
+        (app->observer_open && Clay_PointerOver(CLAY_ID("SplitRight"))))
+        want = MOUSE_CURSOR_RESIZE_EW;
+    else if (CheckCollisionPointRec(mouse, app->editor_rect) || CheckCollisionPointRec(mouse, app->chat_input_rect))
+        want = MOUSE_CURSOR_IBEAM;
+    else if (Clay_PointerOver(CLAY_ID("Explorer")))
+        want = MOUSE_CURSOR_POINTING_HAND;
+    if (want != loop->cursor_shape) {
+        SetMouseCursor(want);
+        loop->cursor_shape = want;
+    }
+}
+
+/* Begins the frame's drawing; returns the welcome screen's action, if any. */
+static int frame_draw_panes(App *app, Clay_RenderCommandArray cmds, const FrameRects *rects, bool modal)
+{
+    BeginDrawing();
+    ClearBackground((Color){ 0x1F, 0x1F, 0x1F, 0xFF });
+    clay_render(cmds, app->font_ptrs);
+    if (modal) GuiLock(); /* nothing behind a prompt or menu reacts */
+    if (GuiButton(rects->open_rect, "Open...")) choose_project(app, false);
+    if (editor_path(app->editor)) editor_draw(app->editor, app->editor_rect, app->focus == FOCUS_DOC);
+    int empty_act = editor_path(app->editor) ? 0 : draw_empty(app, app->editor_rect);
+    if (review_active(app->review)) {
+        review_draw(app->review, app->review_rect);
+        if (GuiButton(review_accept_rect(app->review_rect), "Accept")) accept_proposal(app);
+        if (GuiButton(review_reject_rect(app->review_rect), "Reject")) reject_proposal(app);
+    }
+    if (record_view_active(app->record))
+        record_action(app, record_view_draw(app->record, app->record_rect, app->focus == FOCUS_RECORD));
+    chat_view_draw(app->chat_view, app->chat_list_rect, app->chat_input_rect, app->focus == FOCUS_CHAT);
+    if (app->observer_open && app->findings_rect.width > 0) {
+        char fid[40] = "";
+        FindingAction fa = findings_view_draw(app->findings, app->findings_rect, fid, sizeof(fid));
+        if (fa != FA_NONE) finding_action(app, fa, fid);
+    }
+    if (app->recall_open && app->recall_rect.width > 0) {
+        RecallAction ra = recall_view_draw(app->recall, app->recall_rect, app->focus == FOCUS_RECALL);
+        if (ra.kind == RECALL_ACTION_OPEN) open_recall_row(app, ra.row);
+    }
+    return empty_act;
+}
+
+static void frame_draw_toolbar(App *app, const FrameRects *rects)
+{
+    bool can_save = (editor_is_dirty(app->editor) || editor_overwrite_armed(app->editor)) &&
+                    !editor_is_read_only(app->editor);
+    if (!can_save) GuiDisable();
+    if (GuiButton(rects->save_rect, "Save")) save(app);
+    GuiEnable();
+    /* raygui draws with the primary face only (no fallback), so ASCII. */
+    if (GuiButton(rects->obs_rect, app->observer_open ? "Hide observer" : app->observer_button[0] ? app->observer_button : "Observer")) {
+        app->observer_open = !app->observer_open;
+        if (app->observer_open && app->recall_open) toggle_recall(app);
+    }
+    if (GuiButton(ELEMENT_RECT("RecallToggle"), app->recall_open ? "Hide recall" : "Recall")) toggle_recall(app);
+    /* Whether the observer reads the open chat (the author's choice). */
+    if (open_chat_stored(app)) {
+        Rectangle orr = ELEMENT_RECT("ObserverReads");
+        const ChatSummary *cs = find_chat(app, app->chat_id);
+        bool reads = cs && !cs->observer_ignore, was = reads;
+        GuiCheckBox((Rectangle){ orr.x, orr.y + 4, 16, 16 }, "Observer reads this chat", &reads);
+        if (reads != was) set_chat_observer(app, app->chat_id, reads);
+    }
+}
+
+static void frame_draw_chat_controls(App *app, const FrameRects *rects)
+{
+    if (app->suggest_text[0]) {
+        if (GuiButton(ELEMENT_RECT("NameSave"), "Save")) names_answer(app, true);
+        else if (GuiButton(ELEMENT_RECT("NameSkip"), "Not now")) names_answer(app, false);
+    }
+    if (chat_busy(app->chat)) GuiDisable();
+    if (GuiButton(rects->new_rect, "New chat")) new_chat(app);
+    GuiEnable();
+    if (app->edit_mode) {
+        if (GuiButton(ELEMENT_RECT("CancelEdit"), "Cancel")) {
+            leave_edit_mode(app);
+            editor_anchor_clear(app->editor);
+        }
+    } else if (rects->attach_rect.width > 0) {
+        int aa = draw_attach_row(app, rects->attach_rect);
+        if (aa >= 0) {
+            detach(app, (size_t)aa);
+            chat_controller_mark_attachments_changed(&app->chat_controller);
+        } else if (aa == -2) {
+            if (!app->project_dir[0] || app->ndocs == 0) {
+                set_status(app, "Open a project with documents to attach them");
+            } else {
+                /* The project's documents; a check mark shows what's attached. */
+                const char *items[MENU_MAX_ITEMS];
+                char labels[MENU_MAX_ITEMS][48];
+                int n = 0;
+                /* With more documents than fit, the last item asks for a name. */
+                size_t room = app->ndocs > MENU_MAX_ITEMS ? MENU_MAX_ITEMS - 1 : app->ndocs;
+                for (size_t i = 0; i < room; i++, n++) {
+                    char nm[44];
+                    fit_label(&app->fonts[FONT_UI], app->docs[i], 300, nm, sizeof(nm));
+                    snprintf(app->menu_names[n], sizeof(app->menu_names[n]), "%s", app->docs[i]);
+                    snprintf(labels[n], sizeof(labels[n]), "%s %s", is_attached(app, app->docs[i]) ? "\xE2\x9C\x93" : "  ", nm);
+                    items[n] = labels[n];
+                }
+                if (room < app->ndocs) {
+                    app->menu_names[n][0] = '\0'; /* "other": a prompt */
+                    snprintf(labels[n], sizeof(labels[n]), "   Other document\xE2\x80\xA6");
+                    items[n] = labels[n];
+                    n++;
+                }
+                menu_open(&app->menu, MT_ATTACH, 0, (Vector2){ app->attach_add.x, app->attach_add.y - 8 - (float)n * 30 }, items, n);
+            }
+        }
+    }
+    if (chat_busy(app->chat)) {
+        if (GuiButton(rects->send_rect, "Stop")) chat_cancel(app->chat);
+    } else if (app->history_pending) {
+        if (GuiButton(rects->send_rect, "Cancel")) {
+            cancel_history(app);
+            set_status(app, "History loading cancelled; the current window was kept");
+        }
+    } else {
+        bool ready = !app->llm || chat_remote_selected(app->chat) || llm_server_state(app->llm, NULL, 0) == LLM_READY;
+        if (!ready) GuiDisable();
+        if (GuiButton(rects->send_rect, "Send")) {
+            chat_view_submit_now(app->chat_view);
+            char *t = chat_view_take_submit(app->chat_view);
+            if (t) send_chat(app, t);
+            app->focus = FOCUS_CHAT;
+        }
+        GuiEnable();
+    }
+}
+
+static void frame_draw_overlays(App *app, MainLoop *loop, int empty_act, bool modal)
+{
+    GuiUnlock();
+    if (!modal && empty_act) empty_action(app, empty_act, loop->sample);
+    {
+        Rectangle screen = { 0, 0, (float)GetScreenWidth(), (float)GetScreenHeight() };
+        int pick = menu_draw(&app->menu, &app->fonts[FONT_UI], screen);
+        if (pick >= 0 && app->menu.tag == MT_ATTACH && pick < MENU_MAX_ITEMS && !app->menu_names[pick][0]) {
+            snprintf(app->prompt_project, sizeof(app->prompt_project), "%s", app->project_dir);
+            prompt_open(app->prompt, PT_ATTACH_NAME, "Attach a document", "", "Attach");
+        } else if (pick >= 0 && app->menu.tag == MT_ATTACH && pick < MENU_MAX_ITEMS) {
+            const char *nm = app->menu_names[pick];
+            bool found = false;
+            for (size_t i = 0; i < app->nattached; i++)
+                if (!strcmp(app->attached[i], nm)) {
+                    detach(app, i);
+                    found = true;
+                    break;
+                }
+            if (!found) attach(app, nm);
+            chat_controller_mark_attachments_changed(&app->chat_controller);
+        }
+        if (pick >= 0 && app->menu.tag == MT_MODEL && pick == app->model_menu_settings) {
+            open_model_settings(app);
+        } else if (pick >= 0 && app->menu.tag == MT_MODEL) {
+            bool remote = pick == 1;
+            if (remote == chat_remote_selected(app->chat)) {
+            } else if (!chat_select_remote(app->chat, remote ? &app->remote : NULL)) {
+                set_status(app, "Wait for the reply to finish before switching models");
+            } else {
+                char msg[400];
+                if (remote)
+                    snprintf(msg, sizeof(msg), "Using %s: new chat messages, their attached documents and edit passages go to %s. "
+                                               "Earlier messages and the observer stay on this Mac.", app->remote.name, app->remote.host);
+                else snprintf(msg, sizeof(msg), "Using the local model: nothing leaves this Mac");
+                set_status(app, msg);
+            }
+        }
+        if (pick == 1 && app->menu.tag == MT_CHAT) {
+            const ChatSummary *cs = find_chat(app, app->menu_chat);
+            if (cs) set_chat_observer(app, app->menu_chat, cs->observer_ignore);
+        } else if (pick >= 2 && pick <= 4 && app->menu.tag == MT_CHAT && app->memory_experiment) {
+            memory_control(app, pick == 2 ? MEMORY_JOB_ENABLE : pick == 3 ? MEMORY_JOB_DISABLE : MEMORY_JOB_REBUILD);
+        } else if (pick == 0 && app->menu.tag == MT_CHAT) {
+            const char *title = "";
+            for (size_t i = 0; i < app->nchats; i++)
+                if (!strcmp(app->chats[i].id, app->menu_chat)) title = app->chats[i].title;
+            snprintf(app->prompt_project, sizeof(app->prompt_project), "%s", app->project_dir);
+            prompt_open(app->prompt, PT_RENAME_CHAT, "Rename chat", title, "Rename");
+        }
+        if (pick >= 0 && app->menu.tag == MT_DOC) {
+            if (!name_taken(app, app->menu_doc)) set_status(app, "That document is no longer in this project");
+            else if (pick == 0) begin_rename(app, app->menu_doc); /* a dirty open document is refused on OK */
+            else reveal_document(app, app->menu_doc);
+        }
+        if (app->settings_open) draw_model_settings(app, screen);
+        if (app->memory_sources_open) draw_memory_sources(app);
+        if (prompt_active(app->prompt)) {
+            PromptResult pr = prompt_draw(app->prompt, screen);
+            if (pr == PR_CANCEL) prompt_close(app->prompt);
+            if (pr == PR_OK) {
+                char *t = prompt_text(app->prompt);
+                if (t && finish_prompt(app, t)) prompt_close(app->prompt);
+                free(t);
+            }
+        }
+    }
+}
+
+/* Screenshots, then the end of the frame. False when the SCRIBODO_SCREENSHOT run is done. */
+static bool frame_end(App *app, MainLoop *loop)
+{
+    const char *shot_path = app->script ? script_take_shot(app->script) : NULL;
+    if (shot_path) {
+        /* raylib batches draws until EndDrawing; flush so the capture
+         * includes everything drawn this frame (e.g. raygui controls). */
+        rlDrawRenderBatchActive();
+        Image shot = LoadImageFromScreen();
+        ExportImage(shot, shot_path);
+        UnloadImage(shot);
+    }
+    EndDrawing();
+
+    if (loop->screenshot_path && ++loop->frame == 10) {
+        Image shot = LoadImageFromScreen();
+        ExportImage(shot, loop->screenshot_path);
+        UnloadImage(shot);
+        return false;
+    }
+    return true;
+}
+
+/* One frame after the worker polls in main(). False to leave the loop. */
+static bool frame_step(App *app, MainLoop *loop)
+{
+    frame_poll_workers(app);
+    if (frame_close_requested(app)) {
+        loop->closed_by_window = true;
+        return false;
+    }
+    frame_take_dropped(app);
+
+    Vector2 mouse = GetMousePosition();
+    bool mouse_down = IsMouseButtonDown(MOUSE_BUTTON_LEFT);
+    Clay_SetPointerState((Clay_Vector2){ mouse.x, mouse.y }, mouse_down);
+    /* The Explorer scrolls (long History / chat lists). */
+    Vector2 wheel = GetMouseWheelMoveV();
+    Clay_UpdateScrollContainers(false, (Clay_Vector2){ wheel.x * 30.0f, wheel.y * 30.0f }, GetFrameTime());
+    Clay_SetLayoutDimensions((Clay_Dimensions){ (float)GetScreenWidth(), (float)GetScreenHeight() });
+
+    /* A prompt or menu takes all input until it closes. */
+    bool modal = prompt_active(app->prompt) || app->menu.active || app->settings_open || app->memory_sources_open;
+    input_block_mouse(modal);
+    frame_left_click(app, mouse, modal, loop->trace);
+    frame_model_picker(app, modal);
+    frame_explorer_menu(app, mouse, modal);
+    frame_pane_widths(app, mouse, mouse_down);
+    frame_shortcuts(app, modal);
+
+    FrameRects rects;
+    Clay_RenderCommandArray cmds = frame_layout(app, &rects);
+    frame_update_views(app, modal);
+    frame_apply_reply(app);
+    frame_chat_requests(app);
+    frame_cursor(app, loop, mouse);
+
+    int empty_act = frame_draw_panes(app, cmds, &rects, modal);
+    frame_draw_toolbar(app, &rects);
+    frame_draw_chat_controls(app, &rects);
+    frame_draw_overlays(app, loop, empty_act, modal);
+    return frame_end(app, loop);
+}
+
+int main(int argc, char **argv)
+{
+    static App app;
+    /* Before any thread: the environment is read and rewritten here only (app/startup_env.h). */
+    static StartupEnv env;
+    static MainLoop loop;
+    (void)startup_env_prepare(&env);
+    atomic_init(&app.history_hold, false);
+    app.store = store_manager_create();
+    if (!app.store) return 1;
+    const char *path = argc > 1 ? argv[1] : NULL;
+
+    /* UI test mode: SCRIBODO_SCRIPT=file.scribo runs a scripted session in a
+     * hidden window (no focus stealing, immune to the real mouse) and exits
+     * non-zero if any expectation fails. See src/app/script.h. */
+    const char *script_path = env.scripted ? env.script_path : NULL;
+    int rc = app_init_jobs(&app, script_path);
+    if (!rc) rc = app_open_window(&app, script_path);
+    if (!rc) rc = app_start_models(&app, script_path);
+    if (!rc) rc = app_create_views(&app, script_path);
+    if (!rc) rc = app_load_recents(&app, &loop, &env, script_path);
+    if (!rc) rc = script_host_setup(&app, &loop, &env, script_path);
+    if (rc) {
+        app_destroy(&app);
+        return rc;
+    }
+    app_open_initial(&app, path, script_path, loop.sample);
+
+    /* Debug hook: SCRIBODO_SCREENSHOT=out.png renders a few frames, saves the
+     * framebuffer, and exits. */
+    loop.screenshot_path = getenv("SCRIBODO_SCREENSHOT");
+    loop.trace = getenv("SCRIBODO_INPUT_TRACE") != NULL;
+    loop.cursor_shape = MOUSE_CURSOR_DEFAULT;
+    install_quit_signals();
+    while (true) {
         if (g_quit_signal) {
             fprintf(stderr, "scribodo: quitting (signal %d)\n", (int)g_quit_signal);
             break;
         }
         /* Scripted input is injected before anything reads input state. */
-        if (app.script && !script_frame(app.script, &host)) break;
+        if (app.script && !script_frame(app.script, &loop.host)) break;
 
         if (app.llm) llm_server_tick(app.llm);
         if (app.embed) llm_server_tick(app.embed);
@@ -4113,604 +4903,10 @@ int main(int argc, char **argv)
                 if (app.observer) observer_poke(app.observer);
             }
         }
-        backup_poll(&app);
-        draft_tick(&app);
-        names_tick(&app);
-        names_poll(&app);
-        import_poll(&app);
-        /* A context size chosen while a reply was being written: now. */
-        if (app.llm && app.ctx_pending && !chat_busy(app.chat) && !name_detection_job_busy(&app.names_job)) {
-            app.ctx_pending = false;
-            fit_context(&app, false);
-        }
-        bool graph_succeeded = false;
-        if (entity_backfill_job_poll(&app.graph_job, &graph_succeeded)) { /* the graph is built: show it */
-            app.lists_dirty = true;
-        }
-        chat_poll(app.chat);
-        if (chat_trim_saved(app.chat)) chat_view_history_changed(app.chat_view);
-        /* The observer shares the model: it yields whenever chat is active. */
-        observer_set_chat_active(app.observer, chat_busy(app.chat));
-        if (!history_read_busy(&app) && observer_version(app.observer) != app.findings_version) {
-            app.findings_version = observer_version(app.observer);
-            refresh_findings(&app);
-        }
-        {
-            char st[200];
-            observer_status(app.observer, st, sizeof(st));
-            snprintf(app.observer_label, sizeof(app.observer_label), "%s", st);
-        }
-        const char *cn = chat_take_notice(app.chat);
-        if (cn) set_status(&app, cn);
-        if (app.clear_chat_when_idle && !chat_busy(app.chat)) {
-            app.clear_chat_when_idle = false;
-            chat_lock(app.chat);
-            size_t nmsg = chat_count(app.chat);
-            chat_unlock(app.chat);
-            if (!app.chat_project[0] && nmsg > 0 && app.project_dir[0]) {
-                adopt_chat(&app);
-            } else if (strcmp(app.chat_project, app.project_dir) != 0) {
-                if (unsaved_chat(&app)) {
-                    set_status(&app, "Unsaved chat kept with the previous project; copy it or explicitly start a new chat");
-                } else {
-                    chat_clear(app.chat);
-                    chat_view_history_changed(app.chat_view);
-                    project_session_clear_chat(&app.session);
-                    attach_reset(&app); /* the old project's documents aren't this one's */
-                }
-            }
-        }
-        history_poll(&app);
-        memory_tick(&app);
-        /* Changes made here mark the lists at once; this catches the rest
-         * (files added in Finder, other windows). Store queries cost more
-         * than a directory read, so they're polled less often. */
-        double every = (app.store_inspection.capabilities & PROJECT_STORE_CAP_SLOW_REFRESH) ? 10.0 : 3.0;
-        if (GetTime() - app.lists_refreshed > every) app.lists_dirty = true;
-
-        /* Close requests: never lose unsaved prose silently. */
-        if (WindowShouldClose()) {
-            /* Notes save themselves; uncommitted canon text counts as unsaved. */
-            bool note_lost = record_view_active(app.record) && record_view_kind(app.record) == REC_NOTE &&
-                             record_view_dirty(app.record) && !save_note(&app);
-            bool unsaved = editor_is_dirty(app.editor) || record_unsaved_canon(&app) || note_lost || unsaved_chat(&app) || memory_controls_pending(&app);
-            if (!unsaved || (app.close_armed && GetTime() - app.close_armed_at < 5.0)) {
-                closed_by_window = true;
-                break;
-            }
-            glfwSetWindowShouldClose(GetWindowHandle(), 0);
-            app.close_armed = true;
-            app.close_armed_at = GetTime();
-            set_status(&app, memory_controls_pending(&app)
-                ? "Memory settings are not committed yet; wait, or close again to discard pending settings and other unsaved changes"
-                : "Unsaved changes — save or copy what you need, or close again to discard");
-        }
-
-        if (IsFileDropped()) {
-            FilePathList dropped = LoadDroppedFiles();
-            if (dropped.count > 0 && !prompt_active(app.prompt) && !app.menu.active) drop_path(&app, dropped.paths[0]);
-            UnloadDroppedFiles(dropped);
-        }
-
-        Vector2 mouse = GetMousePosition();
-        bool mouse_down = IsMouseButtonDown(MOUSE_BUTTON_LEFT);
-        Clay_SetPointerState((Clay_Vector2){ mouse.x, mouse.y }, mouse_down);
-        /* The Explorer scrolls (long History / chat lists). */
-        Vector2 wheel = GetMouseWheelMoveV();
-        Clay_UpdateScrollContainers(false, (Clay_Vector2){ wheel.x * 30.0f, wheel.y * 30.0f }, GetFrameTime());
-        Clay_SetLayoutDimensions((Clay_Dimensions){ (float)GetScreenWidth(), (float)GetScreenHeight() });
-
-        /* A prompt or menu takes all input until it closes. */
-        bool modal = prompt_active(app.prompt) || app.menu.active || app.settings_open || app.memory_sources_open;
-        input_block_mouse(modal);
-        /* Clicks (pointer state reflects last frame's layout). */
-        if (!modal && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-            if (trace) fprintf(stderr, "trace: click (%.0f, %.0f) focus=%d\n", mouse.x, mouse.y, app.focus);
-            if (Clay_PointerOver(CLAY_ID("SplitLeft"))) app.dragging = DRAG_EXPLORER;
-            else if (Clay_PointerOver(CLAY_ID("SplitChat"))) app.dragging = DRAG_CHAT;
-            else if ((app.observer_open || app.recall_open) && Clay_PointerOver(CLAY_ID("SplitRight"))) app.dragging = DRAG_OBSERVER;
-            else if (app.recall_open && CheckCollisionPointRec(mouse, recall_view_input_rect(app.recall))) app.focus = FOCUS_RECALL;
-            else if (record_view_active(app.record) && CheckCollisionPointRec(mouse, record_view_editor_rect(app.record)))
-                app.focus = FOCUS_RECORD;
-            else if (record_view_active(app.record) && CheckCollisionPointRec(mouse, app.record_rect)) {
-                /* panel buttons and links: handled when it draws */
-            } else if (Clay_PointerOver(CLAY_ID("Editor"))) app.focus = FOCUS_DOC;
-            else if (Clay_PointerOver(CLAY_ID("ChatInput"))) app.focus = FOCUS_CHAT;
-            else if (Clay_PointerOver(CLAY_ID("NewChatItem"))) new_chat(&app);
-            else if (app.observer_open && Clay_PointerOver(CLAY_ID("RebuildIndex"))) {
-                observer_request_rebuild(app.observer);
-                set_status(&app, "Rebuilding the semantic index from the project store\xE2\x80\xA6");
-            }
-            else if (app.store_problem && Clay_PointerOver(CLAY_ID("StoreFixItem"))) store_resolve_problem(&app);
-            else if (Clay_PointerOver(CLAY_ID("NewDocItem"))) begin_new_document(&app);
-            else if (Clay_PointerOver(CLAY_ID("BackupItem"))) begin_backup(&app);
-            else if (Clay_PointerOver(CLAY_ID("RestoreItem"))) begin_restore(&app);
-            else if (Clay_PointerOver(CLAY_ID("NamesItem"))) begin_names(&app);
-            else if (Clay_PointerOver(CLAY_ID("ImportItem"))) import_documents(&app);
-            else if (Clay_PointerOver(CLAY_ID("NewNoteItem"))) {
-                if (close_record(&app, false) && record_view_open(app.record, REC_NOTE, NULL, "", NULL, 0))
-                    app.focus = FOCUS_RECORD;
-            }
-            else if (Clay_PointerOver(CLAY_ID("Explorer"))) {
-                app.focus = FOCUS_NONE;
-                char full[PATH_MAX + 256];
-                for (size_t i = 0; i < app.ndocs; i++)
-                    if (Clay_PointerOver(CLAY_IDI("DocItem", (uint32_t)i))) {
-                        const char *doc = explorer_snapshot_doc(&app.explorer, app.drawn_explorer_generation,
-                                                                app.session.generation, i);
-                        if (doc) {
-                            snprintf(full, sizeof(full), "%s/%s", app.project_dir, doc);
-                            drop_path(&app, full);
-                            app.focus = FOCUS_DOC;
-                        }
-                        break;
-                    }
-                for (size_t i = 0; i < app.nchats; i++)
-                    if (Clay_PointerOver(CLAY_IDI("ChatItem", (uint32_t)i))) {
-                        const ChatSummary *chat = explorer_snapshot_chat(&app.explorer, app.drawn_explorer_generation,
-                                                                         app.session.generation, i);
-                        if (chat) {
-                            open_chat(&app, chat);
-                            app.focus = FOCUS_CHAT;
-                        }
-                        break;
-                    }
-                for (size_t i = 0; i < app.nrevs && i < REV_SHOW; i++)
-                    if (Clay_PointerOver(CLAY_IDI("RevItem", (uint32_t)i))) {
-                        Revision r = app.revs[i];
-                        restore_revision(&app, &r);
-                        app.focus = FOCUS_DOC;
-                        break;
-                    }
-                /* (Lists are only refreshed after click handling, so these
-                 * records stay valid while the panel copies them.) */
-                for (size_t i = 0; i < app.nnotes && i < REC_SHOW; i++)
-                    if (app.note_labels[i][0] && Clay_PointerOver(CLAY_IDI("NoteItem", (uint32_t)i))) {
-                        show_record(&app, REC_NOTE, &app.notes[i], NULL, NULL, 0);
-                        break;
-                    }
-                for (size_t i = 0; i < app.ncanon && i < REC_SHOW; i++)
-                    if (Clay_PointerOver(CLAY_IDI("CanonItem", (uint32_t)i))) {
-                        show_record(&app, REC_CANON, &app.canon[i], NULL, NULL, 0);
-                        break;
-                    }
-                /* Entities: copy what's needed first (opening refreshes the lists). */
-                for (size_t i = 0; i < ENT_SHOW; i++)
-                    if (app.drawn_ent[i][0] && Clay_PointerOver(CLAY_IDI("EntityItem", (uint32_t)i))) {
-                        char id[40];
-                        snprintf(id, sizeof(id), "%s", app.drawn_ent[i]);
-                        toggle_entity(&app, id);
-                        break;
-                    }
-                for (size_t k = 0; app.ent_open[0] && k < ENT_ROWS; k++) {
-                    char id[40];
-                    if (app.drawn_row_other[k][0] && Clay_PointerOver(CLAY_IDI("EntGo", (uint32_t)k))) {
-                        snprintf(id, sizeof(id), "%s", app.drawn_row_other[k]);
-                        toggle_entity(&app, id);
-                        break;
-                    }
-                    if (app.drawn_row_finding[k][0] && Clay_PointerOver(CLAY_IDI("EntRow", (uint32_t)k))) {
-                        snprintf(id, sizeof(id), "%s", app.drawn_row_finding[k]);
-                        open_finding_source(&app, id);
-                        break;
-                    }
-                }
-            }
-            /* Toolbar, chat header/footer and message list keep the focus. */
-        }
-        if (!modal && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && Clay_PointerOver(CLAY_ID("ModelPicker"))) {
-            static char items[3][240];
-            const char *list[3];
-            int n = 0;
-            if (app.remote_ok) {
-                snprintf(items[0], sizeof(items[0]), "%s Local \xC2\xB7 LFM3-1.7B BF16 (nothing leaves this Mac)",
-                         chat_remote_selected(app.chat) ? "  " : "\xE2\x9C\x93");
-                snprintf(items[1], sizeof(items[1]), "%s Remote \xC2\xB7 %s (sends chat and attached documents to %s)",
-                         chat_remote_selected(app.chat) ? "\xE2\x9C\x93" : "  ", app.remote.name, app.remote.host);
-                list[0] = items[0];
-                list[1] = items[1];
-                n = 2;
-            } else if (app.remote_why[0]) {
-                set_status(&app, app.remote_why); /* a remote is configured but unusable: say why */
-            }
-            snprintf(items[2], sizeof(items[2]), "   Model settings\xE2\x80\xA6");
-            app.model_menu_settings = n;
-            list[n++] = items[2];
-            Rectangle pr = ELEMENT_RECT("ModelPicker");
-            menu_open(&app.menu, MT_MODEL, 0, (Vector2){ pr.x, pr.y + pr.height + 4 }, list, n);
-        }
-        if (!modal && IsMouseButtonPressed(MOUSE_BUTTON_RIGHT) && Clay_PointerOver(CLAY_ID("Explorer"))) {
-            for (size_t i = 0; i < app.nchats; i++)
-                if (Clay_PointerOver(CLAY_IDI("ChatItem", (uint32_t)i))) {
-                    const ChatSummary *chat = explorer_snapshot_chat(&app.explorer, app.drawn_explorer_generation,
-                                                                     app.session.generation, i);
-                    if (!chat) break;
-                    static char reads_item[64];
-                    snprintf(reads_item, sizeof(reads_item), "%s Observer reads this chat",
-                             chat->observer_ignore ? "  " : "\xE2\x9C\x93");
-                    const char *items[] = { "Rename\xE2\x80\xA6", reads_item, "Enable local memory (experimental)",
-                                            "Disable local memory", "Rebuild local memory" };
-                    snprintf(app.menu_chat, sizeof(app.menu_chat), "%s", chat->id);
-                    menu_open(&app.menu, MT_CHAT, (int)i, mouse, items, app.memory_experiment ? 5 : 2);
-                    break;
-                }
-            for (size_t i = 0; i < app.ndocs; i++)
-                if (Clay_PointerOver(CLAY_IDI("DocItem", (uint32_t)i))) {
-                    const char *doc = explorer_snapshot_doc(&app.explorer, app.drawn_explorer_generation,
-                                                            app.session.generation, i);
-                    if (!doc) break;
-                    static const char *const items[] = { "Rename\xE2\x80\xA6", "Reveal in Finder" };
-                    snprintf(app.menu_doc, sizeof(app.menu_doc), "%s", doc); /* copied: later snapshots may re-sort */
-                    menu_open(&app.menu, MT_DOC, (int)i, mouse, items, 2);
-                    break;
-                }
-        }
-        if (!mouse_down) app.dragging = DRAG_NONE;
-        float sw = (float)GetScreenWidth();
-        float right = sw - (app.observer_open || app.recall_open ? app.observer_w + SPLITTER_W : 0);
-        if (app.dragging == DRAG_EXPLORER) app.explorer_w = mouse.x - SPLITTER_W / 2.0f;
-        if (app.dragging == DRAG_OBSERVER) app.observer_w = sw - mouse.x - SPLITTER_W / 2.0f;
-        if (app.dragging == DRAG_CHAT) app.chat_w = right - mouse.x - SPLITTER_W / 2.0f;
-        /* Re-clamp every frame so shrinking the window never squeezes the editor. */
-        app.explorer_w = fmaxf(140.0f, fminf(app.explorer_w, sw * 0.25f));
-        app.observer_w = fmaxf(180.0f, fminf(app.observer_w, sw * 0.25f));
-        app.chat_w = fmaxf(280.0f, fminf(app.chat_w, sw * 0.45f));
-        /* Keep the document at least 320 px wide: shrink chat, then the
-         * observer, then the explorer, and finally close the observer. */
-        for (int pass = 0; pass < 4; pass++) {
-            float side = app.explorer_w + app.chat_w + (app.observer_open || app.recall_open ? app.observer_w + SPLITTER_W : 0) + 2 * SPLITTER_W;
-            float deficit = 320.0f - (sw - side);
-            if (deficit <= 0) break;
-            if (pass == 0) app.chat_w = fmaxf(280.0f, app.chat_w - deficit);
-            else if (pass == 1 && (app.observer_open || app.recall_open)) app.observer_w = fmaxf(180.0f, app.observer_w - deficit);
-            else if (pass == 2) app.explorer_w = fmaxf(140.0f, app.explorer_w - deficit);
-            else if (pass == 3) app.observer_open = app.recall_open = false;
-        }
-
-        bool primary = !modal && (IsKeyDown(KEY_LEFT_SUPER) || IsKeyDown(KEY_RIGHT_SUPER));
-        bool shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
-        if (primary && shortcut_pressed('s')) {
-            if (app.focus == FOCUS_RECORD && record_view_kind(app.record) == REC_NOTE) save_note(&app);
-            else if (app.focus == FOCUS_RECORD)
-                set_status(&app, "Canon is kept with Commit or Revise \xC2\xB7 \xE2\x8C\x98S saves notes and documents");
-            else save(&app);
-        }
-        /* From the document only: the chat box has no selection to quote. */
-        if (primary && shift && shortcut_pressed('n') && app.focus == FOCUS_DOC) note_from_selection(&app);
-        /* In the composer the same keys toggle the Note mark (red-team 2026-11-14: it was mouse-only). */
-        if (primary && shift && shortcut_pressed('n') && app.focus == FOCUS_CHAT && !app.edit_mode) chat_view_toggle_note(app.chat_view);
-        if (primary && shift && shortcut_pressed('c') && app.focus == FOCUS_DOC) canon_from_selection(&app);
-        if (!modal && app.focus == FOCUS_RECORD && IsKeyPressed(KEY_ESCAPE)) app.focus = FOCUS_DOC;
-        if (!modal && app.focus == FOCUS_RECALL && IsKeyPressed(KEY_ESCAPE)) app.focus = FOCUS_DOC;
-        if (primary && shortcut_pressed('l')) app.focus = FOCUS_CHAT;
-        if (primary && shortcut_pressed('k')) begin_edit(&app);
-        /* Cmd+Enter accepts only outside the chat box, where it also sends the
-         * message being typed (red-team 004: one key did both). */
-        if (primary && review_active(app.review) && app.focus != FOCUS_CHAT &&
-            (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER)))
-            accept_proposal(&app);
-        if (primary && shortcut_pressed('o')) choose_project(&app, false);
-        if (primary && !shift && shortcut_pressed('n')) begin_new_document(&app);
-        if (!modal && app.focus == FOCUS_CHAT && IsKeyPressed(KEY_ESCAPE)) {
-            if (app.history_pending) {
-                cancel_history(&app);
-                set_status(&app, "History loading cancelled; the current window was kept");
-            }
-            if (app.edit_mode) {
-                leave_edit_mode(&app);
-                if (!app.pending.active) editor_anchor_clear(app.editor);
-            }
-            app.focus = FOCUS_DOC;
-        }
-
-        const char *notice = editor_take_notice(app.editor);
-        if (notice) set_status(&app, notice);
-
-        /* Refresh lists only now: clicks above were hit-tested against the
-         * lists as last drawn, so a re-sort can never redirect a click. */
-        if (app.lists_dirty && !history_read_busy(&app)) {
-            if (refresh_lists(&app)) app.lists_dirty = false;
-        }
-        Clay_RenderCommandArray cmds = build_layout(&app);
-        app.editor_rect = ELEMENT_RECT("Editor");
-        if (record_view_active(app.record)) {
-            /* Dock the note/canon panel at the bottom of the document pane. */
-            Rectangle er = app.editor_rect;
-            float h = record_view_height(app.record, er.width - 24, er.height * 0.45f);
-            app.record_rect = (Rectangle){ er.x + 12, er.y + er.height - h - 12, er.width - 24, h };
-            app.editor_rect.height = app.record_rect.y - er.y - 8 + 12;
-        }
-        if (review_active(app.review)) {
-            /* Dock the review panel at the bottom of the document pane (above
-             * the note/canon panel, if open). */
-            Rectangle er = app.editor_rect;
-            float h = review_height(app.review, er.width - 24, er.height * 0.5f);
-            app.review_rect = (Rectangle){ er.x + 12, er.y + er.height - h - 12, er.width - 24, h };
-            app.editor_rect.height = app.review_rect.y - er.y - 8;
-        }
-        app.chat_list_rect = ELEMENT_RECT("ChatMessages");
-        app.findings_rect = app.observer_open ? ELEMENT_RECT("Findings") : (Rectangle){ 0 };
-        app.recall_rect = app.recall_open ? ELEMENT_RECT("RecallBody") : (Rectangle){ 0 };
-        app.chat_input_rect = ELEMENT_RECT("ChatInput");
-        Rectangle save_rect = ELEMENT_RECT("SaveButton");
-        Rectangle open_rect = ELEMENT_RECT("OpenButton");
-        Rectangle obs_rect = ELEMENT_RECT("ObserverToggle");
-        Rectangle new_rect = ELEMENT_RECT("NewChatButton");
-        Rectangle send_rect = ELEMENT_RECT("SendButton");
-        Rectangle attach_rect = ELEMENT_RECT("AttachRow");
-
-        /* Always update both so queued keystrokes are consumed or discarded. */
-        if (prompt_active(app.prompt)) {
-            PromptResult pr = prompt_update(app.prompt, (Rectangle){ 0, 0, (float)GetScreenWidth(), (float)GetScreenHeight() });
-            if (pr == PR_CANCEL) prompt_close(app.prompt);
-            if (pr == PR_OK) {
-                char *t = prompt_text(app.prompt);
-                if (t && finish_prompt(&app, t)) prompt_close(app.prompt);
-                free(t);
-            }
-        }
-        bool idle = app.dragging == DRAG_NONE && !modal;
-        editor_update(app.editor, app.editor_rect, idle && app.focus == FOCUS_DOC);
-        memory_document_names(&app); /* dirty-buffer transitions fence preparation immediately */
-        chat_view_set_can_apply(app.chat_view, editor_path(app.editor) != NULL && !editor_is_read_only(app.editor));
-        chat_view_set_note_disabled(app.chat_view, app.edit_mode); /* before the frame's hit test and draw */
-        chat_view_update(app.chat_view, app.chat_list_rect, app.chat_input_rect, idle && app.focus == FOCUS_CHAT);
-        ChatPageAction page_action = chat_view_take_page(app.chat_view);
-        if (idle && page_action.kind != CHAT_PAGE_NONE) page_chat(&app, page_action);
-        if (review_active(app.review) && !modal) review_update(app.review, app.review_rect);
-        if (record_view_active(app.record)) record_view_update(app.record, app.record_rect, idle && app.focus == FOCUS_RECORD);
-        if (app.observer_open && !modal) findings_view_update(app.findings, app.findings_rect);
-        if (app.recall_open && !modal) recall_view_update(app.recall, app.recall_rect, idle && app.focus == FOCUS_RECALL);
-        input_discard_chars(); /* after both views: nothing typed now may appear later */
-        recall_frame(&app);
-        long apply = chat_view_take_apply(app.chat_view);
-        if (apply >= 0) {
-            /* "Apply to document": propose a reply as a replacement for the
-             * selection, or as an insertion at the cursor. */
-            chat_lock(app.chat);
-            const ChatMessage *m = chat_message(app.chat, (size_t)apply);
-            char *reply = m && !m->excerpt ? strdup(m->content) : NULL;
-            bool reply_cut = m && (m->truncated || m->stopped);
-            bool reply_edit = m && m->is_edit;
-            chat_unlock(app.chat);
-            size_t a, c;
-            editor_get_selection(app.editor, &a, &c);
-            size_t lo = a < c ? a : c, hi = a < c ? c : a;
-            if (!reply) {
-            } else if (!editor_path(app.editor) || editor_is_read_only(app.editor)) {
-                set_status(&app, "Open an editable document to apply a reply");
-            } else if (app.pending.active) {
-                set_status(&app, "Wait for the current edit to finish (or stop it) before applying a reply");
-            } else if (reply_edit && hi == lo) {
-                /* An edit reply rewrites a passage; inserting it would duplicate the text. */
-                set_status(&app, "Select the passage this rewrite replaces, then Apply");
-            } else {
-                leave_edit_mode(&app);
-                char *orig = editor_range_utf8(app.editor, lo, hi - lo);
-                char *clean = llm_clean_edit(reply, orig ? orig : "");
-                char where[64];
-                if (hi > lo) snprintf(where, sizeof(where), "replace selection");
-                else snprintf(where, sizeof(where), "insert at line %d", editor_stats(app.editor).line);
-                if (orig && clean) propose(&app, lo, hi - lo, orig, clean, where, reply_cut);
-                free(orig);
-                free(clean);
-            }
-            free(reply);
-        }
-        bool rec_canon = false;
-        long rec_index = chat_view_take_record(app.chat_view, &rec_canon);
-        if (rec_index >= 0) record_from_reply(&app, rec_index, rec_canon);
-        long sources_index = chat_view_take_sources(app.chat_view);
-        if (sources_index >= 0) show_memory_sources(&app, sources_index);
-        char *submitted = chat_view_take_submit(app.chat_view);
-        if (submitted) send_chat(&app, submitted);
-        if (chat_view_take_copied(app.chat_view)) set_status(&app, "Reply copied to the clipboard");
-
-        int want = MOUSE_CURSOR_DEFAULT;
-        if (app.dragging || Clay_PointerOver(CLAY_ID("SplitLeft")) || Clay_PointerOver(CLAY_ID("SplitChat")) ||
-            (app.observer_open && Clay_PointerOver(CLAY_ID("SplitRight"))))
-            want = MOUSE_CURSOR_RESIZE_EW;
-        else if (CheckCollisionPointRec(mouse, app.editor_rect) || CheckCollisionPointRec(mouse, app.chat_input_rect))
-            want = MOUSE_CURSOR_IBEAM;
-        else if (Clay_PointerOver(CLAY_ID("Explorer")))
-            want = MOUSE_CURSOR_POINTING_HAND;
-        if (want != cursor_shape) {
-            SetMouseCursor(want);
-            cursor_shape = want;
-        }
-
-        BeginDrawing();
-        ClearBackground((Color){ 0x1F, 0x1F, 0x1F, 0xFF });
-        clay_render(cmds, app.font_ptrs);
-        if (modal) GuiLock(); /* nothing behind a prompt or menu reacts */
-        if (GuiButton(open_rect, "Open...")) choose_project(&app, false);
-        if (editor_path(app.editor)) editor_draw(app.editor, app.editor_rect, app.focus == FOCUS_DOC);
-        int empty_act = editor_path(app.editor) ? 0 : draw_empty(&app, app.editor_rect);
-        if (review_active(app.review)) {
-            review_draw(app.review, app.review_rect);
-            if (GuiButton(review_accept_rect(app.review_rect), "Accept")) accept_proposal(&app);
-            if (GuiButton(review_reject_rect(app.review_rect), "Reject")) reject_proposal(&app);
-        }
-        if (record_view_active(app.record))
-            record_action(&app, record_view_draw(app.record, app.record_rect, app.focus == FOCUS_RECORD));
-        chat_view_draw(app.chat_view, app.chat_list_rect, app.chat_input_rect, app.focus == FOCUS_CHAT);
-        if (app.observer_open && app.findings_rect.width > 0) {
-            char fid[40] = "";
-            FindingAction fa = findings_view_draw(app.findings, app.findings_rect, fid, sizeof(fid));
-            if (fa != FA_NONE) finding_action(&app, fa, fid);
-        }
-        if (app.recall_open && app.recall_rect.width > 0) {
-            RecallAction ra = recall_view_draw(app.recall, app.recall_rect, app.focus == FOCUS_RECALL);
-            if (ra.kind == RECALL_ACTION_OPEN) open_recall_row(&app, ra.row);
-        }
-
-        bool can_save = (editor_is_dirty(app.editor) || editor_overwrite_armed(app.editor)) &&
-                        !editor_is_read_only(app.editor);
-        if (!can_save) GuiDisable();
-        if (GuiButton(save_rect, "Save")) save(&app);
-        GuiEnable();
-        /* raygui draws with the primary face only (no fallback), so ASCII. */
-        if (GuiButton(obs_rect, app.observer_open ? "Hide observer" : app.observer_button[0] ? app.observer_button : "Observer")) {
-            app.observer_open = !app.observer_open;
-            if (app.observer_open && app.recall_open) toggle_recall(&app);
-        }
-        if (GuiButton(ELEMENT_RECT("RecallToggle"), app.recall_open ? "Hide recall" : "Recall")) toggle_recall(&app);
-        /* Whether the observer reads the open chat (the author's choice). */
-        if (open_chat_stored(&app)) {
-            Rectangle orr = ELEMENT_RECT("ObserverReads");
-            const ChatSummary *cs = find_chat(&app, app.chat_id);
-            bool reads = cs && !cs->observer_ignore, was = reads;
-            GuiCheckBox((Rectangle){ orr.x, orr.y + 4, 16, 16 }, "Observer reads this chat", &reads);
-            if (reads != was) set_chat_observer(&app, app.chat_id, reads);
-        }
-        if (app.suggest_text[0]) {
-            if (GuiButton(ELEMENT_RECT("NameSave"), "Save")) names_answer(&app, true);
-            else if (GuiButton(ELEMENT_RECT("NameSkip"), "Not now")) names_answer(&app, false);
-        }
-        if (chat_busy(app.chat)) GuiDisable();
-        if (GuiButton(new_rect, "New chat")) new_chat(&app);
-        GuiEnable();
-        if (app.edit_mode) {
-            if (GuiButton(ELEMENT_RECT("CancelEdit"), "Cancel")) {
-                leave_edit_mode(&app);
-                editor_anchor_clear(app.editor);
-            }
-        } else if (attach_rect.width > 0) {
-            int aa = draw_attach_row(&app, attach_rect);
-            if (aa >= 0) {
-                detach(&app, (size_t)aa);
-                chat_controller_mark_attachments_changed(&app.chat_controller);
-            } else if (aa == -2) {
-                if (!app.project_dir[0] || app.ndocs == 0) {
-                    set_status(&app, "Open a project with documents to attach them");
-                } else {
-                    /* The project's documents; a check mark shows what's attached. */
-                    const char *items[MENU_MAX_ITEMS];
-                    char labels[MENU_MAX_ITEMS][48];
-                    int n = 0;
-                    /* With more documents than fit, the last item asks for a name. */
-                    size_t room = app.ndocs > MENU_MAX_ITEMS ? MENU_MAX_ITEMS - 1 : app.ndocs;
-                    for (size_t i = 0; i < room; i++, n++) {
-                        char nm[44];
-                        fit_label(&app.fonts[FONT_UI], app.docs[i], 300, nm, sizeof(nm));
-                        snprintf(app.menu_names[n], sizeof(app.menu_names[n]), "%s", app.docs[i]);
-                        snprintf(labels[n], sizeof(labels[n]), "%s %s", is_attached(&app, app.docs[i]) ? "\xE2\x9C\x93" : "  ", nm);
-                        items[n] = labels[n];
-                    }
-                    if (room < app.ndocs) {
-                        app.menu_names[n][0] = '\0'; /* "other": a prompt */
-                        snprintf(labels[n], sizeof(labels[n]), "   Other document\xE2\x80\xA6");
-                        items[n] = labels[n];
-                        n++;
-                    }
-                    menu_open(&app.menu, MT_ATTACH, 0, (Vector2){ app.attach_add.x, app.attach_add.y - 8 - (float)n * 30 }, items, n);
-                }
-            }
-        }
-        if (chat_busy(app.chat)) {
-            if (GuiButton(send_rect, "Stop")) chat_cancel(app.chat);
-        } else if (app.history_pending) {
-            if (GuiButton(send_rect, "Cancel")) {
-                cancel_history(&app);
-                set_status(&app, "History loading cancelled; the current window was kept");
-            }
-        } else {
-            bool ready = !app.llm || chat_remote_selected(app.chat) || llm_server_state(app.llm, NULL, 0) == LLM_READY;
-            if (!ready) GuiDisable();
-            if (GuiButton(send_rect, "Send")) {
-                chat_view_submit_now(app.chat_view);
-                char *t = chat_view_take_submit(app.chat_view);
-                if (t) send_chat(&app, t);
-                app.focus = FOCUS_CHAT;
-            }
-            GuiEnable();
-        }
-
-        GuiUnlock();
-        if (!modal && empty_act) empty_action(&app, empty_act, sample);
-        {
-            Rectangle screen = { 0, 0, (float)GetScreenWidth(), (float)GetScreenHeight() };
-            int pick = menu_draw(&app.menu, &app.fonts[FONT_UI], screen);
-            if (pick >= 0 && app.menu.tag == MT_ATTACH && pick < MENU_MAX_ITEMS && !app.menu_names[pick][0]) {
-                snprintf(app.prompt_project, sizeof(app.prompt_project), "%s", app.project_dir);
-                prompt_open(app.prompt, PT_ATTACH_NAME, "Attach a document", "", "Attach");
-            } else if (pick >= 0 && app.menu.tag == MT_ATTACH && pick < MENU_MAX_ITEMS) {
-                const char *nm = app.menu_names[pick];
-                bool found = false;
-                for (size_t i = 0; i < app.nattached; i++)
-                    if (!strcmp(app.attached[i], nm)) {
-                        detach(&app, i);
-                        found = true;
-                        break;
-                    }
-                if (!found) attach(&app, nm);
-                chat_controller_mark_attachments_changed(&app.chat_controller);
-            }
-            if (pick >= 0 && app.menu.tag == MT_MODEL && pick == app.model_menu_settings) {
-                open_model_settings(&app);
-            } else if (pick >= 0 && app.menu.tag == MT_MODEL) {
-                bool remote = pick == 1;
-                if (remote == chat_remote_selected(app.chat)) {
-                } else if (!chat_select_remote(app.chat, remote ? &app.remote : NULL)) {
-                    set_status(&app, "Wait for the reply to finish before switching models");
-                } else {
-                    char msg[400];
-                    if (remote)
-                        snprintf(msg, sizeof(msg), "Using %s: new chat messages, their attached documents and edit passages go to %s. "
-                                                   "Earlier messages and the observer stay on this Mac.", app.remote.name, app.remote.host);
-                    else snprintf(msg, sizeof(msg), "Using the local model: nothing leaves this Mac");
-                    set_status(&app, msg);
-                }
-            }
-            if (pick == 1 && app.menu.tag == MT_CHAT) {
-                const ChatSummary *cs = find_chat(&app, app.menu_chat);
-                if (cs) set_chat_observer(&app, app.menu_chat, cs->observer_ignore);
-            } else if (pick >= 2 && pick <= 4 && app.menu.tag == MT_CHAT && app.memory_experiment) {
-                memory_control(&app, pick == 2 ? MEMORY_JOB_ENABLE : pick == 3 ? MEMORY_JOB_DISABLE : MEMORY_JOB_REBUILD);
-            } else if (pick == 0 && app.menu.tag == MT_CHAT) {
-                const char *title = "";
-                for (size_t i = 0; i < app.nchats; i++)
-                    if (!strcmp(app.chats[i].id, app.menu_chat)) title = app.chats[i].title;
-                snprintf(app.prompt_project, sizeof(app.prompt_project), "%s", app.project_dir);
-                prompt_open(app.prompt, PT_RENAME_CHAT, "Rename chat", title, "Rename");
-            }
-            if (pick >= 0 && app.menu.tag == MT_DOC) {
-                if (!name_taken(&app, app.menu_doc)) set_status(&app, "That document is no longer in this project");
-                else if (pick == 0) begin_rename(&app, app.menu_doc); /* a dirty open document is refused on OK */
-                else reveal_document(&app, app.menu_doc);
-            }
-            if (app.settings_open) draw_model_settings(&app, screen);
-            if (app.memory_sources_open) draw_memory_sources(&app);
-            if (prompt_active(app.prompt)) {
-                PromptResult pr = prompt_draw(app.prompt, screen);
-                if (pr == PR_CANCEL) prompt_close(app.prompt);
-                if (pr == PR_OK) {
-                    char *t = prompt_text(app.prompt);
-                    if (t && finish_prompt(&app, t)) prompt_close(app.prompt);
-                    free(t);
-                }
-            }
-        }
-        const char *shot_path = app.script ? script_take_shot(app.script) : NULL;
-        if (shot_path) {
-            /* raylib batches draws until EndDrawing; flush so the capture
-             * includes everything drawn this frame (e.g. raygui controls). */
-            rlDrawRenderBatchActive();
-            Image shot = LoadImageFromScreen();
-            ExportImage(shot, shot_path);
-            UnloadImage(shot);
-        }
-        EndDrawing();
-
-        if (screenshot_path && ++frame == 10) {
-            Image shot = LoadImageFromScreen();
-            ExportImage(shot, screenshot_path);
-            UnloadImage(shot);
-            running = false;
-        }
+        if (!frame_step(&app, &loop)) break;
     }
 
-    int rc = app.script ? script_finish(app.script, &host, closed_by_window) : 0;
+    rc = app.script ? script_finish(app.script, &loop.host, loop.closed_by_window) : 0;
     app_destroy(&app);
     return rc;
 }
