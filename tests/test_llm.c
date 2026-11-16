@@ -1318,9 +1318,9 @@ static void test_records(void)
               (unsigned)strtoul(next + 18, NULL, 16) == ((suffix + 4) & 0xffffu)); /* the count moved past them */
         records_test_id_hooks(0, 0);
     }
-    /* The author's new notes and canon entries draw against the project's log (records_new_id_checked, AUDIT-004 F12;
-     * record_workflow.c's new_record_id): an id another process already wrote in this second is passed over; an
-     * exhausted draw or an unreadable log gives no id, so the workflow takes its existing failure path. */
+    /* The author's new notes and canon entries are written with an id no other record has, checked in the write
+     * (records_create_drawn, RECORD_APPEND_NEW; AUDIT-004 final verification 3): a taken id is drawn again, up to 8
+     * times; a write failure is not retried. */
     {
         char lp[700];
         snprintf(lp, sizeof(lp), "%s/ids-proj", g_dir);
@@ -1334,17 +1334,69 @@ static void test_records(void)
             snprintf(other, sizeof(other), "%.18s%04x", first, (suffix + k) & 0xffffu);
             CHECK(records_append(g_store, lp, REC_NOTE, other, "active", "Someone else's note.", NULL, 0, NULL));
         }
-        CHECK(records_new_id_checked(g_store, lp, REC_NOTE, got, sizeof(got)) && !strncmp(got, first, 18) &&
-              (unsigned)strtoul(got + 18, NULL, 16) == ((suffix + 4) & 0xffffu));
-        records_test_id_exhausted(true);
-        CHECK(!records_new_id_checked(g_store, lp, REC_NOTE, got, sizeof(got)) && got[0] == '\0');
+        int ver = 0;
+        CHECK(records_create_drawn(g_store, lp, REC_NOTE, "active", "Mine.", NULL, 0, NULL, got, sizeof(got), &ver) && ver == 1 &&
+              !strncmp(got, first, 18));
+        bool fresh_id = true; /* the next in the count was taken: the draw went elsewhere, to an id no record had */
+        for (unsigned k = 1; k <= 3; k++) {
+            char other[40];
+            snprintf(other, sizeof(other), "%.18s%04x", first, (suffix + k) & 0xffffu);
+            fresh_id = fresh_id && strcmp(got, other) != 0;
+        }
+        CHECK(fresh_id && strcmp(got, first) != 0);
+        records_test_id_exhausted(true); /* every draw taken: eight draws, then no id, nothing written */
+        CHECK(!records_create_drawn(g_store, lp, REC_NOTE, "active", "Lost?", NULL, 0, NULL, got, sizeof(got), &ver) && got[0] == '\0' &&
+              records_append_taken());
         records_test_id_exhausted(false);
+        Record *list = NULL;
+        size_t n = records_list(g_store, lp, REC_NOTE, &list);
+        bool one_each = n == 4;
+        for (size_t i = 0; i < n; i++) one_each = one_each && list[i].nversions == 1;
+        CHECK(one_each);
+        records_free(list, n);
         char log[800];
         snprintf(log, sizeof(log), "%s/.scribodo/notes.jsonl", lp);
         CHECK(chmod(log, 0000) == 0);
-        CHECK(!records_new_id_checked(g_store, lp, REC_NOTE, got, sizeof(got)) && got[0] == '\0');
+        CHECK(!records_create_drawn(g_store, lp, REC_NOTE, "active", "No log.", NULL, 0, NULL, got, sizeof(got), &ver) &&
+              !records_append_taken()); /* a read failure: no redraw */
         CHECK(chmod(log, 0644) == 0);
         records_test_id_hooks(0, 0);
+
+        /* Two writers, two processes, the same id stream (the child is forked after the draw state, so both draw the
+         * same ids in the same fixed second): every note lands under its own id, each once. */
+        char tp[700];
+        snprintf(tp, sizeof(tp), "%s/ids-two", g_dir);
+        mkdir(tp, 0755);
+        records_test_id_hooks((time_t)1763300100, 0);
+        pid_t child = fork();
+        if (child == 0) {
+            StoreManager *m = store_manager_create();
+            int bad = 0;
+            for (int i = 0; i < 40; i++) {
+                char child_id[40], body[32];
+                snprintf(body, sizeof(body), "child %d", i);
+                if (!m || !records_create_drawn(m, tp, REC_NOTE, "active", body, NULL, 0, NULL, child_id, sizeof(child_id), NULL)) bad++;
+            }
+            if (m) store_manager_destroy(m);
+            _exit(bad ? 1 : 0);
+        }
+        int bad = 0;
+        for (int i = 0; i < 40; i++) {
+            char pidid[40], body[32];
+            snprintf(body, sizeof(body), "parent %d", i);
+            if (!records_create_drawn(g_store, tp, REC_NOTE, "active", body, NULL, 0, NULL, pidid, sizeof(pidid), NULL)) bad++;
+        }
+        int st = 0;
+        CHECK(child > 0 && waitpid(child, &st, 0) == child && WIFEXITED(st) && WEXITSTATUS(st) == 0 && bad == 0);
+        if (bad || !WIFEXITED(st) || WEXITSTATUS(st)) fprintf(stderr, "    two writers: parent failures %d, child exit %d\n", bad, WEXITSTATUS(st));
+        records_test_id_hooks(0, 0);
+        list = NULL;
+        n = records_list(g_store, tp, REC_NOTE, &list);
+        one_each = n == 80;
+        for (size_t i = 0; i < n; i++) one_each = one_each && list[i].nversions == 1;
+        if (!one_each) fprintf(stderr, "    two writers: %zu records\n", n);
+        CHECK(one_each);
+        records_free(list, n);
     }
     int ver = 0;
     CHECK(records_append(g_store, proj, REC_NOTE, nid, "active", "Check the letter's date.", &src, 1, &ver) && ver == 1);
@@ -1954,6 +2006,52 @@ static bool has_finding(const char *proj, const char *needle, Record *out_copy_s
 /* AUDIT-004 F12, the observer's side: when no finding id can be drawn (records_new_id_unused exhausted, forced by the
  * test hook) nothing is written under a used id, the job is not marked read, the status says why, and the next run
  * (here after the project is set again, which ends the back-off) writes the findings. */
+/* Final verification 3, measured, not a gate: SCRIBODO_RECORD_ID_TIMING=<n> writes a notes log of n notes and times
+ * one new note the old way (a log read for the id, then the append's own read) and the new (records_create_drawn: the
+ * append's read only). Recorded in journal/audit004-text.md. */
+static double ms_now(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
+}
+
+static void test_record_id_timing(void)
+{
+    const char *env = getenv("SCRIBODO_RECORD_ID_TIMING");
+    if (!env) return;
+    int n = atoi(env) > 0 ? atoi(env) : 10000;
+    char tp[700], log[800];
+    snprintf(tp, sizeof(tp), "%s/ids-timing-%d", g_dir, n);
+    mkdir(tp, 0755);
+    snprintf(log, sizeof(log), "%s/.scribodo", tp);
+    mkdir(log, 0755);
+    snprintf(log, sizeof(log), "%s/.scribodo/notes.jsonl", tp);
+    FILE *f = fopen(log, "w");
+    for (int i = 0; f && i < n; i++)
+        fprintf(f, "{\"id\":\"n-20251101-000000-%04x%04x\",\"ver\":1,\"ts\":1700000000,\"status\":\"active\",\"content\":\"Note %d about the letter.\",\"sources\":[]}\n",
+                i >> 16, i & 0xffff, i);
+    if (f) fclose(f);
+    double best_old = 1e9, best_new = 1e9;
+    for (int run = 0; run < 3; run++) {
+        char id[40];
+        double t0 = ms_now();
+        Record *taken = NULL;
+        size_t nt = 0;
+        bool ok = records_list_checked(g_store, tp, REC_NOTE, &taken, &nt) && records_new_id_unused(REC_NOTE, taken, nt, id, sizeof(id));
+        records_free(taken, nt);
+        ok = ok && records_append(g_store, tp, REC_NOTE, id, "active", "Old way.", NULL, 0, NULL);
+        double t1 = ms_now();
+        ok = ok && records_create_drawn(g_store, tp, REC_NOTE, "active", "New way.", NULL, 0, NULL, id, sizeof(id), NULL);
+        double t2 = ms_now();
+        CHECK(ok);
+        if (t1 - t0 < best_old) best_old = t1 - t0;
+        if (t2 - t1 < best_new) best_new = t2 - t1;
+    }
+    printf("    record id timing: %d notes: old (read, then append's read) %.1f ms, new (append's read only) %.1f ms\n", n, best_old,
+           best_new);
+}
+
 static void test_observer_id_exhaustion(void)
 {
     char proj[700], doc[800];
@@ -3059,6 +3157,7 @@ int main(int argc, char **argv)
         { "snapshot_reuse_integrity", test_snapshot_reuse_integrity },
         { "observer_run", test_observer_run },
         { "observer_id_exhaustion", test_observer_id_exhaustion },
+        { "record_id_timing", test_record_id_timing },
         { "observer_judge_log", test_observer_judge_log },
         { "observer_sentence_pairs", test_observer_sentence_pairs },
         { "observer_sentence_arms", test_observer_sentence_arms },

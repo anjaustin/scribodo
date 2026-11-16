@@ -133,14 +133,6 @@ bool record_unsaved_canon(App *app)
 
 static bool is_blank(const char *s) { return !s || !s[strspn(s, " \n\t\r")]; }
 
-/* A new note or canon id that the project's log does not already hold (AUDIT-004 F12): records_new_id alone is
- * distinct only within this process, and records_append would file a new record under another process's id as that
- * record's next version, hiding it. False (nothing to write) when the log cannot be read or every id is taken. */
-static bool new_record_id(App *app, RecordKind kind, char *id, size_t idlen)
-{
-    return app->project_dir[0] && records_new_id_checked(app->store, app->project_dir, kind, id, idlen);
-}
-
 /* Store the open note's text as a new version. */
 bool save_note(App *app)
 {
@@ -149,21 +141,17 @@ bool save_note(App *app)
     if (!text) return false;
     char id[40];
     snprintf(id, sizeof(id), "%s", record_view_id(v));
-    if (!id[0]) {
-        if (is_blank(text)) { /* an untouched new note is nothing to keep */
-            free(text);
-            return true;
-        }
-        if (!new_record_id(app, REC_NOTE, id, sizeof(id))) {
-            set_status(app, store_says(app, "Could not save the note to .scribodo/notes.jsonl"));
-            free(text);
-            return false;
-        }
+    if (!id[0] && is_blank(text)) { /* an untouched new note is nothing to keep */
+        free(text);
+        return true;
     }
     size_t ns;
     const SourceRef *src = record_view_sources(v, &ns);
     int ver = 0;
-    bool ok = app->project_dir[0] && records_append(app->store, app->project_dir, REC_NOTE, id, "active", text, src, ns, &ver);
+    /* A new note gets an id no other record has, checked in the write (records_create_drawn; AUDIT-004 F12). */
+    bool ok = app->project_dir[0] &&
+              (id[0] ? records_append(app->store, app->project_dir, REC_NOTE, id, "active", text, src, ns, &ver)
+                     : records_create_drawn(app->store, app->project_dir, REC_NOTE, "active", text, src, ns, NULL, id, sizeof(id), &ver));
     if (ok) {
         record_view_stored(v, id, ver, "active", text);
         set_status(app, "Note saved");
@@ -259,8 +247,7 @@ void note_from_selection(App *app)
         RecordView *v = app->record;
         char id[40];
         int ver = 0;
-        if (new_record_id(app, REC_NOTE, id, sizeof(id)) &&
-            records_append(app->store, app->project_dir, REC_NOTE, id, "active", s.quote, &s, 1, &ver)) {
+        if (records_create_drawn(app->store, app->project_dir, REC_NOTE, "active", s.quote, &s, 1, NULL, id, sizeof(id), &ver)) {
             record_view_stored(v, id, ver, "active", s.quote);
             set_status(app, "Saved as a note \xC2\xB7 edit it below");
         } else {
@@ -309,8 +296,7 @@ void record_from_reply(App *app, long index, bool canon)
         if (show_record(app, REC_NOTE, NULL, text, &s, 1)) {
             char id[40];
             int ver = 0;
-            if (new_record_id(app, REC_NOTE, id, sizeof(id)) &&
-                records_append(app->store, app->project_dir, REC_NOTE, id, "active", text, &s, 1, &ver)) {
+            if (records_create_drawn(app->store, app->project_dir, REC_NOTE, "active", text, &s, 1, NULL, id, sizeof(id), &ver)) {
                 record_view_stored(app->record, id, ver, "active", text);
                 set_status(app, "Saved the reply as a note");
             } else {
@@ -419,18 +405,16 @@ static void store_canon(App *app, const char *status, bool use_editor_text)
     }
     char id[40];
     snprintf(id, sizeof(id), "%s", record_view_id(v));
-    if (!id[0] && !new_record_id(app, REC_CANON, id, sizeof(id))) {
-        set_status(app, store_says(app, "Could not save to .scribodo/canon.jsonl"));
-        free(text);
-        return;
-    }
     size_t ns;
     const SourceRef *src = record_view_sources(v, &ns);
     int ver = 0;
     bool first = !record_view_id(v)[0];
     FindingInfo origin = { 0 }; /* a first version drafted from a finding records which one (red-team 2026-11-14) */
     if (first && app->canon_finding[0]) snprintf(origin.related, sizeof(origin.related), "%s", app->canon_finding);
-    if (app->project_dir[0] && records_append_ex(app->store, app->project_dir, REC_CANON, id, status, text, src, ns, origin.related[0] ? &origin : NULL, &ver)) {
+    const FindingInfo *from = origin.related[0] ? &origin : NULL;
+    if (app->project_dir[0] &&
+        (first ? records_create_drawn(app->store, app->project_dir, REC_CANON, status, text, src, ns, from, id, sizeof(id), &ver)
+               : records_append_ex(app->store, app->project_dir, REC_CANON, id, status, text, src, ns, from, &ver))) {
         record_view_stored(v, id, ver, status, text);
         if (first && app->canon_finding[0]) { /* the finding it came from is now committed */
             observer_set_finding_status(app->observer, app->project_dir, app->canon_finding, "committed");
@@ -555,7 +539,7 @@ void finding_action(App *app, FindingAction act, const char *id)
         int ver = 0;
         FindingInfo origin = { 0 }; /* the note's provenance: the finding it was made from (red-team 2026-11-14) */
         snprintf(origin.related, sizeof(origin.related), "%s", id);
-        if (!new_record_id(app, REC_NOTE, nid, sizeof(nid)) || !records_append_ex(app->store, app->project_dir, REC_NOTE, nid, "active", v->content, v->sources, v->nsources, &origin, &ver)) {
+        if (!records_create_drawn(app->store, app->project_dir, REC_NOTE, "active", v->content, v->sources, v->nsources, &origin, nid, sizeof(nid), &ver)) {
             set_status(app, store_says(app, "Could not save the note to .scribodo/notes.jsonl"));
             break;
         }

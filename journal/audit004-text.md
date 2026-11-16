@@ -679,3 +679,36 @@ was written by the import; (a) with P's backfill holding the worker, Q (needing 
 when the worker frees, and a project needing only a backfill is started then; (c) six renames on the test thread while
 the worker backfills 60 chats of 20 title lines each all succeed, each renamed chat ending with its 20 earlier titles
 and then the replaced one.
+
+### 3. Record ids: the check is in the write
+
+**Finding.** `records_new_id_checked` drew an id against the log, and the write came later: in the store `INSERT
+IGNORE INTO records` silently accepted another process's record as the id, and the note became its version 2; in
+files the same window was open (the project's lock is shared, so writers did not exclude each other). Each new note
+also read the log twice on the frame thread.
+
+**Change.** Appends take a mode (`RECORD_APPEND_NEXT`, `_FRESH` as the observer uses it, and the new `_NEW`, "must be
+new"). In the store, a `_NEW` append checks that `INSERT IGNORE` made exactly one row, and otherwise rolls back and
+reports the id as taken (`records_append_taken`). In files, the check is the read the append already does for the
+version number, and record writes now hold an exclusive lock on the project's `.scribodo` folder from that read to
+the write, so no other writer comes between (the folder, not the log, so a write that fails before its line leaves
+no log, as `test_persistence_faults` requires; the project's own lock could not be used exclusively, since an
+exclusive holder of it reads as an import in progress). `records_create_drawn` draws with `records_new_id` and writes
+with `_NEW`, drawing again on a taken id up to 8 times and never after an I/O failure; a redraw takes a random suffix
+in the same second rather than the next in the count, because a taken id means another process is drawing the same
+stretch of the count (the store test's second writer, far behind, failed eight times in a row on the count); the write
+checks the random id like any other, and only notes and canon entries are written this way, so the observer's count
+is undisturbed; the five new-id sites in
+`record_workflow.c` use it with their existing failure paths, and `records_new_id_checked` (the separate pre-read) is
+gone.
+
+**Cost on the frame thread** (`SCRIBODO_RECORD_ID_TIMING=<n>`, the `test_llm` binary, best of three, files mode): 10,000
+notes 15.1 ms before (read for the id, then the append's read) and 7.4 ms after; 50,000 notes 81.0 and 40.6 ms. One
+read remains, the append's own; in the store there is no read.
+
+**Tests.** `test_llm`: with the next three ids written by "another process", the note is written under an id none of
+them has; with every draw taken (the `records_test_id_exhausted` hook) the eight draws fail with nothing written; an unreadable log is a write failure, not retried; two
+processes (a fork, so both draw the same ids in one fixed second) each write 40 notes into one file-backed project and
+all 80 are records of one version. `test_db` `record_ids_two_writers` does the same in the store. Without `_NEW`
+(the old append) the file test ends with 79 records, one note filed as another's second version (checked by mutation);
+with `_NEW` but without the folder lock it failed too (a writer read the other's half-written line).

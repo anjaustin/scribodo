@@ -2,6 +2,7 @@
  * and sources by id. Called by records.c for projects in the store. */
 #define _DARWIN_C_SOURCE
 #include "store_backends.h"
+#include "app/records_internal.h"
 #include "store_entities.h"
 
 #include <limits.h>
@@ -109,12 +110,21 @@ static bool source_row(const DbRows *rows, size_t row, SourceRow *out)
 
 bool sdb_record_append(Db *db, const char *project_id, RecordKind kind, const char *id, const char *status,
                        const char *content, const SourceRef *sources, size_t nsources, const FindingInfo *finding,
-                       bool fresh, int *ver_out)
+                       int mode, int *ver_out)
 {
     double t = now_s();
+    bool fresh = mode != RECORD_APPEND_NEXT;
+    records_append_mark_taken(false);
     if (!db_begin(db)) return false;
     DbArg rec[4] = { DB_S(id), DB_S(project_id), DB_S(kind_name(kind)), DB_D(t) };
-    bool ok = db_run(db, "INSERT IGNORE INTO records (id, project_id, kind, created_at) VALUES (?,?,?,?)", rec, 4, NULL);
+    uint64_t inserted = 0;
+    bool ok = db_run(db, "INSERT IGNORE INTO records (id, project_id, kind, created_at) VALUES (?,?,?,?)", rec, 4, &inserted);
+    /* Must be new: the INSERT made the row, or another writer has the id (AUDIT-004 final verification 3). */
+    if (ok && mode == RECORD_APPEND_NEW && inserted != 1) {
+        db_rollback(db);
+        records_append_mark_taken(true);
+        return false;
+    }
     /* The record must be this project's and this kind (never an id from
      * elsewhere), and its row is locked so version numbers can't race. */
     DbRows r;

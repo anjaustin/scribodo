@@ -30,7 +30,7 @@ struct ProjectStore {
 struct ProjectStoreOps {
     bool (*records_list)(ProjectStore *, RecordKind, Record **, size_t *);
     bool (*records_append)(ProjectStore *, RecordKind, const char *, const char *, const char *, const SourceRef *, size_t,
-                           const FindingInfo *, bool, int *);
+                           const FindingInfo *, int, int *);
     bool (*revisions_list)(ProjectStore *, const char *, Revision **, size_t *);
     bool (*revisions_record)(ProjectStore *, const char *, const char *, const char *, const char *, bool *);
     bool (*revisions_snapshot)(ProjectStore *, const char *, const char *, char *, size_t);
@@ -53,9 +53,9 @@ static bool file_records_list(ProjectStore *store, RecordKind kind, Record **out
 
 static bool file_records_append(ProjectStore *store, RecordKind kind, const char *id, const char *status,
                                 const char *content, const SourceRef *sources, size_t nsources,
-                                const FindingInfo *finding, bool fresh, int *ver_out)
+                                const FindingInfo *finding, int mode, int *ver_out)
 {
-    return records_append_files(store->manager, store->project_dir, kind, id, status, content, sources, nsources, finding, fresh, ver_out);
+    return records_append_files(store->manager, store->project_dir, kind, id, status, content, sources, nsources, finding, mode, ver_out);
 }
 
 static bool db_records_list(ProjectStore *store, RecordKind kind, Record **out, size_t *count)
@@ -65,9 +65,9 @@ static bool db_records_list(ProjectStore *store, RecordKind kind, Record **out, 
 
 static bool db_records_append(ProjectStore *store, RecordKind kind, const char *id, const char *status,
                               const char *content, const SourceRef *sources, size_t nsources,
-                              const FindingInfo *finding, bool fresh, int *ver_out)
+                              const FindingInfo *finding, int mode, int *ver_out)
 {
-    return sdb_record_append(store->db, store->project_id, kind, id, status, content, sources, nsources, finding, fresh,
+    return sdb_record_append(store->db, store->project_id, kind, id, status, content, sources, nsources, finding, mode,
                              ver_out);
 }
 
@@ -80,7 +80,7 @@ static bool paused_records_list(ProjectStore *store, RecordKind kind, Record **o
 
 static bool paused_records_append(ProjectStore *store, RecordKind kind, const char *id, const char *status,
                                   const char *content, const SourceRef *sources, size_t nsources,
-                                  const FindingInfo *finding, bool fresh, int *ver_out)
+                                  const FindingInfo *finding, int mode, int *ver_out)
 {
     return false;
 }
@@ -458,13 +458,13 @@ size_t project_store_records_list(StoreManager *manager, const char *project_dir
 
 bool project_store_records_append(StoreManager *manager, const char *project_dir, RecordKind kind, const char *id, const char *status,
                                    const char *content, const SourceRef *sources, size_t nsources,
-                                   const FindingInfo *finding, bool fresh, int *ver_out)
+                                   const FindingInfo *finding, int mode, int *ver_out)
 {
     if (!project_dir || !project_dir[0]) return false;
     ProjectStore store;
     int lock = begin_operation(manager, project_dir, &store);
     if (store.ops == &file_ops && lock < 0) return false;
-    bool ok = store.ops->records_append(&store, kind, id, status, content, sources, nsources, finding, fresh, ver_out);
+    bool ok = store.ops->records_append(&store, kind, id, status, content, sources, nsources, finding, mode, ver_out);
     project_store_file_unlock(lock);
     return ok;
 }

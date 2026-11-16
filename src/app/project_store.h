@@ -51,7 +51,7 @@ bool project_store_records_list_checked(StoreManager *manager, const char *proje
                                         size_t *count);
 bool project_store_records_append(StoreManager *manager, const char *project_dir, RecordKind kind, const char *id, const char *status,
                                   const char *content, const SourceRef *sources, size_t nsources,
-                                   const FindingInfo *finding, bool fresh, int *ver_out);
+                                   const FindingInfo *finding, int mode, int *ver_out);
 
 size_t project_store_revisions_list(StoreManager *manager, const char *project_dir, const char *doc_path, Revision **out);
 bool project_store_revisions_list_checked(StoreManager *manager, const char *project_dir, const char *doc_path,

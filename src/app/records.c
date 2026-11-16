@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -99,18 +100,6 @@ bool records_new_id_unused(RecordKind kind, const Record *taken, size_t ntaken, 
      * not check the result still fails its write instead of overwriting. */
     if (outlen) out[0] = '\0';
     return false;
-}
-
-bool records_new_id_checked(StoreManager *manager, const char *project_dir, RecordKind kind, char *out, size_t outlen)
-{
-    if (outlen) out[0] = '\0';
-    Record *taken = NULL;
-    size_t ntaken = 0;
-    bool ok = records_list_checked(manager, project_dir, kind, &taken, &ntaken) &&
-              records_new_id_unused(kind, taken, ntaken, out, outlen);
-    records_free(taken, ntaken);
-    if (!ok && outlen) out[0] = '\0';
-    return ok;
 }
 
 void records_free_sources(SourceRef *s, size_t n)
@@ -380,44 +369,79 @@ bool records_append(StoreManager *manager, const char *project_dir, RecordKind k
 }
 
 static bool append_impl(StoreManager *manager, const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
-                        const SourceRef *sources, size_t nsources, const FindingInfo *finding, int *ver_out, bool fresh);
+                        const SourceRef *sources, size_t nsources, const FindingInfo *finding, int *ver_out, int mode);
 
 bool records_append_ex(StoreManager *manager, const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
                        const SourceRef *sources, size_t nsources, const FindingInfo *finding, int *ver_out)
 {
-    return append_impl(manager, project_dir, kind, id, status, content, sources, nsources, finding, ver_out, false);
+    return append_impl(manager, project_dir, kind, id, status, content, sources, nsources, finding, ver_out, RECORD_APPEND_NEXT);
 }
 
 bool records_create_ex(StoreManager *manager, const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
                        const SourceRef *sources, size_t nsources, const FindingInfo *finding)
 {
-    return append_impl(manager, project_dir, kind, id, status, content, sources, nsources, finding, NULL, true);
+    return append_impl(manager, project_dir, kind, id, status, content, sources, nsources, finding, NULL, RECORD_APPEND_FRESH);
 }
 
 static bool append_impl(StoreManager *manager, const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
-                         const SourceRef *sources, size_t nsources, const FindingInfo *finding, int *ver_out, bool fresh)
+                         const SourceRef *sources, size_t nsources, const FindingInfo *finding, int *ver_out, int mode)
 {
     if (ver_out) *ver_out = 0;
+    records_append_mark_taken(false);
     if (!valid_id(id)) return false;
-    return project_store_records_append(manager, project_dir, kind, id, status, content, sources, nsources, finding, fresh, ver_out);
+    return project_store_records_append(manager, project_dir, kind, id, status, content, sources, nsources, finding, mode, ver_out);
 }
 
-bool records_append_files(StoreManager *manager, const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
-                          const SourceRef *sources, size_t nsources, const FindingInfo *finding, bool fresh, int *ver_out)
+static _Thread_local bool g_append_taken;
+
+void records_append_mark_taken(bool taken) { g_append_taken = taken; }
+
+bool records_append_taken(void) { return g_append_taken; }
+
+bool records_create_drawn(StoreManager *manager, const char *project_dir, RecordKind kind, const char *status,
+                          const char *content, const SourceRef *sources, size_t nsources, const FindingInfo *finding,
+                          char *id, size_t idlen, int *ver_out)
+{
+    for (int attempt = 0; attempt < 8; attempt++) {
+        records_new_id(kind, id, idlen);
+        /* After a taken id, another process is drawing the same stretch of this second's ids (a fork, or the same random
+         * start): a random suffix leaves it, where the next in the count would follow it. The write checks it as any
+         * other, and only notes and canon entries are written this way, so no other caller's count is disturbed. */
+        size_t n = strlen(id);
+        if (attempt > 0 && n >= 4 && idlen > n) snprintf(id + n - 4, 5, "%04x", arc4random_uniform(0x10000));
+        if (g_test_id_exhausted) { /* test hook: every draw taken */
+            records_append_mark_taken(true);
+            continue;
+        }
+        if (append_impl(manager, project_dir, kind, id, status, content, sources, nsources, finding, ver_out, RECORD_APPEND_NEW))
+            return true;
+        if (!records_append_taken()) break; /* a write failure, not another writer's id: no redraw */
+    }
+    if (idlen) id[0] = '\0';
+    return false;
+}
+
+static bool append_files_locked(StoreManager *manager, const char *project_dir, RecordKind kind, const char *id, const char *status, const char *content,
+                          const SourceRef *sources, size_t nsources, const FindingInfo *finding, int mode, int *ver_out)
 {
     char path[1200];
     if (!log_path(project_dir, kind, true, path, sizeof(path))) return false;
 
     /* Next version number: one past the newest stored (a fresh id is 1, with
-     * no need to read the whole log). */
+     * no need to read the whole log). A must-be-new id is checked in the same read, under the records lock held
+     * by records_append_files, so no other writer comes between (AUDIT-004 final verification 3). */
     int ver = 1;
-    if (!fresh) {
+    if (mode != RECORD_APPEND_FRESH) {
         Record *list = NULL;
         size_t n = 0;
         if (!records_list_files_checked(project_dir, kind, &list, &n)) return false;
         for (size_t i = 0; i < n; i++)
             if (!strcmp(list[i].id, id)) ver = record_current(&list[i])->ver + 1;
         records_free(list, n);
+        if (mode == RECORD_APPEND_NEW && ver != 1) {
+            records_append_mark_taken(true);
+            return false;
+        }
     }
 
     cJSON *j = cJSON_CreateObject();
@@ -465,5 +489,27 @@ bool records_append_files(StoreManager *manager, const char *project_dir, Record
     }
     free(line);
     if (ok && ver_out) *ver_out = ver;
+    return ok;
+}
+
+/* Record writes to a project's logs are serialised across processes by an exclusive lock on its .scribodo folder (the
+ * project's own lock is shared by every operation and taken exclusively only by an import): a write reads the log (the
+ * next version, or that a must-be-new id is free) and appends to it, and no other writer may come between (AUDIT-004
+ * final verification 3: two processes drew the same id, both found it free and both wrote it). The folder is locked
+ * rather than the log, so a write that fails before its line leaves no log behind. */
+bool records_append_files(StoreManager *manager, const char *project_dir, RecordKind kind, const char *id, const char *status,
+                          const char *content, const SourceRef *sources, size_t nsources, const FindingInfo *finding, int mode,
+                          int *ver_out)
+{
+    records_append_mark_taken(false);
+    char dir[1100];
+    snprintf(dir, sizeof(dir), "%s/.scribodo", project_dir);
+    if (mkdir(dir, 0755) != 0 && errno != EEXIST) return false;
+    int fd = open(dir, O_RDONLY);
+    if (fd < 0) return false;
+    int rc;
+    do rc = flock(fd, LOCK_EX); while (rc != 0 && errno == EINTR);
+    bool ok = rc == 0 && append_files_locked(manager, project_dir, kind, id, status, content, sources, nsources, finding, mode, ver_out);
+    close(fd); /* releases the lock */
     return ok;
 }

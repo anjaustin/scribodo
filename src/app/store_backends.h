@@ -51,7 +51,7 @@ void sdb_content_hash16(const char *s, char out[17]);
 /* records (notes, canon, findings) */
 bool sdb_record_append(Db *db, const char *project_id, RecordKind kind, const char *id, const char *status,
                        const char *content, const SourceRef *sources, size_t nsources, const FindingInfo *finding,
-                       bool fresh, int *ver_out);
+                       int mode, int *ver_out);
 size_t sdb_record_list(Db *db, const char *project_id, RecordKind kind, Record **out);
 bool sdb_record_list_checked(Db *db, const char *project_id, RecordKind kind, Record **out, size_t *count);
 

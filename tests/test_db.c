@@ -10,6 +10,7 @@
 #include <time.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <sys/wait.h>
 #include <mysql.h>
 
 #include "../src/app/db.h"
@@ -2433,6 +2434,61 @@ static void test_chat_title_backfill_worker(void)
     system(cmd);
 }
 
+/* Final verification 3, in the store: two writers in two processes draw the same ids in the same fixed second; the
+ * "must be new" append (INSERT IGNORE's row count) makes the second writer of an id draw again, so every note is its
+ * own record with one version. Before, INSERT IGNORE took the other process's id and the note became its version 2. */
+static void test_record_ids_two_writers(void)
+{
+    char why[256] = "", root[PATH_MAX], proj[PATH_MAX + 16], pid[40] = "";
+    CHECK(store_start(g_store, g_name, why, sizeof(why)));
+    snprintf(root, sizeof(root), "%sscribodo-ids-two-XXXXXX", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp/");
+    CHECK(mkdtemp(root) != NULL);
+    snprintf(proj, sizeof(proj), "%s/p", root);
+    CHECK(mkdir(proj, 0755) == 0);
+    write_file(strcat(strcpy((char[PATH_MAX + 32]){ 0 }, proj), "/ch1.md"), "Text.\n");
+    CHECK(store_import(g_store, proj, why, sizeof(why)) && store_mode(g_store, proj, pid, sizeof(pid), NULL) == STORE_DB);
+    records_test_id_hooks((time_t)1763400000, 0);
+    char first[40], other[40];
+    records_new_id(REC_NOTE, first, sizeof(first)); /* both processes go on from here: the same stream of ids */
+    pid_t child = fork();
+    if (child == 0) {
+        StoreManager *m = store_manager_create();
+        char cwhy[256];
+        int bad = m && store_start(m, g_name, cwhy, sizeof(cwhy)) ? 0 : 100;
+        if (bad) fprintf(stderr, "    child store_start: %s\n", cwhy);
+        else if (store_mode(m, proj, NULL, 0, NULL) != STORE_DB) fprintf(stderr, "    child: project mode %d\n", (int)store_mode(m, proj, NULL, 0, NULL));
+        for (int i = 0; !bad && i < 40; i++) {
+            char body[32];
+            snprintf(body, sizeof(body), "child %d", i);
+            if (!records_create_drawn(m, proj, REC_NOTE, "active", body, NULL, 0, NULL, other, sizeof(other), NULL)) bad++;
+        }
+        if (m) store_manager_destroy(m);
+        _exit(bad ? 1 : 0);
+    }
+    int bad = 0;
+    for (int i = 0; i < 40; i++) {
+        char body[32];
+        snprintf(body, sizeof(body), "parent %d", i);
+        if (!records_create_drawn(g_store, proj, REC_NOTE, "active", body, NULL, 0, NULL, other, sizeof(other), NULL)) bad++;
+    }
+    int st = 0;
+    CHECK(child > 0 && waitpid(child, &st, 0) == child && WIFEXITED(st) && WEXITSTATUS(st) == 0 && bad == 0);
+    records_test_id_hooks(0, 0);
+    DbRows r;
+    CHECK(db_query(store_db(g_store), "SELECT COUNT(*), SUM(n = 1) FROM (SELECT r.id, COUNT(*) AS n FROM records r JOIN record_versions v"
+                                      " ON v.record_id = r.id WHERE r.project_id = ? AND r.kind = 'note' GROUP BY r.id) x",
+                   (DbArg[1]){ DB_S(pid) }, 1, &r) && r.nrows == 1);
+    if (r.nrows == 1) {
+        if (strcmp(db_cell(&r, 0, 0), "80") || strcmp(db_cell(&r, 0, 1), "80"))
+            fprintf(stderr, "    two writers in the store: %s records, %s with one version\n", db_cell(&r, 0, 0), db_cell(&r, 0, 1));
+        CHECK(!strcmp(db_cell(&r, 0, 0), "80") && !strcmp(db_cell(&r, 0, 1), "80"));
+        db_rows_free(&r);
+    }
+    char cmd[PATH_MAX + 20];
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root);
+    system(cmd);
+}
+
 /* Round 3 (c), measured, not a gate: SCRIBODO_TITLE_BACKFILL_TIMING=1 builds an old-imported project of 200 chats with
  * 100 title lines each (20,000 lines) and times the open's frame-thread part (store_backfill_pending) and the
  * worker's part (store_backfill_chat_titles). Recorded in journal/audit004-text.md. */
@@ -2633,6 +2689,7 @@ int main(void)
                           { "chat_title_contents", test_chat_title_contents },
                           { "chat_title_backfill_timing", test_chat_title_backfill_timing },
                           { "chat_title_backfill_worker", test_chat_title_backfill_worker },
+                          { "record_ids_two_writers", test_record_ids_two_writers },
                          { "entities_redteam", test_entities_redteam }, { "semantic", test_semantic } };
     int rc = run_db_core_tests();
     if (run_tests(tests, sizeof(tests) / sizeof(tests[0])) != 0) rc = 1;

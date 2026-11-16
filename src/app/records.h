@@ -80,15 +80,27 @@ void records_new_id(RecordKind kind, char *out, size_t outlen);
 /* False, with `out` empty, when every attempt (all 65,536 suffixes of the second) is taken: the caller has no id and
  * must not write (an empty id is refused by every record write in any case). */
 bool records_new_id_unused(RecordKind kind, const Record *taken, size_t ntaken, char *out, size_t outlen);
-/* A new id that the project's log of `kind` does not hold: the log read (records_list_checked), then
- * records_new_id_unused over it. False, with `out` empty, when the log cannot be read or every attempt is taken. The
- * author's new notes and canon entries draw with it (record_workflow.c), as the observer draws against its findings.
- * The read and the write are not under one lock: another process writing in between is the residual race. */
-bool records_new_id_checked(StoreManager *manager, const char *project_dir, RecordKind kind, char *out, size_t outlen);
+/* How an append treats the id (the backends' `mode`): RECORD_APPEND_NEXT appends the next version of the record (or
+ * version 1 of a new one); RECORD_APPEND_FRESH writes version 1 without reading, the caller having drawn the id against
+ * the log under its lock (the observer); RECORD_APPEND_NEW writes version 1 only if no record has the id, checked in
+ * the write itself (inside the file lock's read, or by INSERT IGNORE's row count), and fails with
+ * records_append_taken() true otherwise. */
+enum { RECORD_APPEND_NEXT = 0, RECORD_APPEND_FRESH = 1, RECORD_APPEND_NEW = 2 };
+/* After a failed RECORD_APPEND_NEW append on this thread: the id was another record's (not an I/O failure). */
+bool records_append_taken(void);
+/* A new record under a newly drawn id, never onto another record: drawn with records_new_id and written with
+ * RECORD_APPEND_NEW, drawn again (up to 8 times) when another writer had the id (AUDIT-004 final verification 3: the draw
+ * and the write were two steps, so another process could take the id in between and the write became that record's
+ * next version). `id` gets the id written; false, with it empty, when the write failed or every draw was taken. The
+ * author's new notes and canon entries are written with it (record_workflow.c). */
+bool records_create_drawn(StoreManager *manager, const char *project_dir, RecordKind kind, const char *status,
+                          const char *content, const SourceRef *sources, size_t nsources, const FindingInfo *finding,
+                          char *id, size_t idlen, int *ver_out);
 /* Test hook: records_new_id stamps `fixed_time` (0: the clock) and records_new_id_unused gives up after
  * `max_attempts` (0: 65,536). Process-wide; a test restores both with records_test_id_hooks(0, 0). */
 void records_test_id_hooks(time_t fixed_time, unsigned max_attempts);
-/* Test hook: records_new_id_unused reports exhaustion at once (the observer's handling of it is tested with this). */
+/* Test hook: records_new_id_unused reports exhaustion at once, and records_create_drawn finds every draw taken (the
+ * observer's and the record workflow's handling of it are tested with this). */
 void records_test_id_exhausted(bool exhausted);
 
 /* Append a new version of record `id` (its number is one past the newest).
