@@ -17,7 +17,8 @@
 #      dump; a second migration over the native store is refused and changes nothing; a migration whose load fails puts
 #      both stores back as they were, and a replacing one leaves the native store exactly as it was; a migration over a
 #      volume made under other credentials is refused by name and leaves the running native store running; a failed
-#      load over an existing but empty native store leaves it exactly as it was (no table of the containers' left)
+#      load over an existing but empty native store leaves it exactly as it was (no table of the containers' left); a
+#      MariaDB killed during the load is restarted and the store reloaded; a restart that brings back only MariaDB says so
 # Logs of every store are kept in build/servicestest-logs (uploaded by CI on failure).
 set -u
 cd "$(dirname "$0")/.."
@@ -53,6 +54,18 @@ fresh_project() {
     done
     if docker network inspect "${p}_default" >/dev/null 2>&1; then docker network rm "${p}_default" >/dev/null || return 1; fi
 }
+# on_load PORT COMMAND...: in the background, run COMMAND once the migration's sandboxed load into the native MariaDB on
+# PORT has started (fault injection during the load; the restore's own reload comes later, and is not acted on).
+on_load() {
+    local port="$1"; shift
+    ( for _ in $(seq 1 2400); do
+          if pgrep -f -- "-P$port --skip-ssl-verify-server-cert --sandbox -uscribodo_restore_" >/dev/null; then "$@"; exit $?; fi
+          sleep 0.05
+      done; exit 1 ) 2>/dev/null &   # quiet: the case's assertions say whether the action happened
+}
+# A large table, so the load lasts long enough to act during it (100,000 rows of 1 KB).
+big_table_sql="CREATE TABLE d (n INT); INSERT INTO d VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9);
+CREATE TABLE big (t TEXT); INSERT INTO big SELECT REPEAT('x', 1000) FROM d a, d b, d c, d e, d f;"
 mdb() { MYSQL_PWD="$1" "$MB/mariadb" --no-defaults --skip-ssl-verify-server-cert -N "${@:2}"; }
 cleanup() {
     while IFS= read -r d; do
@@ -61,7 +74,7 @@ cleanup() {
     done < <(find "$root" -type d -path '*/mariadb/data' 2>/dev/null)
     [ -n "${sleeper:-}" ] && kill "$sleeper" 2>/dev/null
     if docker info >/dev/null 2>&1; then   # step 10's containers and volumes, whether or not its secrets folder exists
-        for p in e g h i j; do fresh_project "$p" || echo "cleanup: scribodo-st-$p could not be removed" >&2; done
+        for p in e g h i j k l n; do fresh_project "$p" || echo "cleanup: scribodo-st-$p could not be removed" >&2; done
     fi
     rm -rf "$keep_logs"; mkdir -p "$keep_logs"
     find "$root" -maxdepth 1 -type d -name 'logs-*' -exec cp -R {} "$keep_logs/" \; 2>/dev/null
@@ -184,7 +197,11 @@ printf '#include <unistd.h>\nint main(void) { sleep(30); return 0; }\n' | cc -x 
 "$root/scribodo" & fake=$!
 sleep 0.3
 started=0; kill -0 "$fake" 2>/dev/null && started=1   # the refusal must come from this stand-in, not chance
+# Its own Compose project and ports: if the refusal ever failed, the migration's containers and volumes would be
+# scribodo-st-n's, which fresh_project and the cleanup remove, not another step's.
+if docker info >/dev/null 2>&1; then fresh_project n || echo "      (could not clear scribodo-st-n)"; fi
 r=0; out="$(HOME="$fakehome9" SCRIBODO_SECRETS="$fakehome9/Library/Application Support/Scribodo/services" SCRIBODO_SERVICES= \
+    SCRIBODO_COMPOSE_PROJECT=scribodo-st-n SCRIBODO_DB_PORT=33083 SCRIBODO_QDRANT_PORT=6353 \
     tools/services.sh migrate-from-docker 2>&1)" || r=$?
 kill "$fake" 2>/dev/null; wait "$fake" 2>/dev/null
 [ "$started" = 1 ] && [ "$r" = 2 ] && echo "$out" | grep -q "quit Scribodo first" &&
@@ -321,6 +338,70 @@ SQL
         [ "$(cat "$SCRIBODO_SECRETS/mode")" = native ] && containers_down scribodo-st-j; ok $?
     [ "$r" = 1 ] && [ "$after" = 0 ] && [ "$running" = 2 ] ||
         { echo "      exit $r, tables after [$after], running $running"; echo "$out" | tail -6 | sed 's/^/      /'; }
+    SCRIBODO_SERVICES=native svc down >/dev/null 2>&1
+    SCRIBODO_SERVICES=docker SCRIBODO_PURGE_CONFIRM=1 svc purge >/dev/null 2>&1
+
+    # A native store with a probe row, running, and containers holding a large table: the two cases below act during
+    # the load (verification of AUDIT-004, 2026-11-16).
+    native_with_probe_and_big_containers() { # EXTRA_SQL: more for the containers (a view that makes the load fail)
+        setup=0; fresh_project "${SCRIBODO_COMPOSE_PROJECT#scribodo-st-}" || setup=1
+        SCRIBODO_SERVICES=docker svc up >/dev/null 2>&1 || SCRIBODO_SERVICES=docker svc up >/dev/null 2>&1 || setup=1
+        printf '%s\nCREATE TABLE schema_migrations (version INT PRIMARY KEY); INSERT INTO schema_migrations VALUES (18);\nCREATE TABLE probe (t TEXT); INSERT INTO probe VALUES (%s);\n%s\n' \
+            "$big_table_sql" "'docker'" "${1:-}" | SCRIBODO_SERVICES=docker svc rootsql scribodo >/dev/null 2>&1 || setup=1
+        SCRIBODO_SERVICES=docker svc down >/dev/null 2>&1 || setup=1
+        SCRIBODO_SERVICES=native SCRIBODO_NATIVE_FRESH=1 svc up >/dev/null 2>&1 || setup=1
+        printf "CREATE TABLE probe (t TEXT); INSERT INTO probe VALUES ('native original');\n" |
+            SCRIBODO_SERVICES=native svc rootsql scribodo >/dev/null 2>&1 || setup=1
+        [ "$setup" = 0 ] || echo "      (setup failed: the case below is not what it claims)"
+    }
+
+    store k 33081 6351
+    unset SCRIBODO_SERVICES
+    step "    a MariaDB killed during the load is restarted and the native store reloaded"
+    native_with_probe_and_big_containers
+    # Killed mid-load: once the containers' large table exists natively (some of it loaded, the rest not), never at the
+    # connection, where nothing would have been loaded to undo.
+    mid_load_kill() {
+        local _
+        for _ in $(seq 1 400); do
+            [ "$(SCRIBODO_SERVICES=native tools/services.sh rootsql -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='scribodo' AND table_name='big'" 2>/dev/null)" = 1 ] &&
+                { kill -9 "$(cat "$SCRIBODO_SECRETS/mariadb/mariadbd.pid")"; return 0; }
+            sleep 0.05
+        done
+        return 1
+    }
+    on_load 33081 mid_load_kill; watcher=$!
+    r=0; out="$(SCRIBODO_MIGRATE_REPLACE=1 svc migrate-from-docker 2>&1)" || r=$?
+    acted=0; wait "$watcher" && acted=1
+    got="$(SCRIBODO_SERVICES=native svc rootsql -N scribodo -e "SELECT t FROM probe" 2>/dev/null)"
+    others="$(SCRIBODO_SERVICES=native svc rootsql -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='scribodo' AND table_name <> 'probe'" 2>/dev/null)"
+    running="$(SCRIBODO_SERVICES=native svc status 2>/dev/null | grep -c running)"
+    [ "$setup" = 0 ] && [ "$acted" = 1 ] && [ "$r" = 1 ] && echo "$out" | grep -q "both stores are as they were" &&
+        [ "$got" = "native original" ] && [ "$others" = 0 ] && [ "$running" = 2 ] && containers_down scribodo-st-k; ok $?
+    [ "$acted" = 1 ] && [ "$r" = 1 ] && [ "$got" = "native original" ] && [ "$others" = 0 ] ||
+        { echo "      killed during the load $acted, exit $r, probe [$got], other tables [$others], running $running"; echo "$out" | tail -6 | sed 's/^/      /'; }
+    SCRIBODO_SERVICES=native svc down >/dev/null 2>&1
+    SCRIBODO_SERVICES=docker SCRIBODO_PURGE_CONFIRM=1 svc purge >/dev/null 2>&1
+
+    store l 33082 6352
+    unset SCRIBODO_SERVICES
+    step "    a restore that brings back only MariaDB says which service is not running"
+    # During the load, the native Qdrant is stopped and its port taken by another program; the load then fails (a view
+    # the restore user may not create), and the restore's restart finds the port taken.
+    native_with_probe_and_big_containers "CREATE DEFINER = 'root'@'%' SQL SECURITY DEFINER VIEW probe_view AS SELECT t FROM probe;"
+    on_load 33082 sh -c 'kill "$(cat "$1/qdrant/qdrant.pid")"; for _ in $(seq 1 100); do lsof -nP -iTCP:6352 -sTCP:LISTEN >/dev/null || break; sleep 0.1; done
+        exec python3 -I -c "import socket, time; s = socket.socket(); s.bind((\"127.0.0.1\", 6352)); s.listen(); time.sleep(300)"' sh "$SCRIBODO_SECRETS"
+    watcher=$!   # the watcher becomes the port's holder (exec), so killing the holder below ends it
+    r=0; out="$(SCRIBODO_MIGRATE_REPLACE=1 svc migrate-from-docker 2>&1)" || r=$?
+    holder="$(lsof -t -nP -iTCP:6352 -sTCP:LISTEN 2>/dev/null | head -1)"
+    holder_cmd="$(ps -p "${holder:-0}" -o comm= 2>/dev/null)"
+    mstate="$(SCRIBODO_SERVICES=native svc status 2>/dev/null | grep -c "^mariadb	running")"
+    [ "$setup" = 0 ] && [ "$r" = 1 ] && echo "$out" | grep -q "came back only in part: MariaDB running, Qdrant stopped" &&
+        echo "$out" | grep -q "putting the stores back was incomplete" && [ "$mstate" = 1 ] &&
+        [ "${holder_cmd##*/}" != qdrant ] && containers_down scribodo-st-l; ok $?
+    echo "$out" | grep -q "came back only in part" || { echo "      exit $r, MariaDB running $mstate, port held by [$holder_cmd]"; echo "$out" | tail -6 | sed 's/^/      /'; }
+    # The stand-in holder is this rehearsal's own python3 (by its pid, never by pattern).
+    case "${holder_cmd##*/}" in python3*|Python*) { kill "$holder"; wait "$watcher"; } 2>/dev/null ;; esac
     SCRIBODO_SERVICES=native svc down >/dev/null 2>&1
     SCRIBODO_SERVICES=docker SCRIBODO_PURGE_CONFIRM=1 svc purge >/dev/null 2>&1
 else

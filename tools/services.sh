@@ -402,10 +402,18 @@ migrate_from_docker() {
 migration_restore() {
     local clean=0
     export SCRIBODO_SERVICES=native
-    if [ -n "$keepn" ] && [ -s "$keepn" ] && m_alive; then
+    if [ -n "$keepn" ]; then
+        # The load reached a store that existed: it goes back to its dump, whatever happened to the server meanwhile.
+        # A MariaDB that died during the load is started again for the reload (the containers are already down, so
+        # their ports are free); one that cannot be started is said, never skipped (verification of AUDIT-004).
+        if ! m_alive; then SCRIBODO_NATIVE_FRESH=1 native_up >/dev/null || true; fi
+        if ! m_alive; then
+            echo "the native MariaDB is not running, so its previous contents were not reloaded; they are kept in $keepn" >&2; clean=1
         # The database is emptied first, so a table only the failed load created does not survive the reload.
-        if printf "DROP DATABASE IF EXISTS scribodo;\nCREATE DATABASE scribodo CHARACTER SET utf8mb4;\nGRANT ALL ON scribodo.* TO 'scribodo'@'%%';\n" | rootsql &&
-           gzip -dc "$keepn" | load_dump scribodo; then :; else
+        elif [ -s "$keepn" ] &&
+             printf "DROP DATABASE IF EXISTS scribodo;\nCREATE DATABASE scribodo CHARACTER SET utf8mb4;\nGRANT ALL ON scribodo.* TO 'scribodo'@'%%';\n" | rootsql &&
+             gzip -dc "$keepn" | load_dump scribodo; then :
+        else
             echo "the native store's previous contents could not be reloaded; they are kept in $keepn" >&2; clean=1
         fi
     fi
@@ -420,7 +428,15 @@ migration_restore() {
             { echo "the containers this migration started could not be stopped: SCRIBODO_SERVICES=docker tools/services.sh down" >&2; clean=1; }
     fi
     export SCRIBODO_SERVICES=native
-    if [ "$native_was_up" = 1 ]; then SCRIBODO_NATIVE_FRESH=1 native_up >/dev/null || { echo "the native services did not come back: tools/services.sh up" >&2; clean=1; }; fi
+    if [ "$native_was_up" = 1 ] && ! SCRIBODO_NATIVE_FRESH=1 native_up >/dev/null; then
+        # Say what is running: native_up can leave MariaDB up when Qdrant's port is taken.
+        local mstate=stopped qstate=stopped
+        m_alive && mstate=running
+        q_alive && qstate=running
+        if [ "$mstate$qstate" = stoppedstopped ]; then echo "the native services did not come back: tools/services.sh up" >&2
+        else echo "the native services came back only in part: MariaDB $mstate, Qdrant $qstate (tools/services.sh up)" >&2; fi
+        clean=1
+    fi
     export SCRIBODO_SERVICES=docker
     if [ "$containers_were_up" = 1 ]; then
         { secrets docker && compose up -d --wait --wait-timeout 180 >/dev/null; } ||

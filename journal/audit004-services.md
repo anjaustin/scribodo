@@ -593,3 +593,53 @@ DEFINER view (so the load fails part-way); the native store exists, runs and has
 `SCRIBODO_MIGRATE_REPLACE=1 migrate-from-docker`, the case asserts: exit 1; the native contents kept; "as they were";
 **0 tables** in native `scribodo`; both native services running; mode native; containers removed. Results are below
 with the other items'.
+
+## R2 — a MariaDB that died during the load was skipped silently
+
+The restore reloaded the native dump only `… && m_alive`. If mariadbd died during the load, nothing was reloaded,
+`clean` stayed 0, and the author was told "as they were" over a half-replaced store. Now, when the load reached a
+store that existed (`keepn` set), the restore starts MariaDB again if it is not running (the containers are already
+down, so the ports are free) and reloads. If MariaDB cannot be started, it says "the native MariaDB is not running, so
+its previous contents were not reloaded; they are kept in …" and the restore counts as incomplete.
+
+**Rehearsal case (store k, 33081/6351):** native runs with `probe='native original'`; the containers hold a 100,000-row
+table `big` (1 KB rows) so the load lasts. A watcher (`on_load`) waits until the containers' `big` table exists
+natively, so some of it is loaded, then `kill -9`s mariadbd by its pid file. A first version killed at the restore
+client's connection, before anything was loaded, and so passed even on the old script: a test that could not fail.
+The case asserts the kill happened during the load, exit 1, "as they were", the probe intact, **no other table** in
+native `scribodo`, both services running, containers removed.
+
+## R3 — a partial restart was reported as nothing running
+
+When the restore's native `up` failed after starting MariaDB (Qdrant's port taken), the message said "the native
+services did not come back". It now names both: "the native services came back only in part: MariaDB running, Qdrant
+stopped (tools/services.sh up)". It keeps the old wording when neither came back.
+
+**Rehearsal case (store l, 33082/6352):** the same large containers plus a DEFINER view, so the load fails at its
+end. During the load the watcher stops the native Qdrant and holds its port with a stand-in python listener. The case
+asserts exit 1, the partial-restart sentence with MariaDB running and Qdrant stopped, "incomplete", MariaDB actually
+running, and containers removed. The stand-in is killed by its pid (from `lsof` on that port), never by pattern.
+
+## R4 — step 9 borrowed step 7's project
+
+Step 9 ran with step 7's `SCRIBODO_COMPOSE_PROJECT=scribodo-st-d` and port 33074. If its stand-in app had failed to
+start, the migration would have made `scribodo-st-d_*` volumes that no cleanup covered. Step 9 now runs as
+`scribodo-st-n` on 33083/6353, cleared before the step and at cleanup (the cleanup list is now e, g, h, i, j, k, l,
+n).
+
+## Results (logs in `build/audit004-services-docker-r/`)
+
+- Before the fixes: main's pre-red-team `services.sh` (`663e652`) with the new cases.
+  - `before-fix-servicestest.log`: j and l FAIL, and k passed (the too-early kill described under R2).
+  - `before-fix2-servicestest.log`, with the mid-load kill: all three FAIL.
+    - j: 2 tables left, yet "both stores are as they were";
+    - k: 1 other table left (the partly loaded `big`), yet "as they were";
+    - l: "the native services did not come back" while MariaDB was running.
+- After the fixes, `SCRIBODO_SERVICESTEST_DOCKER=1 make servicestest` twice back to back (`after-fix-run{1,2}.log`,
+  `.exit`, `.state`): both exit 0, 25 checks ok, no "setup failed" or cleanup complaint, and no `scribodo-st-*`
+  container or volume afterwards. No listener was left on 6352, 33081 or 33082.
+
+**Note on the author's old Docker volumes.** On 2026-11-16 the coordinator deleted `scribodo_mariadb` and
+`scribodo_qdrant` at the author's request ("We were just testing"); no run of this stream removed them. Lines above
+that record them as present describe the state when those runs ended. No script or check expects them. The state
+files of this round list only rehearsal leftovers.
