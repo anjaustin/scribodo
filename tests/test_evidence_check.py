@@ -79,7 +79,8 @@ class NormalizeTests(unittest.TestCase):
         self.assertEqual(found, [["build/real/p"], ["build/q"]])
 
     def tokens(self, line):
-        return [ec.normalize(m.group(1)) for m in ec.SPACED.finditer(line)] + \
+        spaced = [t if "/" in t.split(" ", 1)[1] else t.split(" ", 1)[0] for t in (m.group(1) for m in ec.SPACED.finditer(line))]
+        return [ec.normalize(t) for t in spaced] + \
             [ec.normalize(m.group(0)) for m in ec.CITE.finditer(ec.SPACED.sub("``", line))]
 
     def test_markdown_links_and_angle_brackets(self):

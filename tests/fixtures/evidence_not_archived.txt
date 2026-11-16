@@ -57,3 +57,13 @@ build/ui/<script>/saved.png	a screenshot a test script names, recreated every ru
 #
 # frozen app copies inside archived run directories (binaries are excluded from every archive)
 build/answer-live-*/scribodo	a frozen app binary; the run directory around it is archived
+#
+# the AUDIT-004 remediation streams' worktrees and binaries (2026-11-15); their gate logs are in 2026-11-15-audit004d
+build/wt-main	the main.c stream's git worktree, named; a checkout of tracked files, removed after the merge
+build/wt-observer	the observer stream's git worktree, named; a checkout of tracked files, removed after the merge
+build/wt-observer/build/gatetree	the observer stream's temporary per-commit gate worktree, removed after each gate
+build/gatetree	the same temporary gate worktree, named relative to the observer worktree
+build/qdrant/qdrant	the pinned Qdrant release binary (make qdrant)
+build/observer_replay.base	a copy of the unchanged tree's observer_replay binary, the yardstick's reference
+build/draft_tick_probe	a tool binary (make tools)
+build/observer/<label>-flags.txt	the file name observer_replay_run.sh writes per run (a family named in prose)

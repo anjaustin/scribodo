@@ -36,7 +36,8 @@ LOST = "tests/fixtures/evidence_lost.txt"
 # "foo/build/" are not citations) and runs to whitespace, a backtick or a quote.
 # Markdown's own syntax ends it too: "[build/x](build/x)" is two citations of build/x, "<build/r.log>" one of
 # build/r.log; angle brackets stay only as a "<placeholder>" segment; parentheses end it (no cited path has one). A path with a space is cited only inside
-# backticks, where it runs to the closing backtick (SPACED); outside them a citation stops at the first space.
+# backticks, where it runs to the closing backtick (SPACED), unless what follows the first space has no "/" (a command
+# and its arguments: the path is the first word); outside backticks a citation stops at the first space.
 CITE = re.compile(r"(?<![A-Za-z0-9_./$-])build/(?:[^\s`'\"|\[\]()<>]|<[A-Za-z0-9_-]+>)*")
 SPACED = re.compile(r"`(build/[^`]* [^`]*)`")
 TRAILING = ".,;:)]!?"
@@ -137,7 +138,10 @@ def citations(root, build=None):
         lines = f.read_text(errors="replace").splitlines()
         cited_dirs = []
         for n, line in enumerate(lines, 1):
-            tokens = [m.group(1) for m in SPACED.finditer(line)]
+            # A spaced span whose words after the first carry no "/" is a command and its arguments
+            # (`build/x/yard.sh <label>`): the path is the first word.
+            tokens = [t if "/" in t.split(" ", 1)[1] else t.split(" ", 1)[0]
+                      for t in (m.group(1) for m in SPACED.finditer(line))]
             tokens += [m.group(0) for m in CITE.finditer(SPACED.sub("``", line))]
             for token in tokens:
                 if token.rstrip(TRAILING + "/") == "build":
