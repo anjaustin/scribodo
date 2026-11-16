@@ -28,7 +28,7 @@ WARN       := -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter
 CFLAGS     := $(CSTD) $(OPT) $(ARCH_FLAGS) -g $(WARN)
 
 RAYLIB_DIR := third_party/raylib/src
-INCLUDES   := -Isrc -I$(RAYLIB_DIR) -Ithird_party/raygui/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON \
+INCLUDES   := -Isrc -I$(RAYLIB_DIR) -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON \
               -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include
 
 # --- raylib (static, GLFW desktop backend, OpenGL 3.3) ----------------------

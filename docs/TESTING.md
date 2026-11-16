@@ -728,7 +728,7 @@ Each of these was caught by the suites and has a regression check:
 - **ID collision.** The Explorer's first chat row (`CLAY_IDI("Chat", 0)`) hashed identically to the chat pane (`CLAY_ID("Chat")`), so clicking anywhere in the chat pane opened a saved chat. Rows are now `ChatItem`/`DocItem`, and `chat.scribo` clicks the pane and checks that nothing opens.
 - **Stale element boxes.** `Clay_GetElementData()` returns the last known box of an element that's no longer declared (a closed pane), which made a closed Observer look open. `clay_element_current()` checks Clay's per-layout generation before any box is trusted.
 - **Pane clamping at minimum width** could squeeze the document to ~155 px. It now shrinks chat, then the Observer, then the Explorer, and finally closes the Observer.
-- **raygui renders with the primary font face only,** with no fallback. Button labels must avoid glyphs Verdana lacks; the Observer button showed "?".
+- **raygui rendered with the primary font face only,** with no fallback, so button labels had to avoid glyphs Verdana lacked (the Observer button showed "?"). The controls have been drawn by `src/ui/widgets.c` in the app's own fonts since 2026-11-16, and raygui is gone.
 
 ## Findings from the UI suite
 

@@ -7,7 +7,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "raygui.h"
 #include "ui/input.h"
 #include "core/experiments.h"
 #include "llm/observer_arms.h"
@@ -240,7 +239,7 @@ void findings_view_update(FindingsView *v, Rectangle r)
     float max = total - r.height > 0 ? total - r.height : 0;
     if (v->scroll > max) v->scroll = max;
     if (v->scroll < 0) v->scroll = 0;
-    /* Select a card on click (buttons inside the selected card are raygui's). */
+    /* Select a card on click (buttons inside the selected card are ui/widgets controls). */
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) v->pressed = false;
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(GetMousePosition(), r)) {
         Vector2 m = GetMousePosition();

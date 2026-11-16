@@ -29,7 +29,7 @@ int input_get_char(void);
 void input_discard_chars(void);
 
 /* While a prompt or menu is open, views ignore the mouse (clicks, drags,
- * wheel): raygui's lock only covers raygui widgets (red-team 006). */
+ * wheel): the widgets' lock (ui/widgets.h) only covers the controls (red-team 006). */
 void input_block_mouse(bool blocked);
 bool input_mouse_blocked(void);
 

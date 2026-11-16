@@ -1,7 +1,7 @@
 /* Small drawn controls in the theme (ui/theme.h), with text in the app's own fonts (so any letter the font chain
- * covers shows, unlike raygui's single-face labels).
+ * covers shows; raygui, which drew the controls until 2026-11-16, used one face and no fallback).
  *
- * A button is clicked when the mouse is pressed and released inside it, the same rule as raygui's, so a scripted
+ * A button is clicked when the mouse is pressed and released inside it, the rule raygui had, so a scripted
  * click (press frame, release frame) works. */
 #ifndef SCRIBODO_WIDGETS_H
 #define SCRIBODO_WIDGETS_H
@@ -22,7 +22,7 @@ void widget_set_font(const SFont *f);
 /* Once per frame before any control: a press is owned by the control it began on this frame, or by none. */
 void widget_frame_begin(void);
 /* While locked (a dialog, menu or prompt is open over the panes), controls draw but do not react, as raygui's
- * GuiLock did. */
+ * GuiLock did when it drew them. */
 void widget_set_locked(bool locked);
 bool widget_locked(void);
 

@@ -1,4 +1,4 @@
-/* Scribodo: native workbench (raylib + Clay layout + raygui controls) with
+/* Scribodo: native workbench (raylib + Clay layout + ui/widgets controls) with
  * the prose editor, a creative chat backed by the local LFM3 model, and the
  * project explorer.
  *
@@ -739,7 +739,7 @@ static void open_model_settings(App *app)
     app->mem_for_model = app->llm ? memory_for_model(app) : 0;
 }
 
-/* The panel (drawn over everything; raygui draws ASCII only). */
+/* The panel (drawn over everything). */
 static void draw_model_settings(App *app, Rectangle screen)
 {
     DrawRectangleRec(screen, THEME_SCRIM);
@@ -1724,7 +1724,7 @@ static bool frame_end(App *app, MainLoop *loop)
     const char *shot_path = app->script ? script_take_shot(app->script) : NULL;
     if (shot_path) {
         /* raylib batches draws until EndDrawing; flush so the capture
-         * includes everything drawn this frame (e.g. raygui controls). */
+         * includes everything drawn this frame (e.g. the widgets' controls). */
         rlDrawRenderBatchActive();
         Image shot = LoadImageFromScreen();
         ExportImage(shot, shot_path);
@@ -1744,6 +1744,11 @@ static bool frame_end(App *app, MainLoop *loop)
 /* One frame after the worker polls in main(). False to leave the loop. */
 static bool frame_step(App *app, MainLoop *loop)
 {
+    static double refresh_checked;
+    if (GetTime() - refresh_checked > 3.0) { /* the window may have moved to another display */
+        refresh_checked = GetTime();
+        app_match_refresh_rate(app);
+    }
     if (app->font_notice[0]) { /* a font problem found at launch (app_lifecycle.c load_fonts) */
         set_status(app, app->font_notice);
         app->font_notice[0] = '\0';

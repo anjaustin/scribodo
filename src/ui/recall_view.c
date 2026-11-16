@@ -6,7 +6,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "raygui.h"
 #include "ui/editor.h"
 #include "ui/input.h"
 

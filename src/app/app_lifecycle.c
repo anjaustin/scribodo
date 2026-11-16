@@ -8,36 +8,11 @@
 #include "ui/widgets.h"
 
 static void clay_error(Clay_ErrorData err);
-static void style_raygui(const SFont *ui);
 static bool load_fonts(App *app, float dpi);
 
 static void clay_error(Clay_ErrorData err)
 {
     fprintf(stderr, "clay: %.*s\n", err.errorText.length, err.errorText.chars);
-}
-
-static void style_raygui(const SFont *ui)
-{
-    GuiSetFont(ui->faces[0]);
-    GuiSetStyle(DEFAULT, TEXT_SIZE, (int)ui->size);
-    GuiSetStyle(DEFAULT, TEXT_SPACING, 0);
-    int controls[] = { BUTTON, TOGGLE, CHECKBOX };
-    for (size_t i = 0; i < sizeof(controls) / sizeof(controls[0]); i++) {
-        int c = controls[i];
-        GuiSetStyle(c, BORDER_WIDTH, 1);
-        GuiSetStyle(c, BASE_COLOR_NORMAL, ColorToInt(THEME_CONTROL));
-        GuiSetStyle(c, BORDER_COLOR_NORMAL, ColorToInt(THEME_BORDER_STRONG));
-        GuiSetStyle(c, TEXT_COLOR_NORMAL, ColorToInt(THEME_TEXT));
-        GuiSetStyle(c, BASE_COLOR_FOCUSED, ColorToInt(THEME_CONTROL_HOVER));
-        GuiSetStyle(c, BORDER_COLOR_FOCUSED, ColorToInt(THEME_ACCENT));
-        GuiSetStyle(c, TEXT_COLOR_FOCUSED, ColorToInt(THEME_ON_ACCENT));
-        GuiSetStyle(c, BASE_COLOR_PRESSED, ColorToInt(THEME_ACCENT));
-        GuiSetStyle(c, BORDER_COLOR_PRESSED, ColorToInt(THEME_ACCENT));
-        GuiSetStyle(c, TEXT_COLOR_PRESSED, ColorToInt(THEME_ON_ACCENT));
-        GuiSetStyle(c, BASE_COLOR_DISABLED, ColorToInt(THEME_INPUT));
-        GuiSetStyle(c, BORDER_COLOR_DISABLED, ColorToInt(THEME_BORDER));
-        GuiSetStyle(c, TEXT_COLOR_DISABLED, ColorToInt(THEME_TEXT_DIM));
-    }
 }
 
 /* One role's font: the author's choice (SCRIBODO_PROSE_FONT first for documents and chat), else the bundled default,
@@ -70,8 +45,8 @@ static bool load_role(App *app, int role, SFont *out, bool *choice_failed)
 
 /* The fonts of `roles` from app->appearance. Each loads into a scratch SFont and replaces the old one only when it
  * loaded, so a failure keeps what is on screen; the SFont addresses never change (views and Clay hold them). The batch
- * of text already queued this frame is drawn first, since it names the textures about to be freed. Afterwards raygui
- * and Clay's text-measurement cache follow; views reflow because each load has a new version. */
+ * of text already queued this frame is drawn first, since it names the textures about to be freed. Afterwards the widgets'
+ * default font and Clay's text-measurement cache follow; views reflow because each load has a new version. */
 unsigned app_fonts_apply(App *app, unsigned roles, char *why, size_t whylen)
 {
     if (why && whylen) why[0] = '\0';
@@ -96,12 +71,22 @@ unsigned app_fonts_apply(App *app, unsigned roles, char *why, size_t whylen)
         app->fonts[r] = next;
     }
     for (int i = 0; i < FONT_COUNT; i++) app->font_ptrs[i] = &app->fonts[i];
-    if (app->fonts[FONT_UI].nfaces) {
-        style_raygui(&app->fonts[FONT_UI]);
-        widget_set_font(&app->fonts[FONT_UI]);
-    }
+    if (app->fonts[FONT_UI].nfaces) widget_set_font(&app->fonts[FONT_UI]);
     if (app->clay_buf) Clay_ResetMeasureTextCache();
     return failed;
+}
+
+/* Frames at the display's own rate: 120 on a ProMotion screen, 60 on this MacBook Air's, so motion is as smooth as
+ * the panel allows. UI test runs stay at 60: their waits count frames. Checked again every few seconds by the frame
+ * loop, since the window can move to another display. */
+void app_match_refresh_rate(App *app)
+{
+    int hz = app->scripted ? 60 : GetMonitorRefreshRate(GetCurrentMonitor());
+    if (hz < 30 || hz > 240) hz = 60;
+    if (hz != app->target_fps) {
+        SetTargetFPS(hz);
+        app->target_fps = hz;
+    }
 }
 
 void app_apply_look(App *app)
@@ -252,7 +237,8 @@ int app_open_window(App *app, const char *script_path)
     app->window_ready = true;
     SetWindowMinSize(900, 480);
     SetExitKey(KEY_NULL); /* Esc must never quit a writing app */
-    SetTargetFPS(60);
+    app->scripted = script_path != NULL;
+    app_match_refresh_rate(app);
 
     if (!backup_job_init(&app->backup, app->store)) {
         fprintf(stderr, "scribodo: couldn't initialise the backup worker\n");

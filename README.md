@@ -88,7 +88,7 @@ and stops when the app quits.
 
 | Component | Choice | Notes |
 |---|---|---|
-| Native UI | **raylib + raygui + Clay** | Desktop workbench with resizable panes. No browser, Tauri, or React. |
+| Native UI | **raylib + Clay** | Desktop workbench with resizable panes; its controls are drawn in the app's own theme and fonts (`src/ui/widgets.c`). No browser, Tauri, or React. |
 | Document editor | Custom native text surface | UTF-8 input, selection, scrolling, undo/redo, and reviewable AI diffs. |
 | Structured store | **MariaDB** (local) | Source of truth for project records, chats, revisions, findings, notes, canon, entities and links, and job state. |
 | Semantic index | **Qdrant** (local) | Derived and rebuildable. Every point references MariaDB and source IDs. |
@@ -187,7 +187,6 @@ covers every target, how the UI tests work, and what they can't cover.
 | Library | Version | License | Used for |
 |---|---|---|---|
 | [raylib](https://github.com/raysan5/raylib) | 6.2 | zlib | Window, input, rendering |
-| [raygui](https://github.com/raysan5/raygui) | 5.0 | zlib | Immediate-mode controls |
 | [Clay](https://github.com/nicbarker/clay) | 0.14 | zlib | Layout |
 | [stb_textedit](https://github.com/nothings/stb) | 1.14 | Public domain / MIT | Cursor, selection, and navigation logic |
 | [cJSON](https://github.com/DaveGamble/cJSON) | v1.7.19-6-g6d9f244 | MIT | JSON parsing and building |

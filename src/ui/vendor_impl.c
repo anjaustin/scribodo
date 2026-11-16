@@ -3,9 +3,6 @@
 #define CLAY_IMPLEMENTATION
 #include "clay.h"
 
-#define RAYGUI_IMPLEMENTATION
-#include "raygui.h"
-
 /* Clay_GetElementData() returns the last known box of an element even if it
  * was not declared in the current layout (e.g. a pane that was just closed).
  * Elements declared in the current layout carry generation == context + 1

@@ -26,7 +26,6 @@
 #include "app/appearance.h"
 #include "app/fonts_panel.h"
 #include "ui/theme.h"
-#include "raygui.h"
 #include "raylib.h"
 #include "rlgl.h"
 #include "app/chat_store.h"
@@ -134,6 +133,8 @@ typedef struct {
     float side_target; /* the width it was heading for last frame */
     bool side_gliding; /* opening or shutting */
     bool focus_mode;  /* the page alone (⌘\\); for the session, not saved */
+    bool scripted;    /* a UI test run */
+    int target_fps;   /* the display's refresh rate (app_match_refresh_rate) */
     bool observer_open;
     int dragging;
     int focus;
@@ -421,7 +422,7 @@ typedef struct {
     bool closed_by_window;
 } MainLoop;
 
-/* The screen rects of raygui controls drawn over the layout this frame. */
+/* The screen rects of the controls (ui/widgets.h) drawn over the layout this frame. */
 typedef struct {
     Rectangle save_rect, open_rect, obs_rect, new_rect, send_rect, attach_rect;
 } FrameRects;
@@ -472,6 +473,7 @@ void fonts_panel_draw(App *app, Rectangle screen);
 void fonts_panel_update(App *app);
 /* The palette and the editor's writing aids from app->appearance (at launch and on every change in the panel). */
 void app_apply_look(App *app);
+void app_match_refresh_rate(App *app);
 /* Focus mode on or off: the page alone. Typing focus moves to the document. */
 void app_set_focus_mode(App *app, bool on);
 int app_init_jobs(App *app, const char *script_path);
