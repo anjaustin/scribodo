@@ -111,6 +111,8 @@ if (( sample )); then
     ( while :; do tools/store_growth_sample.sh "$name" soak || true; sleep "$sample"; done ) &
     sampler=$!
 fi
+# Every experiment arm explicit, defaults stated as values (AUDIT-004 F4); frame_soak_run prints the ARMS line.
+eval "$(SCRIBODO_MEMORY_EXPERIMENT="$memory" python3 tools/experiment_arms.py --export)"
 start=$SECONDS
 SCRIBODO_STORE=db SCRIBODO_DB_NAME="$name" SCRIBODO_DB_PORT="$port" SCRIBODO_SOAK_LLM="$llm" \
     SCRIBODO_MEMORY_EXPERIMENT="$memory" \

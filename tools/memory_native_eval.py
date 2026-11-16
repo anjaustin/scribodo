@@ -13,6 +13,8 @@ import sys
 import tempfile
 import time
 
+import experiment_arms  # tools/, the script's own directory
+
 ROOT=Path(__file__).resolve().parents[1]
 def sha(path):
     h=hashlib.sha256()
@@ -39,11 +41,12 @@ def main():
               'binary_sha256':sha(binary),'cases_sha256':sha(run/'dev.json'),
               'registration_sha256':sha(run/'preregistration.json'),
               'cases_path':str(cases_path),'expected_answers':expected_answers,'selection':'frozen SQL episode candidate seam; native hydration/admission/inference',
+              'experiment_arms':experiment_arms.record(experiment_arms.pin(os.environ)),
               'working_tree_sources':{str(p.relative_to(ROOT)):sha(p) for p in sorted((ROOT/'src').rglob('*')) if p.suffix in ('.c','.h')}}
     (run/'manifest.json').write_text(json.dumps(manifest,indent=2))
     print(f'Frozen native DEV run: {run}',flush=True)
     subprocess.run(['tools/services.sh','testdb','create',database],cwd=ROOT,check=True)
-    environment=os.environ.copy(); environment.setdefault('SCRIBODO_LLAMA_SERVER',str(ROOT/'build/llama/bin/llama-server'))
+    environment=experiment_arms.pin(os.environ); environment.setdefault('SCRIBODO_LLAMA_SERVER',str(ROOT/'build/llama/bin/llama-server'))
     process=None; returncode=-1; began=time.monotonic(); began_wall=time.time()
     try:
         with (run/'driver.log').open('w') as log:

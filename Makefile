@@ -357,6 +357,12 @@ evidencecheck:
 	$(WATCHDOG) $(TEST_TIMEOUT) evidence_check python3 tools/evidence_check.py
 test: evidencecheck
 
+# Measurements pin every experiment arm and record it (AUDIT-004 F4; tools/experiment_arms.py).
+.PHONY: armstest
+armstest:
+	$(WATCHDOG) $(TEST_TIMEOUT) test_experiment_arms python3 tests/test_experiment_arms.py
+test: armstest
+
 # Verify pinned dependency inventory, upstream refs, container digests and OSV
 # advisories. The scheduled workflow publishes the same report as an artifact.
 dependency-report:

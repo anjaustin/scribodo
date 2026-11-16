@@ -17,6 +17,8 @@ import subprocess
 import tempfile
 import time
 
+import experiment_arms  # tools/, the script's own directory
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -81,11 +83,12 @@ def main():
                 "cases_sha256": sha(run / "cases.json"), "registration_sha256": sha(run / "preregistration.json"),
                 "source_fixture_sha256": sha(fixture / "dev.json"),
                 "tools_sha256": {name: sha(run / name) for name in ("memory_operation_eval.py", "memory_native_eval.c", "memory_native_eval.sh")},
+                "experiment_arms": experiment_arms.record(experiment_arms.pin(os.environ)),
                 "production_source_sha256": {str(p.relative_to(ROOT)): sha(p) for p in sorted((ROOT / "src").rglob("*")) if p.suffix in (".c", ".h")}}
     (run / "manifest.json").write_text(json.dumps(manifest, indent=2))
     print(f"Frozen native operation DEV run: {run}", flush=True)
     subprocess.run(["tools/services.sh", "testdb", "create", database], cwd=ROOT, check=True)
-    env = os.environ.copy()
+    env = experiment_arms.pin(os.environ)  # as the manifest records (AUDIT-004 F4)
     env.setdefault("SCRIBODO_LLAMA_SERVER", str(ROOT / "build/llama/bin/llama-server"))
     process = None
     code = -1

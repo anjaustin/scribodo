@@ -62,6 +62,9 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 printf '%s\n' "$name" > "$temp/owned-database"
 echo "memory_pipeline_soak: disposable_database=$name requested_seconds=$seconds toggle=$toggle"
+# Every experiment arm explicit, defaults stated as values, and printed with the run (AUDIT-004 F4).
+eval "$(python3 tools/experiment_arms.py --export)"
+echo "memory_pipeline_soak: $(python3 tools/experiment_arms.py --line)"
 created=1
 tools/services.sh testdb create "$name"
 SCRIBODO_LLM=fake SCRIBODO_DB_NAME="$name" \

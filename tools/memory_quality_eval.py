@@ -22,6 +22,8 @@ import sys
 import time
 import unicodedata
 
+import experiment_arms  # tools/, the script's own directory
+
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests/fixtures/memory_quality"
 ARMS = ("recent_window", "retrieval_only", "t1_retrieval", "oracle_source")
@@ -462,7 +464,8 @@ def main():
                 "python": sys.version,
                 "service_ports": {"db": os.environ.get("SCRIBODO_DB_PORT", "33061"),
                                   "qdrant": os.environ.get("SCRIBODO_QDRANT_PORT", "6333")},
-                "configuration": "Pinned supervisor defaults; private run/cache/log directories; chat one 8192-token slot; Qwen embedder defaults; no author service changes."}
+                "configuration": "Pinned supervisor defaults; private run/cache/log directories; chat one 8192-token slot; Qwen embedder defaults; no author service changes.",
+                "experiment_arms": experiment_arms.record(experiment_arms.pin(dict(os.environ, SCRIBODO_MEMORY_BRIEFS="1")))}
     save(run / "manifest.json", manifest)
     manifest_hash = sha(run / "manifest.json")
     (run / "FROZEN.sha256").write_text(manifest_hash + "\n")
@@ -478,7 +481,7 @@ def main():
             parser.error(f"invalid {var}")
     if os.environ.get("SCRIBODO_LLM") == "fake":
         parser.error("fake model selection forbidden")
-    env = dict(os.environ, SCRIBODO_DB_NAME=name, SCRIBODO_MEMORY_BRIEFS="1")
+    env = experiment_arms.pin(dict(os.environ, SCRIBODO_DB_NAME=name, SCRIBODO_MEMORY_BRIEFS="1"))  # as recorded (AUDIT-004 F4)
     env.pop("SCRIBODO_LLM", None)
     services = ROOT / "tools/services.sh"
     created = False

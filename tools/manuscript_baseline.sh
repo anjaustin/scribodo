@@ -13,6 +13,7 @@ usage() {
     echo '--real uses the pinned local model (slower; needs make llama and make model); default is the fake model.'
     echo '--context N fixes the requested per-conversation context (8192, 16384, 24576 or 32768); actual memory-fit reductions still apply.'
     echo 'Default: the 100K-word fixture with 4 items per category.'
+    echo 'Experiment flags: every one is pinned and printed on an ARMS line (tools/experiment_arms.py); an unset flag takes the product default, stated as a value. SCRIBODO_ANSWER_PIPELINE=off reproduces the arm of runs before 2026-11-14.'
     echo 'Requires tools/services.sh up and a built app (build/scribodo).'
 }
 words=100000; per=4; llm=fake; script=tests/ui/store/16_manuscript_baseline.scribo; keep=0; context=
@@ -68,9 +69,12 @@ python3 tests/seed_manuscript.py "$temp/work/manuscript" --words "$words" --per-
 echo "manuscript_baseline: disposable_database=$name"
 created=1
 tools/services.sh testdb create "$name"
+# Every experiment arm explicit, defaults stated as values (AUDIT-004 F4): the pipeline default flipped on 2026-11-14.
+eval "$(python3 tools/experiment_arms.py --export)"
+echo "manuscript_baseline: $(python3 tools/experiment_arms.py --line)"
 start=$SECONDS
 SCRIBODO_STORE=db SCRIBODO_DB_NAME="$name" SCRIBODO_DB_PORT="$port" SCRIBODO_SOAK_LLM="$llm" SCRIBODO_MEMORY_EXPERIMENT=1 \
     SCRIBODO_MODEL_SETTINGS="$temp/work/model-settings.json" SCRIBODO_PROFILE="$temp/work/profile.json" \
     SCRIBODO_SCRIPT="$script" SCRIBODO_SCRIPT_DIR="$temp/work" \
     SCRIBODO_SHOT_DIR="$temp" caffeinate -i tools/watchdog.sh 3000 manuscript-baseline python3 tools/frame_soak_run.py "$app"
-echo "manuscript_baseline: process_wall_seconds=$((SECONDS - start)) words=$words per_category=$per model=$llm script=$script manuscript=${manuscript:-fixture}"
+echo "manuscript_baseline: process_wall_seconds=$((SECONDS - start)) words=$words per_category=$per model=$llm script=$script manuscript=${manuscript:-fixture} memory=$SCRIBODO_MEMORY_EXPERIMENT pipeline=$SCRIBODO_ANSWER_PIPELINE"

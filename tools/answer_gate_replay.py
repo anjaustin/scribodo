@@ -50,7 +50,9 @@ def main():
         for item, record in items_from_sheet(json.loads(Path(path).read_text()), fixture_cases, run):
             items.append(item)
             records.append(record)
-    result = subprocess.run([str(args.binary)], input=json.dumps(items), text=True, capture_output=True, check=True)
+    import experiment_arms  # tools/, the script's own directory
+    env = experiment_arms.pin(os.environ)  # every arm explicit, and kept with the output (AUDIT-004 F4)
+    result = subprocess.run([str(args.binary)], input=json.dumps(items), text=True, capture_output=True, check=True, env=env)
     rows = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
     if len(rows) != len(records):
         sys.exit(f'{len(rows)} results for {len(records)} claims')
@@ -77,7 +79,8 @@ def main():
     for r in flagged:
         print(f"  {r['run']:14s} {r['case']:28s} recorded_withheld={r['recorded_withheld']} piece={r['misquoted'][:110]!r}")
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps({'claims': records, 'changed': changed, 'misquoted_replies': len(flagged)}, ensure_ascii=False, indent=1) + '\n')
+    args.output.write_text(json.dumps({'claims': records, 'changed': changed, 'misquoted_replies': len(flagged),
+                                        'experiment_arms': experiment_arms.record(env)}, ensure_ascii=False, indent=1) + '\n')
 
 
 if __name__ == '__main__':

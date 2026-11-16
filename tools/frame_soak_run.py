@@ -142,7 +142,11 @@ def run(app):
     try:
         # Inherit stdout/stderr: frame metrics and script failures stream directly.
         backend = "real" if os.environ.get("SCRIBODO_SOAK_LLM") == "real" else "fake"
-        child = subprocess.Popen([app], env={**os.environ, "SCRIBODO_LLM": backend})
+        # Every experiment arm explicit, defaults stated as values, and printed with the run (AUDIT-004 F4).
+        import experiment_arms  # tools/, the script's own directory
+        env = experiment_arms.pin({**os.environ, "SCRIBODO_LLM": backend})
+        print(f"frame_soak: {experiment_arms.line(env)}", flush=True)
+        child = subprocess.Popen([app], env=env)
         print(f"frame_soak: owned_app_pid={child.pid} rss_interval_seconds=1 backend={'real-pinned-model' if backend == 'real' else 'fake-no-LLM'}", flush=True)
         next_sample = time.monotonic()
         while child.poll() is None:

@@ -22,6 +22,8 @@ import subprocess
 import sys
 import time
 
+import experiment_arms  # tools/, the script's own directory
+
 root = Path.cwd()
 label, executable = sys.argv[1:]
 destination = root / 'build/product-memory-use' / label
@@ -47,10 +49,12 @@ if label.endswith('before'):
         for name in ('src/app/memory_document_store.c', 'src/app/memory_documents.h'):
             manifest['source_sha256'][str(root / name)] = hashlib.sha256((root / 'build/product-memory-baseline' / name).read_bytes()).hexdigest()
         manifest['baseline'] += '; HEAD document ingestion; trace-only chat instrumentation and scripted cancellation'
-(destination / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
 environment = {**os.environ, 'SCRIBODO_SOAK_APP': str(frozen), 'SCRIBODO_SEED': '42',
                'SCRIBODO_LLAMA_SERVER': str(root / 'build/llama/bin/llama-server'),
                'SCRIBODO_MEMORY_TRACE': '1', 'SCRIBODO_MEMORY_EXCERPTS': '0'}
+environment = experiment_arms.pin(environment)  # every arm explicit, and recorded (AUDIT-004 F4)
+manifest['experiment_arms'] = experiment_arms.record(environment)
+(destination / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
 started = time.monotonic()
 with (destination / 'app.log').open('w') as log:
     result = subprocess.run(['tools/manuscript_baseline.sh', '--keep', '--real', '--words', '30000',

@@ -12,6 +12,7 @@ usage() {
     echo '--real              the pinned model for the sends (default fake).'
     echo '--settle-seconds N  how long to wait for memory to settle after the restart (default 600).'
     echo '--out DIR           where run logs go (default build/gap003/restart-<stamp>).'
+    echo 'Experiment flags: every one is pinned and printed on an ARMS line (tools/experiment_arms.py); an unset flag takes the product default, stated as a value. SCRIBODO_ANSWER_PIPELINE=off reproduces the arm of runs before 2026-11-14.'
     echo 'Requires tools/services.sh up and a built app.'
 }
 cycles=3; llm=fake; settle=600; out=
@@ -67,6 +68,9 @@ sample() { tools/store_growth_sample.sh "$name" "$1" | tee -a "$out/store.log"; 
 messages_of() { sed -n 's/.* messages=\([0-9]*\) .*/\1/p' <<<"$1"; }
 settled() { [[ $1 =~ outbox_pending=0\ outbox_leased=0\ outbox_failed=0 ]] && [[ $1 =~ scope_cursor=([0-9-]+)\ scope_pending=[0-9-]+\ max_seq=([0-9-]+) ]] && [[ ${BASH_REMATCH[1]} == "${BASH_REMATCH[2]}" ]]; }
 echo "manuscript_restart: disposable_database=$name cycles=$cycles model=$llm out=$out tree=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" | tee "$out/restart.log"
+# Every experiment arm explicit, defaults stated as values, and kept with the run (AUDIT-004 F4).
+eval "$(python3 tools/experiment_arms.py --export)"
+python3 tools/experiment_arms.py --line --json "$out/arms.json" | sed 's/^/manuscript_restart: /' | tee -a "$out/restart.log"
 created=1
 tools/services.sh testdb create "$name"
 env_common=(SCRIBODO_STORE=db SCRIBODO_DB_NAME="$name" SCRIBODO_DB_PORT="$port" SCRIBODO_SOAK_LLM="$llm" SCRIBODO_MEMORY_EXPERIMENT=1

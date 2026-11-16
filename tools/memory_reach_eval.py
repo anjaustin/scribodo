@@ -33,6 +33,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 import memory_fixture  # noqa: E402
+import experiment_arms  # noqa: E402
 
 CANARY = "PRIVATE-OTHER-CONVERSATION-5d2e7a90 Zoë Íñigo Kestrel archive key birthday 777771"
 BUDGET_SECONDS = 0.5
@@ -344,6 +345,7 @@ def main():
                 "binary_sha256": sha(owned) if owned.is_file() else None,
                 "git_head": subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip(),
                 "budget_seconds": BUDGET_SECONDS,
+                "experiment_arms": experiment_arms.record(experiment_arms.pin(os.environ)),
                 "configuration": "pinned supervisor defaults; chat server for tokenization only; Qwen embedder; production planner and admission; no generation"}
     save(run / "manifest.json", manifest)
     manifest_hash = sha(run / "manifest.json")
@@ -354,7 +356,7 @@ def main():
         return 0
     if not owned.is_file():
         parser.error("native binary missing; run tools/memory_reach_eval.sh")
-    env = dict(os.environ, SCRIBODO_DB_NAME=name)
+    env = experiment_arms.pin(dict(os.environ, SCRIBODO_DB_NAME=name))  # the arms the manifest records (AUDIT-004 F4)
     env.pop("SCRIBODO_LLM", None)
     services = ROOT / "tools/services.sh"
     started = time.monotonic()
