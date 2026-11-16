@@ -397,3 +397,32 @@ of the small-buffer sizes.
 - Still for the coordinator after merge: `backuptest` (now also RT1's corrected shell-escape probe in docker mode,
   which needs Docker to mean anything), `uitest-db`, and the restore path, which run item 3's root operations on a
   real server.
+
+# Verification follow-up (same day)
+
+The coordinator's verification closed RT1–RT6. It found one new medium issue and four small gaps; one commit for
+each group.
+
+## V1 — an expansion error under `set -u` exited 0 (medium; dates from bcd8aec)
+
+Bash runs the EXIT trap after a failed `${n:?}` or an unset variable with `$?` = 0, and the trap kept 0. Reproduced on
+the pre-fix script (`git show 14bcad8:tools/services.sh`, a throwaway store, docker mode, Docker shimmed):
+`testdb create` printed "line 434: 3: name" and exited 0; `dump` printed "line 453: 2: database" and exited 0. An
+unset-variable bug in `up` would have read as success to the app.
+
+**Fix:**
+- Every intended exit goes through `leave`, which marks the run finished: the contract codes, the refusals, the
+  rollback, `testdb sql`, and the end of the script (which maps a non-zero status from a command `set -e` exempts to
+  1).
+- The trap is now `[ -n "$finished" ] || exit 1`: any other way out, a stray code or an expansion error, is 1. Bash's
+  own message stays the last stderr line, which is the reason the app shows.
+- The `${3:?name}` and `${2:?database}` checks are explicit usage errors (`usage`, exit 2). `testdb` with an action
+  other than create, drop or sql is now a usage error too; it used to fall through to drop.
+
+**Tests** (`tests/test_services_docker.sh`, the real script):
+- `testdb create`, `testdb drop`, `testdb`, `testdb bogus NAME`, `dump` and an unknown command each exit 2 with the
+  usage line and run nothing;
+- a copy of the real scripts with an unset variable planted in `status` and in docker `up` exits 1 for each, with
+  bash's error on stderr and Compose never started.
+
+**Gates (V1):** `make test` exit 0; `make analyze` exit 0; `make sanitize` exit 0.

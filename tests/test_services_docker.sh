@@ -243,6 +243,33 @@ r=0; SCRIBODO_SERVICES=native SCRIBODO_MARIADB_BIN="$T/clients" "$B/tools/servic
 check "the bundle's native mode finds its Qdrant and MariaDB, then stops at the credentials guard (2), starting nothing" $?
 rm -rf "$T/Scribodo.app"
 
+# ---- every way out is meant: usage errors are 2, an unset variable is 1 (never 0) ----------------------------------
+export SCRIBODO_SERVICES=docker
+for args in "testdb create" "testdb drop" "testdb" "testdb bogus scribodo_test_x" "dump" "no-such-command"; do
+    reset; r=0
+    # shellcheck disable=SC2086
+    tools/services.sh $args >/dev/null 2>"$T/usage.err" || r=$?
+    { [ "$r" = 2 ] && grep -q "^usage: " "$T/usage.err" && [ ! -s "$CLIENT_LOG" ]; } || { check "'$args' is a usage error, 2 (got $r)" 1; continue; }
+    check "'$args' is a usage error, 2, and runs nothing" 0
+done
+# A copy of the real scripts with an unset variable planted in a command: under `set -u` the expansion fails, which
+# the old trap passed on as 0, success to the app.
+P="$T/planted"
+mkdir -p "$P/tools" "$P/docker"
+cp tools/services.sh tools/services_lib.sh tools/services.defaults "$P/tools/"
+cp docker/compose.yml "$P/docker/"
+sed -i '' -e 's/^    status) if/    status) : "$planted_unset_variable"; if/' \
+          -e 's/^            secrets docker$/            : "$planted_unset_variable"; secrets docker/' "$P/tools/services.sh"
+[ "$(grep -c planted_unset_variable "$P/tools/services.sh")" = 2 ]
+check "(the plant is in status and in docker up)" $?
+for cmd in status up; do
+    reset; r=0
+    "$P/tools/services.sh" $cmd >/dev/null 2>"$T/plant.err" || r=$?
+    [ "$r" = 1 ] && grep -q "planted_unset_variable" "$T/plant.err" && ! grep -q "\[up\]" "$SHIM_LOG"
+    check "an unset variable in $cmd leaves as 1, the error on stderr, Compose never started" $?
+done
+rm -rf "$P"
+
 # ---- Compose is called only through the library ------------------------------------------------------------------
 # docker/compose.yml requires variables only services_lib.sh exports: a direct `docker compose` elsewhere fails at parse
 # time, and a check reading its (empty) output passes vacuously (the red-team finding on servicestest and backuptest).

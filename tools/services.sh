@@ -63,12 +63,14 @@ case "${1:-status}" in
         fi ;;
 esac
 
-# Every code above 2 means what the header says and nothing else: a command that fails under `set -e` with its own code
-# (curl's 7, docker compose's 4, anything's 75) leaves as 1. `leave` is how the script says 3 to 6 on purpose; 75
-# only ever comes from lockf, the outer process, never from this script.
-contract_exit=""
-leave() { contract_exit=1; exit "$1"; }
-trap 'rc=$?; if [ -z "$contract_exit" ] && [ "$rc" -gt 2 ]; then exit 1; fi' EXIT
+# Every exit the script means goes through `leave`; any other way out is a failure and leaves as 1: a command failing
+# under `set -e` with its own code (curl's 7, docker compose's 4, anything's 75, which would pose as the contract's),
+# and an expansion error under `set -u`, which reaches this trap with $? = 0 and would look like success (verification
+# of the red-team pass). 75 only ever comes from lockf, the outer process, never from this script.
+finished=""
+leave() { finished=1; exit "$1"; }
+trap '[ -n "$finished" ] || exit 1' EXIT   # bash has already said why on stderr; that line stays the last
+usage() { echo "usage: $0 up|down|purge|status|logs|mode|testdb create|drop|sql NAME|rootsql [args]|dump DB|rotate-root|migrate-from-docker" >&2; leave 2; }
 
 had_credentials=0
 [ -s "$SCRIBODO_SECRETS/db_root_password" ] && had_credentials=1
@@ -297,13 +299,13 @@ native_status() {
 # (REDTEAM-023: the guard was a string comparison that ran after the services had already been stopped).
 purge_guard() {
     if is_default_store && [ "${SCRIBODO_PURGE_CONFIRM:-}" != 1 ]; then
-        echo "this would delete the author's store under $SCRIBODO_SECRETS; set SCRIBODO_PURGE_CONFIRM=1 to do it" >&2; exit 2
+        echo "this would delete the author's store under $SCRIBODO_SECRETS; set SCRIBODO_PURGE_CONFIRM=1 to do it" >&2; leave 2
     fi
 }
 
 native_purge() {
     purge_guard
-    native_down || { echo "the services are still running; nothing was deleted" >&2; exit 1; }
+    native_down || { echo "the services are still running; nothing was deleted" >&2; leave 1; }
     rm -rf "${mdata:?}" "${qdata:?}"
     rm -f "$sock"
     # The credentials stay (an older container volume may still need them); the remembered mode says native, so the
@@ -325,15 +327,15 @@ migrate_from_docker() {
     # its check succeed. Any failure puts both stores back exactly as they were before the migration began: the
     # containers up or down as they were, the native services up or down as they were, a native data directory this
     # migration created removed, a replaced native store reloaded from its dump (REDTEAM-023).
-    [ -z "${SCRIBODO_SERVICES:-}" ] || { echo "unset SCRIBODO_SERVICES for the migration" >&2; exit 2; }
-    app_running && { echo "quit Scribodo first (it would keep writing to the store being moved)" >&2; exit 2; }
+    [ -z "${SCRIBODO_SERVICES:-}" ] || { echo "unset SCRIBODO_SERVICES for the migration" >&2; leave 2; }
+    app_running && { echo "quit Scribodo first (it would keep writing to the store being moved)" >&2; leave 2; }
     native_need || leave $?
     docker info >/dev/null 2>&1 || { echo "Docker isn't running; the store to move is in its containers" >&2; leave 6; }
     prior="$mode"
     native_existed=0; native_store_exists && native_existed=1
     native_was_up=0; m_alive && native_was_up=1
     if [ "$native_existed" = 1 ] && [ "${SCRIBODO_MIGRATE_REPLACE:-}" != 1 ]; then
-        echo "a native store already exists; nothing was changed (SCRIBODO_MIGRATE_REPLACE=1 keeps a dump of it and replaces it)" >&2; exit 2
+        echo "a native store already exists; nothing was changed (SCRIBODO_MIGRATE_REPLACE=1 keeps a dump of it and replaces it)" >&2; leave 2
     fi
     mkdir -p "$SCRIBODO_SECRETS" && chmod 700 "$SCRIBODO_SECRETS"
     # The choice is written down now, so a native data directory a failed migration leaves can never become the
@@ -343,7 +345,7 @@ migrate_from_docker() {
     containers_were_up=0; [ -n "$(compose ps -q 2>/dev/null)" ] && containers_were_up=1
     keepn=""
     # The two stores share their ports: the native services stop before the containers start.
-    if [ "$native_was_up" = 1 ]; then native_down || { echo "the native services did not stop; nothing was changed" >&2; exit 1; }; fi
+    if [ "$native_was_up" = 1 ]; then native_down || { echo "the native services did not stop; nothing was changed" >&2; leave 1; }; fi
     secrets docker
     compose up -d --wait --wait-timeout 180 >/dev/null || migration_rollback
     stamp="$(date +%Y%m%d-%H%M%S)"
@@ -360,7 +362,7 @@ migrate_from_docker() {
     if [ "$tables" != 0 ]; then
         if [ "${SCRIBODO_MIGRATE_REPLACE:-}" != 1 ]; then
             echo "the native store already holds $tables tables; nothing was replaced (SCRIBODO_MIGRATE_REPLACE=1 keeps a dump of it and replaces it)" >&2
-            migration_restore || true; exit 2
+            migration_restore || true; leave 2
         fi
         # The dump is trusted for a reload only once it is complete (REDTEAM-023: a part-written one would have been
         # loaded over the intact native store).
@@ -409,7 +411,7 @@ migration_restore() {
 migration_rollback() {
     if migration_restore; then echo "the migration failed; both stores are as they were before it and the remembered mode is unchanged" >&2
     else echo "the migration failed, and putting the stores back was incomplete (above); the remembered mode is unchanged" >&2; fi
-    exit 1
+    leave 1
 }
 
 # ---- the commands ----------------------------------------------------------------------------------------------------
@@ -431,14 +433,15 @@ case "${1:-status}" in
             compose ps --format 'table {{.Service}}\t{{.Status}}\t{{.Ports}}'
         fi ;;
     testdb) # testdb create|drop|sql NAME: a throwaway database for tests (sql: run stdin against it, read-only diagnosis)
-        name="${3:?name}"
+        [ -n "${3:-}" ] && { [ "${2:-}" = create ] || [ "${2:-}" = drop ] || [ "${2:-}" = sql ]; } || usage
+        name="$3"
         # Strictly a test name: no quotes, backticks or separators can reach SQL.
         if ! [[ "$name" =~ ^scribodo_test_[a-z0-9_]+$ ]]; then
-            echo "test databases are named scribodo_test_[a-z0-9_]+" >&2; exit 2
+            echo "test databases are named scribodo_test_[a-z0-9_]+" >&2; leave 2
         fi
         if [ "${2:-}" = sql ]; then
             rootsql --batch "$name"
-            exit $?
+            leave 0
         fi
         if [ "${2:-}" = create ]; then
             printf 'CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4;\nGRANT ALL ON `%s`.* TO '"'"'scribodo'"'"'@'"'"'%%'"'"';\n' "$name" "$name" | rootsql
@@ -450,7 +453,7 @@ case "${1:-status}" in
         fi
         ;;
     rootsql) shift; rootsql "$@" ;;   # stdin to the client as root (backup, restore and their tests)
-    dump) dump_db "${2:?database}" ;;
+    dump) [ -n "${2:-}" ] || usage; dump_db "$2" ;;
     rotate-root) # new MariaDB root password, set without ever appearing in ps
         f="$SCRIBODO_SECRETS/db_root_password"
         new="$(openssl rand -hex 24)"
@@ -458,7 +461,7 @@ case "${1:-status}" in
             # Rewrite in place: the container's bind mount follows the inode.
             printf '%s' "$new" > "$f" && echo "rotated"
         else
-            echo "rotation failed; the old password is unchanged" >&2; exit 1
+            echo "rotation failed; the old password is unchanged" >&2; leave 1
         fi
         ;;
     migrate-from-docker) migrate_from_docker ;;
@@ -466,10 +469,15 @@ case "${1:-status}" in
     purge)
         if [ "$mode" = native ]; then native_purge; else
             [ "${SCRIBODO_COMPOSE_PROJECT:-scribodo}" != scribodo ] || [ "${SCRIBODO_PURGE_CONFIRM:-}" = 1 ] ||
-                { echo "this would delete the author's container volumes; set SCRIBODO_PURGE_CONFIRM=1 to do it" >&2; exit 2; }
+                { echo "this would delete the author's container volumes; set SCRIBODO_PURGE_CONFIRM=1 to do it" >&2; leave 2; }
             compose down -v --remove-orphans
         fi ;;
     status) if [ "$mode" = native ]; then native_status; else compose ps --format 'table {{.Service}}\t{{.Status}}\t{{.Ports}}'; fi ;;
     logs) if [ "$mode" = native ]; then tail -n 50 "$SCRIBODO_LOGS/mariadb.log" "$SCRIBODO_LOGS/qdrant.log" 2>/dev/null; else compose logs --tail 50; fi ;;
-    *) echo "usage: $0 up|down|purge|status|logs|mode|testdb create|drop|sql NAME|rootsql [args]|dump DB|rotate-root|migrate-from-docker" >&2; exit 2 ;;
+    *) usage ;;
 esac
+# The end of a command that ran to completion. `set -e` does not apply to every command (the left of `&&` or `||`), so a
+# non-zero status here is still a failure: never 2 or a contract code by accident.
+rc=$?
+[ "$rc" = 0 ] || rc=1
+leave "$rc"
