@@ -76,7 +76,7 @@ LLM_SRCS += src/llm/canon_reference.c
 LLM_SRCS += src/app/local_models.c
 LLM_SRCS += src/llm/rerank.c src/llm/answer_pipeline.c src/llm/answer_receipt.c
 LLM_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(LLM_SRCS)) $(BUILD)/third_party/cJSON/cJSON.o
-APP_SRCS  := src/main.c src/app/script.c src/app/script_host.c src/app/draft_controller.c src/app/chat_controller.c src/app/reviewed_edit_controller.c src/ui/font.c src/ui/clay_render.c src/ui/editor.c src/ui/input.c src/ui/recall_view.c \
+APP_SRCS  := src/main.c src/app/script.c src/app/script_host.c src/app/startup_env.c src/app/draft_controller.c src/app/chat_controller.c src/app/reviewed_edit_controller.c src/ui/font.c src/ui/clay_render.c src/ui/editor.c src/ui/input.c src/ui/recall_view.c \
              src/ui/chat_view.c src/ui/review_view.c src/ui/record_view.c src/ui/findings_view.c src/ui/prompt_view.c src/ui/menu_view.c src/ui/vendor_impl.c
 CORE_OBJS := $(patsubst %.c,$(BUILD)/%.o,$(CORE_SRCS))
 APP_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(APP_SRCS))
@@ -95,7 +95,7 @@ TESTS += $(BUILD)/test_answer_pipeline $(BUILD)/test_memory_index_text
 TESTS += $(BUILD)/test_memory_document_cache $(BUILD)/test_memory_budget $(BUILD)/test_generative_gate
 TESTS += $(BUILD)/test_http_deadlines $(BUILD)/test_db_deadlines $(BUILD)/test_memory_brief_model
 TESTS += $(BUILD)/test_http_poll_errno
-TESTS += $(BUILD)/test_draft_controller $(BUILD)/test_script_host
+TESTS += $(BUILD)/test_draft_controller $(BUILD)/test_script_host $(BUILD)/test_startup_env
 
 .PHONY: all run test analyze analyzetest uitest uitest-real sanitize tsan cstest dbtest crashtest envs tools uitest-db backuptest servicestest remotetest offlinetest dependency-report qdrant clean distclean llama model llmtest
 
@@ -132,6 +132,9 @@ $(BUILD)/test_draft_controller: $(CORE_OBJS) $(BUILD)/src/app/draft_controller.o
 	$(CC) $(CFLAGS) $^ -o $@ -lpthread
 
 $(BUILD)/test_script_host: $(BUILD)/src/app/script_host.o $(BUILD)/tests/test_script_host.o
+	$(CC) $(CFLAGS) $^ -o $@
+
+$(BUILD)/test_startup_env: $(BUILD)/src/app/startup_env.o $(BUILD)/tests/test_startup_env.o
 	$(CC) $(CFLAGS) $^ -o $@
 
 $(BUILD)/test_llm: $(CORE_OBJS) $(LLM_OBJS) $(BUILD)/tests/test_state_fixture.o $(BUILD)/tests/test_llm.o
@@ -293,6 +296,7 @@ test: $(TESTS)
 	$(WATCHDOG) $(TEST_TIMEOUT) test_frame_soak python3 tests/test_frame_soak.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_manuscript_series python3 tests/test_manuscript_series.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_power_source python3 tests/test_power_source.py
+	$(WATCHDOG) $(TEST_TIMEOUT) test_env_writes python3 tests/test_env_writes.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_sysmem_sample python3 tests/test_sysmem_sample.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_observer_faults python3 tests/test_observer_faults.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_observer_judge_score python3 tests/test_observer_judge_score.py

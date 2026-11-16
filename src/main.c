@@ -57,6 +57,7 @@
 #include "app/chat_controller.h"
 #include "app/draft_controller.h"
 #include "app/local_models.h"
+#include "app/startup_env.h"
 #include "app/reviewed_edit_controller.h"
 #include "app/frame_view_model.h"
 #include "app/profile.h"
@@ -3757,6 +3758,9 @@ static void app_destroy(App *app)
 int main(int argc, char **argv)
 {
     static App app;
+    /* Before any thread: the environment is read and rewritten here only (app/startup_env.h). */
+    static StartupEnv env;
+    (void)startup_env_prepare(&env);
     atomic_init(&app.history_hold, false);
     app.store = store_manager_create();
     if (!app.store) return 1;
@@ -3782,7 +3786,7 @@ int main(int argc, char **argv)
     /* UI test mode: SCRIBODO_SCRIPT=file.scribo runs a scripted session in a
      * hidden window (no focus stealing, immune to the real mouse) and exits
      * non-zero if any expectation fails. See src/app/script.h. */
-    const char *script_path = getenv("SCRIBODO_SCRIPT");
+    const char *script_path = env.scripted ? env.script_path : NULL;
     app.history_job = script_path ? chat_history_job_create_with_reader(app.store, scripted_history_read, &app)
                                   : chat_history_job_create(app.store);
     if (!app.history_job) { app_destroy(&app); return 1; }
@@ -3843,12 +3847,7 @@ int main(int argc, char **argv)
     Clay_SetMeasureTextFunction(clay_measure_text, app.font_ptrs);
 
     /* The local model. UI scripts use a fake model unless SCRIBODO_LLM=real. */
-    /* The author's model settings (UI scripts keep their own). */
-    if (script_path && !getenv("SCRIBODO_MODEL_SETTINGS")) {
-        char mp[PATH_MAX];
-        snprintf(mp, sizeof(mp), "%s/model-settings.json", getenv("SCRIBODO_SCRIPT_DIR") ? getenv("SCRIBODO_SCRIPT_DIR") : ".");
-        setenv("SCRIBODO_MODEL_SETTINGS", mp, 1);
-    }
+    /* The author's model settings (UI scripts keep their own: startup_env_prepare). */
     model_settings_load(&app.model);
     /* The verified-answer pipeline (default on since 2026-11-14) runs for conversations with memory on; it needs the
      * memory experiment and, with a real model, the pinned reranker file. */
@@ -3916,16 +3915,9 @@ int main(int argc, char **argv)
             chat_memory_set_presentation(owned_chat, CHAT_MEMORY_EPISODE);
     }
     name_detection_job_set_server(&app.names_job, app.llm);
-    /* TLS secrets are never written out for a remote model's traffic. */
-    unsetenv("SSLKEYLOGFILE");
-    /* A remote model only if the author configured one; never selected here. */
-    /* UI scripts never read the author's remote configuration (its provider name and host would reach a run's
-     * artefacts); they keep their own, normally absent, in the fixture folder. */
-    if (script_path && !getenv("SCRIBODO_REMOTE_CONFIG")) {
-        char rp[PATH_MAX];
-        snprintf(rp, sizeof(rp), "%s/remote.json", getenv("SCRIBODO_SCRIPT_DIR") ? getenv("SCRIBODO_SCRIPT_DIR") : ".");
-        setenv("SCRIBODO_REMOTE_CONFIG", rp, 1);
-    }
+    /* A remote model only if the author configured one; never selected here. TLS secrets are never written out for
+     * its traffic, and UI scripts never read the author's remote configuration (its provider name and host would
+     * reach a run's artefacts); they keep their own, normally absent, in the fixture folder (startup_env_prepare). */
     app.remote_ok = remote_load(&app.remote, app.remote_why, sizeof(app.remote_why));
     if (!app.remote_ok && app.remote_why[0]) {
         char msg[300];
@@ -3962,12 +3954,7 @@ int main(int argc, char **argv)
         return 1;
     }
     chat_on_message_done(app.chat, on_message_done, &app);
-    /* Who is who. UI scripts keep their own profile, never the author's. */
-    if (script_path && !getenv("SCRIBODO_PROFILE")) {
-        char pp[PATH_MAX];
-        snprintf(pp, sizeof(pp), "%s/profile.json", getenv("SCRIBODO_SCRIPT_DIR") ? getenv("SCRIBODO_SCRIPT_DIR") : ".");
-        setenv("SCRIBODO_PROFILE", pp, 1);
-    }
+    /* Who is who. UI scripts keep their own profile, never the author's (startup_env_prepare). */
     profile_load(&app.profile);
     apply_profile(&app);
     apply_model_settings(&app, false);
@@ -3988,7 +3975,7 @@ int main(int argc, char **argv)
             struct passwd *pw = getpwuid(getuid());
             home = pw ? pw->pw_dir : "/tmp";
         }
-        if (script_path) snprintf(state, sizeof(state), "%s/.scribodo-state", getenv("SCRIBODO_SCRIPT_DIR") ? getenv("SCRIBODO_SCRIPT_DIR") : ".");
+        if (script_path) snprintf(state, sizeof(state), "%s/.scribodo-state", env.script_dir);
         else snprintf(state, sizeof(state), "%s/Library/Application Support/Scribodo", home ? home : ".");
         app.recent_store = recent_store_create(state);
         if (!app.recent_store) {
@@ -4041,7 +4028,8 @@ int main(int argc, char **argv)
             return 2;
         }
         char err[256];
-        app.script = script_load(script_path, getenv("SCRIBODO_SCRIPT_DIR"), getenv("SCRIBODO_SHOT_DIR"), err, sizeof(err));
+        app.script = script_load(script_path, env.has_script_dir ? env.script_dir : NULL,
+                                 env.has_shot_dir ? env.shot_dir : NULL, err, sizeof(err));
         if (!app.script) {
             fprintf(stderr, "scribodo: %s\n", err);
             app_destroy(&app);
