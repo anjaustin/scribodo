@@ -101,7 +101,7 @@ TESTS += $(BUILD)/test_http_deadlines $(BUILD)/test_db_deadlines $(BUILD)/test_m
 TESTS += $(BUILD)/test_http_poll_errno
 TESTS += $(BUILD)/test_draft_controller $(BUILD)/test_script_host $(BUILD)/test_startup_env
 TESTS += $(BUILD)/test_services
-TESTS += $(BUILD)/test_font_file $(BUILD)/test_appearance $(BUILD)/test_font_catalog
+TESTS += $(BUILD)/test_font_file $(BUILD)/test_appearance $(BUILD)/test_font_catalog $(BUILD)/test_widgets
 
 .PHONY: all run test analyze analyzetest uitest uitest-real sanitize tsan cstest dbtest crashtest envs tools uitest-db backuptest servicestest remotetest offlinetest dependency-report qdrant clean distclean llama model llmtest
 
@@ -219,6 +219,10 @@ $(BUILD)/test_memory_job: tests/test_memory_job.c src/app/memory_job.c src/app/m
 $(BUILD)/test_font_catalog: tests/test_font_catalog.c src/app/font_catalog.c src/core/font_file.c src/app/font_catalog.h src/core/font_file.h
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -Isrc tests/test_font_catalog.c src/app/font_catalog.c src/core/font_file.c -o $@
+
+$(BUILD)/test_widgets: tests/test_widgets.c src/ui/widgets.c src/ui/widgets.h src/ui/theme.h
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(INCLUDES) tests/test_widgets.c src/ui/widgets.c -o $@
 
 APPEARANCE_TEST_SRCS := tests/test_appearance.c src/app/appearance.c src/core/file_text.c src/core/json.c src/core/json_vendor.c
 $(BUILD)/test_appearance: $(APPEARANCE_TEST_SRCS) src/app/appearance.h src/ui/font.h

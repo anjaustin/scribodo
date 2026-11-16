@@ -268,7 +268,8 @@ static void layout_explorer(App *app)
         for (size_t i = 0; i < app->ncanon && i < REC_SHOW; i++)
             list_item(app, CLAY_IDI("CanonItem", (uint32_t)i), app->canon_labels[i], !strcmp(open_id, app->canon[i].id));
         /* Back up, Restore and Names live in the Scribodo menu; the last backup's outcome stays in view here. */
-        if (app->project_dir[0] && app->backup_label[0]) coming_soon(app, app->backup_label);
+        if (app->project_dir[0] && backup_job_busy(&app->backup)) coming_soon(app, "Backing up\xE2\x80\xA6");
+        else if (app->project_dir[0] && app->backup_label[0]) coming_soon(app, app->backup_label);
         layout_entities(app);
     }
 }

@@ -104,7 +104,7 @@ just trusting the index hash; a missing or damaged candidate fails the operation
 
 Qdrant isn't backed up. When a project's collection is missing, the next sync rebuilds the whole index from the store (acceptance criterion 10), documents and chats included. The marks alone would otherwise claim everything was already indexed.
 
-**From the app** (Explorer → PROJECT):
+**From the app** (the Scribodo menu; Explorer → PROJECT until 2026-11-16):
 - **Back up now** runs `tools/backup.sh` in the background, so you keep writing. For a project in the store, it also adds `export/`: one repeatable-read snapshot of the project's History, notes, canon, findings and chats, written in the file format with their original times. Sources point at the exported snapshots. A required revision mapping that cannot be exported fails the operation rather than becoming an empty source.
 - **Restore from a backup…** never overwrites anything, and never touches the database. The backed-up project goes into a new folder beside the current one, "Name (restored <time>)", built from its documents plus `export/` (or, for a project on files, its own `.scribodo/`). It then opens and is imported as a project of its own; ids that belong to the original get their own.
 - **Whole-database disasters** are restored with `tools/restore.sh`. So is a backup made by the CLI without an export, and the app says so.

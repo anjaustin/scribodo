@@ -1514,6 +1514,7 @@ static int frame_draw_panes(App *app, Clay_RenderCommandArray cmds, const FrameR
     BeginDrawing();
     ClearBackground(THEME_BG);
     clay_render(cmds, app->font_ptrs);
+    widget_frame_begin();
     widget_set_locked(modal); /* nothing behind a prompt or menu reacts */
     if (widget_button(rects->open_rect, "Open\xE2\x80\xA6", NULL, WIDGET_QUIET, true)) choose_project(app, false);
     if (editor_path(app->editor)) editor_draw(app->editor, app->editor_rect, app->focus == FOCUS_DOC);

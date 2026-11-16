@@ -367,6 +367,7 @@ int app_create_views(App *app, const char *script_path)
         chat_destroy(owned_chat);
     }
     app->memory_sources_editor = editor_create(&app->fonts[FONT_CHAT]);
+    if (app->memory_sources_editor) editor_set_layout(app->memory_sources_editor, 32.0f, 28.0f, 720.0f); /* the width it had before the measure (8d5d6a4) */
     if (!app->memory_sources_editor) { return 1; }
     editor_set_modal_owner(app->memory_sources_editor, true);
     if (!reviewed_edit_controller_adopt(&app->reviewed_edit, app->editor, review)) review_destroy(review);

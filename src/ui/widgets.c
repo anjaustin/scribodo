@@ -7,13 +7,31 @@
 #include "core/utf8.h"
 #include "ui/theme.h"
 
-/* The button the current press began on (its rectangle), so a release elsewhere clicks nothing. */
+/* The control the current press began on: its rectangle and its label, so a release elsewhere, or on another control
+ * drawn in the same place (Stop becoming Send when a reply ends mid-press; Back and Done), clicks nothing. */
 static Rectangle g_pressed;
+static uint64_t g_pressed_label;
 static bool g_has_pressed;
 static const SFont *g_font;
 static bool g_locked;
 
 void widget_set_font(const SFont *f) { g_font = f; }
+
+void widget_frame_begin(void)
+{
+    /* A press is claimed by the control under it this frame, or by none: one left over from a control that was not
+     * drawn on its release frame must not click whatever appears there later. */
+    bool pressed = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+    bool idle = !IsMouseButtonDown(MOUSE_BUTTON_LEFT) && !IsMouseButtonReleased(MOUSE_BUTTON_LEFT);
+    if (pressed || idle) g_has_pressed = false;
+}
+
+static uint64_t label_key(const char *s)
+{
+    uint64_t h = 1469598103934665603ull;
+    for (; s && *s; s++) h = (h ^ (unsigned char)*s) * 1099511628211ull;
+    return h;
+}
 void widget_set_locked(bool locked) { g_locked = locked; }
 bool widget_locked(void) { return g_locked; }
 
@@ -68,24 +86,27 @@ void widget_text_in(const SFont *f, const char *s, Rectangle r, Color c)
 }
 
 /* The press/release rule shared by every control; `held` reports a press in progress on `r`. */
-static bool press_rule(Rectangle r, bool enabled, bool *held)
+static bool press_rule(Rectangle r, const char *label, bool enabled, bool *held)
 {
     enabled = enabled && !g_locked;
     bool inside = CheckCollisionPointRec(GetMousePosition(), r);
     bool clicked = false;
+    uint64_t key = label_key(label);
     if (enabled && inside && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
         g_pressed = r;
+        g_pressed_label = key;
         g_has_pressed = true;
     }
-    if (held) *held = enabled && g_has_pressed && same_rect(g_pressed, r) && IsMouseButtonDown(MOUSE_BUTTON_LEFT);
-    if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT) && g_has_pressed && same_rect(g_pressed, r)) {
+    bool mine = g_has_pressed && same_rect(g_pressed, r) && g_pressed_label == key;
+    if (held) *held = enabled && mine && IsMouseButtonDown(MOUSE_BUTTON_LEFT);
+    if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT) && mine) {
         clicked = enabled && inside;
         g_has_pressed = false;
     }
     return clicked;
 }
 
-bool widget_clicked(Rectangle r) { return press_rule(r, true, NULL); }
+bool widget_clicked(Rectangle r) { return press_rule(r, "", true, NULL); }
 
 static bool draw_button(Rectangle r, const char *label, const SFont *f, WidgetKind kind, bool enabled, bool on)
 {
@@ -93,7 +114,7 @@ static bool draw_button(Rectangle r, const char *label, const SFont *f, WidgetKi
     if (!f) return false;
     bool inside = CheckCollisionPointRec(GetMousePosition(), r) && !g_locked;
     bool held = false;
-    bool clicked = press_rule(r, enabled, &held);
+    bool clicked = press_rule(r, label, enabled, &held);
 
     Color fill = BLANK, text = enabled ? THEME_TEXT : THEME_TEXT_DIM;
     switch (kind) {
@@ -107,7 +128,8 @@ static bool draw_button(Rectangle r, const char *label, const SFont *f, WidgetKi
         break;
     case WIDGET_QUIET:
     default:
-        fill = enabled && held ? THEME_ACTIVE : on ? THEME_ACTIVE : enabled && inside ? THEME_HOVER : BLANK;
+        fill = enabled && held ? THEME_ACTIVE : on ? (enabled && inside ? THEME_CONTROL_HOVER : THEME_ACTIVE)
+                                               : enabled && inside ? THEME_HOVER : BLANK;
         if (on && enabled) text = THEME_TEXT_STRONG;
         break;
     }
@@ -134,7 +156,7 @@ bool widget_checkbox(Rectangle r, const char *label, const SFont *f, bool *value
 {
     if (!f) f = g_font;
     if (!f) return false;
-    bool clicked = press_rule(r, true, NULL);
+    bool clicked = press_rule(r, label, true, NULL);
     if (clicked) *value = !*value;
     float s = 14;
     Rectangle box = { r.x, roundf(r.y + (r.height - s) * 0.5f), s, s };

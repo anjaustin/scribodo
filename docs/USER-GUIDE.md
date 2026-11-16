@@ -40,7 +40,8 @@ A project is a folder of `.md` and `.txt` files.
 - **Attached documents:** the chips under the chat show which project documents the assistant sees. A new chat starts with the open document attached; **+ Attach** adds others, and × removes one. Documents are read when you send (the open one including unsaved edits), never copied. Each message remembers what it was sent with, and reopening a chat restores its attachments.
 - **Note turns:** the composer's **Note** toggle marks a message as your note rather than a question, so the answer checks do not treat it as one.
 - **Rename a chat:** right-click it in the Explorer.
-- **Copy:** under any reply, puts its text on the clipboard for pasting into the document.
+- **Reply actions** (Copy, Apply to document, Note, Canon) show under the latest reply and under any message you point at.
+- **Copy** puts a reply's text on the clipboard for pasting into the document.
 - **Saving chats:** each message is saved to the local MariaDB project store, and past chats reopen from the Explorer. Before a project is moved into the store, or when running with `SCRIBODO_STORE=off`, the file backend uses `.scribodo/chats/` instead.
 
 ## Reviewed AI edits
@@ -52,7 +53,7 @@ The assistant never changes your document by itself.
 - **Accept** (or ⌘↩ in the document) applies it as one undoable step and records revisions from before and after. If the "before" revision can't be written, nothing is applied. **Reject** discards it. Saving the file is still ⌘S.
 - **Warnings:** the review warns when a proposal is much shorter or longer than the passage, or the reply was cut off. A reply you stop part-way is never proposed.
 - **Stale proposals:** the passage is tracked through your edits (and undo/redo). Text you add or remove around it moves it. If you change the passage itself, or type at an insertion point, Accept refuses rather than overwrite your newer text.
-- **Apply to document**, under any chat reply, proposes that reply for the current selection (or inserts it at the cursor), through the same review. A rewrite from ⌘K needs the passage selected.
+- **Apply to document**, under a reply, proposes that reply for the current selection (or inserts it at the cursor), through the same review. A rewrite from ⌘K needs the passage selected.
 - **History** in the Explorer lists the document's 100 newest revisions (each save, AI edit and restore) from the project store; the Explorer scrolls. Clicking one restores it, undoably, after first recording the current text. The file backend keeps equivalent revisions under `.scribodo/revisions/`.
 
 ## Notes and canon
