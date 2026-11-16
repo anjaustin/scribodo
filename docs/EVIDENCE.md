@@ -235,6 +235,16 @@ The final AUDIT-004 verification matrix on `ac73f79` and the merge gates of `1f0
 every target's log, and `build/merge-gates/main-1f0660c`), with its manifest and `SHA256SUMS` entry. Archive SHA-256:
 `cc016b9d88f76e605e9a4c5ab9e5db5aa2c8801c27bd089b6ed353a92df298c2`.
 
+The data/text stream's final verification rounds, each with its manifest and `SHA256SUMS` entry:
+- `scribodo-evidence-2026-11-15-audit004f.tar.gz` (3 files): the item-1 re-measurement (`build/audit004-text/f1`).
+  SHA-256 `b08f4f1b1e15a5a147b1efd1895686d6b6912dd91aa12196909ea7124824f222`.
+- `scribodo-evidence-2026-11-15-audit004g.tar.gz` (14 files): its gate logs and exit files (`build/audit004-text/f-gates`).
+  SHA-256 `72f22c30b25b58fee9ff1048f7d71ae422f2f52493cb0d1844eb028082a133b5`.
+- `scribodo-evidence-2026-11-15-audit004h.tar.gz` (2 files): the second pass's re-measurement (`build/audit004-text/g1`).
+  SHA-256 `3eb8c9aa54f4a55013eba4eaa788e61e2767fb14fae44e4b682ac0d0644f4297`.
+- `scribodo-evidence-2026-11-15-audit004i.tar.gz` (10 files): the second pass's gates on `45b001f`
+  (`build/audit004-text/g-gates`). SHA-256 `98134062d3bf77cf469804706267f44aee8729dd7b4bdd719bb9ac012bbd1c5b`.
+
 Since 2026-11-15 `make test` runs `tools/evidence_check.py`. Every cited `build/` path must be one of:
 - archived: checked against each tarball's real file list, so a cited directory counts only when every file under
   it is archived, and a file stem (`build/recover/gates2`) resolves to its files;

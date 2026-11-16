@@ -326,9 +326,21 @@ audit mutations failed on the stale control, were re-pointed (`4849092`) and rer
 
 **Still open:**
 - the full Docker migration rehearsal (needs Docker running);
-- the data/text stream's last verification round (relation-check name runs with non-ASCII, apostrophe and particle
-  words; the backfill while another project's import is pending; atomic record ids), which is in progress at this
-  writing.
+- known misses pinned in the relation check's fixture: "Tardos Mors K. Lydia is not…", "…Mors van K. Lydia…" and
+  "…Mors de la K. Lydia…" have the same shape as a name with an initial. No text rule bounds them without re-flagging
+  questions like "Is Lydia's father James van K. Powell?". The first-token rule for multi-dot initials would now
+  flag "Is Lydia's father James J.R. Powell?", a shape no recorded reply has (`journal/audit004-text.md`);
+- `import_poll` and `store_adopt_project` are static in `src/main.c` and covered only by the UI suites.
+
+The data/text stream's last two verification rounds closed after this section was first written. Those rounds added:
+- name runs of every shape;
+- the import deferred while the worker is busy;
+- the importer's receipt;
+- per-conversation commits with progress marks;
+- atomic must-be-new record appends;
+- multi-dot abbreviations as bounds.
+
+They ended with 145 crash-matrix rows and 1,657 checks.
 
 ## Register changes made by this audit
 
