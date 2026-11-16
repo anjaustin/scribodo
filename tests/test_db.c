@@ -19,6 +19,7 @@
 #include "../src/app/entity_backfill_job.h"
 #include "../src/llm/semantic.h"
 #include "cJSON.h"
+#include <dirent.h>
 #include <fcntl.h>
 #include <sys/file.h>
 #include <sys/stat.h>
@@ -2030,6 +2031,50 @@ static void test_chat_title_bad_time(void)
     system(cmd);
 }
 
+/* An import resumed into the same project (it died after its commit and before its marker: import-pending names
+ * the project, the legacy files are still live) imports the chat again with INSERT IGNORE; the archive must not
+ * double (AUDIT-004 F11 red team). The state is rebuilt by hand: the chats moved back, the marker removed, the
+ * witness written. */
+static void test_chat_title_reimport(void)
+{
+    char why[256] = "", root[PATH_MAX], proj[PATH_MAX + 16], path[PATH_MAX + 200], legacy[PATH_MAX + 200] = "";
+    CHECK(store_start(g_store, g_name, why, sizeof(why)));
+    snprintf(root, sizeof(root), "%sscribodo-title-reimport-XXXXXX", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp/");
+    CHECK(mkdtemp(root) != NULL);
+    snprintf(proj, sizeof(proj), "%s/p", root);
+    CHECK(mkdir(proj, 0755) == 0);
+    const char *id = "20261115-120000-abcd";
+    ChatMessage u = { .role = CHAT_USER, .content = "hello" };
+    CHECK(chat_store_append(g_store, proj, id, "First", &u));
+    CHECK(chat_store_title_line_files(proj, id, "Second", 1700000000) && chat_store_title_line_files(proj, id, "Third", 1700000001));
+    CHECK(store_import(g_store, proj, why, sizeof(why)));
+    char pid[40] = "", pid2[40] = "";
+    CHECK(store_mode(g_store, proj, pid, sizeof(pid), NULL) == STORE_DB);
+    Db *db = store_db(g_store);
+    CHECK(archive_rows(db, pid) == 2);
+    /* Back to "committed, not marked". */
+    snprintf(path, sizeof(path), "%s/.scribodo", proj);
+    DIR *d = opendir(path);
+    struct dirent *ent;
+    while (d && (ent = readdir(d)) != NULL)
+        if (!strncmp(ent->d_name, "legacy-", 7)) snprintf(legacy, sizeof(legacy), "%s/%s/chats", path, ent->d_name);
+    if (d) closedir(d);
+    CHECK(legacy[0] != '\0');
+    snprintf(path, sizeof(path), "%s/.scribodo/chats", proj);
+    CHECK(rename(legacy, path) == 0);
+    snprintf(path, sizeof(path), "%s/.scribodo/store.json", proj);
+    CHECK(unlink(path) == 0);
+    snprintf(path, sizeof(path), "%s/.scribodo/import-pending", proj);
+    write_file(path, pid);
+    CHECK(store_mode(g_store, proj, NULL, 0, NULL) == STORE_FILES);
+    CHECK(store_import(g_store, proj, why, sizeof(why)));
+    CHECK(store_mode(g_store, proj, pid2, sizeof(pid2), NULL) == STORE_DB && !strcmp(pid, pid2)); /* the same project */
+    CHECK(archive_rows(db, pid) == 2);
+    char cmd[PATH_MAX + 20];
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root);
+    system(cmd);
+}
+
 int main(void)
 {
     g_store = store_manager_create();
@@ -2053,6 +2098,7 @@ int main(void)
                           { "import_revision_identity", test_import_revision_identity },
                           { "chat_title_archive", test_chat_title_archive },
                           { "chat_title_bad_time", test_chat_title_bad_time },
+                          { "chat_title_reimport", test_chat_title_reimport },
                          { "entities_redteam", test_entities_redteam }, { "semantic", test_semantic } };
     int rc = run_db_core_tests();
     if (run_tests(tests, sizeof(tests) / sizeof(tests[0])) != 0) rc = 1;

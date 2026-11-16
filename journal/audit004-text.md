@@ -268,3 +268,12 @@ be a made-up time presented as the record's.
 **Test.** `test_db` `chat_title_bad_time`: a chat with title lines stamped 1e300, -5 and 1700000000 reads as four
 titles, the first two timed lines without a time; it imports with three archived rows, and its export succeeds with
 all four titles in order. Before the fix the same test failed three checks (the export among them).
+
+### R3 (low): the re-import guard was untested
+
+**Test.** `test_db` `chat_title_reimport`: a file chat with two renames imports (two archived rows); the folder is
+then put back in the state an import that died after its commit and before its marker leaves (the chats moved back
+from legacy-*, `store.json` removed, `import-pending` naming the project), and `store_import` resumes into the same
+project (checked) and imports the chat again. The archive still holds two rows. With the guard's `have == 0`
+removed from `import_chat_titles` the test fails at that count (checked by mutating `store_import.c` and rebuilding
+`test_db`, then restoring it).
