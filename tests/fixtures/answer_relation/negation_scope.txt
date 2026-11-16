@@ -58,3 +58,6 @@ Her father is Tardos Mors, a ward of Mr. B. Darcy is not his son.
 Her father is Tardos Mors in Room V. Yesterday Kitty was not there.
 Her father is Tardos Mors in Room V. Lydia is not, however, his daughter.
 Her father is Tardos Mors in Room V.
+- Is Lydia's father James K. Powell?
+- Is Lydia's father Tardos K. Mors?
+- Is Lydia's father Dr. K. Bennet?

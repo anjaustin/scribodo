@@ -426,10 +426,12 @@ static void test_relations(void)
                 else reply[o++] = *c;
             }
             reply[o] = '\0';
-            n = answer_relations(reply, NULL, 0, NULL, 0, "q", &bad);
-            bool flagged = bad && !strcmp(bad, "Her father is Tardos Mors");
-            if (!flagged) fprintf(stderr, "    negation scope: %s -> %s\n", reply, bad ? bad : "(none)");
-            CHECK(flagged);
+            bool quiet = !strncmp(reply, "- ", 2); /* a reply that must flag nothing */
+            n = answer_relations(quiet ? reply + 2 : reply, NULL, 0, NULL, 0, "q", &bad);
+            bool flagged = bad && !strncmp(bad, "Her father is Tardos Mors", strlen("Her father is Tardos Mors"));
+            bool right = quiet ? bad == NULL : flagged;
+            if (!right) fprintf(stderr, "    negation scope: %s -> %s\n", reply, bad ? bad : "(none)");
+            CHECK(right);
             free(bad); bad = NULL;
             ncases++;
         }

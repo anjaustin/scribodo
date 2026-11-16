@@ -948,11 +948,27 @@ static bool rel_break_at(const char *s, size_t len, size_t i, size_t *blen)
  * bounded by every initial's period before the phrase, and after it unless the initials directly continue the phrase's
  * name ("son of James| K. Powell"). "Her father is Tardos Mors in Chapter V. Lydia is not his daughter." is one
  * sentence to the splitter, two scopes here (AUDIT-004 red team R1, the verifier's rule; the arm's phrase_scope). */
+/* t[0..n) is a run of name tokens, each after one space: a capitalised word, a title with its period, an initial with
+ * its period ("father| Dr. K." of "father Dr. K. Bennet"). The verifier's round 3: bare initials only cut "Is Lydia's
+ * father James K. Powell?" at "K." and left the "?" outside the scope. */
 static bool rel_continues_name(const char *t, size_t n)
 {
-    if (!n || n % 3) return false;
-    for (size_t i = 0; i < n; i += 3)
-        if (t[i] != ' ' || t[i + 1] < 'A' || t[i + 1] > 'Z' || t[i + 2] != '.') return false;
+    if (!n) return false;
+    size_t i = 0;
+    while (i < n) {
+        if (t[i] != ' ') return false;
+        size_t a = ++i;
+        while (i < n && t[i] != ' ') i++;
+        size_t len = i - a;
+        const char *w = t + a;
+        bool word = len >= 2 && w[0] >= 'A' && w[0] <= 'Z';
+        for (size_t k = 1; word && k < len; k++) word = w[k] >= 'a' && w[k] <= 'z';
+        bool initial = len == 2 && w[0] >= 'A' && w[0] <= 'Z' && w[1] == '.';
+        bool title = false;
+        for (size_t k = 0; !title && len >= 2 && w[len - 1] == '.' && k < TEXT_COUNT(TEXT_TITLES); k++)
+            title = strlen(TEXT_TITLES[k]) == len - 1 && !strncmp(w, TEXT_TITLES[k], len - 1);
+        if (!word && !initial && !title) return false;
+    }
     return true;
 }
 
@@ -964,7 +980,7 @@ static void rel_scope(const char *s, size_t len, size_t start, size_t end, size_
         if (!text_initial_period(s, len, p)) continue;
         size_t cut = p + 1;
         if (cut <= start) { if (cut > *lo) *lo = cut; }
-        else if (p - 1 >= end && !rel_continues_name(s + end, cut - end) && cut < *hi) *hi = cut;
+        else if (p >= end && !rel_continues_name(s + end, cut - end) && cut < *hi) *hi = cut;
     }
 }
 

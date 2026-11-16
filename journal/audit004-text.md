@@ -458,3 +458,16 @@ sanitize` 0, `make dbtest` 0, `make analyze` 0 (88 files), `make crashtest` 0 (1
 516 s). Its first crashtest was killed by the 900 s watchdog while the shared MariaDB was loaded (`r2b/crashtest-
 timeout1.log`, at the migration rows); the rerun of the same tree passed. Logs: `build/audit004-text/{backfill,r1b,r2b}/`.
 No `git stash` was used in this round; each commit was gated with nothing else in the tree.
+
+## Verification round 3 (2026-11-15)
+
+### 1. A false alarm from the name-continuation rule
+
+**Finding.** `rel_continues_name` accepted only a run of bare initials after the phrase, so in "Is Lydia's father
+James K. Powell?", "... Tardos K. Mors?" and "... Dr. K. Bennet?" the scope was cut at "K.", the "?" fell outside it,
+and the question was flagged as a stated relation (none was flagged at `1eeb9bd`).
+
+**Change.** The continuation is any run of name tokens between the phrase's end and the bound, each after one space:
+a capitalised word, a title with its period, or an initial with its period (C `rel_continues_name`, arm
+`_CONTINUES_NAME`). The three questions are in `negation_scope.txt` as lines opened by "- " (must flag nothing), read
+by both test suites; at `eced5df` all three were flagged (arm, checked).
