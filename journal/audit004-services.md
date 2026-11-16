@@ -119,3 +119,22 @@ spaces, then corrected) and failed the native ones only on argument order: the t
 
 Not covered: a whole migration (it needs a real native MariaDB and real containers); that stays servicestest step
 10, which still needs Docker.
+
+## Item 4 — finding the scripts from a bundle
+
+**Before:** `main.c` built `GetApplicationDirectory() + "../tools"` in two places (the supervisor's start and the
+backup's `tools_dir`), which no `.app` bundle has.
+
+**Now:** `src/app/tools_dir.c`, `tools_dir_resolve(app_dir, out, len)`: `$SCRIBODO_TOOLS_DIR` when set and not empty
+(used as given); else `<binary dir>/../Resources/tools` when `services.sh` is there and executable (the binary in
+`Scribodo.app/Contents/MacOS`); else `<binary dir>/../tools` (the source tree, `make run`), which is also the path
+written when nothing is found, so the supervisor's "couldn't run …/services.sh" names a place. Returns whether
+`services.sh` was found. Both main.c sites call it (two one-line changes and an include).
+
+**Test:** `test_tools_dir` in `tests/test_services.c`: a bundle layout, a source-tree layout (with and without the
+trailing slash), an empty layout (false, the tree path), the override over a bundle, an override with no script
+(false, as given), an empty override (ignored), a buffer too small.
+
+Not done here: building a bundle (GAP-002) — the resolver only makes one possible without touching main.c again.
+
+**Gates (item 4 tree):** `make test` exit 0; `make analyze` exit 0; `make sanitize` exit 0.

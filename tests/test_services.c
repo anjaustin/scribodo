@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include "app/service_supervisor.h"
+#include "app/tools_dir.h"
 #include "test_state_fixture.h"
 #include "test_util.h"
 
@@ -217,6 +218,56 @@ static void test_real_script_refusals(void)
     unsetenv("SCRIBODO_DB_PORT");
 }
 
+/* Where the scripts are found: the override, a bundle's Resources/tools, the source tree's tools/. */
+static void test_tools_dir(void)
+{
+    char root[PATH_MAX], cmd[PATH_MAX * 2], out[PATH_MAX + 64], want[PATH_MAX + 64];
+    fresh_dir(root, sizeof(root), "layout");
+    snprintf(cmd, sizeof(cmd),
+             "cd '%s' && mkdir -p Scribodo.app/Contents/MacOS Scribodo.app/Contents/Resources/tools tree/build tree/tools "
+             "empty/build && touch Scribodo.app/Contents/Resources/tools/services.sh tree/tools/services.sh && "
+             "chmod 755 Scribodo.app/Contents/Resources/tools/services.sh tree/tools/services.sh",
+             root);
+    CHECK(system(cmd) == 0);
+    unsetenv("SCRIBODO_TOOLS_DIR");
+    char app[PATH_MAX + 64];
+
+    snprintf(app, sizeof(app), "%s/Scribodo.app/Contents/MacOS/", root);
+    CHECK(tools_dir_resolve(app, out, sizeof(out)));
+    snprintf(want, sizeof(want), "%s../Resources/tools", app);
+    CHECK(!strcmp(out, want));
+
+    snprintf(app, sizeof(app), "%s/tree/build/", root);
+    CHECK(tools_dir_resolve(app, out, sizeof(out)));
+    snprintf(want, sizeof(want), "%s../tools", app);
+    CHECK(!strcmp(out, want));
+
+    snprintf(app, sizeof(app), "%s/tree/build", root); /* no trailing slash */
+    CHECK(tools_dir_resolve(app, out, sizeof(out)));
+    snprintf(want, sizeof(want), "%s/../tools", app);
+    CHECK(!strcmp(out, want));
+
+    /* Nothing there: false, and the source-tree path named for the failure message. */
+    snprintf(app, sizeof(app), "%s/empty/build/", root);
+    CHECK(!tools_dir_resolve(app, out, sizeof(out)));
+    snprintf(want, sizeof(want), "%s../tools", app);
+    CHECK(!strcmp(out, want));
+
+    /* The override wins, as given, even over a bundle. */
+    snprintf(want, sizeof(want), "%s/tree/tools", root);
+    setenv("SCRIBODO_TOOLS_DIR", want, 1);
+    snprintf(app, sizeof(app), "%s/Scribodo.app/Contents/MacOS/", root);
+    CHECK(tools_dir_resolve(app, out, sizeof(out)) && !strcmp(out, want));
+    setenv("SCRIBODO_TOOLS_DIR", root, 1);
+    CHECK(!tools_dir_resolve(app, out, sizeof(out)) && !strcmp(out, root));
+    setenv("SCRIBODO_TOOLS_DIR", "", 1); /* empty: not set */
+    CHECK(tools_dir_resolve(app, out, sizeof(out)) && strstr(out, "Resources/tools"));
+    unsetenv("SCRIBODO_TOOLS_DIR");
+
+    char tiny[8];
+    CHECK(!tools_dir_resolve(app, tiny, sizeof(tiny)));
+}
+
 /* The script's header and the C enum name the same codes. */
 static void test_contract_written_once(void)
 {
@@ -264,6 +315,7 @@ int main(void)
         { "reason_bounds", test_reason_bounds },
         { "real_script_refusals", test_real_script_refusals },
         { "contract_written_once", test_contract_written_once },
+        { "tools_dir", test_tools_dir },
     };
     int rc = run_tests(tests, sizeof(tests) / sizeof(tests[0]));
     test_state_fixture_destroy(g_dir, g_store);

@@ -14,6 +14,7 @@
 #define _DARWIN_C_SOURCE
 
 #include "app/app_internal.h"
+#include "app/tools_dir.h"
 
 static bool store_adopt_project(App *app);
 
@@ -236,7 +237,7 @@ static void store_try_later(App *app)
 {
     if (service_supervisor_busy(&app->services)) return;
     char tools[PATH_MAX];
-    snprintf(tools, sizeof(tools), "%s../tools", GetApplicationDirectory());
+    (void)tools_dir_resolve(GetApplicationDirectory(), tools, sizeof(tools));
     /* Native services have no container runtime to restart them: a store that drops after a successful start (a
      * daemon that died) is started again, at most once a minute (REDTEAM-023; `up` keeps running daemons as they are). */
     bool start = !getenv("SCRIBODO_SCRIPT") && (!app->services_started || GetTime() - app->services_started_at >= 60.0);
@@ -320,7 +321,7 @@ static void store_resolve_problem(App *app)
 
 /* ---- backups (SOW §7) ------------------------------------------------------------ */
 
-static void tools_dir(char *out, size_t outlen) { snprintf(out, outlen, "%s../tools", GetApplicationDirectory()); }
+static void tools_dir(char *out, size_t outlen) { (void)tools_dir_resolve(GetApplicationDirectory(), out, outlen); }
 
 static void begin_backup(App *app)
 {
