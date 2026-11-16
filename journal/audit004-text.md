@@ -319,3 +319,44 @@ rule is not to overlap. Logs: `build/audit004-text/redteam/{r1,r2,r3,final}-*`.
 `git stash pop`, which takes the top of a stash stack shared by every worktree. Checked afterwards: the stash list is
 empty (every entry pushed here was popped here), each pop restored exactly this stream's files, and every commit on
 the branch contains only this stream's files. No other stream's stash was taken. Later work uses WIP commits instead.
+
+## Backfill: chats imported before this branch get their earlier titles
+
+**Why.** The importer before migration 019 read only a chat file's last title line. Those projects' stores hold no
+earlier titles, while the titles sit in `.scribodo/legacy-*/chats/`; an export or fork from the store drops them.
+
+**What.** `store_backfill_chat_titles_db` (`src/app/store_import.c`), run by `store_finish_import` at open
+(`store_adopt_project` in main.c already calls it; main.c is not edited) once the move is complete (no
+`import-pending`, no legacy item live), after migrations (the store is up). Once per project: migration 020 adds
+`project_backfills (project_id, name, done_at, detail)`, and the receipt `chat-titles-legacy` is written in the same
+transaction as the titles, with a detail line (counts, and every file skipped with why). One transaction per project:
+a death anywhere before the commit rolls it all back, and the next open runs it from the start.
+
+- **Mapping.** Each `legacy-*/chats/<id>.jsonl` (folders and files in name order) belongs to the conversation of this
+  project with the file's id or the importer's rebased id (`rebased_id`, salt 0 to 7) whose first message has the
+  file's first message's role and content. No match, several matches, or one conversation claimed by two files with
+  different histories: skipped, named in the receipt. The same history in two legacy folders counts once.
+- **Idempotent.** The receipt; and without it a conversation whose archive already starts with the file's earlier
+  titles (imported by the current importer, or already backfilled) is left alone.
+- **Order.** The file's titles were replaced before any rename made in the store after the import, so they take the
+  lowest `seq` keys. Rather than move keys (an AUTO_INCREMENT key moved past the counter can leave the counter
+  behind and a later rename would collide), the conversation's rows keep their keys and the contents shift: the k new
+  rows are inserted (fresh, higher keys) and titles and times move along the rows in key order, the file's into the
+  lowest keys, the store's renames after them. Every title and time is kept; one transaction.
+- **Times.** A title's `replaced_at` is the `ts` of the line that replaced it, under R2's range; a line without a usable
+  time takes the legacy file's mtime, as the importer stamps it.
+- **Legacy files** are read only (`chat_store_titles_path`, `chat_store_load_path`: no directory is created).
+
+**Column checklist.** Migration 020: `LATEST_SCHEMA` 20, `MIGRATION_STATEMENTS` 86, the "20" receipt strings,
+`db_schema_version(db) == 20` (seven places), GAP-004 counts and a new matrix row (`titles.statement`). LANDSCAPE row
+8/9 counts (not this stream's file) now read 20 migrations.
+
+**Tests.** `test_db` `chat_title_backfill`: a plain backfill at open (titles and times; the legacy file byte-identical
+before and after); a re-run as a no-op both by the receipt and, with the receipt removed, by the archive; a rebased id
+(the same chat id imported into a second project); a chat renamed in the store after the import (the file's titles
+first, and a rename after the backfill still lands last, the key counter intact; export then carries all five
+titles); an ambiguous mapping (a second legacy copy with another history: neither applied) and a file matching no
+conversation, both named in the receipt; a missing legacy folder (receipt "0 legacy folders", nothing written).
+`test_crash_points` `titles_points`: deaths after each of the four statements (one row rewritten, two inserted, the
+receipt); at each death the archive and receipts are as before, and the next open (and the one after) leaves the file's
+titles before the store's rename, each once, one receipt.

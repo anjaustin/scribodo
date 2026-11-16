@@ -893,7 +893,7 @@ static bool import_locked(StoreManager *manager, Db *db, const char *project_dir
  * ever finished the move. Finishing is idempotent and acts only when the witness names the marker's project and
  * either no fork journal is present or the journal's target is that project (a fork that died after its marker;
  * its cleanup is fork_snapshot_finish). True when the move was finished here. */
-bool store_finish_import(StoreManager *manager, const char *project_dir)
+static bool finish_import_move(StoreManager *manager, const char *project_dir)
 {
     char pid[40] = "", pending[PATH_MAX + 64], *id = NULL;
     if (!project_dir || !project_dir[0] || store_mode(manager, project_dir, pid, sizeof(pid), NULL) != STORE_DB) return false;
@@ -1339,4 +1339,327 @@ bool store_restore(StoreManager *manager, const char *project_dir, char *why, si
         return true;
     }
     return store_import(manager, project_dir, why, whylen);
+}
+
+/* ---- the chat-title backfill (AUDIT-004 F11) ---------------------------------------------------------------------
+ *
+ * The importer before migration 019 read only a chat file's last title line, so a project imported then holds its
+ * chats' current titles and none of the earlier ones; the earlier ones are still on disk in the chat files it set
+ * aside under .scribodo/legacy-* (never read or changed here). This puts them into conversation_titles, once per
+ * project, at open (store_finish_import), in one transaction that also writes the project's receipt
+ * (project_backfills): a death anywhere before the commit rolls everything back and the next open runs it again from
+ * the start, so nothing is doubled and nothing is lost (GAP-004 matrix, titles row).
+ *
+ * Mapping: a legacy file belongs to the conversation of this project with the file's id, or with the importer's
+ * rebased id for it (salt 0 to 7), whose first message has the file's first message's role and content. A file that
+ * matches no conversation, or more than one, or a conversation another legacy file with a different title history also
+ * claims, is skipped and named in the receipt's detail. A conversation whose archive already starts with the file's
+ * earlier titles (imported by the current importer, or backfilled) is left alone.
+ *
+ * Order: the file's earlier titles were replaced before any rename made in the store after the import, so they must
+ * come first in seq order. seq is an AUTO_INCREMENT key, and moving a key past the counter can leave the counter behind
+ * (a later rename would then collide), so the conversation's rows are renumbered by content instead: the k new rows are
+ * inserted (fresh keys, above every existing one) and the titles and times are shifted along the conversation's rows in
+ * seq order, the file's titles into the lowest keys and the store's renames after them. Every title and time is kept;
+ * only which key holds it changes, in the same transaction. */
+
+#define TITLE_BACKFILL "chat-titles-legacy"
+
+typedef struct {
+    char file[PATH_MAX + 128];
+    char label[160]; /* legacy-.../<id>.jsonl, for the receipt (no home-folder path in the store) */
+    char cid[40];
+    ChatTitle *titles; /* the file's, oldest first; the last is the title the conversation was imported with */
+    size_t n;
+    double updated; /* the file's mtime: the time of a title line without one, as the importer stamps it */
+    bool skip;      /* not applied: a duplicate of an earlier claim, or ambiguous */
+    bool ambiguous;
+} TitleClaim;
+
+static void detail_add(char *detail, size_t len, const char *fmt, const char *a, const char *b)
+{
+    size_t used = strlen(detail);
+    if (used + 1 < len) snprintf(detail + used, len - used, fmt, a, b);
+}
+
+static int cmp_names(const void *a, const void *b) { return strcmp(*(char *const *)a, *(char *const *)b); }
+
+/* The project's .scribodo/legacy-* directories, sorted (their names carry the time they were made). */
+static bool legacy_dirs(const char *project_dir, char ***out, size_t *n)
+{
+    *out = NULL;
+    *n = 0;
+    char base[PATH_MAX + 32];
+    snprintf(base, sizeof(base), "%s/.scribodo", project_dir);
+    DIR *d = opendir(base);
+    if (!d) return errno == ENOENT;
+    bool ok = true;
+    size_t cap = 0;
+    struct dirent *ent;
+    while (ok) {
+        errno = 0;
+        ent = readdir(d);
+        if (!ent) { ok = errno == 0; break; }
+        if (strncmp(ent->d_name, "legacy-", 7)) continue;
+        if (*n == cap) {
+            cap = cap ? cap * 2 : 4;
+            char **m = realloc(*out, cap * sizeof(char *));
+            if (!m) { ok = false; break; }
+            *out = m;
+        }
+        if (!((*out)[*n] = strdup(ent->d_name))) { ok = false; break; }
+        (*n)++;
+    }
+    if (closedir(d) != 0) ok = false;
+    if (ok && *n) qsort(*out, *n, sizeof(char *), cmp_names);
+    return ok;
+}
+
+/* The conversation of this project a legacy chat file belongs to (see above): 1 with *cid set, 0 none, 2 several. */
+static int title_claim_conversation(Db *db, const char *pid, const char *file_id, const ChatMessage *first, char *cid,
+                                    size_t cidlen, bool *ok)
+{
+    int found = 0;
+    for (int salt = -1; *ok && salt < 8; salt++) {
+        char cand[40];
+        if (salt < 0) snprintf(cand, sizeof(cand), "%s", file_id);
+        else rebased_id(pid, file_id, salt, cand, sizeof(cand));
+        DbRows r;
+        DbArg a[4] = { DB_S(cand), DB_S(pid), DB_S(first->role == CHAT_USER ? "user" : "assistant"),
+                       DB_S(first->content ? first->content : "") };
+        *ok = db_query(db,
+                       "SELECT COUNT(*) FROM conversations c JOIN messages m ON m.conversation_id = c.id AND m.seq = 0"
+                       " WHERE c.id = ? AND c.project_id = ? AND m.role = ? AND m.content = ?",
+                       a, 4, &r);
+        if (!*ok) break;
+        int64_t hit = 0;
+        *ok = r.nrows == 1 && db_rows_has_columns(&r, 1) && db_cell_i64(&r, 0, 0, &hit);
+        db_rows_free(&r);
+        if (*ok && hit > 0) {
+            if (found && strcmp(cid, cand)) return 2;
+            if (!found) snprintf(cid, cidlen, "%s", cand);
+            found = 1;
+        }
+    }
+    return found;
+}
+
+static bool same_history(const TitleClaim *a, const TitleClaim *b)
+{
+    if (a->n != b->n) return false;
+    for (size_t k = 0; k < a->n; k++)
+        if (strcmp(a->titles[k].title, b->titles[k].title)) return false;
+    return true;
+}
+
+/* One conversation: the claim's earlier titles before whatever its archive holds, unless the archive starts with them. */
+static bool title_claim_apply(Db *db, const TitleClaim *c, bool *applied)
+{
+    *applied = false;
+    size_t k = c->n - 1; /* the earlier titles; titles[k] is the one the conversation was imported with */
+    DbRows r;
+    if (!db_query(db, "SELECT seq, title, replaced_at FROM conversation_titles WHERE conversation_id = ? ORDER BY seq FOR UPDATE",
+                  (DbArg[1]){ DB_S(c->cid) }, 1, &r))
+        return false;
+    bool ok = db_rows_has_columns(&r, 3);
+    size_t m = ok ? r.nrows : 0;
+    bool present = ok && m >= k;
+    for (size_t j = 0; ok && present && j < k; j++) {
+        const char *t;
+        ok = db_cell_text(&r, j, 1, &t);
+        present = ok && !strcmp(t, c->titles[j].title);
+    }
+    if (!ok || present) {
+        db_rows_free(&r);
+        return ok;
+    }
+    /* combined[0..k) the file's titles, combined[k..k+m) the archive's rows: titles and times */
+    size_t total = k + m;
+    const char **title = calloc(total, sizeof(char *));
+    double *at = calloc(total, sizeof(double));
+    int64_t *seq = calloc(m ? m : 1, sizeof(int64_t));
+    ok = title && at && seq;
+    for (size_t j = 0; ok && j < k; j++) {
+        title[j] = c->titles[j].title;
+        at[j] = c->titles[j + 1].has_ts ? c->titles[j + 1].ts : c->updated;
+    }
+    for (size_t j = 0; ok && j < m; j++)
+        ok = db_cell_i64(&r, j, 0, &seq[j]) && db_cell_text(&r, j, 1, &title[k + j]) && db_cell_double(&r, j, 2, &at[k + j]);
+    /* Rows keep their keys; their contents shift: the existing m rows take combined[0..m), new rows combined[m..). The
+     * existing rows are rewritten from the lowest key up, after every value they hold has been read above. */
+    for (size_t j = 0; ok && j < m; j++) {
+        DbArg a[3] = { DB_S(title[j]), DB_D(at[j]), DB_I(seq[j]) };
+        ok = db_run(db, "UPDATE conversation_titles SET title = ?, replaced_at = ? WHERE seq = ?", a, 3, NULL);
+        if (ok) crash_point("titles.statement");
+    }
+    for (size_t j = m; ok && j < total; j++) {
+        DbArg a[3] = { DB_S(c->cid), DB_S(title[j]), DB_D(at[j]) };
+        ok = db_run(db, "INSERT INTO conversation_titles (conversation_id, title, replaced_at) VALUES (?,?,?)", a, 3, NULL);
+        if (ok) crash_point("titles.statement");
+    }
+    free(title);
+    free(at);
+    free(seq);
+    db_rows_free(&r);
+    if (ok) *applied = true;
+    return ok;
+}
+
+bool store_backfill_chat_titles_db(Db *db, const char *pid, const char *project_dir, char *detail, size_t detaillen)
+{
+    char local[4000];
+    if (!detail || !detaillen) {
+        detail = local;
+        detaillen = sizeof(local);
+    }
+    detail[0] = '\0';
+    DbRows r;
+    if (!db_query(db, "SELECT detail FROM project_backfills WHERE project_id = ? AND name = ?",
+                  (DbArg[2]){ DB_S(pid), DB_S(TITLE_BACKFILL) }, 2, &r))
+        return false;
+    bool done = r.nrows > 0;
+    if (done && db_rows_has_columns(&r, 1) && db_cell(&r, 0, 0)) snprintf(detail, detaillen, "%s", db_cell(&r, 0, 0));
+    db_rows_free(&r);
+    if (done) return true;
+    if (db_in_transaction(db) || !db_begin(db)) return false;
+    char **dirs = NULL;
+    size_t nd = 0;
+    bool ok = legacy_dirs(project_dir, &dirs, &nd);
+    TitleClaim *claims = NULL;
+    size_t nclaims = 0, cap = 0, files = 0, applied_n = 0, titles_n = 0, skipped = 0;
+    for (size_t d = 0; ok && d < nd; d++) {
+        char chats[PATH_MAX + 128];
+        snprintf(chats, sizeof(chats), "%s/.scribodo/%s/chats", project_dir, dirs[d]);
+        DIR *cd = opendir(chats);
+        if (!cd) {
+            if (errno != ENOENT && errno != ENOTDIR) ok = false;
+            continue;
+        }
+        char **names = NULL;
+        size_t nn = 0, ncap = 0;
+        struct dirent *ent;
+        while (ok) {
+            errno = 0;
+            ent = readdir(cd);
+            if (!ent) { ok = errno == 0; break; }
+            size_t len = strlen(ent->d_name);
+            if (len < 7 || len - 6 >= 40 || strcmp(ent->d_name + len - 6, ".jsonl")) continue;
+            if (nn == ncap) {
+                ncap = ncap ? ncap * 2 : 16;
+                char **m = realloc(names, ncap * sizeof(char *));
+                if (!m) { ok = false; break; }
+                names = m;
+            }
+            if (!(names[nn] = strdup(ent->d_name))) { ok = false; break; }
+            nn++;
+        }
+        if (closedir(cd) != 0) ok = false;
+        if (ok && nn) qsort(names, nn, sizeof(char *), cmp_names);
+        for (size_t f = 0; ok && f < nn; f++) {
+            char id[40];
+            size_t len = strlen(names[f]) - 6;
+            memcpy(id, names[f], len);
+            id[len] = '\0';
+            bool id_ok = true;
+            for (const char *p = id; *p; p++) id_ok = id_ok && ((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'f') || *p == '-');
+            files++;
+            if (!id_ok) { skipped++; detail_add(detail, detaillen, "%s/%s: not a chat id; ", dirs[d], names[f]); continue; }
+            TitleClaim c = { .titles = NULL };
+            snprintf(c.file, sizeof(c.file), "%s/%s", chats, names[f]);
+            snprintf(c.label, sizeof(c.label), "%.100s/%s", dirs[d], names[f]);
+            struct stat st;
+            if (stat(c.file, &st) != 0 || !chat_store_titles_path(c.file, &c.titles, &c.n)) {
+                skipped++;
+                detail_add(detail, detaillen, "%s/%s: unreadable; ", dirs[d], names[f]);
+                continue;
+            }
+            c.updated = (double)st.st_mtimespec.tv_sec;
+            if (c.n < 2) { chat_store_titles_free(c.titles, c.n); continue; } /* never renamed: nothing to archive */
+            ChatMessage *msgs = NULL;
+            size_t nm = 0;
+            if (!chat_store_load_path(c.file, &msgs, &nm) || nm == 0) {
+                chat_store_free_messages(msgs, nm);
+                chat_store_titles_free(c.titles, c.n);
+                skipped++;
+                detail_add(detail, detaillen, "%s/%s: no first message to match; ", dirs[d], names[f]);
+                continue;
+            }
+            int found = title_claim_conversation(db, pid, id, &msgs[0], c.cid, sizeof(c.cid), &ok);
+            chat_store_free_messages(msgs, nm);
+            if (!ok || found != 1) {
+                chat_store_titles_free(c.titles, c.n);
+                if (ok) {
+                    skipped++;
+                    detail_add(detail, detaillen, found ? "%s/%s: ambiguous (several conversations match); "
+                                                        : "%s/%s: no conversation of this project matches; ",
+                               dirs[d], names[f]);
+                }
+                continue;
+            }
+            if (nclaims == cap) {
+                cap = cap ? cap * 2 : 16;
+                TitleClaim *m = realloc(claims, cap * sizeof(TitleClaim));
+                if (!m) { chat_store_titles_free(c.titles, c.n); ok = false; break; }
+                claims = m;
+            }
+            claims[nclaims++] = c;
+        }
+        for (size_t f = 0; f < nn; f++) free(names[f]);
+        free(names);
+    }
+    /* A conversation two files claim with different histories is ambiguous: neither is applied. The same history in two
+     * legacy folders (a move split by a death) is one claim. */
+    for (size_t i = 0; ok && i < nclaims; i++)
+        for (size_t j = i + 1; j < nclaims; j++) {
+            if (strcmp(claims[i].cid, claims[j].cid)) continue;
+            if (same_history(&claims[i], &claims[j])) { claims[j].skip = true; continue; }
+            claims[i].skip = claims[j].skip = claims[i].ambiguous = claims[j].ambiguous = true;
+            detail_add(detail, detaillen, "%s and %s: ambiguous (one conversation, two histories); ", claims[i].label, claims[j].label);
+        }
+    for (size_t i = 0; i < nclaims; i++) skipped += claims[i].ambiguous;
+    for (size_t i = 0; ok && i < nclaims; i++) {
+        if (claims[i].skip) continue;
+        bool applied = false;
+        ok = title_claim_apply(db, &claims[i], &applied);
+        if (applied) {
+            applied_n++;
+            titles_n += claims[i].n - 1;
+        }
+    }
+    char summary[160];
+    snprintf(summary, sizeof(summary), "%zu legacy folders, %zu chat files, %zu chats backfilled (%zu titles), %zu skipped%s",
+             nd, files, applied_n, titles_n, skipped, detail[0] ? ": " : "");
+    size_t sl = strlen(summary), dl = strlen(detail);
+    if (sl + dl + 1 <= detaillen) {
+        memmove(detail + sl, detail, dl + 1);
+        memcpy(detail, summary, sl);
+    } else snprintf(detail, detaillen, "%s", summary);
+    if (ok) {
+        DbArg a[4] = { DB_S(pid), DB_S(TITLE_BACKFILL), DB_D((double)time(NULL)), DB_S(detail) };
+        ok = db_run(db, "INSERT INTO project_backfills (project_id, name, done_at, detail) VALUES (?,?,?,?)", a, 4, NULL);
+        if (ok) crash_point("titles.statement");
+    }
+    for (size_t i = 0; i < nclaims; i++) chat_store_titles_free(claims[i].titles, claims[i].n);
+    free(claims);
+    for (size_t d = 0; d < nd; d++) free(dirs[d]);
+    free(dirs);
+    if (ok) ok = db_commit(db);
+    if (!ok) db_rollback(db);
+    return ok;
+}
+
+/* At open (store_adopt_project): the move finished if it died after its marker, then, once the move is complete (no
+ * witness, no legacy item live), the chat-title backfill, which is once per project by its receipt. A backfill that
+ * fails leaves no receipt and is tried at the next open; it never changes what this returns. */
+bool store_finish_import(StoreManager *manager, const char *project_dir)
+{
+    bool finished = finish_import_move(manager, project_dir);
+    char pid[40] = "", pending[PATH_MAX + 64];
+    Db *db = NULL;
+    if (!project_dir || !project_dir[0] || store_mode(manager, project_dir, pid, sizeof(pid), &db) != STORE_DB || !db) return finished;
+    snprintf(pending, sizeof(pending), "%s/.scribodo/import-pending", project_dir);
+    struct stat st;
+    if (lstat(pending, &st) == 0 || legacy_items_live(project_dir)) return finished;
+    (void)store_backfill_chat_titles_db(db, pid, project_dir, NULL, 0);
+    return finished;
 }

@@ -20,6 +20,9 @@ typedef struct {
 } ChatTitle;
 bool chat_store_titles_files(const char *project_dir, const char *id, ChatTitle **titles, size_t *count);
 void chat_store_titles_free(ChatTitle *titles, size_t count);
+/* The same two reads from a chat file at `path` (a set-aside legacy copy, for the title backfill): nothing created. */
+bool chat_store_titles_path(const char *path, ChatTitle **titles, size_t *count);
+bool chat_store_load_path(const char *path, ChatMessage **messages, size_t *count);
 bool chat_store_set_observer_files(const char *project_dir, const char *id, bool read);
 size_t chat_store_list_files(const char *project_dir, ChatSummary **out);
 bool chat_store_list_files_checked(const char *project_dir, ChatSummary **out, size_t *count);

@@ -911,11 +911,21 @@ static const char *const k_migration_019[] = {
     NULL,
 };
 
+/* AUDIT-004 F11 backfill: a receipt per project for a one-time repair that reads the project's files (here the chat
+ * titles an older importer left only in .scribodo/legacy-*), written in the repair's own transaction so the repair runs
+ * once and a death before its commit runs it again from the start. One re-runnable statement. */
+static const char *const k_migration_020[] = {
+    "CREATE TABLE IF NOT EXISTS project_backfills (project_id VARCHAR(40) NOT NULL, name VARCHAR(64) NOT NULL,"
+    " done_at DOUBLE NOT NULL, detail TEXT NULL, PRIMARY KEY (project_id, name))",
+    NULL,
+};
+
 static const char *const *const k_migrations[] = { k_migration_001, k_migration_002, k_migration_003, k_migration_004,
                                                    k_migration_005, k_migration_006, k_migration_007, k_migration_008,
                                                    k_migration_009, k_migration_010, k_migration_011, k_migration_012,
                                                    k_migration_013, k_migration_014, k_migration_015, k_migration_016,
-                                                   k_migration_017, k_migration_018, k_migration_019 };
+                                                   k_migration_017, k_migration_018, k_migration_019,
+                                                   k_migration_020 };
 
 int db_schema_version(Db *db)
 {

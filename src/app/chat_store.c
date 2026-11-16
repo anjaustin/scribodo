@@ -301,6 +301,13 @@ bool chat_store_titles_files(const char *project_dir, const char *id, ChatTitle 
     *count = 0;
     char path[1200];
     if (!path_for(project_dir, id, path, sizeof(path))) return false;
+    return chat_store_titles_path(path, titles, count);
+}
+
+bool chat_store_titles_path(const char *path, ChatTitle **titles, size_t *count)
+{
+    *titles = NULL;
+    *count = 0;
     struct stat st;
     FILE *f = open_regular(path, &st);
     if (!f) return false;
@@ -365,6 +372,13 @@ bool chat_store_load_files(const char *project_dir, const char *id, ChatMessage 
     *n = 0;
     char path[1200];
     if (!path_for(project_dir, id, path, sizeof(path))) return false;
+    return chat_store_load_path(path, msgs, n);
+}
+
+bool chat_store_load_path(const char *path, ChatMessage **msgs, size_t *n)
+{
+    *msgs = NULL;
+    *n = 0;
     char *text = slurp(path);
     if (!text) return false;
     size_t cap = 0;

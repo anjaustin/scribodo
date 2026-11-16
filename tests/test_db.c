@@ -25,6 +25,7 @@
 #include <sys/stat.h>
 #include "../src/app/renames.h"
 #include "../src/app/chat_store_internal.h"
+#include "../src/core/file_text.h"
 #include "test_util.h"
 #include "test_db_internal.h"
 #include "core/deadline_clock.h"
@@ -2075,6 +2076,180 @@ static void test_chat_title_reimport(void)
     system(cmd);
 }
 
+/* ---- the chat-title backfill (AUDIT-004 F11): chats imported before migration 019 ---------------------------------- */
+
+/* The project's archived titles, oldest first, joined by '|' (one conversation per project in these tests). */
+static void archive_of(Db *db, const char *pid, char *out, size_t len)
+{
+    DbRows r;
+    out[0] = '\0';
+    if (!db_query(db, "SELECT GROUP_CONCAT(t.title ORDER BY t.seq SEPARATOR '|') FROM conversation_titles t"
+                      " JOIN conversations c ON c.id = t.conversation_id WHERE c.project_id = ?",
+                  (DbArg[1]){ DB_S(pid) }, 1, &r))
+        return;
+    if (r.nrows == 1 && db_cell(&r, 0, 0)) snprintf(out, len, "%s", db_cell(&r, 0, 0));
+    db_rows_free(&r);
+}
+
+/* A file-store project with one chat (first message `first`) renamed twice in the files, imported, then put back in
+ * the state the importer before migration 019 left: no archived titles, no backfill receipt. */
+static bool old_import(const char *root, const char *name, const char *id, const char *first, char *proj, size_t plen,
+                       char *pid, size_t pidlen)
+{
+    char why[256];
+    snprintf(proj, plen, "%s/%s", root, name);
+    if (mkdir(proj, 0755) != 0) return false;
+    ChatMessage u = { .role = CHAT_USER, .content = (char *)first };
+    if (!chat_store_append(g_store, proj, id, "First", &u) || !chat_store_title_line_files(proj, id, "Second", 1700000000) ||
+        !chat_store_title_line_files(proj, id, "Third", 1700000100) || !store_import(g_store, proj, why, sizeof(why)) ||
+        store_mode(g_store, proj, pid, pidlen, NULL) != STORE_DB)
+        return false;
+    Db *db = store_db(g_store);
+    return db_run(db, "DELETE t FROM conversation_titles t JOIN conversations c ON c.id = t.conversation_id WHERE c.project_id = ?",
+                  (DbArg[1]){ DB_S(pid) }, 1, NULL) &&
+           db_run(db, "DELETE FROM project_backfills WHERE project_id = ?", (DbArg[1]){ DB_S(pid) }, 1, NULL);
+}
+
+static char *legacy_chat(const char *proj, const char *id)
+{
+    char base[PATH_MAX + 32];
+    snprintf(base, sizeof(base), "%s/.scribodo", proj);
+    DIR *d = opendir(base);
+    struct dirent *ent;
+    char *out = NULL;
+    while (d && !out && (ent = readdir(d)) != NULL)
+        if (!strncmp(ent->d_name, "legacy-", 7)) {
+            out = malloc(PATH_MAX + 200);
+            if (out) snprintf(out, PATH_MAX + 200, "%s/%s/chats/%s.jsonl", base, ent->d_name, id);
+        }
+    if (d) closedir(d);
+    return out;
+}
+
+static void test_chat_title_backfill(void)
+{
+    char why[256] = "", root[PATH_MAX], proj[PATH_MAX + 32], pid[40], got[512], detail[4000];
+    CHECK(store_start(g_store, g_name, why, sizeof(why)));
+    Db *db = store_db(g_store);
+    snprintf(root, sizeof(root), "%sscribodo-title-backfill-XXXXXX", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp/");
+    CHECK(mkdtemp(root) != NULL);
+    const char *x = "20261115-130000-abcd";
+
+    /* A plain backfill at open: the two earlier titles, with the times of the lines that replaced them; the legacy file
+     * untouched. */
+    CHECK(old_import(root, "a", x, "Who is Ms. Bennet?", proj, sizeof(proj), pid, sizeof(pid)));
+    char *legacy = legacy_chat(proj, x), *before = NULL, *after = NULL;
+    CHECK(legacy && file_text_read(legacy, &before) == FILE_TEXT_OK);
+    archive_of(db, pid, got, sizeof(got));
+    CHECK(!strcmp(got, ""));
+    store_finish_import(g_store, proj);
+    archive_of(db, pid, got, sizeof(got));
+    CHECK(!strcmp(got, "First|Second"));
+    DbRows r;
+    CHECK(db_query(db, "SELECT GROUP_CONCAT(CAST(t.replaced_at AS SIGNED) ORDER BY t.seq) FROM conversation_titles t"
+                       " JOIN conversations c ON c.id = t.conversation_id WHERE c.project_id = ?", (DbArg[1]){ DB_S(pid) }, 1, &r) &&
+          r.nrows == 1 && db_cell(&r, 0, 0) && !strcmp(db_cell(&r, 0, 0), "1700000000,1700000100"));
+    db_rows_free(&r);
+    CHECK(legacy && file_text_read(legacy, &after) == FILE_TEXT_OK && before && after && !strcmp(before, after));
+    free(before);
+    free(after);
+    free(legacy);
+    /* A re-run is a no-op: by the receipt, and without it by the archive already holding the titles. */
+    store_finish_import(g_store, proj);
+    archive_of(db, pid, got, sizeof(got));
+    CHECK(!strcmp(got, "First|Second"));
+    CHECK(store_backfill_chat_titles_db(db, pid, proj, detail, sizeof(detail)) && strstr(detail, "1 chats backfilled (2 titles)"));
+    CHECK(db_run(db, "DELETE FROM project_backfills WHERE project_id = ?", (DbArg[1]){ DB_S(pid) }, 1, NULL));
+    CHECK(store_backfill_chat_titles_db(db, pid, proj, detail, sizeof(detail)) && strstr(detail, "0 chats backfilled"));
+    archive_of(db, pid, got, sizeof(got));
+    CHECK(!strcmp(got, "First|Second"));
+
+    /* The same chat id in another project: imported under the rebased id, backfilled there. */
+    char pid_b[40];
+    CHECK(old_import(root, "b", x, "A different first message", proj, sizeof(proj), pid_b, sizeof(pid_b)));
+    CHECK(db_query(db, "SELECT id FROM conversations WHERE project_id = ?", (DbArg[1]){ DB_S(pid_b) }, 1, &r) && r.nrows == 1 &&
+          strcmp(db_cell(&r, 0, 0), x) != 0);
+    db_rows_free(&r);
+    CHECK(store_backfill_chat_titles_db(db, pid_b, proj, detail, sizeof(detail)) && strstr(detail, "1 chats backfilled (2 titles)"));
+    archive_of(db, pid_b, got, sizeof(got));
+    CHECK(!strcmp(got, "First|Second"));
+    archive_of(db, pid, got, sizeof(got));
+    CHECK(!strcmp(got, "First|Second")); /* the first project's archive is its own */
+
+    /* Renamed in the store after the import: the file's titles come before the store's renames, and a rename after the
+     * backfill still lands last (the key counter is intact). */
+    char pid_c[40];
+    const char *y = "20261115-130100-abcd";
+    CHECK(old_import(root, "c", y, "Renamed later", proj, sizeof(proj), pid_c, sizeof(pid_c)));
+    CHECK(chat_store_rename(g_store, proj, y, "Fourth"));
+    archive_of(db, pid_c, got, sizeof(got));
+    CHECK(!strcmp(got, "Third"));
+    CHECK(store_backfill_chat_titles_db(db, pid_c, proj, detail, sizeof(detail)));
+    archive_of(db, pid_c, got, sizeof(got));
+    CHECK(!strcmp(got, "First|Second|Third"));
+    CHECK(chat_store_rename(g_store, proj, y, "Fifth"));
+    archive_of(db, pid_c, got, sizeof(got));
+    CHECK(!strcmp(got, "First|Second|Third|Fourth"));
+    char exported[PATH_MAX + 48];
+    snprintf(exported, sizeof(exported), "%s/c-export", root);
+    CHECK(store_export_project(g_store, pid_c, exported, why, sizeof(why)));
+    ChatTitle *t = NULL;
+    size_t n = 0;
+    CHECK(chat_store_titles_files(exported, y, &t, &n) && n == 5 && !strcmp(t[0].title, "First") && !strcmp(t[4].title, "Fifth"));
+    chat_store_titles_free(t, n);
+
+    /* Ambiguous: a second legacy copy of the chat with another history claims the same conversation; neither applies.
+     * A file whose first message matches no conversation of the project is skipped too. Both are named. */
+    char pid_d[40];
+    const char *z = "20261115-130200-abcd";
+    CHECK(old_import(root, "d", z, "Ambiguous", proj, sizeof(proj), pid_d, sizeof(pid_d)));
+    char path[PATH_MAX + 200], *text = NULL;
+    legacy = legacy_chat(proj, z);
+    CHECK(legacy && file_text_read(legacy, &text) == FILE_TEXT_OK);
+    snprintf(path, sizeof(path), "%s/.scribodo/legacy-zzzz", proj);
+    CHECK(mkdir(path, 0755) == 0);
+    snprintf(path, sizeof(path), "%s/.scribodo/legacy-zzzz/chats", proj);
+    CHECK(mkdir(path, 0755) == 0);
+    snprintf(path, sizeof(path), "%s/.scribodo/legacy-zzzz/chats/%s.jsonl", proj, z);
+    char *other = text ? malloc(strlen(text) + 80) : NULL;
+    if (other) {
+        sprintf(other, "%s{\"type\":\"title\",\"title\":\"Elsewhere\",\"ts\":1700000200}\n", text);
+        write_file(path, other);
+    }
+    snprintf(path, sizeof(path), "%s/.scribodo/legacy-zzzz/chats/20261115-130300-abcd.jsonl", proj);
+    write_file(path, "{\"type\":\"meta\",\"version\":1,\"title\":\"A\"}\n{\"type\":\"message\",\"role\":\"user\",\"content\":\"Nobody\",\"ts\":1}\n"
+                     "{\"type\":\"title\",\"title\":\"B\",\"ts\":2}\n");
+    free(other);
+    free(text);
+    free(legacy);
+    CHECK(store_backfill_chat_titles_db(db, pid_d, proj, detail, sizeof(detail)));
+    CHECK(strstr(detail, "0 chats backfilled") && strstr(detail, "ambiguous (one conversation, two histories)") &&
+          strstr(detail, "no conversation of this project matches") && strstr(detail, "3 skipped") && !strstr(detail, root));
+    archive_of(db, pid_d, got, sizeof(got));
+    CHECK(!strcmp(got, ""));
+
+    /* No legacy folder (moved away here; the product never removes one): a receipt that says so, nothing written. */
+    char pid_e[40];
+    const char *w = "20261115-130400-abcd";
+    CHECK(old_import(root, "e", w, "Missing", proj, sizeof(proj), pid_e, sizeof(pid_e)));
+    legacy = legacy_chat(proj, w);
+    char moved[PATH_MAX + 48];
+    snprintf(moved, sizeof(moved), "%s/e-legacy-moved", root);
+    if (legacy) *strstr(legacy, "/chats/") = '\0';
+    CHECK(legacy && rename(legacy, moved) == 0);
+    free(legacy);
+    store_finish_import(g_store, proj);
+    CHECK(db_query(db, "SELECT detail FROM project_backfills WHERE project_id = ?", (DbArg[1]){ DB_S(pid_e) }, 1, &r) &&
+          r.nrows == 1 && db_cell(&r, 0, 0) && strstr(db_cell(&r, 0, 0), "0 legacy folders"));
+    db_rows_free(&r);
+    archive_of(db, pid_e, got, sizeof(got));
+    CHECK(!strcmp(got, ""));
+
+    char cmd[PATH_MAX + 20];
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root);
+    system(cmd);
+}
+
 int main(void)
 {
     g_store = store_manager_create();
@@ -2099,6 +2274,7 @@ int main(void)
                           { "chat_title_archive", test_chat_title_archive },
                           { "chat_title_bad_time", test_chat_title_bad_time },
                           { "chat_title_reimport", test_chat_title_reimport },
+                          { "chat_title_backfill", test_chat_title_backfill },
                          { "entities_redteam", test_entities_redteam }, { "semantic", test_semantic } };
     int rc = run_db_core_tests();
     if (run_tests(tests, sizeof(tests) / sizeof(tests[0])) != 0) rc = 1;
