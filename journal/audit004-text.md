@@ -712,3 +712,22 @@ processes (a fork, so both draw the same ids in one fixed second) each write 40 
 all 80 are records of one version. `test_db` `record_ids_two_writers` does the same in the store. Without `_NEW`
 (the old append) the file test ends with 79 records, one note filed as another's second version (checked by mutation);
 with `_NEW` but without the folder lock it failed too (a writer read the other's half-written line).
+
+### Measured, evidence and gates (final verification)
+
+Item 2 (c), measured in `test_db`: six renames on the test thread while the worker backfilled 60 chats of 20 title
+lines each all succeeded; the worst wait was 0.5 ms.
+
+Evidence: `build/audit004-text/f1` (item 1's re-measurement) is in `scribodo-evidence-2026-11-15-audit004f.tar.gz`;
+`build/audit004-text/f-gates` (the gate logs below) is in `scribodo-evidence-2026-11-15-audit004g.tar.gz`; each with
+its manifest and `SHA256SUMS` entry.
+
+Gates on the final tree (`build/audit004-text/f-gates`), run after the coordinator's matrix had ended: `make dbtest` 0;
+`make analyze` 0 (102 files; no `clang` process running); `make crashtest` 0 (141 rows, 1,588 checks, 0 failures,
+557 s). `make test` and `make sanitize` exited 2 at `evidencecheck` only (`test-attempt1.log`,
+`sanitize-attempt1.log`): 18 citations in other documents (`docs/EVIDENCE.md`, `docs/TESTING.md`,
+`journal/observer-cycle1_replay.md` and others) of the observer's replay folder, under which the 314 files of a
+`yardstick-check` run (written at 21:36 during the coordinator's matrix) are in no archive; nothing this stream cites
+is unarchived. The same targets with `evidencecheck` taken as done (`make -o evidencecheck test`, and sanitize's
+`make BUILD=build/asan OPT="$(SAN_FLAGS)" -o evidencecheck test`) exited 0 (`test-without-evidencecheck.log`,
+`sanitize-without-evidencecheck.log`).
