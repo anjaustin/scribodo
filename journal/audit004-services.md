@@ -545,3 +545,28 @@ on this tree (`B-servicestest-run1.log` and `-run2.log`, with `.exit` files):
 - both exit 0, 22 checks ok each (all 10 steps, five Docker cases), no "setup failed", no cleanup complaint;
 - after each run only `scribodo_mariadb` and `scribodo_qdrant` exist, with no rehearsal container or volume
   (`B-after-run{1,2}.state`).
+
+## backuptest in Docker mode
+
+This exercises RT1's corrected shell-escape probe, which only means something when the loading client is inside a
+container. Steps:
+1. A throwaway Docker store: `SCRIBODO_SECRETS` in a scratch folder, `SCRIBODO_SERVICES=docker`,
+   `SCRIBODO_COMPOSE_PROJECT=scribodo-bt`, ports 33063/6335. `tools/services.sh up` exited 0, both containers healthy
+   (`backuptest-docker-up.log`).
+2. `IOConsoleLocked` was false. `make backuptest` exited 0 with 18 checks ok, including "a dump with a shell escape is
+   refused", whose probe now has to print `absent` from inside the container (`backuptest-docker.log`, `.exit`).
+3. The store was taken down and purged with `SCRIBODO_PURGE_CONFIRM=1`: `scribodo-bt_mariadb` and `_qdrant` removed,
+   the author's two volumes still present (`backuptest-docker-teardown.log`).
+
+## Gates on the final tree (`d61db9a` plus this journal and EVIDENCE.md)
+
+- `SCRIBODO_SERVICESTEST_DOCKER=1 make servicestest`: exit 0, twice in a row (above, B).
+- `make test`: exit 0, including `test_services_docker`, the evidence check (every citation above archived) and the
+  observer yardstick (pp 717, mars 348, heights 948, byte-identical). The first attempt exited 2 only because the new
+  worktree had no `build/manuscripts`; the test novels were linked in from the main checkout, and the rerun passed.
+- `make sanitize`: exit 0, after the same link (its first attempt failed the same way).
+- `make analyze`: exit 0 (0 warnings, 102 files; no real clang analyzer was running).
+- `make dbtest`: exit 0 (12 suites, 0 failures; no `test_db` or `test_crash_points` process was running).
+- `make backuptest` in Docker mode: exit 0 (above).
+
+The evidence is in `scribodo-evidence-2026-11-16-docker.tar.gz`; `docs/EVIDENCE.md` gives its manifest and SHA-256.

@@ -245,6 +245,18 @@ The data/text stream's final verification rounds, each with its manifest and `SH
 - `scribodo-evidence-2026-11-15-audit004i.tar.gz` (10 files): the second pass's gates on `45b001f`
   (`build/audit004-text/g-gates`). SHA-256 `98134062d3bf77cf469804706267f44aee8729dd7b4bdd719bb9ac012bbd1c5b`.
 
+The services stream's Docker-mode work of 2026-11-16 (journal `audit004-services.md`, "With Docker running") is in
+`scribodo-evidence-2026-11-16-docker.tar.gz` (17 files, `build/audit004-services-docker`), with
+`manifest-scribodo-evidence-2026-11-16-docker.txt` and an entry in `SHA256SUMS`:
+- the step-10 rehearsal with main's `services.sh` (the migration's restore leaving the native store down) and with the
+  fix (`A-before-fix-*`, `A-after-fix-*`);
+- the stale `scribodo-st-h` volumes removed by exact name (`C-stale-volumes.log`);
+- the planted interrupted-run state, the two back-to-back Docker rehearsals and the Docker state after each
+  (`B-*`);
+- `backuptest` against a throwaway Docker store, from `up` to purge (`backuptest-*`).
+
+Archive SHA-256: `7cc03f8c0354d4ba822138cfe51ac30b2b22a2ae10b0340956b7f46ed8c15212`.
+
 Since 2026-11-15 `make test` runs `tools/evidence_check.py`. Every cited `build/` path must be one of:
 - archived: checked against each tarball's real file list, so a cited directory counts only when every file under
   it is archived, and a file stem (`build/recover/gates2`) resolves to its files;
