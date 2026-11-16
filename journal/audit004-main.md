@@ -183,3 +183,86 @@ note "acceptance runner console lock"), and this stream was allowed one run, so 
 run once the console is unlocked. It is the strongest check on item 2 (`main()`/`build_layout`), on item 3's
 script-mode host check and on item 6, so the branch should not merge until it exits 0.
 
+
+## Red-team remediation (same branch)
+
+The coordinator's red team on `remed/main` found five items; each is one commit. Gates: `make test`, `make sanitize`
+and `make tsan` exit 0 each; `make analyze` was run only when `pgrep -fl "clang --analyze"` showed no other run
+(exit 1, nothing found). uitest is the coordinator's, after merge.
+
+| Item | Commit | What |
+|---|---|---|
+| 3 | `2e0a532` | deterministic in-flight draft tests through a write hook |
+| 1 | `d99a745` | no draft write in flight when a load recovers strays |
+| 2 | `3940161` | a failed draft write is reported once |
+| 4 | `9c6fb48` | the environment-write guard's holes closed |
+| 5 | `2c34003` | workflow bodies leave main.c (F3) |
+
+Item 3 went first because items 1 and 2 are tested through its hook.
+
+**Item 3.** `draft_controller_set_write_hook` (tests only) runs on the writing thread before each write. The tests block
+it on a mutex/condition gate and wait until the writer is inside, so the write is certainly in flight, then exercise
+`discard_while_writing`, `switch_while_writing` and `quit_while_writing`. The old test accepted `|| !d.busy` and so
+might never run the `discard_pending` branch. The draft test is in the tsan list; it ran clean five times there before
+the commit, and in the final gate.
+
+**Item 1.** Only `editor_load_file` calls `doc_recover_strays`, and only `open_path` calls `editor_load_file`, so
+`open_path` is the one load path; it now calls `draft_controller_before_load` before the load. That function **waits
+for the write and then discards** (unless the draft holds unsaved text of the document being loaded), rather than
+discarding and then waiting as suggested. A discard would also remove the whole draft of a dirty buffer being
+reloaded. Under the synchronous writer that draft survived the reload as a recovered copy, and waiting first keeps
+that. The race the red team found (Cmd-S, write in flight, the same document opened) ends with no draft at all,
+because the buffer is clean. `test_load_while_writing` covers both cases with the write held in flight; a dirty reload
+recovers the complete text.
+
+**Item 2.** `adopt` records a failed write with its errno; `draft_controller_take_failure` returns it once per run of
+failures (a successful write or a discard re-arms it), and `draft_tick` shows "Couldn't keep a draft of the unsaved
+text beside the document (<reason>); save to keep it". The status line is not covered by a UI script (nothing in the
+fixtures makes the draft write fail); the controller's once-per-run rule is unit-tested.
+
+**Item 4.** `tests/test_env_writes.py` now scans headers as well as `.c`/`.m`. It flags any mention of
+`setenv`/`unsetenv`/`putenv`/`_NSGetEnviron` (a call, a `#define` alias, `&setenv`) and any assignment through
+`environ`, outside `startup_env.c`. Self-tests cover each spelling the red team showed passing, and reads that must
+not trip it (`posix_spawn(..., environ)` in three files). The ordering check now requires `startup_env_prepare` to be
+`main()`'s first call, which no phase split can break. In `startup_env.c` a second prepare and any write after the
+seal now `assert`. Every build this tree makes keeps assertions; with `NDEBUG` the old refuse-and-report remains.
+`test_startup_env` checks all three abort in a forked child and leave the parent's environment untouched.
+
+**Item 5 (F3).** `src/main.c` goes from 4,912 lines to **1,799**. Moved:
+
+| File | Lines | Contents |
+|---|---|---|
+| `src/app/app_internal.h` | 506 | `App`, its unions and static asserts, enums, colours, macros, `MainLoop`/`FrameRects`, prototypes of the 77 shared functions |
+| `src/ui/layout.c` | 430 | `build_layout`, `layout_*`, `update_labels`, the Clay helpers, `element_rect_str`: all 31 `CLAY(` sites |
+| `src/app/script_host_app.c` | 340 | the `host_*` adapters, `scripted_history_read`, `script_host_setup` |
+| `src/app/app_lifecycle.c` | 378 | startup phases, fonts and raygui style, `app_destroy` |
+| `src/app/chat_workflow.c` | 710 | `send_chat`, `on_message_done`, history windows, attachments, names noticed in chat |
+| `src/app/document_workflow.c` | 349 | `finish_prompt`, new/rename/import/reveal |
+| `src/app/record_workflow.c` | 578 | notes, canon, entities, observer findings |
+
+The move was done by a script that cuts top-level units (with their doc comments) by name. Every non-blank line of the
+old main.c appears in the new files; the differences are `static` dropped from the 77 shared functions, the includes,
+the file headers, and two forward declarations no longer needed. Functions that stayed private to a new file stay
+`static` there.
+
+Deliberately left in main.c:
+- the status line, the project lists refresh, the memory controls, and the store, import and backup polls. The
+  services stream edits `store_try_later` and the loop's services-started status; keeping them here keeps that merge
+  clean.
+- the reviewed-edit glue (propose/accept/reject/restore), `open_path`/`open_project`, the model-settings panel, the
+  draft adapter, the welcome screen and the recall panel. These are small adapters the frame loop calls directly.
+- the frame loop (`frame_step`, the `frame_*` phases, `main()`), which is what a composition root is.
+
+Longest in main.c now: `frame_left_click` 98, `main` 80, `draw_empty` 74.
+
+Gates on `2c34003` (exit status read from the shell):
+
+| Gate | Exit |
+|---|---|
+| `make test` | 0 |
+| `make analyze` | 0, "0 warnings across 97 source files" (no other analyzer running: `pgrep` exit 1) |
+| `make sanitize` | 0 |
+| `make tsan` | 0 (includes `test_draft_controller` with the held-write tests) |
+| `make uitest` | not run here; the coordinator runs it after merge |
+
+Every item ran `make test` (exit 0) before its commit.
