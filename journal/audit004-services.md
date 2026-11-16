@@ -386,3 +386,14 @@ Mutation: with byte-wise `snprintf` restored in both places, the case fails at t
 of the small-buffer sizes.
 
 **Gates (RT6):** `make test` exit 0; `make analyze` exit 0 (0 warnings, 89 files); `make sanitize` exit 0.
+
+## Red-team remediation: end gates (tree `14bcad8`)
+
+- `make dbtest`: exit 0 (12 suites, each "0 failures").
+- `make servicestest`: exit 0, run once after `pgrep` found no other run, with the main checkout's pinned Qdrant.
+  Steps 1-9 ok; step 10 skipped, Docker not running. The new version check (RT2), the wider trap (RT3) and the
+  bundle-aware Qdrant lookup (RT5) all ran on real daemons here: the installed 11.4.13 passed silently, and every
+  `up` exited 0.
+- Still for the coordinator after merge: `backuptest` (now also RT1's corrected shell-escape probe in docker mode,
+  which needs Docker to mean anything), `uitest-db`, and the restore path, which run item 3's root operations on a
+  real server.
