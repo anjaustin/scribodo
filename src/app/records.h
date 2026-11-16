@@ -80,6 +80,11 @@ void records_new_id(RecordKind kind, char *out, size_t outlen);
 /* False, with `out` empty, when every attempt (all 65,536 suffixes of the second) is taken: the caller has no id and
  * must not write (an empty id is refused by every record write in any case). */
 bool records_new_id_unused(RecordKind kind, const Record *taken, size_t ntaken, char *out, size_t outlen);
+/* A new id that the project's log of `kind` does not hold: the log read (records_list_checked), then
+ * records_new_id_unused over it. False, with `out` empty, when the log cannot be read or every attempt is taken. The
+ * author's new notes and canon entries draw with it (record_workflow.c), as the observer draws against its findings.
+ * The read and the write are not under one lock: another process writing in between is the residual race. */
+bool records_new_id_checked(StoreManager *manager, const char *project_dir, RecordKind kind, char *out, size_t outlen);
 /* Test hook: records_new_id stamps `fixed_time` (0: the clock) and records_new_id_unused gives up after
  * `max_attempts` (0: 65,536). Process-wide; a test restores both with records_test_id_hooks(0, 0). */
 void records_test_id_hooks(time_t fixed_time, unsigned max_attempts);

@@ -101,6 +101,18 @@ bool records_new_id_unused(RecordKind kind, const Record *taken, size_t ntaken, 
     return false;
 }
 
+bool records_new_id_checked(StoreManager *manager, const char *project_dir, RecordKind kind, char *out, size_t outlen)
+{
+    if (outlen) out[0] = '\0';
+    Record *taken = NULL;
+    size_t ntaken = 0;
+    bool ok = records_list_checked(manager, project_dir, kind, &taken, &ntaken) &&
+              records_new_id_unused(kind, taken, ntaken, out, outlen);
+    records_free(taken, ntaken);
+    if (!ok && outlen) out[0] = '\0';
+    return ok;
+}
+
 void records_free_sources(SourceRef *s, size_t n)
 {
     for (size_t i = 0; i < n; i++) free(s[i].quote);

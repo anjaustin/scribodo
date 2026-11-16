@@ -1318,6 +1318,34 @@ static void test_records(void)
               (unsigned)strtoul(next + 18, NULL, 16) == ((suffix + 4) & 0xffffu)); /* the count moved past them */
         records_test_id_hooks(0, 0);
     }
+    /* The author's new notes and canon entries draw against the project's log (records_new_id_checked, AUDIT-004 F12;
+     * record_workflow.c's new_record_id): an id another process already wrote in this second is passed over; an
+     * exhausted draw or an unreadable log gives no id, so the workflow takes its existing failure path. */
+    {
+        char lp[700];
+        snprintf(lp, sizeof(lp), "%s/ids-proj", g_dir);
+        mkdir(lp, 0755);
+        records_test_id_hooks((time_t)1763300000, 0);
+        char first[40], got[40];
+        records_new_id(REC_NOTE, first, sizeof(first));
+        unsigned suffix = (unsigned)strtoul(first + 18, NULL, 16);
+        for (unsigned k = 1; k <= 3; k++) { /* "another process" wrote the next three ids of this second */
+            char other[40];
+            snprintf(other, sizeof(other), "%.18s%04x", first, (suffix + k) & 0xffffu);
+            CHECK(records_append(g_store, lp, REC_NOTE, other, "active", "Someone else's note.", NULL, 0, NULL));
+        }
+        CHECK(records_new_id_checked(g_store, lp, REC_NOTE, got, sizeof(got)) && !strncmp(got, first, 18) &&
+              (unsigned)strtoul(got + 18, NULL, 16) == ((suffix + 4) & 0xffffu));
+        records_test_id_exhausted(true);
+        CHECK(!records_new_id_checked(g_store, lp, REC_NOTE, got, sizeof(got)) && got[0] == '\0');
+        records_test_id_exhausted(false);
+        char log[800];
+        snprintf(log, sizeof(log), "%s/.scribodo/notes.jsonl", lp);
+        CHECK(chmod(log, 0000) == 0);
+        CHECK(!records_new_id_checked(g_store, lp, REC_NOTE, got, sizeof(got)) && got[0] == '\0');
+        CHECK(chmod(log, 0644) == 0);
+        records_test_id_hooks(0, 0);
+    }
     int ver = 0;
     CHECK(records_append(g_store, proj, REC_NOTE, nid, "active", "Check the letter's date.", &src, 1, &ver) && ver == 1);
     CHECK(records_append(g_store, proj, REC_NOTE, nid, "active", "Check the letter's date (1911?).", &src, 1, &ver) && ver == 2);

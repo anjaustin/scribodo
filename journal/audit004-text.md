@@ -587,3 +587,16 @@ id of this second is taken) — retrying in a minute" instead of the state-file 
 `observer_id_exhaustion` forces the exhaustion (`records_test_id_exhausted`, a test hook beside
 `records_test_id_hooks`), sees that status, no job done and no finding, then lifts it and sees the retry write the
 findings; with the previous `observer.c` the test fails at the status check (run).
+
+### C. The author's new notes and canon entries draw an unused id
+
+The five new-id sites, now in `src/app/record_workflow.c` (`save_note`, `note_from_selection`, the reply saved as a
+note, `save_canon`'s first version, and the finding's `FA_NOTE`), call `new_record_id`, which uses the new
+`records_new_id_checked` (`src/app/records.c`): the project's log of that kind is read and `records_new_id_unused`
+draws past every id it holds. On failure (the log cannot be read, or every id is taken) each site takes its existing
+failure path ("Could not save the note to .scribodo/notes.jsonl", "Could not save to .scribodo/canon.jsonl") and
+writes nothing. Before, an id another process had written in the same second was filed as that record's next
+version, hiding it. The read and the write are not under one lock; a writer in between is the residual race (as
+recorded in item 4). Test: `test_llm` writes the next three ids of a fixed second as "another process's" notes and
+sees `records_new_id_checked` land past them, then sees it give no id under forced exhaustion and with the log made
+unreadable.
