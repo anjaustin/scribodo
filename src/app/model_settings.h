@@ -18,6 +18,7 @@ typedef struct {
     double repeat_penalty;
     double edit_temperature; /* reviewed edits (lower: closer to the text) */
     int context;            /* tokens per conversation (the model restarts to change it) */
+    int keep_in_memory;     /* 1: the chat model's weights are pinned in RAM, never swapped (the model restarts) */
 } ModelSettings;
 
 void model_settings_defaults(ModelSettings *m);
@@ -32,9 +33,10 @@ typedef struct {
     const char *label, *hint;
     double min, max, step;
     bool integer;
+    bool toggle; /* 0 or 1, shown as Off and On */
 } ModelSettingInfo;
 
-#define MODEL_SETTING_COUNT 8
+#define MODEL_SETTING_COUNT 9
 /* The largest context per conversation the panel offers: the model's trained context (llm_model_context_length),
  * rounded down to the step. Call before model_settings_load, so a saved setting above the old ceiling survives.
  * Ignored when `tokens` is 0 (unknown). */

@@ -35,6 +35,7 @@ typedef struct {
     char cache_path[1024];  /* verified-hash cache */
     int ctx_total;          /* -c (split evenly across slots) */
     int ctx_train;          /* the model's trained context, from its file (0: unknown); a slot's ceiling */
+    bool keep_resident;     /* chat: pin the weights in RAM (--load-mode mmap+mlock) */
     int slots;              /* -np */
     int batch;              /* -b and -ub */
     bool embedding;         /* an embedding server (Qwen3-Embedding), not the chat model */
@@ -87,6 +88,9 @@ int llm_server_slot_ctx(LlmServer *s);
  * range (below 2048, or above the model's trained context when known).
  * Callers make sure nothing is in flight. */
 bool llm_server_set_slot_ctx(LlmServer *s, int slot_ctx);
+/* Both at once, with at most one restart: the context per slot (as above) and whether the weights are pinned in
+ * RAM (--load-mode mmap+mlock). False, and nothing changed, if the context is out of range. */
+bool llm_server_reconfigure(LlmServer *s, int slot_ctx, bool keep_resident);
 
 /* The estimated memory for `cfg` at `ctx_total` tokens: the model file
  * (memory-mapped weights) plus mem_fixed plus mem_per_token x ctx_total. */

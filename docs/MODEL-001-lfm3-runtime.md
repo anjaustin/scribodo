@@ -197,11 +197,20 @@ of their own experiments; a tool that reproduces the product from now on adds `-
 The model file declares its trained context (`lfm3.context_length` = 262,144); `llm_model_context_length` reads it
 from the GGUF header with every length bounded, and the Model settings panel offers context per conversation up to it in
 8K steps (`model_settings_set_context_limit`, applied before the saved settings are read). 32K stays the default and the
-fallback when no model file can be read. A slot above the file's value is refused (`llm_server_set_slot_ctx`).
+fallback when no model file can be read. A slot above the file's value is refused (`llm_server_reconfigure`, which applies a new context and the keep setting with one restart).
 
 Measured on this Mac with `--swa-full`: prefill runs at about 900 tokens a second at 3K and averages 570 over 30K (flash
 attention is off, so attention cost grows with the prompt); generation stays near 20 tokens a second at 30K. Planted
 facts at 10, 50 and 90% of a 30K prompt were all recalled.
+
+## Keeping the model in memory (2026-11-16)
+
+`--load-mode mmap+mlock` when the author's **Keep the model in memory** is on (the default): the weights are pinned, and
+macOS swaps other apps first (`vm.user_wire_limit` is 13 GB on the 16 GB Mac). Measured with a 6K-token conversation,
+8 minutes idle, then another process touching 4 GB: the next turn read its 20 new tokens in 0.33 s with 1 page read back
+from disk, against 1.28 s and 78,408 pages (the weights) without. Keeping the GPU buffers resident as well
+(`GGML_METAL_RESIDENCY_KEEP_ALIVE_S=1800`, against llama.cpp's 3 minutes) took it to 0.15 s, but llama.cpp holds them by
+waking a thread every 5 ms for the whole window, so the app does not set it.
 
 ## Deployment security
 

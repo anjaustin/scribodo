@@ -13,16 +13,20 @@
 #include "core/json.h"
 
 static ModelSettingInfo k_info[MODEL_SETTING_COUNT] = {
-    { "Max reply length", "tokens per reply", 256, 8192, 256, true },
-    { "Temperature", "higher: more varied", 0.0, 1.5, 0.05, false },
-    { "Top-p", "keep the likeliest words up to this share", 0.05, 1.0, 0.05, false },
-    { "Top-k", "keep this many likeliest words (0: off)", 0, 200, 5, true },
-    { "Min-p", "drop words this much less likely than the best", 0.0, 0.5, 0.01, false },
-    { "Repeat penalty", "discourage repeating words", 1.0, 1.5, 0.01, false },
-    { "Edit temperature", "for reviewed edits", 0.0, 1.5, 0.05, false },
+    { "Max reply length", "tokens per reply", 256, 8192, 256, true, false },
+    { "Temperature", "higher: more varied", 0.0, 1.5, 0.05, false, false },
+    { "Top-p", "keep the likeliest words up to this share", 0.05, 1.0, 0.05, false, false },
+    { "Top-k", "keep this many likeliest words (0: off)", 0, 200, 5, true, false },
+    { "Min-p", "drop words this much less likely than the best", 0.0, 0.5, 0.01, false, false },
+    { "Repeat penalty", "discourage repeating words", 1.0, 1.5, 0.01, false, false },
+    { "Edit temperature", "for reviewed edits", 0.0, 1.5, 0.05, false, false },
     /* The ceiling is the model's own trained context (model_settings_set_context_limit, from its file); 32K only
      * until that is known, or when no model file can be read (UI scripts' fake model). */
-    { "Context per conversation", "tokens; the model restarts to change it", 8192, 32768, 8192, true },
+    { "Context per conversation", "tokens; the model restarts to change it", 8192, 32768, 8192, true, false },
+    /* Pinned weights (--load-mode mmap+mlock): measured 2026-11-16, after 8 minutes idle and another process taking
+     * 4 GB, the next turn read its prompt in 0.33 s against 1.28 s, with 1 page read back from disk against 78,408
+     * (the weights). Other apps take the swapping instead. MODEL-001 "Keeping the model in memory". */
+    { "Keep the model in memory", "never swapped: other apps give way", 0, 1, 1, true, true },
 };
 
 #define DEFAULT_CONTEXT 32768
@@ -46,6 +50,7 @@ void model_settings_defaults(ModelSettings *m)
     m->repeat_penalty = 1.05;
     m->edit_temperature = 0.4;
     m->context = DEFAULT_CONTEXT < k_info[7].max ? DEFAULT_CONTEXT : (int)k_info[7].max;
+    m->keep_in_memory = 1;
 }
 
 static double clampd(double v, double lo, double hi) { return isnan(v) ? lo : v < lo ? lo : v > hi ? hi : v; }
@@ -67,6 +72,7 @@ double model_setting_get(const ModelSettings *m, int i)
     case 5: return m->repeat_penalty;
     case 6: return m->edit_temperature;
     case 7: return m->context;
+    case 8: return m->keep_in_memory;
     default: return 0;
     }
 }
@@ -89,6 +95,7 @@ void model_setting_set(ModelSettings *m, int i, double v)
     case 5: m->repeat_penalty = v; break;
     case 6: m->edit_temperature = v; break;
     case 7: m->context = (int)lround(v); break;
+    case 8: m->keep_in_memory = (int)lround(v); break;
     }
 }
 
@@ -100,7 +107,7 @@ static void path_of(char *out, size_t outlen)
 }
 
 static const char *const k_keys[MODEL_SETTING_COUNT] = { "max_reply", "temperature", "top_p", "top_k",
-                                                          "min_p", "repeat_penalty", "edit_temperature", "context" };
+                                                          "min_p", "repeat_penalty", "edit_temperature", "context", "keep_in_memory" };
 
 void model_settings_load(ModelSettings *m)
 {

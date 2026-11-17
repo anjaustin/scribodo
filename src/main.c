@@ -708,9 +708,13 @@ static void fit_context(App *app, bool announce)
     char msg[400];
     memfit_message(&f, app->model.context, msg, sizeof(msg));
     if (msg[0]) fprintf(stderr, "scribodo: %s\n", msg);
-    if (f.slot_ctx != running) llm_server_set_slot_ctx(app->llm, f.slot_ctx);
+    bool keep = app->model.keep_in_memory != 0, keep_changed = llm_server_config(app->llm)->keep_resident != keep;
+    if (f.slot_ctx != running || keep_changed) llm_server_reconfigure(app->llm, f.slot_ctx, keep); /* one restart */
     if (msg[0]) set_status(app, msg);
     else if (announce && f.slot_ctx != running) set_status(app, "Model settings saved; the model is restarting with the new context size");
+    else if (announce && keep_changed)
+        set_status(app, keep ? "Model settings saved; the model is restarting to stay in memory"
+                             : "Model settings saved; the model is restarting and may be swapped out when memory is short");
     else if (announce) set_status(app, "Model settings saved (they apply to the next message)");
 }
 
@@ -724,7 +728,8 @@ void apply_model_settings(App *app, bool context)
                         app->model.min_p, app->model.repeat_penalty, app->model.edit_temperature };
     if (app->chat) chat_set_sampling(app->chat, &sp);
     if (!context) return;
-    if (app->llm && llm_server_slot_ctx(app->llm) != app->model.context) {
+    bool keep_changed = app->llm && llm_server_config(app->llm)->keep_resident != (app->model.keep_in_memory != 0);
+    if (app->llm && (llm_server_slot_ctx(app->llm) != app->model.context || keep_changed)) {
         if ((app->chat && chat_busy(app->chat)) || name_detection_job_busy(&app->names_job)) {
             app->ctx_pending = true;
             set_status(app, "Saved. The new context size applies after the reply finishes and the model restarts");
@@ -763,7 +768,8 @@ static void draw_model_settings(App *app, Rectangle screen)
         widget_text(ui, in->hint, p.x + 24, y + 18, 330, THEME_TEXT_DIM);
         double v = model_setting_get(&app->model_edit, i);
         char val[32];
-        if (in->integer) snprintf(val, sizeof(val), "%d", (int)v);
+        if (in->toggle) snprintf(val, sizeof(val), "%s", v != 0 ? "On" : "Off");
+        else if (in->integer) snprintf(val, sizeof(val), "%d", (int)v);
         else snprintf(val, sizeof(val), "%.2f", v);
         app->set_minus[i] = (Rectangle){ p.x + w - 200, y + 4, 36, 28 };
         app->set_plus[i] = (Rectangle){ p.x + w - 60, y + 4, 36, 28 };

@@ -326,6 +326,7 @@ int app_start_models(App *app, const char *script_path)
         memfit_message(&fit, app->model.context, app->mem_msg, sizeof(app->mem_msg));
         if (app->mem_msg[0]) fprintf(stderr, "scribodo: %s\n", app->mem_msg);
         cfg.ctx_total = fit.slot_ctx * (cfg.slots > 0 ? cfg.slots : 1);
+        cfg.keep_resident = app->model.keep_in_memory != 0;
         app->llm = llm_server_create(&cfg);
         if (app->llm) llm_server_start(app->llm);
         /* Embeddings for the semantic index (a second, small server). */

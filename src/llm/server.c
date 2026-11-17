@@ -500,6 +500,7 @@ static bool spawn_server(LlmServer *s)
         s->cfg.server_bin, "-m", s->cfg.model_path, "--host", s->sock, "--api-key-file", s->keyfile,
         "-ngl", "99", "-fa", "off", "-ctk", "bf16", "-ctv", "bf16", "--jinja",
         "--reasoning-format", "deepseek", "-np", np, "-c", ctx, "-b", batch, "-ub", batch, "--swa-full",
+        "--load-mode", s->cfg.keep_resident ? "mmap+mlock" : "auto",
         "--cache-ram", "0", "--no-webui", "--no-slots", NULL,
     };
     /* Embeddings: Qwen3-Embedding pools the last token; a whole input must
@@ -696,16 +697,19 @@ LlmState llm_server_state(LlmServer *s, char *msg, size_t msglen)
 
 const char *llm_server_socket(LlmServer *s) { return s->sock; }
 
-bool llm_server_set_slot_ctx(LlmServer *s, int slot_ctx)
+bool llm_server_reconfigure(LlmServer *s, int slot_ctx, bool keep_resident)
 {
     int slots = s->cfg.slots > 0 ? s->cfg.slots : 1;
     if (slot_ctx < 2048 || (s->cfg.ctx_train > 0 && slot_ctx > s->cfg.ctx_train)) return false;
-    if (s->cfg.ctx_total == slot_ctx * slots) return true;
+    if (s->cfg.ctx_total == slot_ctx * slots && s->cfg.keep_resident == keep_resident) return true;
     llm_server_stop(s);
     s->cfg.ctx_total = slot_ctx * slots;
+    s->cfg.keep_resident = keep_resident;
     llm_server_start(s);
     return true;
 }
+
+bool llm_server_set_slot_ctx(LlmServer *s, int slot_ctx) { return llm_server_reconfigure(s, slot_ctx, s->cfg.keep_resident); }
 
 long long llm_server_mem_need(const LlmServerConfig *cfg, int ctx_total)
 {
