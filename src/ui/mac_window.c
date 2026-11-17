@@ -173,13 +173,6 @@ int mac_window_last_click_count(void *nswindow)
     return (int)((long (*)(id, SEL))objc_msgSend)(ev, SEL_("clickCount"));
 }
 
-double mac_window_double_click_interval(void)
-{
-    id e = cls("NSEvent");
-    double s = answers(e, "doubleClickInterval") ? ((double (*)(id, SEL))objc_msgSend)(e, SEL_("doubleClickInterval")) : 0.5;
-    return s > 0.1 && s < 5.0 ? s : 0.5;
-}
-
 void mac_window_title_double_click(void *nswindow)
 {
     id win = (id)nswindow;

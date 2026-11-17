@@ -136,7 +136,6 @@ typedef struct {
     bool focus_mode;  /* the page alone (⌘\\); for the session, not saved */
     bool scripted;    /* a UI test run */
     bool unified_titlebar; /* the toolbar holds the traffic lights (ui/mac_window.h) */
-    Vector2 toolbar_click_pos; /* where the window was at the last press on an empty part of the toolbar */
     int target_fps;   /* the display's refresh rate (app_match_refresh_rate) */
     bool observer_open;
     int dragging;

@@ -21,8 +21,6 @@ void mac_window_place_buttons(void *nswindow, float toolbar_h);
 /* Where the app's toolbar content may start, in points: right of the zoom button as AppKit placed it. 0 when not
  * unified or in full screen (the buttons are not in the window then). */
 float mac_window_toolbar_inset(void *nswindow);
-/* The system's double-click interval, in seconds. */
-double mac_window_double_click_interval(void);
 /* AppKit's click count for the last left press in this window (2 for a double-click, by the system's own interval
  * and distance); 0 when there is none, as in a UI script, whose presses are raylib's, not AppKit's. */
 int mac_window_last_click_count(void *nswindow);
