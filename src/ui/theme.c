@@ -68,14 +68,17 @@ static bool g_translucent;
 void theme_set_translucent(bool on) { g_translucent = on; }
 bool theme_translucent(void) { return g_translucent; }
 
-/* How much of the panel colour covers the material: enough to keep each palette's character (Paper stays warm) and
- * the text's contrast, little enough that the desktop shows. */
+/* How much of the panel colour covers the material. Not counting the material at all (the worst case: a white, black
+ * or grey desktop straight behind), interface text keeps at least 5.9:1 at 82% in every palette and secondary text
+ * about 3:1; the material, which blurs and tints what is behind, only raises both (red team: 62% left text at 3.1:1
+ * over white in Dark). tests/test_theme_contrast.py holds the floor. */
+#define SIDEBAR_COVER 0.82f
+
 Color theme_sidebar(void)
 {
     Color c = g_theme->panel;
     if (!g_translucent) return c;
-    float keep = g_theme == &k_palettes[THEME_DARK] ? 0.62f : g_theme == &k_palettes[THEME_PAPER] ? 0.74f : 0.66f;
-    c.a = (unsigned char)(255.0f * keep);
+    c.a = (unsigned char)(255.0f * SIDEBAR_COVER);
     return c;
 }
 

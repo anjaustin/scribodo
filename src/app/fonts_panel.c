@@ -266,7 +266,7 @@ static void draw_roles(App *app, Rectangle d, bool previews)
     /* The palette: one of three, side by side. */
     DrawRectangle((int)(d.x + SP_6), (int)y, (int)(d.width - 2 * SP_6), 1, THEME_BORDER);
     widget_text(ui, "Theme", d.x + SP_6, y + SP_2 + (28 - ui->line_height) / 2, 0, THEME_TEXT);
-    p->translucent = (Rectangle){ d.x + 180, y + SP_2, 220, 28 };
+    p->translucent = (Rectangle){ d.x + 180, y + SP_2, 200, 28 }; /* clear of the palettes, which start at d.x + 396 */
     widget_checkbox(p->translucent, "Translucent sidebar", ui, &next.translucent_sidebar);
     for (int t = 0; t < THEME_COUNT; t++) {
         p->theme[t] = (Rectangle){ d.x + d.width - SP_6 - (float)(THEME_COUNT - t) * 100, y + SP_2, 96, 28 };

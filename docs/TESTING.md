@@ -582,6 +582,8 @@ These sit above raylib and need a real-input pass:
   back in a scratch program and by hand)
 - motion (ui/motion.h is off in scripted runs) and the frosted backdrop's look beyond the screenshots
 - macOS's Reduce motion setting and a ProMotion display's refresh rate
+- the translucent sidebar's look: a UI screenshot reads the frame with its alpha forced opaque, so the glass shows as a
+  darker band, not as the desktop through the material
 
 ## Checking that the tests catch regressions
 

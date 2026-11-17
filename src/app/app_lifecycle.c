@@ -105,9 +105,8 @@ void app_apply_look(App *app)
 {
     theme_select(app->appearance.theme);
     /* The translucent sidebar needs the unified title bar (the toolbar is part of the sidebar's glass). */
-    bool glass = app->appearance.translucent_sidebar && app->unified_titlebar && app->window_ready &&
-                 mac_window_vibrancy(GetWindowHandle(), app->appearance.translucent_sidebar, app->appearance.theme == THEME_DARK);
-    if (!app->appearance.translucent_sidebar && app->window_ready) mac_window_vibrancy(GetWindowHandle(), false, false);
+    bool want = app->appearance.translucent_sidebar && app->unified_titlebar;
+    bool glass = app->window_ready && mac_window_vibrancy(GetWindowHandle(), want, app->appearance.theme == THEME_DARK) && want;
     theme_set_translucent(glass);
     if (app->editor) editor_set_writing_aids(app->editor, app->appearance.typewriter, app->appearance.dim_paragraphs);
 }

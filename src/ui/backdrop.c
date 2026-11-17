@@ -116,6 +116,15 @@ void backdrop_draw(Rectangle screen)
     }
     if (g_ready && (g_w != GetRenderWidth() || g_h != GetRenderHeight())) unload(); /* resized */
     if (!g_ready && g_wanted_at < 0) g_wanted_at = (long)g_frame;
+    /* With the translucent sidebar the frame is not opaque, and the readback (alpha forced to 255) would turn the glass
+     * into a dark band frozen under the dialog (red team): the veil alone, through which the glass still shows. */
+    if (theme_translucent()) {
+        unload();
+        Color veil = THEME_SCRIM;
+        veil.a = (unsigned char)(veil.a * 0.55f);
+        DrawRectangleRec(screen, veil);
+        return;
+    }
     if (g_shader_ok && g_wanted_at >= 0 && g_frame != g_blocked_at) { /* never in a frame that holds a menu or old text */
         unload();
         if (capture()) g_wanted_at = -1;

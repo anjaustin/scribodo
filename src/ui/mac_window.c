@@ -177,10 +177,30 @@ int mac_window_last_click_count(void *nswindow)
  * draws a view's subviews over its own content, so the material must be a sibling below, not a child. */
 static id g_effect;
 
+/* A transparent window makes AppKit treat every view in the title band as a handle that moves the window (GLFW's view
+ * answers mouseDownCanMoveWindow from its opacity), so a press-and-move on a toolbar button would drag the window and a
+ * double-click on one would zoom it (red team). The app decides where the window moves (mac_window_begin_drag). */
+static BOOL never_moves_window(id self, SEL cmd)
+{
+    (void)self, (void)cmd;
+    return NO;
+}
+
 bool mac_window_vibrancy(void *nswindow, bool on, bool dark)
 {
     id win = (id)nswindow;
     if (!win || !answers(win, "setContentView:") || !cls("NSVisualEffectView")) return false;
+    static bool patched;
+    id view_class = cls("GLFWContentView");
+    if (!patched && view_class) {
+        class_replaceMethod((Class)view_class, SEL_("mouseDownCanMoveWindow"), (IMP)never_moves_window, "B@:");
+        patched = true;
+    }
+    /* Opaque unless the glass is on: an opaque window composites as before, and keeps its shadow, which GLFW drops for
+     * a transparent one (red team); with the glass on the shadow is asked for again and recomputed. */
+    ((void (*)(id, SEL, BOOL))objc_msgSend)(win, SEL_("setOpaque:"), on ? NO : YES);
+    ((void (*)(id, SEL, BOOL))objc_msgSend)(win, SEL_("setHasShadow:"), YES);
+    if (answers(win, "invalidateShadow")) ((void (*)(id, SEL))objc_msgSend)(win, SEL_("invalidateShadow"));
     if (!g_effect) {
         if (!on) return true; /* nothing to hide */
         id glview = send_id(win, "contentView");

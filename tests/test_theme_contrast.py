@@ -64,6 +64,22 @@ class ThemeContrastTests(unittest.TestCase):
                 failures.append(f"{name}: a highlighted menu item")
         self.assertEqual(failures, [])
 
+    def test_the_translucent_sidebar_keeps_its_floor(self):
+        # The panel colour at SIDEBAR_COVER over a white, black or grey desktop, the material not counted.
+        src = (ROOT / "src/ui/theme.c").read_text(encoding="utf-8")
+        cover = float(re.search(r"#define SIDEBAR_COVER ([0-9.]+)f", src).group(1))
+        def over(fg, a, bg):
+            return "".join("%02X" % round(int(fg[i:i + 2], 16) * a + int(bg[i:i + 2], 16) * (1 - a)) for i in (0, 2, 4))
+        failures = []
+        for name, pal in palettes().items():
+            for desk in ("FFFFFF", "000000", "808080"):
+                glass = over(pal["panel"], cover, desk)
+                if contrast(pal["text"], glass) < 5.9:
+                    failures.append(f"{name}: text over {desk} {contrast(pal['text'], glass):.2f}")
+                if contrast(pal["text_muted"], glass) < 3.0:
+                    failures.append(f"{name}: secondary text over {desk} {contrast(pal['text_muted'], glass):.2f}")
+        self.assertEqual(failures, [])
+
     def test_the_check_would_catch_a_bad_pair(self):
         self.assertLess(contrast("777777", "666666"), 3)
         self.assertAlmostEqual(contrast("FFFFFF", "000000"), 21, places=1)
