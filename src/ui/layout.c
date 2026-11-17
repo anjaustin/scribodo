@@ -19,6 +19,13 @@ static void layout_chat(App *app);
 static void layout_side_panel(App *app);
 static void layout_status_bar(App *app);
 
+/* A coloured label on the sidebar (ui/theme.h THEME_SIDE_*: stronger on the glass). */
+static Clay_Color side_ink(Clay_Color c)
+{
+    Color k = theme_glass_ink((Color){ (unsigned char)c.r, (unsigned char)c.g, (unsigned char)c.b, (unsigned char)c.a });
+    return THEME_CLAY(k);
+}
+
 static Clay_String cstr(FrameViewModel *frame, const char *s)
 {
     const char *copy = frame_view_model_copy(frame, s);
@@ -44,10 +51,10 @@ static void section_header(App *app, const char *s, int icon)
             CLAY({ .layout = { .sizing = { CLAY_SIZING_FIXED(cell), CLAY_SIZING_FIT(0) },
                                .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER } } }) {
                 CLAY({ .layout = { .sizing = { CLAY_SIZING_FIXED(fminf(roundf(sz.x * k), cell)), CLAY_SIZING_FIXED(roundf(sz.y * k)) } },
-                       .image = { .imageData = (void *)t }, .backgroundColor = COL_MUTED }) {}
+                       .image = { .imageData = (void *)t }, .backgroundColor = COL_SIDE_MUTED }) {}
             }
         }
-        label(app, s, FONT_UI, COL_MUTED);
+        label(app, s, FONT_UI, COL_SIDE_MUTED);
     }
 }
 
@@ -63,14 +70,14 @@ static void list_item(App *app, Clay_ElementId id, const char *s, bool active)
            .cornerRadius = CLAY_CORNER_RADIUS(4) }) {
         /* Clipped by the Explorer itself: a clip on every row made each a
          * Clay scroll container and overflowed Clay's limit (red-team 005). */
-        label(app, s, FONT_UI, active ? COL_TEXT : COL_MUTED);
+        label(app, s, FONT_UI, active ? COL_TEXT : COL_SIDE_MUTED);
     }
 }
 
 /* Inactive placeholder text: deliberately not styled like a row. */
 static void coming_soon(App *app, const char *s)
 {
-    CLAY({ .layout = { .padding = { 8, 8, 2, 2 } } }) { label(app, s, FONT_UI, COL_DIM); }
+    CLAY({ .layout = { .padding = { 8, 8, 2, 2 } } }) { label(app, s, FONT_UI, COL_SIDE_DIM); }
 }
 
 static void splitter(Clay_ElementId id, bool active)
@@ -175,17 +182,17 @@ static void layout_toolbar(App *app)
             label(app, "Scribodo", FONT_UI, COL_TEXT);
         }
         slot(CLAY_ID("OpenButton"), 88, 26);
-        label(app, app->doc_label, FONT_UI, COL_MUTED);
+        label(app, app->doc_label, FONT_UI, COL_SIDE_MUTED);
         slot(CLAY_ID("SaveButton"), 84, 26);
         grow();
-        if (app->store_label[0]) label(app, app->store_label, FONT_UI, app->store_color);
+        if (app->store_label[0]) label(app, app->store_label, FONT_UI, side_ink(app->store_color));
         /* The model in use; click to choose (when a remote is configured). */
         CLAY({ .id = CLAY_ID("ModelPicker"),
                .layout = { .sizing = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(26) }, .padding = { 8, 8, 0, 0 },
                            .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } },
                .backgroundColor = Clay_PointerOver(CLAY_ID("ModelPicker")) ? COL_HOVER : (Clay_Color){ 0 },
                .cornerRadius = CLAY_CORNER_RADIUS(4) }) {
-            label(app, app->model_label, FONT_UI, app->model_color);
+            label(app, app->model_label, FONT_UI, side_ink(app->model_color));
         }
         slot(CLAY_ID("RecallToggle"), 100, 26);
         slot(CLAY_ID("ObserverToggle"), 132, 26);
@@ -224,7 +231,7 @@ static void layout_entities(App *app)
                                        .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER } },
                            .backgroundColor = hover ? COL_HOVER : (Clay_Color){ 0 },
                            .cornerRadius = CLAY_CORNER_RADIUS(4) }) {
-                        label(app, "\xE2\x80\xBA", FONT_UI, COL_MUTED);
+                        label(app, "\xE2\x80\xBA", FONT_UI, COL_SIDE_MUTED);
                     }
                 }
             }

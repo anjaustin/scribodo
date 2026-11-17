@@ -73,7 +73,9 @@ static void show(App *app, const Appearance *next)
         before.dim_paragraphs != next->dim_paragraphs || before.translucent_sidebar != next->translucent_sidebar)
         backdrop_invalidate(); /* the window behind changed: the frosted snapshot is taken again next frame */
     app->appearance = *next;
-    app_apply_look(app); /* the palette and writing aids show at once */
+    if (before.theme != next->theme || before.typewriter != next->typewriter || before.dim_paragraphs != next->dim_paragraphs ||
+        before.translucent_sidebar != next->translucent_sidebar)
+        app_apply_look(app); /* the palette, writing aids and glass show at once; not every frame the panel is open */
     if (!roles) return;
     char why[PATH_MAX + 128];
     unsigned failed = app_fonts_apply(app, roles, why, sizeof(why));

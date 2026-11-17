@@ -196,9 +196,18 @@ bool mac_window_vibrancy(void *nswindow, bool on, bool dark)
         class_replaceMethod((Class)view_class, SEL_("mouseDownCanMoveWindow"), (IMP)never_moves_window, "B@:");
         patched = true;
     }
-    /* Opaque unless the glass is on: an opaque window composites as before, and keeps its shadow, which GLFW drops for
-     * a transparent one (red team); with the glass on the shadow is asked for again and recomputed. */
+    /* Only a change does anything: the Appearance panel applies the look every frame while it is open. */
+    static int last_on = -1, last_dark = -1;
+    if (last_on == (int)on && last_dark == (int)dark) return g_effect != nil || !on;
+    last_on = on, last_dark = dark;
+    /* Opaque unless the glass is on: an opaque window composites as before, with the window's own background behind
+     * anything not yet drawn (a live resize, the full-screen animation) instead of GLFW's clear one, and keeps its
+     * shadow, which GLFW drops for a transparent window (red team); with the glass on the shadow is recomputed. */
     ((void (*)(id, SEL, BOOL))objc_msgSend)(win, SEL_("setOpaque:"), on ? NO : YES);
+    id color_class = cls("NSColor");
+    const char *bg = on ? "clearColor" : "windowBackgroundColor";
+    if (answers(color_class, bg) && answers(win, "setBackgroundColor:"))
+        ((void (*)(id, SEL, id))objc_msgSend)(win, SEL_("setBackgroundColor:"), send_id(color_class, bg));
     ((void (*)(id, SEL, BOOL))objc_msgSend)(win, SEL_("setHasShadow:"), YES);
     if (answers(win, "invalidateShadow")) ((void (*)(id, SEL))objc_msgSend)(win, SEL_("invalidateShadow"));
     if (!g_effect) {

@@ -73,11 +73,17 @@ int theme_by_name(const char *name);          /* -1 when unknown */
 void theme_set_translucent(bool on);
 bool theme_translucent(void);
 Color theme_sidebar(void);
+Color theme_glass_ink(Color c); /* a coloured label on the sidebar */
 
 #define THEME_PANEL         (g_theme->panel)
 /* The toolbar and Explorer: the panel colour, or, with the translucent sidebar on, the same colour partly transparent
  * over macOS's own sidebar material (ui/mac_window.h), so the desktop shows through, blurred and tinted. */
 #define THEME_SIDEBAR       (theme_sidebar())
+/* Text on the sidebar: on the glass each colour is one step stronger (secondary text as interface text, placeholders as
+ * secondary text) and a coloured label is mixed toward the text colour, so every one keeps its own contrast level over
+ * any desktop (tests/test_theme_contrast.py). Off the glass these are the ordinary roles. */
+#define THEME_SIDE_MUTED    (theme_translucent() ? THEME_TEXT : THEME_TEXT_MUTED)
+#define THEME_SIDE_DIM      (theme_translucent() ? THEME_TEXT_MUTED : THEME_TEXT_DIM)
 #define THEME_FIELD         (g_theme->field)
 #define THEME_BG            (g_theme->bg)
 #define THEME_CARD          (g_theme->card)

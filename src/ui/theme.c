@@ -74,6 +74,18 @@ bool theme_translucent(void) { return g_translucent; }
  * over white in Dark). tests/test_theme_contrast.py holds the floor. */
 #define SIDEBAR_COVER 0.82f
 
+/* How far a coloured label on the glass moves toward the text colour: the least that holds every status and link
+ * colour at its level over a white or black desktop (0.3 left Paper's error colour at 4.34:1). */
+#define GLASS_INK_MIX 0.40f
+
+Color theme_glass_ink(Color c)
+{
+    if (!g_translucent) return c;
+    Color t = g_theme->text;
+    return (Color){ (unsigned char)(c.r + (t.r - c.r) * GLASS_INK_MIX + 0.5f), (unsigned char)(c.g + (t.g - c.g) * GLASS_INK_MIX + 0.5f),
+                    (unsigned char)(c.b + (t.b - c.b) * GLASS_INK_MIX + 0.5f), c.a };
+}
+
 Color theme_sidebar(void)
 {
     Color c = g_theme->panel;

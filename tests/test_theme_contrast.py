@@ -70,14 +70,21 @@ class ThemeContrastTests(unittest.TestCase):
         cover = float(re.search(r"#define SIDEBAR_COVER ([0-9.]+)f", src).group(1))
         def over(fg, a, bg):
             return "".join("%02X" % round(int(fg[i:i + 2], 16) * a + int(bg[i:i + 2], 16) * (1 - a)) for i in (0, 2, 4))
+        mix = float(re.search(r"#define GLASS_INK_MIX ([0-9.]+)f", src).group(1))
+        def ink(c, t):
+            return "".join("%02X" % int(int(c[i:i + 2], 16) + (int(t[i:i + 2], 16) - int(c[i:i + 2], 16)) * mix + 0.5) for i in (0, 2, 4))
         failures = []
         for name, pal in palettes().items():
-            for desk in ("FFFFFF", "000000", "808080"):
+            # What the sidebar draws with the glass on (ui/theme.h THEME_SIDE_*, theme_glass_ink), each at its level.
+            drawn = {"interface text (and secondary, one step up)": (pal["text"], 4.5),
+                     "placeholders (secondary colour)": (pal["text_muted"], 3.0)}
+            for role, need in (("err", 4.5), ("link", 4.5), ("ok", 3.0), ("warn", 3.0)):
+                drawn[f"{role} label"] = (ink(pal[role], pal["text"]), need)
+            for desk in ("FFFFFF", "000000"):  # the composite is monotone in the desktop: these are the worst cases
                 glass = over(pal["panel"], cover, desk)
-                if contrast(pal["text"], glass) < 5.9:
-                    failures.append(f"{name}: text over {desk} {contrast(pal['text'], glass):.2f}")
-                if contrast(pal["text_muted"], glass) < 3.0:
-                    failures.append(f"{name}: secondary text over {desk} {contrast(pal['text_muted'], glass):.2f}")
+                for what, (colour, need) in drawn.items():
+                    if contrast(colour, glass) < need:
+                        failures.append(f"{name}: {what} over {desk} {contrast(colour, glass):.2f} < {need}")
         self.assertEqual(failures, [])
 
     def test_the_check_would_catch_a_bad_pair(self):

@@ -5,7 +5,8 @@
  * that frame holds a menu or an appearance change (a lighter flat veil meanwhile), runs it through a two-pass Gaussian blur at half resolution, and draws the result over the window; later
  * frames reuse it until backdrop_release (the dialog closed) or a window resize. The panes behind a dialog take no
  * input, so a still picture of them loses nothing but a reply's streaming, which resumes on screen when the dialog
- * closes. Without a shader (a GL that refuses it) it falls back to the flat scrim. */
+ * closes. Without a shader (a GL that refuses it), and with the translucent sidebar on (the frame is not opaque, and a
+ * readback forces it so), there is no snapshot: a veil over the live panes. */
 #ifndef SCRIBODO_BACKDROP_H
 #define SCRIBODO_BACKDROP_H
 

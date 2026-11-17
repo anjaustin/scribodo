@@ -32,9 +32,12 @@ bool mac_window_begin_drag(void *nswindow);
 void mac_window_title_double_click(void *nswindow);
 
 /* The translucent sidebar: macOS's own sidebar material (an NSVisualEffectView, blending with what is behind the
- * window) placed beneath the app's drawing, which must then be a transparent window (FLAG_WINDOW_TRANSPARENT) and clear
- * to transparent where the material should show. `dark` picks the material's dark or light look to match the palette.
- * Installed once; `on` false hides it (nothing is composited). False when the window cannot take it. */
+ * window) placed beneath the app's drawing. The window is created transparent (FLAG_WINDOW_TRANSPARENT) and clears to
+ * transparent where the material should show. `dark` picks the material's dark or light look to match the palette.
+ * The material is installed on the first `on` and hidden when off. Every call (on or off) also makes the window opaque
+ * with its own background unless the glass is on, keeps its shadow, and stops GLFW's view from moving the window on
+ * a press in the title band (the app's toolbar drag decides). Repeated calls with the same state do nothing. False
+ * when the window cannot take it. */
 bool mac_window_vibrancy(void *nswindow, bool on, bool dark);
 
 #endif
