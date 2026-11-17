@@ -39,7 +39,8 @@ typedef struct {
     int slots;              /* -np */
     int reserve;            /* >0: one KV pool shared by the slots (-kvu), ctx_total = the conversation's context + this
                              * room for the other slot's work (the observer); 0: -c split evenly across the slots */
-    int batch;              /* -b and -ub */
+    int batch;              /* -b; the embedding and reranker servers pass it as -ub too */
+    int ubatch;             /* the chat server's -ub (0: batch); the other servers ignore it */
     bool embedding;         /* an embedding server (Qwen3-Embedding), not the chat model */
     bool rerank;            /* the cross-encoder (Qwen3-Reranker), scored through /completion */
     /* Memory beyond the model file, measured from llama-server's own

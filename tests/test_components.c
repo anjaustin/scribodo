@@ -341,12 +341,16 @@ static void test_memfit(void)
     /* file + fixed + per token x the pool */
     long long at32 = llm_server_mem_need(&cfg, llm_server_pool_ctx(&cfg, 32768));
     CHECK(at32 == 3000 * MiB + cfg.mem_fixed + (long long)cfg.mem_per_token * 40960);
-    /* The measured LFM3 numbers at the chat server's micro-batch of 128, --swa-full, one pool (KV + Metal compute + CPU
-     * compute at 40,960 cells: 880 + 366.5 + 45 MiB allocated, 90 by llama.cpp's projection; 2,992 + 1,230.5 + 282 at
-     * 139,264; 2026-11-16) are covered by the per-token cost alone, projection included. */
-    CHECK((long long)cfg.mem_per_token * 40960 >= (880 + 367 + 90) * MiB);
-    CHECK((long long)cfg.mem_per_token * 139264 >= (2992 + 1231 + 282) * MiB);
-    CHECK(cfg.batch == 128);
+    /* The measured LFM3 numbers at -b 128 -ub 64, checkpoints in place of --swa-full, one pool (KV + recurrent state +
+     * Metal compute + CPU compute: 1,640.7 + 581.4 + 36.7 MiB allocated at 139,264 cells, the CPU buffer twice by
+     * llama.cpp's projection; 278.85 MiB at 16,384; 2026-11-17) are covered by the per-token cost alone, projection
+     * included; the checkpoints (at most 16 a slot, 3.1 MiB each) by the fixed cost. */
+    CHECK((long long)cfg.mem_per_token * 139264 >= (1641 + 582 + 2 * 37) * MiB);
+    /* At 16,384 cells a 15 MiB intercept shows (the recurrent state, the window layers' short cache, compute
+     * intercepts), inside the fixed cost. */
+    CHECK((long long)cfg.mem_per_token * 16384 + 32 * MiB >= (201 + 72 + 2 * 7) * MiB && cfg.mem_fixed >= 32 * MiB + 2 * 16 * 32 * MiB / 10);
+    CHECK(cfg.mem_fixed >= 2 * 16 * 32 * MiB / 10); /* 2 slots x 16 checkpoints x 3.2 MiB */
+    CHECK(cfg.batch == 128 && cfg.ubatch == 64);
     long long other = 2000 * MiB;
     /* Plenty: the author's context. */
     MemFit m = memfit_context(16000 * MiB, other, &cfg, 32768, 8192, 8192);

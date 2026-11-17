@@ -284,3 +284,26 @@ Since 2026-11-15 `make test` runs `tools/evidence_check.py`. Every cited `build/
 
 A missing archive folder fails, except on a GitHub-hosted runner (`CI` and `RUNNER_ENVIRONMENT=github-hosted`) or
 with `SCRIBODO_EVIDENCE_SKIP` set.
+
+The room-per-token measurements (journal `room-per-token.md`, MODEL-001 "Room per token") are in
+`scribodo-evidence-2026-11-17-room.tar.gz` (21 files, `build/room`), with
+`manifest-scribodo-evidence-2026-11-17-room.txt` and an entry in `SHA256SUMS`:
+- each run's server log at `-lv 4` and its JSON record (`A0`, `A5`, `D0`, `D5`, `M0`, `M1`, `M2`);
+- the precision runs (`P0`, `P0b`, `P5`) and `summary.txt` with the comparison.
+
+Archive SHA-256: `7b03232848a0c2762e9ac455b4478abbcb875182e584865462f272edbb473f48`.
+
+The red-team follow-up on that work (journal `room-per-token.md`: "Fixed cost, as macOS sees it", "Long prompts", the
+in-app chat, "Launch") is in `scribodo-evidence-2026-11-17-room-b.tar.gz` (79 files under `build/room`), with
+`manifest-scribodo-evidence-2026-11-17-room-b.txt` and an entry in `SHA256SUMS`:
+- the fixed-cost runs `F5s`, `F5sb`, `F5`, `F5b`, `F5c`, `F0`;
+- the long-prompt runs `L0`, `L5` and `summary2.txt`, `summary3.txt`;
+- under `app/` the in-app chat's script, its server lines and the two launch logs;
+- under `scratch/` the earlier single-change runs with the harness they came from.
+
+Archive SHA-256: `6e5466ca5229e20794607afec072998c3a3a6a7d0dfa6797e381b41ac78330b7`.
+
+Its last verification items (journal `room-per-token.md`: the full-pool runs, the morning launch) are in
+`scribodo-evidence-2026-11-17-room-c.tar.gz` (6 files under `build/room`), with
+`manifest-scribodo-evidence-2026-11-17-room-c.txt` and an entry in `SHA256SUMS`: `G5`, `G5b`, `summary4.txt` and
+`app/launch-morning.log`. Archive SHA-256: `c5f50a2bf0b0bc6d0535dce5015a169d37c1372ab379825239f9b01fcc547003`.

@@ -3014,6 +3014,49 @@ static int read_pidfile(const char *path)
     return pid;
 }
 
+/* The chat server's command line (2026-11-17): the BF16 contract (flash attention off, BF16 KV), the half micro-batch,
+ * checkpoints at every user message instead of --swa-full, the pool. */
+static void test_chat_server_flags(void)
+{
+    LlmServerConfig cfg;
+    orphan_config(&cfg, g_dir);
+    snprintf(cfg.run_dir, sizeof(cfg.run_dir), "%s/flagsrun", g_dir);
+    char args[700];
+    snprintf(args, sizeof(args), "%s/flags-args.txt", g_dir);
+    unlink(args);
+    FILE *script = fopen(cfg.server_bin, "wb");
+    CHECK(script != NULL);
+    if (!script) return;
+    fprintf(script, "#!/bin/sh\nfor a in \"$@\"; do printf '%%s\\n' \"$a\"; done > '%s'\nwhile :; do sleep 1; done\n", args);
+    fclose(script);
+    chmod(cfg.server_bin, 0700);
+    FILE *f = fopen(cfg.model_path, "w");
+    if (f) { fputs("x", f); fclose(f); }
+    LlmServer *s = llm_server_create(&cfg);
+    llm_server_start(s);
+    char *text = NULL;
+    for (int i = 0; i < 500 && !text; i++) {
+        FILE *a = fopen(args, "r");
+        if (a) {
+            char buf[4096];
+            size_t n = fread(buf, 1, sizeof(buf) - 1, a);
+            fclose(a);
+            buf[n] = 0;
+            if (strstr(buf, "--no-slots")) text = strdup(buf);
+        }
+        if (!text) usleep(20000);
+    }
+    CHECK(text != NULL);
+    if (text) {
+        CHECK(strstr(text, "\n-fa\noff\n") && strstr(text, "\n-ctk\nbf16\n") && strstr(text, "\n-ctv\nbf16\n"));
+        CHECK(strstr(text, "\n-b\n128\n") && strstr(text, "\n-ub\n64\n"));
+        CHECK(strstr(text, "\n-cms\n0\n") && strstr(text, "\n-ctxcp\n16\n"));
+        CHECK(!strstr(text, "--swa-full") && strstr(text, "\n-kvu\n"));
+    }
+    free(text);
+    llm_server_destroy(s);
+}
+
 static void test_orphan_after_owner_kill(void)
 {
     /* GAP-003 restart (2026-11-13): the window that owns the server dies with
@@ -3325,7 +3368,7 @@ int main(int argc, char **argv)
         { "stop_never_hangs", test_stop_never_hangs },
         { "torn_line_recovery", test_torn_line_recovery },
         { "instance_lock", test_instance_lock },
-        { "orphan_after_owner_kill", test_orphan_after_owner_kill },
+        { "chat_server_flags", test_chat_server_flags }, { "orphan_after_owner_kill", test_orphan_after_owner_kill },
         { "reap_orphan", test_reap_orphan },
     };
     TestCase livet[] = { { "live_llama_server", test_live } };

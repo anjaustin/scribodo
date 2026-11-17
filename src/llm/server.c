@@ -268,10 +268,10 @@ void llm_server_default_config(LlmServerConfig *c, const char *app_dir)
         snprintf(c->cache_path, sizeof(c->cache_path), "%s/Library/Application Support/Scribodo/model-verified.txt", home);
     }
     /* 32K context per conversation, 2 slots (chat + observer): see MODEL-001 "Memory" and "Chat and observer
-     * together". -b and -ub 128 since 2026-11-14 (256 before; the measurement is in the comment below).
+     * together". -b 128 since 2026-11-14 (256 before; the measurement is in the comment below); -ub 64 since 2026-11-17.
      *
      * One pool since 2026-11-16 (-kvu): the conversation's context plus 8K for the observer, instead of two equal
-     * slots, so a large context is paid for once (128K: 4.4 GB against about 7). The observer's requests are bounded
+     * slots, so a large context is paid for once (128K: 4.4 GB against about 7 with the flags of then; 2.3 GB since 2026-11-17). The observer's requests are bounded
      * (a passage of at most 3,000 bytes, a statement of at most 2,400, up to 1,400 tokens out), and the verified-answer
      * pipeline's extractions use the same slot while the chat waits for them. If the pool ever fills, llama.cpp purges
      * the idle slot's cache and goes on (measured): nothing fails, the chat reads its prompt again once. */
@@ -279,6 +279,7 @@ void llm_server_default_config(LlmServerConfig *c, const char *app_dir)
     c->reserve = 8192;
     c->ctx_total = 32768 + c->reserve;
     c->batch = 128;
+    c->ubatch = 64;
     /* llama-server's memory at -c 65536 (two slots at 32K), measured 2026-11-14 by tools/model_batch_compare.py: KV
      * 779 MiB, 12.2 KiB per token (6 attention layers, BF16); the attention-score scratch with flash attention off
      * grows with micro-batch x context: Metal compute 557 MiB and CPU compute 42 at -ub 256, 278 and 21 at 128. At
@@ -290,7 +291,7 @@ void llm_server_default_config(LlmServerConfig *c, const char *app_dir)
      * micro-batch"; REDTEAM-023). Fixed: about 45 MiB (the convolution layers' short KV, compute intercepts) plus the
      * process and Metal's own, rounded up.
      *
-     * --swa-full since 2026-11-16: the sliding-window layers keep their whole history, so a conversation's next turn
+     * --swa-full from 2026-11-16 to 2026-11-17 (replaced below): the sliding-window layers keep their whole history, so a conversation's next turn
      * resumes from the slot's cache instead of reading the whole prompt again (llama.cpp needs a checkpoint 256 tokens,
      * the window, before the shared prefix, and saves them only near a prompt's end: a 12K-token chat re-read all of it
      * every turn, 16 s, and 0.2 s with the flag). Measured at -c 65536: KV 768 + 640 MiB, Metal compute 294.5, CPU 37
@@ -300,9 +301,27 @@ void llm_server_default_config(LlmServerConfig *c, const char *app_dir)
      *
      * With the pool (-kvu) the attention scratch is sized for one sequence as long as the whole pool: measured at
      * -c 40960, KV 480 + 400 MiB, Metal compute 366.5, CPU 45 (90 by the projection), 33.4 KiB a token; at 139264,
-     * 33.1. So 34, counted over the pool (llm_server_pool_ctx). */
-    c->mem_fixed = 384LL * 1024 * 1024;
-    c->mem_per_token = 34 * 1024;
+     * 33.1. So 34, counted over the pool (llm_server_pool_ctx).
+     *
+     * Half that since 2026-11-17 (the author: "make some more room", the BF16 rule kept). -ub 64 halves the attention
+     * scratch (-b stays 128, which sets how chat and observer interleave), and checkpoints replace --swa-full: one at the
+     * start of every user message (-cms 0, llama.cpp's default spacing being 8,192), at most 16 a slot (-ctxcp; 3.1 MiB
+     * each, host memory, inside the fixed cost), so the next turn resumes from the previous exchange instead of keeping
+     * the window layers' whole history. Measured (MODEL-001 "Room per token"): KV 1,640.7 + Metal compute 581.4 + CPU
+     * 36.7 MiB at 139,264 cells, 278.85 MiB in all at 16,384: 16.5 KiB a token, 16.75 with llama.cpp's projection; 16.9
+     * at 40,960, so 17. A 25-turn chat re-reads its last exchange or two (about 550 tokens, about 0.7 s) where it read
+     * about 150; a chat with a document attached reads the document again each turn as before (it moves to the newest
+     * message), plus about 250 to 540 tokens. Over
+     * 600 identical-context greedy steps no top-10 probability moved more than 2.4 points and no top token changed.
+     *
+     * The fixed cost measured as macOS sees it (tools/model_room_compare.py, what can be handed out before the server
+     * starts, once ready, after a 30-turn chat with an observer request each turn): ready, the model file plus the
+     * buffers plus 92 to 93 MiB, steady over three runs at 40,960 cells (104 to 110 at 16,384); after the chat up to 260 MiB more (checkpoints, buffers
+     * llama.cpp grows as it works). At 40,960 cells that came within 37 MiB of the 384 fixed, against 142 for the old
+     * flags with theirs, so 512. With the pool mostly full (26,257 of 40,960 cells, mlock as the app runs it): 4,155
+     * and 4,296 MiB taken against an estimate of 4,498, before the app's own headroom. */
+    c->mem_fixed = 512LL * 1024 * 1024;
+    c->mem_per_token = 17 * 1024;
 }
 
 LlmServer *llm_server_create(const LlmServerConfig *cfg)
@@ -520,16 +539,17 @@ static bool spawn_server(LlmServer *s)
         return false;
     }
 
-    char ctx[16], np[16], batch[16];
+    char ctx[16], np[16], batch[16], ubatch[16];
     snprintf(ctx, sizeof(ctx), "%d", s->cfg.ctx_total);
     snprintf(np, sizeof(np), "%d", s->cfg.slots);
     snprintf(batch, sizeof(batch), "%d", s->cfg.batch);
+    snprintf(ubatch, sizeof(ubatch), "%d", s->cfg.ubatch > 0 ? s->cfg.ubatch : s->cfg.batch);
     /* Validated BF16 configuration (MODEL-001): flash attention OFF (Metal
      * FA stages values in F16), BF16 KV cache, official template. */
     char *chat_argv[] = {
         s->cfg.server_bin, "-m", s->cfg.model_path, "--host", s->sock, "--api-key-file", s->keyfile,
         "-ngl", "99", "-fa", "off", "-ctk", "bf16", "-ctv", "bf16", "--jinja",
-        "--reasoning-format", "deepseek", "-np", np, "-c", ctx, "-b", batch, "-ub", batch, "--swa-full",
+        "--reasoning-format", "deepseek", "-np", np, "-c", ctx, "-b", batch, "-ub", ubatch, "-cms", "0", "-ctxcp", "16",
         s->cfg.reserve > 0 ? "-kvu" : "-no-kvu",
         "--load-mode", s->cfg.keep_resident ? "mmap+mlock" : "auto",
         "--cache-ram", "0", "--no-webui", "--no-slots", NULL,

@@ -12,7 +12,7 @@ Run **llama.cpp `llama-server`** as a supervised child process, reached through 
 
 ```
 -m LFM3-1.7B-BF16.gguf -ngl 99 -fa off -ctk bf16 -ctv bf16 --jinja
--np 2 -c <2 × per-slot context> -b 128 -ub 128 --cache-ram 0
+-np 2 -kvu -c <context + 8192> -b 128 -ub 64 -cms 0 -ctxcp 16 --cache-ram 0   (since 2026-11-17: "Room per token")
 --host <0700 dir>/llama.sock --api-key-file <0600 file>
 ```
 
@@ -166,18 +166,18 @@ Recommended flags (`-fa off`, `-np 2`, `--cache-ram 0`), with both slots holding
 | 32768 | 395 MiB | 285 MiB | 53 MiB |
 | 65536 (default, 32K × 2) | 779 MiB | 557 MiB | 85 MiB |
 
-That works out to about 21.5 KiB per token of `-c`: 12 KiB of KV (6 attention layers), 8.5 KiB of Metal compute and 1 KiB of CPU compute. (The CPU column is llama.cpp's projection, which counts the CPU buffer twice; allocated, it is half.) **Since 2026-11-14 the chat server runs `-b/-ub 128`**: Metal compute 278 MiB and CPU 21 at 65,536 cells, 16.8 KiB per token in all, so the fit uses 18 KiB; it keeps the BF16 contract but changes the accumulation order (3 of 20 captured replies diverged late against 256, two 256 runs agreeing on 20 of 20), and its prefill cost is within the machine's drift (journal/answer-cycle4_default_path.md, "The micro-batch"; REDTEAM-023). Weights are 3.3 GB Metal-mapped plus 0.5 GB CPU-mapped from a 3.47 GB file. The embedding server (Qwen3-Embedding-0.6B, fixed at 2,304 tokens) needs about 2.2 GB in all.
+That works out to about 21.5 KiB per token of `-c`: 12 KiB of KV (6 attention layers), 8.5 KiB of Metal compute and 1 KiB of CPU compute. (The CPU column is llama.cpp's projection, which counts the CPU buffer twice; allocated, it is half.) **From 2026-11-14 the chat server ran `-b/-ub 128`** (`-ub 64` since 2026-11-17, "Room per token"): Metal compute 278 MiB and CPU 21 at 65,536 cells, 16.8 KiB per token in all, so the fit uses 18 KiB; it keeps the BF16 contract but changes the accumulation order (3 of 20 captured replies diverged late against 256, two 256 runs agreeing on 20 of 20), and its prefill cost is within the machine's drift (journal/answer-cycle4_default_path.md, "The micro-batch"; REDTEAM-023). Weights are 3.3 GB Metal-mapped plus 0.5 GB CPU-mapped from a 3.47 GB file. The embedding server (Qwen3-Embedding-0.6B, fixed at 2,304 tokens) needs about 2.2 GB in all.
 
-**Memory check before starting (`src/llm/memfit.c`).** The estimate is the model file, plus a fixed cost, plus a cost per token of the pool (`llm_server_mem_need`, `llm_server_pool_ctx`): 34 KiB since 2026-11-16 (one pool with `--swa-full`; 18 KiB from 2026-11-14 with two slots and a 128 micro-batch, 22 before). This is compared with what macOS can hand out, keeping 512 MiB of headroom for the app itself, since macOS's own memory is already counted as used. That's the total minus wired, compressed and apps' own anonymous memory, as Activity Monitor counts it; cached files count as available. Free + inactive alone read 7.1 GB on a machine with 8.9 GB to give. If the author's context doesn't fit, the model starts with the largest context, in 8K steps, that does, and the status bar says so. The saved setting is kept, and Apply in Model settings checks again. Since 2026-11-16 the app also looks again once a minute while the model runs smaller than the setting, and restarts it at the largest size that now fits, only growing, never shrinking, when nothing uses the model and the author has not touched the keyboard or mouse for 30 seconds (`memfit_refit_due`; the session's idle time comes from the window server). If not even 8K fits, the model starts anyway with a warning. The same check runs before a restart for a new context size (`memory_for_model`). It counts the running chat model's memory as returned only when the model is ready (an Apply while it starts waits for it), and each server's weights by whether they are wired now (`llm_server_weights_wired`): pinned, or used within the last 180 s, since llama.cpp keeps memory-mapped weights wired only that long after their last use and macOS then reports them as available. Weights that are not wired are held back for the embedding and reranker servers and not counted as returned for the chat model; wired ones are already counted as used. Every request takes the server's socket just before sending, which stamps the time. Measured (wired MiB, a 16K pool): unpinned 5,942 ready and 1,850 idle; pinned 5,611 and 5,221. The Model settings panel shows the estimate for the context being chosen against what's free.
+**Memory check before starting (`src/llm/memfit.c`).** The estimate is the model file, plus a fixed cost, plus a cost per token of the pool (`llm_server_mem_need`, `llm_server_pool_ctx`): 17 KiB since 2026-11-17 (`-ub 64` and checkpoints, "Room per token"; 34 from 2026-11-16 with one pool and `--swa-full`, 18 from 2026-11-14 with two slots and a 128 micro-batch, 22 before). This is compared with what macOS can hand out, keeping 512 MiB of headroom for the app itself, since macOS's own memory is already counted as used. That's the total minus wired, compressed and apps' own anonymous memory, as Activity Monitor counts it; cached files count as available. Free + inactive alone read 7.1 GB on a machine with 8.9 GB to give. If the author's context doesn't fit, the model starts with the largest context, in 8K steps, that does, and the status bar says so. The saved setting is kept, and Apply in Model settings checks again. Since 2026-11-16 the app also looks again once a minute while the model runs smaller than the setting, and restarts it at the largest size that now fits, only growing, never shrinking, when nothing uses the model and the author has not touched the keyboard or mouse for 30 seconds (`memfit_refit_due`; the session's idle time comes from the window server). If not even 8K fits, the model starts anyway with a warning. The same check runs before a restart for a new context size (`memory_for_model`). It counts the running chat model's memory as returned only when the model is ready (an Apply while it starts waits for it), and each server's weights by whether they are wired now (`llm_server_weights_wired`): pinned, or used within the last 180 s, since llama.cpp keeps memory-mapped weights wired only that long after their last use and macOS then reports them as available. Weights that are not wired are held back for the embedding and reranker servers and not counted as returned for the chat model; wired ones are already counted as used. Every request takes the server's socket just before sending, which stamps the time. Measured (wired MiB, a 16K pool): unpinned 5,942 ready and 1,850 idle; pinned 5,611 and 5,221. The Model settings panel shows the estimate for the context being chosen against what's free.
 
 The server's own defaults are **4 slots and an 8 GB host prompt cache**, so `-np` and `--cache-ram` must always be set explicitly.
 
-## Prompt reuse (`--swa-full`, 2026-11-16)
+## Prompt reuse (`--swa-full`, 2026-11-16; replaced by checkpoints 2026-11-17, see "Room per token")
 
 **Without it, every chat turn read the whole conversation again.** LFM3 is a hybrid: convolution layers carry a running
 state, and some attention layers see only a 256-token sliding window. To resume a slot after the shared prefix, llama.cpp
-needs a saved checkpoint at least the window (256 tokens) before that point, and it saves checkpoints only near the end of
-each prompt. So the next turn (the previous prompt, the reply, the new message) found none early enough, rolled back to
+needs a saved checkpoint at least the window (256 tokens) before that point, and by default it saves them near the end of
+each prompt and at user messages at most once every 8,192 tokens (found 2026-11-17, "Room per token"). So the next turn (the previous prompt, the reply, the new message) found none early enough, rolled back to
 token 16 and read everything: a 12K-token conversation took 16 s before each reply, a 30K one 53 s. `--swa-full` keeps
 the window layers' whole history, the checkpoint rule no longer bites, and the next turn reads only the new tokens: 0.2 s
 at 12K. An observer request on the other slot leaves the chat's cache in place.
@@ -190,7 +190,48 @@ GPU's summation order. Fifty captured requests (`build/window/capture-pp`, `capt
 the cache identical (20/20), baseline deterministic (20/20); with the flag, 5 of 20 sampled replies diverged, from the
 first word to late. Greedy next-token probabilities over 457 identical-context steps: no top-10 probability moved more
 than 1.2 points; the only flip of the top token was at a 24.6% / 24.4% tie. Research tools under `tools/` keep the flags
-of their own experiments; a tool that reproduces the product from now on adds `--swa-full`.
+of their own experiments; a tool that reproduces the product adds `--swa-full` from 2026-11-16, and `-ub 64 -cms 0 -ctxcp 16` in its place from 2026-11-17 ("Room per token").
+
+## Room per token (2026-11-17)
+
+The author asked for more room with the BF16 rule kept (flash attention stays off). Two changes, measured with
+`tools/model_room_compare.py` (journal/room-per-token.md):
+
+- **`-ub 64`** (from 128; `-b` stays 128, which sets how chat and observer interleave): the attention scratch, which
+  with flash attention off grows with micro-batch × context, halves.
+- **Checkpoints instead of `--swa-full`:** llama.cpp saves a checkpoint at the start of each user message, but by
+  default at most one every 8,192 tokens, which is why the next turn used to find none early enough (above).
+  `-cms 0` saves one at every user message, `-ctxcp 16` keeps the latest 16 a slot (about 3.1 MiB each, host memory),
+  and the window layers keep only their window.
+
+| Flags (one pool, 40,960 cells) | KiB a token | A 25-turn chat: tokens read a turn, prompt time | 8 turns with an 8K-token chapter attached |
+|---|---|---|---|
+| `-ub 128 --swa-full` (before) | 32.3 | about 150, 5.75 s in all | 7,085–7,143 a turn, 82–85 s |
+| `-ub 64 -cms 0 -ctxcp 16` (now) | 16.9 | about 550 (the last exchanges), 17–21 s | 7,156–7,623 a turn, 86–89 s |
+
+**Fixed cost, measured as macOS sees it** (what can be handed out, as the app counts it, before the server starts,
+once it is ready and after a 30-turn chat with an observer request each turn): ready, the server takes the model
+file plus its buffers plus 92 to 93 MiB over three runs at 40,960 cells (4,072 to 4,074 MiB in all), 104 to 110 at
+16,384; after the
+chat, up to 260 MiB more (its checkpoints, buffers llama.cpp grows as it works): 4,165 to 4,333 MiB. With the old
+fixed 384 MiB that is within 37 MiB of the estimate (the old flags: 4,908 against 5,050), so the fixed cost is now
+512 MiB. With the pool mostly full (a 25K-token document, 26,257 of 40,960 cells, `mlock` as the app runs it), the
+server took 4,155 and 4,296 MiB against an estimate of 4,498.
+
+At 139,264 cells: 2,259 MiB of KV and compute buffers against 4,365 (16.5 KiB a token by the slope from 16,384, 16.75 with llama.cpp's
+projection), so the memory check uses 17 (`llm_server_mem_need`), and a 128K context needs about 6.4 GB where it
+needed 8.7. In the app (`SCRIBODO_LLM=real`, a seven-turn chat with no document), each turn after the first read 296–436 tokens as
+the conversation grew, about 0.7 s; with a chapter attached each turn reads the chapter again, as before (it
+travels with the newest message). On the same 16 GB Mac that started the model at 8K in the morning, it started at
+40K with 4.9 GB free, where the old figures would have allowed 16K (journal/room-per-token.md, "Launch").
+
+**Long prompts:** five prompts of about 25,000 tokens read in 44 s each against 50 with the old flags (the smaller
+micro-batch is faster here); over their 120 identical-context steps the largest top-10 difference was 2.1 points, and
+the one change of top token came at a near-tie (44.6% against 44.4%).
+
+**Output:** the BF16 contract holds (every kernel BF16 or F32); the summation order changes, as for the earlier
+micro-batch. Over 600 identical-context greedy steps (24 tokens on each of the 25 turn prompts), no top-10
+probability moved more than 2.4 points and no top token changed; two runs of the old flags agreed exactly.
 
 ## Context ceiling (2026-11-16)
 
@@ -199,7 +240,7 @@ from the GGUF header with every length bounded, and the Model settings panel off
 8K steps (`model_settings_set_context_limit`, applied before the saved settings are read). 32K stays the default and the
 fallback when no model file can be read. A slot above the file's value is refused (`llm_server_reconfigure`, which applies a new context and the keep setting with one restart).
 
-Measured on this Mac with `--swa-full`: prefill runs at about 900 tokens a second at 3K and averages 570 over 30K (flash
+Measured on this Mac with `--swa-full` and `-ub 128` (before "Room per token"): prefill runs at about 900 tokens a second at 3K and averages 570 over 30K (flash
 attention is off, so attention cost grows with the prompt); generation stays near 20 tokens a second at 30K. Planted
 facts at 10, 50 and 90% of a 30K prompt were all recalled.
 
@@ -215,9 +256,9 @@ context is paid for once. The observer's requests are bounded (a passage of at m
 | 128K | about 7 GB | 4.4 GB (`-c 139264`) |
 
 The attention scratch is then sized for one sequence the length of the pool: 33.4 KiB a token by llama.cpp's projection
-at 40,960 cells, 33.1 at 139,264, so the fit uses 34 over the pool (`llm_server_pool_ctx`). Output is unchanged: 480
-greedy steps over 20 captured requests, every top-10 probability identical to the two-slot layout. Turns resume from the
-cache as before (0.1 s), and an observer request on slot 1 leaves the chat's cache in place.
+at 40,960 cells, 33.1 at 139,264, so the fit used 34 over the pool (`llm_server_pool_ctx`; 17 since 2026-11-17). Output is unchanged: 480
+greedy steps over 20 captured requests, every top-10 probability identical to the two-slot layout. Turns resumed from the
+cache as before (0.1 s with `--swa-full`; since 2026-11-17 from the previous exchange, "Room per token"), and an observer request on slot 1 leaves the chat's cache in place.
 
 **If the pool fills** while one slot is idle, llama.cpp purges that slot's cache and continues (measured on a 16K pool;
 the chat then reads its prompt once more). If both slots are processing, it fails both requests ("Context size has been
