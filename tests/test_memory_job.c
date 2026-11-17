@@ -410,6 +410,8 @@ static void test_latest_and_pause(void)
     MemoryJob *job = memory_job_create_with_runner(&manager, runner, &g);
     assert(job && memory_job_select(job, "/original", "A", MEMORY_JOB_RESUME));
     wait_entered(&g);
+    /* A delete of A waits for this step (round 3); B, never stepped, does not. */
+    assert(memory_job_step_on(job, "A") && !memory_job_step_on(job, "B") && !memory_job_step_on(job, ""));
     memory_job_pause(job, true);
     for (unsigned i = 0; i < 10000; i++)
         assert(memory_job_select(job, "/pending", "B", MEMORY_JOB_RESUME));
@@ -762,6 +764,8 @@ static void test_consent_fifo_while_paused(void)
     MemoryJobStatus status;
     assert(memory_job_status(job, &status) && status.controls_pending);
     control_wait_entered(&g); /* Consent runs even though resource work is paused. */
+    /* A delete of A waits for its consent change, in flight (round 4); B has none queued and is not stepping. */
+    assert(memory_job_step_on(job, "A") && !memory_job_step_on(job, "B"));
     const char *names[] = {"A", "C", "D", "E", "F", "G", "H", "I"};
     for (unsigned i = 1; i < MEMORY_JOB_CONTROL_CAPACITY; i++)
         assert(memory_job_select(job, "/p", names[i], i % 2 ? MEMORY_JOB_ENABLE : MEMORY_JOB_REBUILD));
@@ -799,6 +803,7 @@ static void test_consent_fifo_while_paused(void)
         poll_pause();
     }
     assert(!status.scope.conversation_id[0]); /* A's result never labels B. */
+    assert(!memory_job_step_on(job, "A") && !memory_job_step_on(job, "I")); /* all committed */
     pthread_mutex_lock(&g.mu);
     assert(g.attempts == MEMORY_JOB_CONTROL_CAPACITY + 1 && g.commits == MEMORY_JOB_CONTROL_CAPACITY);
     assert(!g.resources);

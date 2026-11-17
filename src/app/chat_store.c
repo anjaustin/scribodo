@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -204,34 +205,103 @@ bool chat_store_set_archived_files(const char *project_dir, const char *id, bool
     return append_flag_line(project_dir, id, "archive", "archived", archived);
 }
 
-bool chat_group_name_clean(const char *in, char out[48])
+/* Characters a name may not hold: bidi overrides and isolates, the zero-width space and marks that only steer
+ * direction, line separators, the BOM, the C1 controls (red team round 2: an override could make one heading read
+ * as another). The joiners (U+200C, U+200D) and the soft hyphen stay: Persian and Indic names and emoji need them
+ * (round 3). */
+static bool invisible_control(uint32_t cp)
 {
-    out[0] = '\0';
-    if (!in) return false;
-    while (*in == ' ' || *in == '\t') in++;
-    size_t n = strlen(in);
-    while (n && (in[n - 1] == ' ' || in[n - 1] == '\t')) n--;
-    size_t o = 0;
+    return (cp >= 0x80 && cp <= 0x9F) || cp == 0x61C || cp == 0xE0001 ||
+           cp == 0x200B || cp == 0x200E || cp == 0x200F || (cp >= 0x2028 && cp <= 0x202E) ||
+           (cp >= 0x2060 && cp <= 0x2064) || (cp >= 0x2066 && cp <= 0x206F) || cp == 0xFEFF || (cp >= 0xFFF9 && cp <= 0xFFFB);
+}
+
+static bool blank(uint32_t cp)
+{
+    return cp == ' ' || cp == '\t' || cp == 0xA0 || cp == 0x1680 || (cp >= 0x2000 && cp <= 0x200A) || cp == 0x202F ||
+           cp == 0x205F || cp == 0x3000;
+}
+
+/* Allowed but drawn as nothing on their own: joiners, the soft hyphen, variation selectors, fillers (round 4). */
+static bool zero_width(uint32_t cp)
+{
+    return cp == 0xAD || cp == 0x34F || cp == 0x200C || cp == 0x200D || (cp >= 0x180B && cp <= 0x180F) ||
+           (cp >= 0xFE00 && cp <= 0xFE0F) || cp == 0x115F || cp == 0x1160 || cp == 0x3164 || cp == 0xFFA0 || cp == 0x2800 ||
+           (cp >= 0xE0100 && cp <= 0xE01EF) || (cp >= 0xE0020 && cp <= 0xE007F); /* tags: the subdivision flags */
+}
+
+/* Something to see, and, its blanks and zero-width characters left out, not the Archived heading's name (ASCII
+ * case; "Arch ived" is refused too). */
+static bool name_shows(const char *s, size_t n, bool reserve)
+{
+    char bare[48];
+    size_t b = 0;
+    bool visible = false;
+    for (size_t i = 0; i < n;) {
+        uint32_t cp;
+        int used = utf8_decode_one((const uint8_t *)s + i, n - i, &cp);
+        if (used <= 0) break;
+        if (!zero_width(cp) && !blank(cp)) { /* compared without padding of any kind (round 5) */
+            visible = true;
+            if (b + (size_t)used < sizeof(bare)) { memcpy(bare + b, s + i, (size_t)used); b += (size_t)used; }
+        }
+        i += (size_t)used;
+    }
+    bare[b] = '\0';
+    return visible && !(reserve && !strcasecmp(bare, "Archived"));
+}
+
+/* The name's own bytes as kept, or false: every character allowed (see invisible_control). */
+static bool name_chars(const char *in, size_t n, char out[48], size_t *len)
+{
+    size_t o = 0, last_visible_end = 0;
+    bool started = false;
     for (size_t i = 0; i < n;) {
         uint32_t cp;
         int used = utf8_decode_one((const uint8_t *)in + i, n - i, &cp);
         /* The decoder answers an invalid sequence with U+FFFD; only the real one (EF BF BD) is a character here. */
         bool invalid = cp == 0xFFFD && !(used == 3 && !memcmp(in + i, "\xEF\xBF\xBD", 3));
-        if (used <= 0 || invalid || cp < 0x20 || cp == 0x7F || (cp >= 0xD800 && cp <= 0xDFFF)) { out[0] = '\0'; return false; }
+        if (used <= 0 || invalid || (cp < 0x20 && cp != '\t') || cp == 0x7F || (cp >= 0xD800 && cp <= 0xDFFF) ||
+            invisible_control(cp))
+            return false;
+        if (!started && blank(cp)) { i += (size_t)used; continue; } /* leading blanks of any kind */
+        started = true;
         if (o + (size_t)used > CHAT_GROUP_MAX) break; /* cut between characters */
         memcpy(out + o, in + i, (size_t)used);
         o += (size_t)used;
+        if (!blank(cp)) last_visible_end = o;
         i += (size_t)used;
     }
-    while (o && out[o - 1] == ' ') o--; /* a cut can leave a trailing space */
-    out[o] = '\0';
-    return o > 0;
+    *len = last_visible_end; /* trailing blanks of any kind go, as does a cut's */
+    out[*len] = '\0';
+    return !memchr(out, '\t', *len); /* a tab only at the ends */
+}
+
+bool chat_group_name_clean(const char *in, char out[48])
+{
+    out[0] = '\0';
+    size_t o = 0;
+    if (!in || !name_chars(in, strlen(in), out, &o) || !o || !name_shows(out, o, true)) {
+        out[0] = '\0';
+        return false; /* refused, nothing visible, or the Archived heading's name */
+    }
+    return true;
+}
+
+bool chat_group_name_stored(const char *in, char out[48])
+{
+    /* A group already kept is shown, even under a rule added since (round 3): only its characters are checked. */
+    out[0] = '\0';
+    size_t o = 0;
+    if (chat_group_name_clean(in, out)) return true;
+    if (!in || !name_chars(in, strlen(in), out, &o) || !o || !name_shows(out, o, false)) { out[0] = '\0'; return false; }
+    return true;
 }
 
 bool chat_store_set_group_files(const char *project_dir, const char *id, const char *group)
 {
     char clean[48];
-    if (group && group[0] && !chat_group_name_clean(group, clean)) return false;
+    if (group && group[0] && !chat_group_name_stored(group, clean)) return false;
     if (!group || !group[0]) clean[0] = '\0';
     cJSON *j = cJSON_CreateObject();
     if (!j || !cJSON_AddStringToObject(j, "type", "group") || !cJSON_AddStringToObject(j, "group", clean)) {
@@ -406,7 +476,7 @@ bool chat_store_list_files_checked(const char *project_dir, ChatSummary **out, s
                         g->valuestring) {
                         char clean[48];
                         if (!g->valuestring[0]) c->group[0] = '\0';
-                        else if (chat_group_name_clean(g->valuestring, clean)) memcpy(c->group, clean, sizeof(clean));
+                        else if (chat_group_name_stored(g->valuestring, clean)) memcpy(c->group, clean, sizeof(clean));
                     }
                     cJSON_Delete(j);
                 }
@@ -705,14 +775,14 @@ bool chat_store_delete(StoreManager *manager, const char *project_dir, const cha
 bool chat_store_set_group(StoreManager *manager, const char *project_dir, const char *id, const char *group)
 {
     char clean[48] = "";
-    if (group && group[0] && !chat_group_name_clean(group, clean)) return false;
+    if (group && group[0] && !chat_group_name_stored(group, clean)) return false;
     return project_store_chat_set_group(manager, project_dir, id, clean);
 }
 
 bool chat_store_rename_group(StoreManager *manager, const char *project_dir, const char *from, const char *to)
 {
     char f[48], t[48] = "";
-    if (!chat_group_name_clean(from, f) || (to && to[0] && !chat_group_name_clean(to, t))) return false;
+    if (!chat_group_name_stored(from, f) || (to && to[0] && !chat_group_name_stored(to, t))) return false;
     return project_store_chat_rename_group(manager, project_dir, f, t);
 }
 

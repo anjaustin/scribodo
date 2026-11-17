@@ -1651,7 +1651,8 @@ static void test_semantic(void)
           !strcmp(db_cell(&r, 0, 0), "0"));
     db_rows_free(&r);
     /* A chat that does not exist (deleted while the observer read it) is never indexed (red team 2026-11-17). */
-    CHECK(!semantic_index_text(semantic, pid, "chat", NULL, NULL, "20261117-100000-cccc", 1, 0, 30, "The ferry leaves at noon."));
+    CHECK(semantic_index_text(semantic, pid, "chat", NULL, NULL, "20261117-100000-cccc", 1, 0, 30, "The ferry leaves at noon."));
+    /* Skipped, not failed (a rebuild meeting a deleted chat goes on; round 2), and nothing indexed. */
     n = semantic_search(semantic, pid, "ferry to Sula", "chat", 5, &h);
     CHECK(n == 0);
     semantic_hits_free(h, n);

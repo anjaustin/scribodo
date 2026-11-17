@@ -388,6 +388,7 @@ static bool append_impl(StoreManager *manager, const char *project_dir, RecordKi
 {
     if (ver_out) *ver_out = 0;
     records_append_mark_taken(false);
+    records_append_mark_gone(false);
     if (!valid_id(id)) return false;
     return project_store_records_append(manager, project_dir, kind, id, status, content, sources, nsources, finding, mode, ver_out);
 }
@@ -397,6 +398,12 @@ static _Thread_local bool g_append_taken;
 void records_append_mark_taken(bool taken) { g_append_taken = taken; }
 
 bool records_append_taken(void) { return g_append_taken; }
+
+static _Thread_local bool g_append_gone;
+
+void records_append_mark_gone(bool gone) { g_append_gone = gone; }
+
+bool records_append_gone(void) { return g_append_gone; }
 
 bool records_create_drawn(StoreManager *manager, const char *project_dir, RecordKind kind, const char *status,
                           const char *content, const SourceRef *sources, size_t nsources, const FindingInfo *finding,

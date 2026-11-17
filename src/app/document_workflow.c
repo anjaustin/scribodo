@@ -132,7 +132,8 @@ bool finish_prompt(App *app, const char *typed)
     if (prompt_tag(app->prompt) == PT_NEW_GROUP || prompt_tag(app->prompt) == PT_RENAME_GROUP) {
         char g[48];
         if (!chat_group_name_clean(typed, g)) {
-            prompt_set_error(app->prompt, typed[0] ? "Use letters, numbers and spaces" : "Type a name");
+            prompt_set_error(app->prompt, !typed[0] ? "Type a name"
+                                          : "Use visible characters (no control or invisible ones), and not \"Archived\"");
             return false;
         }
         if (strcmp(app->prompt_project, app->project_dir) != 0) return true; /* project changed: nothing done */

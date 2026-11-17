@@ -63,7 +63,87 @@ The reviewer confirmed:
 - Menu positions are right with memory on and off, and actions follow the chat's id, not its row.
 - The archive filter covers both of Recall's queries.
 
+## Rounds 2 to 4
+
+The author then asked for the change to be red-teamed until clean. Round 2 had two fresh reviewers, one on the
+status bar, archive and groups and one on delete. Rounds 3 and 4 each had one reviewer on the previous round's fixes.
+Every finding was checked against the code before it was fixed.
+
+**Round 2, delete.**
+- **F1 — P2, a regression from R1 (fixed).** A finding whose chat link was already empty (imported without its
+  chat's file, or from an older store) could no longer be dismissed, saved or re-filtered. Only a named chat that is
+  missing is refused now.
+- **F2 — P2, R2 incomplete (fixed).** A chat being deleted could still be opened from a Recall excerpt or a
+  finding's source, and a history load in flight could show a chat that had just been deleted. Every way in now goes
+  through one refusal. A load that finishes after the delete is dropped. A delete is refused while that chat's history
+  loads, and is cancelled if the chat is open again.
+- **F3 — P3 (fixed).** In the file store, the confirmation now says the observer's findings stay.
+- **F4 — P3 (fixed).** A rebuild that met a deleted chat counted it as failed and forced another full rebuild. It is
+  skipped now.
+- **F5 — P3 (fixed).** The observer reported a refused finding as an I/O error and paused for a minute. A refused
+  append now sets `records_append_gone()` and the finding is dropped.
+- **P3 (fixed).** The purge now also covers the old `memory_v1` collections.
+- **P3 (fixed).** A failed re-purge after an index race re-lists the chat.
+- **Accepted (P3).** An entity created in the milliseconds between a finding's commit and its mention row can
+  outlive a delete. The delete runs on the frame thread and can take a few seconds against a slow Qdrant; purges have
+  no payload index.
+
+**Round 2, status bar, archive and groups.**
+- **P2 (fixed).** An archived chat still showed "Observer reads this chat", and toggling it said the observer had
+  resumed. It now shows unchecked and refuses the toggle.
+- **P3 (fixed).** The context figure is reset after a remote reply and after Scribodo restarts the model.
+- **P3 (fixed).** "· N set" no longer appears while a change only waits to apply.
+- **P3 (fixed).** The figure now sits with the other figures, so a long status cannot push it off the bar.
+- **P3 (fixed).** Group names refuse control, direction and invisible-only characters, and "Archived".
+- **P3 (fixed).** The open or closed state of groups is per project, and is pruned when full.
+- **P3, docs (fixed).** The GAP-004 and LANDSCAPE matrix figures are updated.
+- **Accepted (P3).** In the file store a group is renamed chat by chat; a failure part-way leaves some chats under
+  the old name, and renaming again finishes it.
+
+**Round 3.**
+- **P3 (fixed).** Narrowing the memory wait let a memory step already running on the chat write its index points
+  after the purge. The memory job now reports which chat its current step is on (`memory_job_step_on`), and a delete
+  waits for exactly that, never for another chat's work.
+- **P3 (fixed).** The name filter refused the joiners that Persian, Indic and emoji names need. They are allowed now,
+  blanks of any kind are trimmed, and names already kept are shown under a lenient read.
+
+**Round 4.**
+- **P2 (fixed).** A consent change (enable, disable, rebuild) still queued for the chat was not waited for. If the
+  delete won, the change retried forever and blocked sending. `memory_job_step_on` now also counts queued and
+  in-flight consent changes.
+- **P3 (fixed).** A store error during the existence checks was taken as "deleted", dropping a finding or skipping a
+  passage. The checks now tell an error from absence.
+- **P3 (fixed in round 5).** Names drawn as nothing (joiners, fillers alone) are refused. So is "Archived" padded
+  with zero-width characters or blanks, compared with all of them left out.
+- **Accepted (P3).** The store layer accepts any name already allowed in storage, so the strict check for new names
+  is at the prompt, the one place new names come from. Cyrillic look-alikes of "Archived" pass; only the author can
+  type them. Closing a 65th open group does nothing.
+
+**Round 5.**
+- **P3 (fixed).** A delete held by a consent change that can never be saved (the store keeps failing, or its
+  identity changed) waited with no end and no reason. It is now given up after a minute, with the reason.
+- **P3 (fixed).** "Archived" padded with blanks inside zero-width characters still passed, and so did U+061C and the
+  tag characters. Names are now compared with all blanks and zero-width characters left out; U+061C and the
+  language tag U+E0001 are refused (the other tags: round 6).
+- **P3 (fixed).** A dead flag left over from round 2 is removed.
+- **P3 (not taken).** A store error during the check after an index write could count a deleted chat as present.
+  Treating the error as "gone" was tried and reverted: it would list a live chat whose purge takes its memory points.
+  The window (a store error at the moment of a delete) is accepted.
+- **Accepted (P3).** Group names saved earlier today under the round-1 rule with outer NBSP or now-refused
+  characters read back differently. No such name has left this Mac: the change was not yet pushed.
+
+**Round 6.** The revert above was confirmed safe. Refusing the tag characters had blocked the England, Scotland and
+Wales flag emoji; they are allowed again and counted as zero-width, like the joiners (fixed). Look-alikes of
+"Archived" in other scripts or in fullwidth pass; only the author can type them (accepted).
+
+Each fix above has a test that fails without it, or a mutant run.
+
 ## Verification
 
-After the fixes, each with exit status 0: `make test`, `analyze` (0 warnings), `sanitize`, `tsan`, `uitest` (496
+After round 1, each with exit status 0: `make test`, `analyze` (0 warnings), `sanitize`, `tsan`, `uitest` (496
 checks), `dbtest`, `crashtest` (1,711 checks, 151 rows), `uitest-db` (317 checks).
+
+After round 6, on the final tree, each with exit status 0: `make test`, `analyze` (0 warnings), `sanitize`,
+`tsan`, `uitest` (496 checks), `dbtest`, `crashtest` (1,711 checks, 151 rows), `uitest-db` (317 checks). Mutant runs
+during the rounds: dropping the consent-queue scan from `memory_job_step_on` fails `test_memory_job`; dropping brief
+inputs from the delete order, or ignoring links when pruning entities, fails the delete test.

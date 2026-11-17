@@ -224,6 +224,9 @@ static void set_project(App *app, const char *real)
         app->menu.active = false;
         (void)project_session_set_project(&app->session, real);
         cancel_history(app);
+        /* Chat-list sections are the project's own (red team 2026-11-17, round 2). */
+        app->nchat_groups_closed = 0;
+        app->chats_archived_open = false;
         ExplorerSnapshot empty;
         explorer_snapshot_init(&empty);
         empty.generation = app->explorer.generation + 1;
@@ -729,7 +732,10 @@ static void fit_context(App *app, bool announce)
     memfit_message(&f, app->model.context, msg, sizeof(msg));
     if (msg[0]) fprintf(stderr, "scribodo: %s\n", msg);
     bool keep = app->model.keep_in_memory != 0, keep_changed = llm_server_config(app->llm)->keep_resident != keep;
-    if (f.slot_ctx != running || keep_changed) llm_server_reconfigure(app->llm, f.slot_ctx, keep); /* one restart */
+    if (f.slot_ctx != running || keep_changed) {
+        llm_server_reconfigure(app->llm, f.slot_ctx, keep); /* one restart */
+        chat_context_used_reset(app->chat); /* the restarted model holds nothing yet (red team round 2) */
+    }
     if (msg[0]) set_status(app, msg);
     else if (announce && f.slot_ctx != running) set_status(app, "Model settings saved; the model is restarting with the new context size");
     else if (announce && keep_changed)
@@ -772,6 +778,7 @@ static void refit_context(App *app)
      * again and could have shrunk it). */
     if (f.slot_ctx <= r.running) return;
     llm_server_reconfigure(app->llm, f.slot_ctx, app->model.keep_in_memory != 0);
+    chat_context_used_reset(app->chat); /* the restarted model holds nothing yet (red team round 2) */
     char msg[160];
     snprintf(msg, sizeof(msg), "More memory is free: the model restarted with a %dK context", llm_server_slot_ctx(app->llm) / 1024);
     set_status(app, msg);
@@ -1418,7 +1425,7 @@ static void frame_explorer_menu(App *app, Vector2 mouse, bool modal)
                 if (!chat) break;
                 static char reads_item[64];
                 snprintf(reads_item, sizeof(reads_item), "%s Observer reads this chat",
-                         chat->observer_ignore ? "  " : "\xE2\x9C\x93");
+                         chat->observer_ignore || chat->archived ? "  " : "\xE2\x9C\x93");
                 /* New items go after the memory ones: scripts pick those by position. */
                 const char *items[8] = { "Rename\xE2\x80\xA6", reads_item };
                 int n = 2;
@@ -1725,9 +1732,11 @@ static void frame_draw_toolbar(App *app, const FrameRects *rects)
     if (open_chat_stored(app)) {
         Rectangle orr = ELEMENT_RECT("ObserverReads");
         const ChatSummary *cs = find_chat(app, app->chat_id);
-        bool reads = cs && !cs->observer_ignore, was = reads;
+        bool reads = cs && !cs->observer_ignore && !cs->archived, was = reads;
         widget_checkbox(orr, "Observer reads this chat", NULL, &reads);
-        if (reads != was) set_chat_observer(app, app->chat_id, reads);
+        if (reads != was && cs && cs->archived) /* archived: set aside until restored (red team round 2) */
+            set_status(app, "This chat is archived: the observer reads it again once you restore it");
+        else if (reads != was) set_chat_observer(app, app->chat_id, reads);
     }
 }
 
@@ -1867,7 +1876,8 @@ static void frame_draw_overlays(App *app, MainLoop *loop, int empty_act, bool mo
             if (cs) set_chat_archived(app, app->menu_chat, !cs->archived);
         } else if (pick == 1 && app->menu.tag == MT_CHAT) {
             const ChatSummary *cs = find_chat(app, app->menu_chat);
-            if (cs) set_chat_observer(app, app->menu_chat, cs->observer_ignore);
+            if (cs && cs->archived) set_status(app, "This chat is archived: the observer reads it again once you restore it");
+            else if (cs) set_chat_observer(app, app->menu_chat, cs->observer_ignore);
         } else if (pick >= 2 && pick <= 4 && app->menu.tag == MT_CHAT && app->memory_experiment) {
             memory_control(app, pick == 2 ? MEMORY_JOB_ENABLE : pick == 3 ? MEMORY_JOB_DISABLE : MEMORY_JOB_REBUILD);
         } else if (pick == 0 && app->menu.tag == MT_CHAT) {
@@ -1888,8 +1898,11 @@ static void frame_draw_overlays(App *app, MainLoop *loop, int empty_act, bool mo
              * Delete… just clicked (a double-click cannot confirm). */
             static const char *const confirm[] = { "Delete chat and what memory learned", "Cancel" };
             menu_open(&app->menu, MT_CHAT_DELETE, 0, move_at, confirm, 2);
-            set_status(app, "Deleting removes this chat, what memory learned from it and the observer's findings from it; "
-                            "notes and canon you saved stay. It can't be undone.");
+            set_status(app, database_history_project(app->project_dir)
+                ? "Deleting removes this chat, what memory learned from it and the observer's findings from it; "
+                  "notes and canon you saved stay. It can't be undone."
+                : "Deleting removes this chat's file. Without the project store, the observer's findings from it stay. "
+                  "It can't be undone.");
         }
         /* Frosted glass behind a dialog (ui/backdrop.h): its snapshot goes when the last dialog closes. */
         if (!app->settings_open && !app->fonts_panel.open && !prompt_active(app->prompt) && !app->memory_sources_open)

@@ -1740,6 +1740,7 @@ static void *server_worker(void *arg)
     free(c.raw);
     s->last_truncated = c.truncated;
     if (!error && !s->via_remote && c.ctx_used >= 0) atomic_store(&s->ctx_used, c.ctx_used);
+    else if (!error && s->via_remote) atomic_store(&s->ctx_used, -1); /* the local figure no longer describes this chat */
     if (!error && !cancelled && s->gate_armed) gate_apply(s);
     gate_clear(s);
     finish(s, error, msg);

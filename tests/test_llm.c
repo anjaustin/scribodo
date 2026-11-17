@@ -603,6 +603,31 @@ static void test_chat_store(void)
     CHECK(chat_group_name_clean("  Book Two \t", g) && !strcmp(g, "Book Two"));
     CHECK(!chat_group_name_clean("   ", g) && !g[0] && !chat_group_name_clean(NULL, g));
     CHECK(!chat_group_name_clean("Bad\nname", g) && !chat_group_name_clean("Bad\x7f", g) && !chat_group_name_clean("\xC0\xAF", g));
+    /* Round 2: C1 and bidi controls, zero-width marks, nothing visible, the Archived heading's name. */
+    CHECK(!chat_group_name_clean("A\xC2\x85" "B", g) && !chat_group_name_clean("\xE2\x80\xAEsrafD", g) &&
+          !chat_group_name_clean("A\xE2\x80\x8B" "B", g) && !chat_group_name_clean("\xC2\xA0\xC2\xA0", g));
+    CHECK(!chat_group_name_clean("archived", g) && !chat_group_name_clean(" Archived ", g));
+    CHECK(chat_group_name_clean("Archived drafts", g) && chat_group_name_clean("Zo\xC3\xAB \xC2\xA0" "Book", g));
+    CHECK(chat_group_name_clean("\xEF\xBF\xBD", g)); /* the real U+FFFD is a character */
+    /* Round 3: joiners kept (Persian, emoji), blanks of any kind trimmed, so "Archived" + NBSP is still refused; a name
+     * kept before a rule was added is still shown. */
+    CHECK(chat_group_name_clean("\xD9\x85\xDB\x8C\xE2\x80\x8C\xD8\xAE\xD9\x88\xD8\xA7\xD9\x87\xD9\x85", g) && strlen(g) == 17);
+    CHECK(chat_group_name_clean("\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x92\xBB", g));
+    CHECK(!chat_group_name_clean("Archived\xC2\xA0", g) && !chat_group_name_clean("\xE3\x80\x80" "archived", g));
+    CHECK(chat_group_name_clean("\xC2\xA0" "Book\xE3\x80\x80", g) && !strcmp(g, "Book"));
+    CHECK(chat_group_name_stored("archived", g) && !strcmp(g, "archived"));
+    CHECK(!chat_group_name_stored("A\xE2\x80\xAE" "B", g) && !chat_group_name_stored("\xC2\xA0", g));
+    /* Round 4: nothing drawn but zero-width characters, or "Archived" with one, is refused. */
+    CHECK(!chat_group_name_clean("\xE2\x80\x8D", g) && !chat_group_name_clean("\xC2\xAD", g) &&
+          !chat_group_name_clean("\xE3\x85\xA4", g) && !chat_group_name_clean("\xE2\xA0\x80", g));
+    CHECK(!chat_group_name_clean("Archived\xE2\x80\x8D", g) && !chat_group_name_clean("Arch\xC2\xAD" "ived", g));
+    /* Round 5: padding inside the joiners, an Arabic letter mark, tag characters. */
+    CHECK(!chat_group_name_clean("Archived \xE2\x80\x8D", g) && !chat_group_name_clean("\xE2\x80\x8D Archived", g));
+    CHECK(!chat_group_name_clean("A\xD8\x9C" "B", g) && !chat_group_name_clean("\xF3\xA0\x80\x81", g));
+    /* Round 6: the subdivision flags' tag characters are kept (Scotland), but tags alone draw nothing. */
+    CHECK(chat_group_name_clean("\xF0\x9F\x8F\xB4\xF3\xA0\x81\xA7\xF3\xA0\x81\xA2\xF3\xA0\x81\xB3\xF3\xA0\x81\xA3"
+                                "\xF3\xA0\x81\xB4\xF3\xA0\x81\xBF", g));
+    CHECK(!chat_group_name_clean("\xF3\xA0\x81\xA7\xF3\xA0\x81\xBF", g));
     CHECK(chat_group_name_clean("\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9"
                                 "\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9xx", g));
     CHECK(strlen(g) == CHAT_GROUP_MAX && g[CHAT_GROUP_MAX - 1] == '\xA9'); /* 20 two-byte letters: cut between them */

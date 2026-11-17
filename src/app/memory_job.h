@@ -57,6 +57,9 @@ void memory_job_pause(MemoryJob *job, bool paused);
 bool memory_job_status(MemoryJob *job, MemoryJobStatus *out);
 /* The worker is doing something (a step runs, or the last one made progress): it may be using the chat server. */
 bool memory_job_working(MemoryJob *job);
+/* A step on this conversation is running now, or a consent change for it is queued or in flight (a delete waits for
+ * both: their writes, Qdrant's included, must land before the purge; red team rounds 3 and 4). Any thread. */
+bool memory_job_step_on(MemoryJob *job, const char *conversation);
 
 /* Capacity includes the in-flight head. Full queues reject controls without
  * changing navigation or previously accepted intent. RESUME is latest-only. */

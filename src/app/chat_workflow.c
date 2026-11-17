@@ -69,7 +69,7 @@ void set_chat_group(App *app, const char *id, const char *group)
 {
     char cid[40], g[48] = "";
     snprintf(cid, sizeof(cid), "%s", id);
-    if (group && group[0] && !chat_group_name_clean(group, g)) {
+    if (group && group[0] && !chat_group_name_stored(group, g)) {
         set_status(app, "That group name can't be used");
         return;
     }
@@ -88,7 +88,7 @@ void set_chat_group(App *app, const char *id, const char *group)
 bool rename_chat_group(App *app, const char *from, const char *to, char *why, size_t whylen)
 {
     char f[48], t[48] = "";
-    if (!chat_group_name_clean(from, f)) { snprintf(why, whylen, "That group is gone"); return false; }
+    if (!chat_group_name_stored(from, f)) { snprintf(why, whylen, "That group is gone"); return false; }
     if (to && to[0] && !chat_group_name_clean(to, t)) { snprintf(why, whylen, "That name can't be used"); return false; }
     if (!chat_store_rename_group(app->store, app->project_dir, f, t)) {
         snprintf(why, whylen, "%s", store_says(app, "Couldn't rename that group"));
@@ -122,7 +122,18 @@ void chat_group_toggle(App *app, const char *group)
             app->nchat_groups_closed--;
             return;
         }
-    if (app->nchat_groups_closed < (int)(sizeof(app->chat_groups_closed) / sizeof(app->chat_groups_closed[0])))
+    int cap = (int)(sizeof(app->chat_groups_closed) / sizeof(app->chat_groups_closed[0]));
+    if (app->nchat_groups_closed == cap) { /* full: forget groups that are gone (red team round 2) */
+        int kept = 0;
+        for (int i = 0; i < app->nchat_groups_closed; i++) {
+            bool live = false;
+            for (size_t g = 0; g < app->nchat_groups && !live; g++) live = !strcmp(app->chat_groups[g], app->chat_groups_closed[i]);
+            if (live && kept != i) memcpy(app->chat_groups_closed[kept], app->chat_groups_closed[i], sizeof(app->chat_groups_closed[0]));
+            kept += live;
+        }
+        app->nchat_groups_closed = kept;
+    }
+    if (app->nchat_groups_closed < cap)
         snprintf(app->chat_groups_closed[app->nchat_groups_closed++], sizeof(app->chat_groups_closed[0]), "%s", group);
 }
 
@@ -156,6 +167,10 @@ void request_chat_delete(App *app, const char *id)
 {
     if (app->chat_delete_pending[0]) { set_status(app, "Another chat is being deleted; try again in a moment"); return; }
     if (!find_chat(app, id)) { set_status(app, "That chat is no longer in this project"); return; }
+    if (app->history_pending && !strcmp(app->history_id, id)) {
+        set_status(app, "That chat is loading; delete it once it has opened"); return;
+    }
+    app->chat_delete_since = GetTime();
     if (!strcmp(id, app->chat_id) && !strcmp(app->chat_project, app->project_dir)) {
         /* The open chat: closed first, as New chat would, so nothing writes to it while it goes. */
         if (chat_busy(app->chat)) { set_status(app, "Stop the reply before deleting this chat"); return; }
@@ -195,10 +210,25 @@ void chat_delete_tick(App *app)
         set_status(app, "The project changed; the chat was not deleted");
         return;
     }
-    /* Memory works only on the open chat: wait until it has let go of this one (no step or consent change running). */
-    if (app->memory_job && (memory_job_working(app->memory_job) || memory_controls_pending(app) ||
-                            !strcmp(app->memory_bound_chat, app->chat_delete_pending)))
+    if (!strcmp(app->chat_id, app->chat_delete_pending)) { /* reopened somehow: never deleted under the author */
+        app->chat_delete_pending[0] = '\0';
+        set_status(app, "The chat was opened again, so it was not deleted");
         return;
+    }
+    /* Memory works only on the open chat: wait while it is bound to this one, a step on it is running (its index writes
+     * must land before the purge), or a consent change for it is queued. Another chat's work never holds up the delete
+     * (red team rounds 2 to 4). */
+    if (app->memory_job && (!strcmp(app->memory_bound_chat, app->chat_delete_pending) ||
+                            memory_job_step_on(app->memory_job, app->chat_delete_pending))) {
+        /* A memory change for it that can never be saved (the store keeps failing, or its identity changed) would
+         * hold the delete for good: given up after a minute, with the reason (round 5). */
+        if (GetTime() - app->chat_delete_since > 60.0) {
+            app->chat_delete_pending[0] = '\0';
+            set_status(app, "The chat was not deleted: memory still has a change for it that can't be saved yet. "
+                            "Try again later");
+        }
+        return;
+    }
     char id[40];
     snprintf(id, sizeof(id), "%s", app->chat_delete_pending);
     app->chat_delete_pending[0] = '\0';
@@ -218,7 +248,7 @@ void chat_delete_tick(App *app)
         semantic_client_destroy(bounded);
     }
     char msg[240];
-    if (!st.derived) snprintf(msg, sizeof(msg), "Chat deleted (its file; without the project store there is no memory of it)");
+    if (!st.derived) snprintf(msg, sizeof(msg), "Chat deleted (its file; without the project store, findings from it stay)");
     else if (st.findings)
         snprintf(msg, sizeof(msg), "Chat deleted, with what memory learned from it and %llu observer finding%s",
                  (unsigned long long)st.findings, st.findings == 1 ? "" : "s");
@@ -549,6 +579,11 @@ bool load_chat_window(App *app, const char *project, const char *id, const char 
                              ChatWindowRequest request, bool restore)
 {
     if (chat_busy(app->chat)) { set_status(app, "Stop the reply before changing history"); return false; }
+    if (app->chat_delete_pending[0] && !strcmp(id, app->chat_delete_pending)) {
+        /* Every way in (the list, a Recall excerpt, a finding's source) comes here (red team round 2). */
+        set_status(app, "That chat is being deleted");
+        return false;
+    }
     chat_lock(app->chat);
     ChatWindowInfo info = chat_window_info(app->chat);
     chat_unlock(app->chat);
@@ -610,6 +645,13 @@ void history_poll(App *app)
         return;
     }
     ChatWindowPage *page = &result.page;
+    if (!find_chat(app, app->history_id) ||
+        (app->chat_delete_pending[0] && !strcmp(app->history_id, app->chat_delete_pending))) {
+        /* Deleted (or being deleted) while it loaded: never shown as the open chat (red team round 2). */
+        set_status(app, "That chat was deleted");
+        chat_window_page_free(&result.page);
+        return;
+    }
     bool ok = chat_load_window(app->chat, page->messages, page->count, page->older, page->newer);
     if (ok) {
         chat_view_history_changed(app->chat_view);

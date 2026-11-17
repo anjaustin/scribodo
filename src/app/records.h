@@ -88,6 +88,10 @@ bool records_new_id_unused(RecordKind kind, const Record *taken, size_t ntaken, 
 enum { RECORD_APPEND_NEXT = 0, RECORD_APPEND_FRESH = 1, RECORD_APPEND_NEW = 2 };
 /* After a failed RECORD_APPEND_NEW append on this thread: the id was another record's (not an I/O failure). */
 bool records_append_taken(void);
+/* After a failed append on this thread: the chat it quotes, or the finding it continues, was deleted (the append was
+ * refused, not an I/O failure; the caller drops it). */
+bool records_append_gone(void);
+void records_append_mark_gone(bool gone);
 /* A new record under a newly drawn id, never onto another record: drawn with records_new_id and written with
  * RECORD_APPEND_NEW, drawn again (up to 8 times) when another writer had the id (AUDIT-004 final verification 3: the draw
  * and the write were two steps, so another process could take the id in between and the write became that record's

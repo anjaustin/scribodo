@@ -323,6 +323,7 @@ typedef struct {
     int chat_menu_delete;     /* ...and its Delete item */
     /* A confirmed delete waits here until memory has let go of the chat (chat_delete_tick). */
     char chat_delete_pending[40], chat_delete_project[PATH_MAX];
+    double chat_delete_since; /* GetTime() of the confirmation: a delete memory never lets go of is given up */
     double chat_forget_retry_at; /* GetTime() of the next retry of deleted chats' index points */
     /* The Move to group menu: its groups by item, then New group and (when grouped) Remove from group. */
     char group_menu_names[12][48];

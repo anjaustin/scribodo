@@ -521,11 +521,13 @@ bool semantic_index_text(SemanticClient *client, const char *project_id, const c
     bool chat = strcmp(kind, "draft") != 0;
     DbRows live;
     if (chat) {
-        bool exists = conversation_id && db_query(db, "SELECT id FROM conversations WHERE id = ? AND project_id = ?",
-                                                  (DbArg[2]){ DB_S(conversation_id), DB_S(project_id) }, 2, &live);
-        bool present = exists && live.nrows == 1;
-        if (exists) db_rows_free(&live);
-        if (!present) return false;
+        if (!conversation_id) return false;
+        if (!db_query(db, "SELECT id FROM conversations WHERE id = ? AND project_id = ?",
+                      (DbArg[2]){ DB_S(conversation_id), DB_S(project_id) }, 2, &live))
+            return false; /* the store could not say: a failure, retried (round 4) */
+        bool present = live.nrows == 1;
+        db_rows_free(&live);
+        if (!present) return true; /* deleted: nothing to index, and not a failure (a rebuild skips it; round 2) */
     }
     Pending p = { .text = text };
     snprintf(p.key, sizeof(p.key), "%s", key);
@@ -539,15 +541,21 @@ bool semantic_index_text(SemanticClient *client, const char *project_id, const c
     cJSON_AddNumberToObject(p.payload, "start", (double)start);
     cJSON_AddNumberToObject(p.payload, "len", (double)len);
     bool ok = upsert(client, db, project_id, &p, 1);
-    if (chat && db_query(db, "SELECT id FROM conversations WHERE id = ? AND project_id = ?",
-                         (DbArg[2]){ DB_S(conversation_id), DB_S(project_id) }, 2, &live)) {
-        bool gone = live.nrows == 0;
-        db_rows_free(&live);
+    if (chat) {
+        bool checked = db_query(db, "SELECT id FROM conversations WHERE id = ? AND project_id = ?",
+                                (DbArg[2]){ DB_S(conversation_id), DB_S(project_id) }, 2, &live);
+        /* Only a chat seen gone is purged: a store error here must never list a live chat, whose memory points the
+         * purge would take (round 5 review; the narrow window of an error during a delete is accepted). */
+        bool gone = checked && live.nrows == 0;
+        if (checked) db_rows_free(&live);
         if (gone) {
-            (void)semantic_forget_conversation(client, project_id, conversation_id);
+            /* Listed again if this purge fails, so a later retry finds it (round 2). */
+            if (!semantic_forget_conversation(client, project_id, conversation_id))
+                db_run(db, "INSERT IGNORE INTO forgotten_conversations (project_id, conversation_id, deleted_at) VALUES (?,?,0)",
+                       (DbArg[2]){ DB_S(project_id), DB_S(conversation_id) }, 2, NULL);
             db_run(db, "DELETE FROM semantic_marks WHERE project_id = ? AND point_key = ?",
                    (DbArg[2]){ DB_S(project_id), DB_S(key) }, 2, NULL);
-            return false;
+            return true;
         }
     }
     return ok;
@@ -847,7 +855,7 @@ bool semantic_forget_conversation(SemanticClient *client, const char *project_id
     if (!qdrant(client, "GET", "/collections", NULL, &list)) return false;
     char legacy[160], memory[200];
     snprintf(legacy, sizeof(legacy), "%s__%s", database, project_id);
-    snprintf(memory, sizeof(memory), "%s__%s__memory_v2__", database, project_id);
+    snprintf(memory, sizeof(memory), "%s__%s__memory_v", database, project_id); /* v2, and v1's leftovers (round 2) */
     const cJSON *collections = cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(list, "result"), "collections");
     bool ok = cJSON_IsArray(collections);
     const cJSON *c;

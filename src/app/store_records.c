@@ -20,6 +20,18 @@ static double now_s(void)
     return (double)tv.tv_sec + (double)tv.tv_usec / 1e6;
 }
 
+/* A source's chat in this project: 1 there, 0 not (or no chat named), -1 the store could not say. */
+static int chat_presence(Db *db, const char *chat, const char *project_id)
+{
+    if (!chat || !chat[0]) return 0;
+    DbRows r;
+    if (!db_query(db, "SELECT id FROM conversations WHERE id = ? AND project_id = ?", (DbArg[2]){ DB_S(chat), DB_S(project_id) }, 2, &r))
+        return -1;
+    int found = r.nrows == 1;
+    db_rows_free(&r);
+    return found;
+}
+
 /* Does the row exist *in this project* (sql takes the id, then the scope)?
  * Live sources only point within their own project (red-team 008). */
 static bool exists(Db *db, const char *sql, const char *id, const char *scope)
@@ -129,6 +141,7 @@ bool sdb_record_append(Db *db, const char *project_id, RecordKind kind, const ch
      * it is not made again (red team 2026-11-17: a deleted chat's quote came back). */
     if (ok && kind == REC_FINDING && mode == RECORD_APPEND_NEXT && inserted == 1) {
         db_rollback(db);
+        records_append_mark_gone(true);
         return false;
     }
     /* The record must be this project's and this kind (never an id from
@@ -164,16 +177,24 @@ bool sdb_record_append(Db *db, const char *project_id, RecordKind kind, const ch
                       v, 11, NULL);
     for (size_t i = 0; ok && i < nsources; i++) {
         const SourceRef *s = &sources[i];
+        int presence = 0;
         char doc[40] = "";
         const char *rev = NULL, *conv = NULL;
         if (s->kind == SRC_DOC) {
             if (!strchr(s->doc, '/') && s->doc[0]) store_document_id_db(db, project_id, s->doc, true, doc, sizeof(doc));
             /* the snapshot must be of this very document */
             if (exists(db, "SELECT id FROM revisions WHERE id = ? AND document_id = ?", s->revision, doc)) rev = s->revision;
-        } else if (exists(db, "SELECT id FROM conversations WHERE id = ? AND project_id = ?", s->chat, project_id)) {
+        } else if ((presence = chat_presence(db, s->chat, project_id)) == 1) {
             conv = s->chat;
-        } else if (kind == REC_FINDING) {
-            ok = false; /* the observer's finding about a chat deleted meanwhile is not kept (red team 2026-11-17) */
+        } else if (presence < 0) {
+            ok = false; /* the store could not say: an I/O failure, retried (round 4) */
+            break;
+        } else if (kind == REC_FINDING && s->chat[0]) {
+            /* The observer's finding about a chat deleted meanwhile is not kept (red team 2026-11-17). A source whose
+             * chat link is already empty (an import without the file, an older store) is kept as it is, so such a
+             * finding can still be dismissed or saved (round 2). */
+            ok = false;
+            records_append_mark_gone(true);
             break;
         }
         DbArg a[10] = { DB_S(id), DB_I(ver), DB_S(s->kind == SRC_DOC ? "doc" : "chat"), DB_S(nz(doc)), DB_S(rev),

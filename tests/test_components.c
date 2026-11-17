@@ -409,6 +409,8 @@ static void test_memfit(void)
     CHECK(!strcmp(cl, "Context 812 / 8K"));
     memfit_context_label(24000, 32768, 16384, cl, sizeof(cl)); /* a lowered setting, not yet applied: no "set" */
     CHECK(!strcmp(cl, "Context 23K / 32K"));
+    memfit_context_label(1024, 32768, 0, cl, sizeof(cl)); /* a change waiting to apply: no "set" */
+    CHECK(!strcmp(cl, "Context 1K / 32K"));
     memfit_context_label(10, 0, 32768, cl, sizeof(cl));
     CHECK(!cl[0]); /* no local model */
 }

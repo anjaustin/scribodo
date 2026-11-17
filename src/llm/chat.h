@@ -238,7 +238,8 @@ int chat_parse_sse_line(const char *line, char **acc, size_t *acc_len, char *err
  * (cache_n + prompt_n + predicted_n); -1 when `line` carries none or they are malformed. */
 int chat_parse_sse_timings(const char *line);
 /* Those tokens for the last finished local reply in this conversation (the status bar's context figure); -1 none yet:
- * a new or newly opened chat, a failed or remote reply. Any thread. */
+ * a new or newly opened chat, or a remote reply since (a failed reply keeps the last figure). The app resets it when
+ * the model restarts. Any thread. */
 int chat_context_used(ChatSession *s);
 void chat_context_used_reset(ChatSession *s);
 

@@ -187,7 +187,7 @@ bool sdb_chat_list_checked(Db *db, const char *project_id, ChatSummary **out, si
         c->updated = (time_t)row.updated;
         c->observer_ignore = row.observer_ignore;
         c->archived = row.archived;
-        if (row.group[0]) (void)chat_group_name_clean(row.group, c->group); /* as kept; anything else is no group */
+        if (row.group[0]) (void)chat_group_name_stored(row.group, c->group); /* as kept; anything else is no group */
     }
     db_rows_free(&r);
     if (!ok) {

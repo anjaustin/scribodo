@@ -26,13 +26,16 @@ typedef struct {
     long updated_nsec; /* orders chats changed within one second */
     bool observer_ignore; /* the author told the observer not to read it */
     bool archived;        /* the author archived it: listed under Archived, set aside from memory recall */
-    char group[48];       /* the group it is filed under (chat_group_name_clean), "" none */
+    char group[48];       /* the group it is filed under (as read back: chat_group_name_stored), "" none */
 } ChatSummary;
 
-/* A group's name as kept (user request 2026-11-17): spaces trimmed, control characters and invalid UTF-8 refused,
- * at most CHAT_GROUP_MAX bytes cut between characters. False when nothing is left (no group). */
+/* A group's name as kept (user request 2026-11-17): blanks of any kind trimmed; control, bidi and direction characters, the zero-width
+ * space and invalid UTF-8 refused (joiners kept); at least one visible character; not "Archived" (that heading's name); at most
+ * CHAT_GROUP_MAX bytes cut between characters. False when refused or nothing is left (no group). */
 #define CHAT_GROUP_MAX 40
 bool chat_group_name_clean(const char *in, char out[48]);
+/* The same for a name read back from the store: one kept before a rule was added is still shown. */
+bool chat_group_name_stored(const char *in, char out[48]);
 
 /* Directory for a project rooted at `project_dir` (created on demand). */
 bool chat_store_dir(const char *project_dir, char *out, size_t outlen);

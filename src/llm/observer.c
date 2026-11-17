@@ -946,7 +946,8 @@ static void job_create(JobRun *r, int findings_fd)
             ids_exhausted(r);
             break;
         }
-        if (!records_create_ex(r->o->store, r->project, REC_FINDING, id, "new", r->cands[i].desc, &r->cands[i].src, 1, &r->cands[i].info))
+        if (!records_create_ex(r->o->store, r->project, REC_FINDING, id, "new", r->cands[i].desc, &r->cands[i].src, 1, &r->cands[i].info) &&
+            !records_append_gone()) /* its chat was deleted meanwhile: dropped, not an I/O failure */
             r->io_failed = true;
     }
     for (size_t c = 0; !r->io_failed && findings_fd >= 0 && c < r->nconf; c++) {
@@ -963,7 +964,9 @@ static void job_create(JobRun *r, int findings_fd)
             ids_exhausted(r);
             break;
         }
-        if (!records_create_ex(r->o->store, r->project, REC_FINDING, id, "new", r->conflicts[c].check, &cd->src, 1, &fi)) r->io_failed = true;
+        if (!records_create_ex(r->o->store, r->project, REC_FINDING, id, "new", r->conflicts[c].check, &cd->src, 1, &fi) &&
+            !records_append_gone())
+            r->io_failed = true;
     }
 }
 

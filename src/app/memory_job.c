@@ -52,6 +52,7 @@ struct MemoryJob {
     bool briefs_enabled;
     atomic_bool generation_cancel;
     atomic_bool working; /* a step is running, or the last one made progress (another follows in 10 ms) */
+    char step_conversation[40]; /* the conversation of the step running now, "" between steps (under mu) */
     MemoryJobRunner runner;
     void *context;
     pthread_t thread;
@@ -592,6 +593,7 @@ static void *memory_main(void *arg)
             previous = request;
             status = (MemoryJobStatus){.active = true};
         }
+        snprintf(job->step_conversation, sizeof(job->step_conversation), "%s", request.conversation);
         pthread_mutex_unlock(&job->mu);
         bool progress = false;
         atomic_store(&job->working, true);
@@ -606,6 +608,7 @@ static void *memory_main(void *arg)
         atomic_store(&job->working, progress);
         bool identity_ok = identity_matches(job, &request);
         pthread_mutex_lock(&job->mu);
+        job->step_conversation[0] = '\0';
         if (job->stopping) break;
         if (!job->selected || job->request.serial != serial) continue;
         if (!identity_ok) {
@@ -806,6 +809,18 @@ void memory_job_pause(MemoryJob *job, bool paused)
 }
 
 bool memory_job_working(MemoryJob *job) { return job && atomic_load(&job->working); }
+
+bool memory_job_step_on(MemoryJob *job, const char *conversation)
+{
+    if (!job || !conversation || !conversation[0]) return false;
+    pthread_mutex_lock(&job->mu);
+    bool on = !strcmp(job->step_conversation, conversation);
+    /* A consent change for it, queued or in flight (it stays queued until SQL commits; red team round 4). */
+    for (size_t k = 0; !on && k < job->control_count; k++)
+        on = !strcmp(job->controls[(job->control_head + k) % MEMORY_JOB_CONTROL_CAPACITY].conversation, conversation);
+    pthread_mutex_unlock(&job->mu);
+    return on;
+}
 
 bool memory_job_status(MemoryJob *job, MemoryJobStatus *out)
 {

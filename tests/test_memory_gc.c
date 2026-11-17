@@ -416,8 +416,20 @@ static void chat_delete_forgets(void)
      * of a finding deleted with it, is not made again. The author's note is kept, without the chat. */
     SourceRef src = { .kind = SRC_CHAT, .message = 0, .start = 0, .len = 6, .quote = "secret" };
     snprintf(src.chat, sizeof(src.chat), "cd-gone");
+    records_append_mark_gone(false);
     CHECK(!sdb_record_append(db, "cd", REC_FINDING, "cd-f9", "new", "x", &src, 1, NULL, RECORD_APPEND_FRESH, NULL));
+    CHECK(records_append_gone()); /* refused for the deleted chat: the observer drops it, no I/O error */
+    records_append_mark_gone(false);
     CHECK(!sdb_record_append(db, "cd", REC_FINDING, "cd-f1", "dismissed", "x", NULL, 0, NULL, RECORD_APPEND_NEXT, NULL));
+    CHECK(records_append_gone());
+    /* A finding whose chat link was already empty (an import without the chat's file) can still change (round 2). */
+    run("INSERT INTO records(id,project_id,kind,created_at) VALUES('cd-f8','cd','finding',1)");
+    run("INSERT INTO record_versions(record_id,ver,status,content,created_at) VALUES('cd-f8',1,'new','x',1)");
+    run("INSERT INTO source_refs(record_id,ver,kind,conversation_id,message_seq,start,len,quote) VALUES('cd-f8',1,'chat',NULL,0,0,3,'old')");
+    SourceRef unlinked = { .kind = SRC_CHAT, .quote = "old", .len = 3 };
+    records_append_mark_gone(false);
+    CHECK(sdb_record_append(db, "cd", REC_FINDING, "cd-f8", "dismissed", "x", &unlinked, 1, NULL, RECORD_APPEND_NEXT, NULL));
+    CHECK(!records_append_gone());
     CHECK(scalar("SELECT COUNT(*) FROM records WHERE id IN ('cd-f1','cd-f9')") == 0);
     CHECK(sdb_record_append(db, "cd", REC_FINDING, "cd-f3", "dismissed", "x", NULL, 0, NULL, RECORD_APPEND_NEXT, NULL));
     CHECK(sdb_record_append(db, "cd", REC_NOTE, "cd-n2", "active", "kept", &src, 1, NULL, RECORD_APPEND_FRESH, NULL));
