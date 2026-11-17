@@ -32,7 +32,7 @@ def main():
     variants = [
         ("control", "src/app/chat_store.c", None),
         ("chat_eof_hides_allocation_failure", "src/app/chat_store.c",
-         ("cJSON_Delete(j); lines_ok = false; break;", "cJSON_Delete(j); break;", 2)),
+         ("cJSON_Delete(j); lines_ok = false; break;", "cJSON_Delete(j); break;", 4)),
         ("chat_title_not_restored", "src/app/chat_store.c",
          ("title_clean(c->title, sizeof(c->title), t->valuestring);", "(void)t;", 1)),
         ("chat_observer_flag_not_restored", "src/app/chat_store.c",
