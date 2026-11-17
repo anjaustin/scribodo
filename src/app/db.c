@@ -927,12 +927,19 @@ static const char *const k_migration_021[] = {
     NULL,
 };
 
+/* 022 (user request 2026-11-17): the group a chat is filed under, by name ('' none). A group exists while a chat is
+ * in it; renaming one renames it on every chat. One re-runnable statement. */
+static const char *const k_migration_022[] = {
+    "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS chat_group VARCHAR(160) COLLATE utf8mb4_nopad_bin NOT NULL DEFAULT ''",
+    NULL,
+};
+
 static const char *const *const k_migrations[] = { k_migration_001, k_migration_002, k_migration_003, k_migration_004,
                                                    k_migration_005, k_migration_006, k_migration_007, k_migration_008,
                                                    k_migration_009, k_migration_010, k_migration_011, k_migration_012,
                                                    k_migration_013, k_migration_014, k_migration_015, k_migration_016,
                                                    k_migration_017, k_migration_018, k_migration_019,
-                                                   k_migration_020, k_migration_021 };
+                                                   k_migration_020, k_migration_021, k_migration_022 };
 
 int db_schema_version(Db *db)
 {

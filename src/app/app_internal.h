@@ -91,8 +91,9 @@ _Static_assert(FONT_UI == APPEARANCE_INTERFACE && FONT_PROSE == APPEARANCE_DOCUM
                FONT_MONO == APPEARANCE_MONO && FONT_COUNT == APPEARANCE_ROLE_COUNT, "font slots follow the roles");
 enum { FOCUS_NONE, FOCUS_DOC, FOCUS_CHAT, FOCUS_RECORD, FOCUS_RECALL };
 enum { DRAG_NONE, DRAG_EXPLORER, DRAG_OBSERVER, DRAG_CHAT };
-enum { PT_NEW_DOC = 1, PT_RENAME_DOC, PT_RENAME_CHAT, PT_ATTACH_NAME, PT_NAME_AUTHOR, PT_NAME_ASSISTANT };  /* what the name prompt is for */
-enum { MT_DOC = 1, MT_CHAT, MT_ATTACH, MT_MODEL, MT_APP };  /* what a context menu is for */
+enum { PT_NEW_DOC = 1, PT_RENAME_DOC, PT_RENAME_CHAT, PT_ATTACH_NAME, PT_NAME_AUTHOR, PT_NAME_ASSISTANT, PT_NEW_GROUP,
+       PT_RENAME_GROUP };  /* what the name prompt is for */
+enum { MT_DOC = 1, MT_CHAT, MT_ATTACH, MT_MODEL, MT_APP, MT_CHAT_GROUP, MT_GROUP };  /* what a context menu is for */
 #define MAX_ATTACH CHAT_CONTROLLER_MAX_ATTACH
 
 #define COL_BG THEME_CLAY(THEME_BG)
@@ -273,6 +274,7 @@ typedef struct {
     char prompt_project[PATH_MAX]; /* the project the prompt was opened in */
     char menu_doc[256];           /* the document a context menu is for (by name) */
     char menu_chat[40];           /* the chat a context menu is for */
+    char menu_group[48];          /* the group a context menu (or its prompt) is for */
     char menu_names[MENU_MAX_ITEMS][256]; /* the attach menu's documents, by item */
 
     /* Documents attached to the current chat (SOW §4.1: by reference, not copied) */
@@ -308,6 +310,8 @@ typedef struct {
             ChatSummary *chats;
             char (*chat_labels)[200];
             size_t nchats;
+            char (*chat_groups)[48];
+            size_t nchat_groups;
             uint64_t explorer_generation;
             uint64_t explorer_project_generation;
         };
@@ -315,6 +319,13 @@ typedef struct {
     uint64_t drawn_explorer_generation;
     bool chats_archived_open; /* the Explorer's Archived chats are shown (closed when the app starts) */
     int chat_menu_archive;    /* the chat menu's Archive / Restore item (after the memory items, which tests pin) */
+    int chat_menu_group;      /* ...and its Move to group item */
+    /* The Move to group menu: its groups by item, then New group and (when grouped) Remove from group. */
+    char group_menu_names[12][48];
+    int group_menu_count, group_menu_new, group_menu_remove;
+    /* Groups whose chats the Explorer hides (by name; open unless listed here). */
+    char chat_groups_closed[16][48];
+    int nchat_groups_closed;
     /* The chat model's settings, and the panel that edits them. */
     ModelSettings model, model_edit;
     bool settings_open;
@@ -414,6 +425,8 @@ APP_MIRRORS(explorer, ExplorerSnapshot, ndocs, ndocs);
 APP_MIRRORS(explorer, ExplorerSnapshot, chats, chats);
 APP_MIRRORS(explorer, ExplorerSnapshot, chat_labels, chat_labels);
 APP_MIRRORS(explorer, ExplorerSnapshot, nchats, nchats);
+APP_MIRRORS(explorer, ExplorerSnapshot, groups, chat_groups);
+APP_MIRRORS(explorer, ExplorerSnapshot, ngroups, nchat_groups);
 APP_MIRRORS(explorer, ExplorerSnapshot, generation, explorer_generation);
 APP_MIRRORS(explorer, ExplorerSnapshot, project_generation, explorer_project_generation);
 APP_MIRROR_ENDS(explorer, ExplorerSnapshot, explorer_project_generation);
@@ -506,6 +519,12 @@ const ChatSummary *find_chat(const App *app, const char *id);
 bool open_chat_stored(const App *app);
 void set_chat_observer(App *app, const char *id, bool read);
 void set_chat_archived(App *app, const char *id, bool archived);
+/* Chat groups (user request 2026-11-17). */
+void set_chat_group(App *app, const char *id, const char *group);
+bool rename_chat_group(App *app, const char *from, const char *to, char *why, size_t whylen);
+bool chat_group_closed(const App *app, const char *group);
+void chat_group_toggle(App *app, const char *group);
+void open_move_to_group_menu(App *app, Vector2 at);
 void names_poll(App *app);
 void names_answer(App *app, bool save);
 void on_message_done(ChatSession *s, size_t index, void *ctx);

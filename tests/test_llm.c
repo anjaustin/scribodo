@@ -12,6 +12,7 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <time.h>
@@ -596,6 +597,38 @@ static void test_chat_store(void)
     CHECK(k >= 1 && !strcmp(list[0].title, "Who is Zoë"));
     free(list);
     CHECK(!chat_store_append(g_store, g_dir, "../../etc/passwd", "x", &u)); /* ids can't escape */
+
+    /* Groups (user request 2026-11-17): names cleaned; filing, renaming, ungrouping; settings keep the list's order. */
+    char g[48];
+    CHECK(chat_group_name_clean("  Book Two \t", g) && !strcmp(g, "Book Two"));
+    CHECK(!chat_group_name_clean("   ", g) && !g[0] && !chat_group_name_clean(NULL, g));
+    CHECK(!chat_group_name_clean("Bad\nname", g) && !chat_group_name_clean("Bad\x7f", g) && !chat_group_name_clean("\xC0\xAF", g));
+    CHECK(chat_group_name_clean("\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9"
+                                "\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9xx", g));
+    CHECK(strlen(g) == CHAT_GROUP_MAX && g[CHAT_GROUP_MAX - 1] == '\xA9'); /* 20 two-byte letters: cut between them */
+    char older[40];
+    chat_store_new_id(older, sizeof(older));
+    older[0] = '1'; /* a different id in the same second */
+    CHECK(chat_store_append(g_store, g_dir, older, "Older", &u));
+    char opath[1200];
+    snprintf(opath, sizeof(opath), "%s/.scribodo/chats/%s.jsonl", g_dir, older);
+    struct timespec past[2] = { { .tv_sec = 1000000000 }, { .tv_sec = 1000000000 } };
+    CHECK(utimensat(AT_FDCWD, opath, past, 0) == 0); /* written long ago */
+    CHECK(chat_store_set_group(g_store, g_dir, older, " Book Two "));
+    CHECK(chat_store_set_archived(g_store, g_dir, older, false));
+    k = chat_store_list(g_store, g_dir, &list);
+    CHECK(k >= 2 && !strcmp(list[k - 1].id, older) && !strcmp(list[k - 1].group, "Book Two")); /* still the oldest */
+    free(list);
+    CHECK(!chat_store_set_group(g_store, g_dir, older, "Bad\nname")); /* refused, nothing written */
+    CHECK(chat_store_rename_group(g_store, g_dir, "Book Two", "Book 2"));
+    k = chat_store_list(g_store, g_dir, &list);
+    CHECK(k >= 2 && !strcmp(list[k - 1].group, "Book 2"));
+    free(list);
+    CHECK(chat_store_rename_group(g_store, g_dir, "Book 2", ""));
+    k = chat_store_list(g_store, g_dir, &list);
+    for (size_t i = 0; i < k; i++) CHECK(!list[i].group[0]);
+    free(list);
+    CHECK(!chat_store_rename_group(g_store, g_dir, "", "x")); /* no group named "" */
 }
 
 /* The resave after a reconnect appends exactly the messages marked save_failed, in order (red-team 2026-11-14);

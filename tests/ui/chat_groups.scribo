@@ -1,0 +1,59 @@
+# Chat groups (user request 2026-11-17): Move to group > New group files a
+# chat under a named heading that opens and closes; another chat joins it from
+# the same menu; the heading's menu renames the group or ungroups its chats.
+open "$DIR/chapter.md"
+click_element ChatInput
+type "Ingrid rows across the fjord."
+key ENTER
+wait_chat
+click_element NewChatButton
+click_element ChatInput
+type "The lighthouse keeper waits."
+key ENTER
+wait_chat
+expect explorer_has "Ingrid rows across the fjord."
+expect explorer_has "The lighthouse keeper waits."
+# Newest first: ChatItem0 is the lighthouse, ChatItem1 Ingrid. Item 6 is Move to group.
+right_click_element ChatItem1
+click_element MenuItem6
+click_element MenuItem0
+key A cmd
+type "  Book Two  "
+key ENTER
+expect status "Chat moved to"
+expect explorer_has "Book Two (1)"
+expect explorer_has "Ingrid rows across the fjord."
+# The heading closes and opens its chats.
+click_element ChatGroup0
+expect explorer_has "Book Two (1)"
+expect explorer_not "Ingrid rows across the fjord."
+click_element ChatGroup0
+expect explorer_has "Ingrid rows across the fjord."
+# The other chat joins the existing group from the menu.
+right_click_element ChatItem0
+click_element MenuItem6
+click_element MenuItem0
+expect status "Chat moved to"
+expect explorer_has "Book Two (2)"
+# Rename the group from its heading.
+right_click_element ChatGroup0
+click_element MenuItem0
+key A cmd
+type "Book 2"
+key ENTER
+expect status "Group renamed to"
+expect explorer_has "Book 2 (2)"
+expect explorer_not "Book Two (2)"
+# Take one chat out: its menu offers New group (0) and Remove from group (1).
+right_click_element ChatItem0
+click_element MenuItem6
+click_element MenuItem1
+expect status "Chat taken out of its group"
+expect explorer_has "Book 2 (1)"
+# Ungroup: the heading goes, its chat is back in the list.
+right_click_element ChatGroup0
+click_element MenuItem1
+expect status "Group removed"
+expect explorer_not "Book 2 (1)"
+expect explorer_has "Ingrid rows across the fjord."
+expect explorer_has "The lighthouse keeper waits."

@@ -15,6 +15,8 @@ typedef struct {
     ChatSummary *chats;
     char (*chat_labels)[200];
     size_t nchats;
+    char (*groups)[48]; /* the groups of the chats not archived, by name (case-insensitive), each once */
+    size_t ngroups;
     uint64_t generation;
     uint64_t project_generation;
 } ExplorerSnapshot;

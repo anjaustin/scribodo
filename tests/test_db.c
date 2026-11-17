@@ -596,6 +596,34 @@ static void test_backends(void)
         for (size_t i = 0; i < an; i++) CHECK(!al[i].archived);
         free(al);
     }
+    /* Groups (user request 2026-11-17): filed, renamed on every chat at once, ungrouped; the order is untouched. */
+    {
+        ChatSummary *gl = NULL;
+        size_t gn = sdb_chat_list(db, pid, &gl);
+        CHECK(gn >= 1);
+        char first[40] = "";
+        if (gn) snprintf(first, sizeof(first), "%s", gl[0].id);
+        free(gl);
+        CHECK(sdb_chat_set_group(db, pid, "20261104-150000-abcd", "Book Two"));
+        gn = sdb_chat_list(db, pid, &gl);
+        bool filed = false;
+        for (size_t i = 0; i < gn; i++)
+            if (!strcmp(gl[i].id, "20261104-150000-abcd")) filed = !strcmp(gl[i].group, "Book Two");
+            else CHECK(!gl[i].group[0]);
+        CHECK(filed && gn && !strcmp(gl[0].id, first));
+        free(gl);
+        CHECK(sdb_chat_rename_group(db, pid, "Book Two", "Book 2"));
+        gn = sdb_chat_list(db, pid, &gl);
+        filed = false;
+        for (size_t i = 0; i < gn; i++) filed = filed || !strcmp(gl[i].group, "Book 2");
+        CHECK(filed);
+        free(gl);
+        CHECK(!sdb_chat_rename_group(db, pid, "", "x")); /* no group named "" */
+        CHECK(sdb_chat_rename_group(db, pid, "Book 2", ""));
+        gn = sdb_chat_list(db, pid, &gl);
+        for (size_t i = 0; i < gn; i++) CHECK(!gl[i].group[0]);
+        free(gl);
+    }
     ChatSummary *cs = NULL;
     size_t nc = sdb_chat_list(db, pid, &cs);
     CHECK(nc == 1 && !strcmp(cs[0].title, "Comparing chapters"));
@@ -720,6 +748,7 @@ static void test_import(void)
     CHECK(renames_record(proj, "ch1.md", "Chapter One.md"));
     CHECK(chat_store_set_observer(g_store, proj, "20261104-160000-abcd", false)); /* carried into the store */
     CHECK(chat_store_set_archived(g_store, proj, "20261104-160000-abcd", true));  /* so is the archive */
+    CHECK(chat_store_set_group(g_store, proj, "20261104-160000-abcd", "Drafts")); /* and the group */
     cJSON *ost = cJSON_CreateObject();
     cJSON *odocs = cJSON_AddObjectToObject(ost, "docs");
     cJSON *ohashes = cJSON_AddArrayToObject(odocs, "Chapter One.md");
@@ -828,7 +857,7 @@ static void test_import(void)
     {
         ChatSummary *il = NULL;
         size_t in = chat_store_list(g_store, proj, &il);
-        CHECK(in == 1 && il[0].observer_ignore && il[0].archived); /* the settings came along */
+        CHECK(in == 1 && il[0].observer_ignore && il[0].archived && !strcmp(il[0].group, "Drafts")); /* the settings came along */
         free(il);
     }
     ost = project_store_observer_state_load(g_store, proj);

@@ -26,7 +26,13 @@ typedef struct {
     long updated_nsec; /* orders chats changed within one second */
     bool observer_ignore; /* the author told the observer not to read it */
     bool archived;        /* the author archived it: listed under Archived, set aside from memory recall */
+    char group[48];       /* the group it is filed under (chat_group_name_clean), "" none */
 } ChatSummary;
+
+/* A group's name as kept (user request 2026-11-17): spaces trimmed, control characters and invalid UTF-8 refused,
+ * at most CHAT_GROUP_MAX bytes cut between characters. False when nothing is left (no group). */
+#define CHAT_GROUP_MAX 40
+bool chat_group_name_clean(const char *in, char out[48]);
 
 /* Directory for a project rooted at `project_dir` (created on demand). */
 bool chat_store_dir(const char *project_dir, char *out, size_t outlen);
@@ -61,6 +67,11 @@ bool chat_store_set_observer(StoreManager *manager, const char *project_dir, con
 /* Archive a stored conversation, or restore it (a line is appended to the chat's file, or the store updated). An
  * archived chat is set aside from memory recall; nothing of it is deleted. */
 bool chat_store_set_archived(StoreManager *manager, const char *project_dir, const char *id, bool archived);
+
+/* File a stored conversation under a group ("" takes it out of its group). */
+bool chat_store_set_group(StoreManager *manager, const char *project_dir, const char *id, const char *group);
+/* Every chat filed under `from` is filed under `to` instead ("" ungroups them; an existing name merges the two). */
+bool chat_store_rename_group(StoreManager *manager, const char *project_dir, const char *from, const char *to);
 
 /* List conversations, newest first. Caller frees *out. */
 size_t chat_store_list(StoreManager *manager, const char *project_dir, ChatSummary **out);

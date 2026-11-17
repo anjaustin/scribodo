@@ -13,6 +13,12 @@ static int compare_names(const void *a, const void *b)
     return strcasecmp(*(char *const *)a, *(char *const *)b);
 }
 
+static int compare_groups(const void *a, const void *b)
+{
+    int c = strcasecmp((const char *)a, (const char *)b);
+    return c ? c : strcmp((const char *)a, (const char *)b);
+}
+
 void explorer_snapshot_init(ExplorerSnapshot *snapshot)
 {
     if (snapshot) memset(snapshot, 0, sizeof(*snapshot));
@@ -74,6 +80,20 @@ bool explorer_snapshot_build(ExplorerSnapshot *next, StoreManager *store, const 
     for (size_t i = 0; i < next->nchats; i++)
         snprintf(next->chat_labels[i], sizeof(next->chat_labels[i]), "%s%s", next->chats[i].title,
                  next->chats[i].observer_ignore ? " \xC2\xB7 not observed" : "");
+    /* Groups, each once, sorted; an archived chat's group is not listed (it shows under Archived). */
+    next->groups = next->nchats ? calloc(next->nchats, sizeof(*next->groups)) : NULL;
+    if (next->nchats && !next->groups) {
+        explorer_snapshot_destroy(next);
+        return false;
+    }
+    for (size_t i = 0; i < next->nchats; i++) {
+        const char *g = next->chats[i].group;
+        if (!g[0] || next->chats[i].archived) continue;
+        bool seen = false;
+        for (size_t k = 0; k < next->ngroups && !seen; k++) seen = !strcmp(next->groups[k], g);
+        if (!seen) snprintf(next->groups[next->ngroups++], sizeof(next->groups[0]), "%s", g);
+    }
+    if (next->ngroups) qsort(next->groups, next->ngroups, sizeof(next->groups[0]), compare_groups);
     return true;
 }
 
@@ -83,6 +103,7 @@ void explorer_snapshot_destroy(ExplorerSnapshot *snapshot)
     for (size_t i = 0; i < snapshot->ndocs; i++) free(snapshot->docs[i]);
     free(snapshot->chats);
     free(snapshot->chat_labels);
+    free(snapshot->groups);
     memset(snapshot, 0, sizeof(*snapshot));
 }
 

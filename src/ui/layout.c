@@ -277,11 +277,26 @@ static void layout_explorer(App *app)
         }
         section_header(app, "CHATS", ICON_CHATS);
         list_item(app, CLAY_ID("NewChatItem"), "+ New chat", false);
-        /* Chats, newest first; archived ones under one heading at the end, closed until clicked. Row ids stay the
-         * chats' list indices, so a click finds its chat whichever section draws it. */
+        /* Groups first (by name, each a heading that opens and closes), then the chats in none, newest first;
+         * archived ones under one heading at the end, closed until clicked. Row ids stay the chats' list indices, so
+         * a click finds its chat whichever section draws it. */
+        for (size_t g = 0; g < app->nchat_groups; g++) {
+            size_t count = 0;
+            for (size_t i = 0; i < app->nchats; i++)
+                count += !app->chats[i].archived && !strcmp(app->chats[i].group, app->chat_groups[g]);
+            bool open = !chat_group_closed(app, app->chat_groups[g]);
+            char head[80];
+            snprintf(head, sizeof(head), "%s %s (%zu)", open ? "\xE2\x96\xBE" : "\xE2\x96\xB8", app->chat_groups[g], count);
+            list_item(app, CLAY_IDI("ChatGroup", (uint32_t)g), head, false);
+            for (size_t i = 0; open && i < app->nchats; i++)
+                if (!app->chats[i].archived && !strcmp(app->chats[i].group, app->chat_groups[g]))
+                    list_item_under(app, CLAY_IDI("ChatItem", (uint32_t)i), app->chat_labels ? app->chat_labels[i] : app->chats[i].title,
+                                    !strcmp(app->chat_id, app->chats[i].id));
+        }
         size_t narchived = 0;
         for (size_t i = 0; i < app->nchats; i++) {
             if (app->chats[i].archived) { narchived++; continue; }
+            if (app->chats[i].group[0]) continue; /* under its group above */
             list_item(app, CLAY_IDI("ChatItem", (uint32_t)i), app->chat_labels ? app->chat_labels[i] : app->chats[i].title,
                       !strcmp(app->chat_id, app->chats[i].id));
         }

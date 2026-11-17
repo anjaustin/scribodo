@@ -64,6 +64,93 @@ void set_chat_archived(App *app, const char *id, bool archived)
     if (!archived && app->observer) observer_poke(app->observer);
 }
 
+void set_chat_group(App *app, const char *id, const char *group)
+{
+    char cid[40], g[48] = "";
+    snprintf(cid, sizeof(cid), "%s", id);
+    if (group && group[0] && !chat_group_name_clean(group, g)) {
+        set_status(app, "That group name can't be used");
+        return;
+    }
+    if (!chat_store_set_group(app->store, app->project_dir, cid, g)) {
+        set_status(app, store_says(app, "Couldn't move that chat"));
+        return;
+    }
+    char msg[120];
+    if (g[0]) snprintf(msg, sizeof(msg), "Chat moved to \xE2\x80\x9C%s\xE2\x80\x9D", g);
+    else snprintf(msg, sizeof(msg), "Chat taken out of its group");
+    set_status(app, msg);
+    if (g[0] && chat_group_closed(app, g)) chat_group_toggle(app, g); /* show where it went */
+    app->lists_dirty = true;
+}
+
+bool rename_chat_group(App *app, const char *from, const char *to, char *why, size_t whylen)
+{
+    char f[48], t[48] = "";
+    if (!chat_group_name_clean(from, f)) { snprintf(why, whylen, "That group is gone"); return false; }
+    if (to && to[0] && !chat_group_name_clean(to, t)) { snprintf(why, whylen, "That name can't be used"); return false; }
+    if (!chat_store_rename_group(app->store, app->project_dir, f, t)) {
+        snprintf(why, whylen, "%s", store_says(app, "Couldn't rename that group"));
+        return false;
+    }
+    bool closed = chat_group_closed(app, f);
+    if (closed) chat_group_toggle(app, f);              /* the old name's state goes... */
+    if (closed && t[0] && !chat_group_closed(app, t)) chat_group_toggle(app, t); /* ...to the new name */
+    char msg[160];
+    if (t[0]) snprintf(msg, sizeof(msg), "Group renamed to \xE2\x80\x9C%s\xE2\x80\x9D", t);
+    else snprintf(msg, sizeof(msg), "Group removed; its chats are back in the list");
+    set_status(app, msg);
+    app->lists_dirty = true;
+    return true;
+}
+
+bool chat_group_closed(const App *app, const char *group)
+{
+    for (int i = 0; i < app->nchat_groups_closed; i++)
+        if (!strcmp(app->chat_groups_closed[i], group)) return true;
+    return false;
+}
+
+void chat_group_toggle(App *app, const char *group)
+{
+    for (int i = 0; i < app->nchat_groups_closed; i++)
+        if (!strcmp(app->chat_groups_closed[i], group)) {
+            app->chat_groups_closed[i][0] = '\0';
+            memmove(app->chat_groups_closed[i], app->chat_groups_closed[i + 1],
+                    (size_t)(app->nchat_groups_closed - i - 1) * sizeof(app->chat_groups_closed[0]));
+            app->nchat_groups_closed--;
+            return;
+        }
+    if (app->nchat_groups_closed < (int)(sizeof(app->chat_groups_closed) / sizeof(app->chat_groups_closed[0])))
+        snprintf(app->chat_groups_closed[app->nchat_groups_closed++], sizeof(app->chat_groups_closed[0]), "%s", group);
+}
+
+/* "Move to group": the other groups (at most 12), New group…, and Remove from group when it is in one. */
+void open_move_to_group_menu(App *app, Vector2 at)
+{
+    const ChatSummary *cs = find_chat(app, app->menu_chat);
+    if (!cs) return;
+    static char labels[MENU_MAX_ITEMS][48];
+    const char *items[MENU_MAX_ITEMS];
+    int n = 0;
+    for (size_t g = 0; g < app->nchat_groups && n < 12; g++) {
+        if (!strcmp(app->chat_groups[g], cs->group)) continue;
+        snprintf(app->group_menu_names[n], sizeof(app->group_menu_names[0]), "%s", app->chat_groups[g]);
+        snprintf(labels[n], sizeof(labels[0]), "%s", app->chat_groups[g]);
+        items[n] = labels[n];
+        n++;
+    }
+    app->group_menu_count = n;
+    app->group_menu_new = n;
+    items[n++] = "New group\xE2\x80\xA6";
+    app->group_menu_remove = -1;
+    if (cs->group[0]) {
+        app->group_menu_remove = n;
+        items[n++] = "Remove from group";
+    }
+    menu_open(&app->menu, MT_CHAT_GROUP, 0, at, items, n);
+}
+
 /* After a reply: did the author's message before it say a name? Checked in
  * the background (the local model, structured output, verified against the
  * author's words). */

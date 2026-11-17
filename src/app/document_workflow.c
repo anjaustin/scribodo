@@ -129,6 +129,25 @@ bool finish_prompt(App *app, const char *typed)
         set_status(app, msg);
         return true;
     }
+    if (prompt_tag(app->prompt) == PT_NEW_GROUP || prompt_tag(app->prompt) == PT_RENAME_GROUP) {
+        char g[48];
+        if (!chat_group_name_clean(typed, g)) {
+            prompt_set_error(app->prompt, typed[0] ? "Use letters, numbers and spaces" : "Type a name");
+            return false;
+        }
+        if (strcmp(app->prompt_project, app->project_dir) != 0) return true; /* project changed: nothing done */
+        if (prompt_tag(app->prompt) == PT_NEW_GROUP) {
+            set_chat_group(app, app->menu_chat, g);
+            return true;
+        }
+        if (!strcmp(g, app->menu_group)) return true; /* unchanged */
+        char why[160];
+        if (!rename_chat_group(app, app->menu_group, g, why, sizeof(why))) {
+            prompt_set_error(app->prompt, why);
+            return false;
+        }
+        return true;
+    }
     if (prompt_tag(app->prompt) == PT_RENAME_CHAT) {
         if (!typed[0]) {
             prompt_set_error(app->prompt, "Type a title");

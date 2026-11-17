@@ -157,24 +157,34 @@ bool chat_store_title_line_files(const char *project_dir, const char *id, const 
     return ok;
 }
 
-/* A setting line appended to a stored chat's file: {"type":type,key:value,"ts":…}; the latest one counts. */
-static bool append_flag_line(const char *project_dir, const char *id, const char *type, const char *key, bool value)
+/* A setting line appended to a stored chat's file ({"type":…,…,"ts":…}; the latest one counts). The file keeps its
+ * modified time, which orders the list: a setting is not activity, as in the store, where only messages and renames
+ * move a chat's updated_at (user request 2026-11-17: filing a chat must not move it to the top). Takes `j`. */
+static bool append_setting_line(const char *project_dir, const char *id, cJSON *j)
 {
     char path[1200];
-    if (!path_for(project_dir, id, path, sizeof(path))) return false;
+    bool ok = j && path_for(project_dir, id, path, sizeof(path)) && cJSON_AddNumberToObject(j, "ts", (double)time(NULL));
+    int fd = ok ? open(path, O_RDWR | O_APPEND) : -1; /* only stored chats: never created here */
     struct stat st;
-    if (stat(path, &st) != 0) return false; /* only stored chats */
-    int fd = open(path, O_RDWR | O_APPEND);
-    if (fd < 0) return false;
-    bool ok = ensure_trailing_newline(fd);
-    cJSON *j = cJSON_CreateObject();
-    ok = ok && j && cJSON_AddStringToObject(j, "type", type) && cJSON_AddBoolToObject(j, key, value) &&
-         cJSON_AddNumberToObject(j, "ts", (double)time(NULL));
-    ok = ok && write_line(fd, j);
+    ok = fd >= 0 && fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && ensure_trailing_newline(fd) && write_line(fd, j) &&
+         fsync(fd) == 0;
+    if (ok) {
+        struct timespec times[2] = { st.st_atimespec, st.st_mtimespec };
+        (void)futimens(fd, times); /* best effort: a failure only reorders the list */
+    }
+    if (fd >= 0) close(fd);
     cJSON_Delete(j);
-    ok = ok && fsync(fd) == 0;
-    close(fd);
     return ok;
+}
+
+static bool append_flag_line(const char *project_dir, const char *id, const char *type, const char *key, bool value)
+{
+    cJSON *j = cJSON_CreateObject();
+    if (!j || !cJSON_AddStringToObject(j, "type", type) || !cJSON_AddBoolToObject(j, key, value)) {
+        cJSON_Delete(j);
+        return false;
+    }
+    return append_setting_line(project_dir, id, j);
 }
 
 bool chat_store_set_observer_files(const char *project_dir, const char *id, bool read)
@@ -185,6 +195,55 @@ bool chat_store_set_observer_files(const char *project_dir, const char *id, bool
 bool chat_store_set_archived_files(const char *project_dir, const char *id, bool archived)
 {
     return append_flag_line(project_dir, id, "archive", "archived", archived);
+}
+
+bool chat_group_name_clean(const char *in, char out[48])
+{
+    out[0] = '\0';
+    if (!in) return false;
+    while (*in == ' ' || *in == '\t') in++;
+    size_t n = strlen(in);
+    while (n && (in[n - 1] == ' ' || in[n - 1] == '\t')) n--;
+    size_t o = 0;
+    for (size_t i = 0; i < n;) {
+        uint32_t cp;
+        int used = utf8_decode_one((const uint8_t *)in + i, n - i, &cp);
+        /* The decoder answers an invalid sequence with U+FFFD; only the real one (EF BF BD) is a character here. */
+        bool invalid = cp == 0xFFFD && !(used == 3 && !memcmp(in + i, "\xEF\xBF\xBD", 3));
+        if (used <= 0 || invalid || cp < 0x20 || cp == 0x7F || (cp >= 0xD800 && cp <= 0xDFFF)) { out[0] = '\0'; return false; }
+        if (o + (size_t)used > CHAT_GROUP_MAX) break; /* cut between characters */
+        memcpy(out + o, in + i, (size_t)used);
+        o += (size_t)used;
+        i += (size_t)used;
+    }
+    while (o && out[o - 1] == ' ') o--; /* a cut can leave a trailing space */
+    out[o] = '\0';
+    return o > 0;
+}
+
+bool chat_store_set_group_files(const char *project_dir, const char *id, const char *group)
+{
+    char clean[48];
+    if (group && group[0] && !chat_group_name_clean(group, clean)) return false;
+    if (!group || !group[0]) clean[0] = '\0';
+    cJSON *j = cJSON_CreateObject();
+    if (!j || !cJSON_AddStringToObject(j, "type", "group") || !cJSON_AddStringToObject(j, "group", clean)) {
+        cJSON_Delete(j);
+        return false;
+    }
+    return append_setting_line(project_dir, id, j);
+}
+
+bool chat_store_rename_group_files(const char *project_dir, const char *from, const char *to)
+{
+    ChatSummary *list = NULL;
+    size_t n = 0;
+    if (!chat_store_list_files_checked(project_dir, &list, &n)) return false;
+    bool ok = true;
+    for (size_t i = 0; ok && i < n; i++)
+        if (!strcmp(list[i].group, from)) ok = chat_store_set_group_files(project_dir, list[i].id, to);
+    free(list);
+    return ok;
 }
 
 /* Validate the descriptor we actually read, not a racy stat-before-fopen.
@@ -330,6 +389,18 @@ bool chat_store_list_files_checked(const char *project_dir, ChatSummary **out, s
                     if (allocation_error) { cJSON_Delete(j); lines_ok = false; break; }
                     cJSON *ty = j ? cJSON_GetObjectItem(j, "type") : NULL, *ar = j ? cJSON_GetObjectItem(j, "archived") : NULL;
                     if (ty && cJSON_IsString(ty) && ty->valuestring && !strcmp(ty->valuestring, "archive") && cJSON_IsBool(ar)) c->archived = cJSON_IsTrue(ar);
+                    cJSON_Delete(j);
+                } else if (strstr(line, "\"type\":\"group\"")) { /* the latest one counts */
+                    bool allocation_error;
+                    cJSON *j = json_parse_checked(line, &allocation_error);
+                    if (allocation_error) { cJSON_Delete(j); lines_ok = false; break; }
+                    cJSON *ty = j ? cJSON_GetObjectItem(j, "type") : NULL, *g = j ? cJSON_GetObjectItem(j, "group") : NULL;
+                    if (ty && cJSON_IsString(ty) && ty->valuestring && !strcmp(ty->valuestring, "group") && g && cJSON_IsString(g) &&
+                        g->valuestring) {
+                        char clean[48];
+                        if (!g->valuestring[0]) c->group[0] = '\0';
+                        else if (chat_group_name_clean(g->valuestring, clean)) memcpy(c->group, clean, sizeof(clean));
+                    }
                     cJSON_Delete(j);
                 }
                 first = false;
@@ -604,6 +675,20 @@ bool chat_store_set_observer(StoreManager *manager, const char *project_dir, con
 bool chat_store_set_archived(StoreManager *manager, const char *project_dir, const char *id, bool archived)
 {
     return project_store_chat_set_archived(manager, project_dir, id, archived);
+}
+
+bool chat_store_set_group(StoreManager *manager, const char *project_dir, const char *id, const char *group)
+{
+    char clean[48] = "";
+    if (group && group[0] && !chat_group_name_clean(group, clean)) return false;
+    return project_store_chat_set_group(manager, project_dir, id, clean);
+}
+
+bool chat_store_rename_group(StoreManager *manager, const char *project_dir, const char *from, const char *to)
+{
+    char f[48], t[48] = "";
+    if (!chat_group_name_clean(from, f) || (to && to[0] && !chat_group_name_clean(to, t))) return false;
+    return project_store_chat_rename_group(manager, project_dir, f, t);
 }
 
 size_t chat_store_list(StoreManager *manager, const char *project_dir, ChatSummary **out)

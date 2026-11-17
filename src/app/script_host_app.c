@@ -257,16 +257,28 @@ static char *host_explorer_text(void *ctx)
     size_t cap = 2;
     for (size_t i = 0; i < app->ndocs; i++) cap += strlen(app->docs[i]) + 1;
     for (size_t i = 0; i < app->nchats; i++) cap += sizeof(app->chat_labels[0]) + 1;
-    cap += 48; /* "Archived (n)" */
+    cap += 48 + app->nchat_groups * 72; /* "Archived (n)", "group (n)" */
     cap += (sizeof(app->ent_labels[0]) + 1) * ENT_SHOW + (sizeof(app->ent_row_labels[0]) + 1) * ENT_ROWS;
     char *s = malloc(cap);
     if (!s) return NULL;
     s[0] = '\0';
     for (size_t i = 0; i < app->ndocs; i++) strcat(strcat(s, app->docs[i]), "\n");
-    /* Chats as the Explorer draws them: archived ones under their heading, listed only while it is open. */
+    /* Chats as the Explorer draws them: each group's heading ("name (n)") and, while it is open, its chats; then the
+     * chats in no group; archived ones under their heading, listed only while it is open. */
+    for (size_t g = 0; g < app->nchat_groups; g++) {
+        size_t count = 0;
+        for (size_t i = 0; i < app->nchats; i++) count += !app->chats[i].archived && !strcmp(app->chats[i].group, app->chat_groups[g]);
+        char head[72];
+        snprintf(head, sizeof(head), "%s (%zu)\n", app->chat_groups[g], count);
+        strcat(s, head);
+        for (size_t i = 0; !chat_group_closed(app, app->chat_groups[g]) && i < app->nchats; i++)
+            if (!app->chats[i].archived && !strcmp(app->chats[i].group, app->chat_groups[g]))
+                strcat(strcat(s, app->chat_labels ? app->chat_labels[i] : app->chats[i].title), "\n");
+    }
     size_t narchived = 0;
     for (size_t i = 0; i < app->nchats; i++) {
         if (app->chats[i].archived) { narchived++; continue; }
+        if (app->chats[i].group[0]) continue;
         strcat(strcat(s, app->chat_labels ? app->chat_labels[i] : app->chats[i].title), "\n");
     }
     if (narchived) {

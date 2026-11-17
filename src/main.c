@@ -1247,6 +1247,17 @@ static bool toolbar_empty(void)
     return true;
 }
 
+/* A click on a chat group's heading opens or closes it. */
+static bool chat_group_clicked(App *app)
+{
+    for (size_t g = 0; g < app->nchat_groups; g++)
+        if (Clay_PointerOver(CLAY_IDI("ChatGroup", (uint32_t)g))) {
+            chat_group_toggle(app, app->chat_groups[g]);
+            return true;
+        }
+    return false;
+}
+
 static void frame_left_click(App *app, Vector2 mouse, bool modal, bool trace)
 {
     /* An empty part of the toolbar: the window's title bar (ui/mac_window.h). A double-click does what the author's
@@ -1285,6 +1296,7 @@ static void frame_left_click(App *app, Vector2 mouse, bool modal, bool trace)
                 app->focus = FOCUS_RECORD;
         }
         else if (Clay_PointerOver(CLAY_ID("ArchivedChats"))) app->chats_archived_open = !app->chats_archived_open;
+        else if (chat_group_clicked(app)) {}
         else if (Clay_PointerOver(CLAY_ID("Explorer"))) {
             app->focus = FOCUS_NONE;
             char full[PATH_MAX + 256];
@@ -1413,8 +1425,17 @@ static void frame_explorer_menu(App *app, Vector2 mouse, bool modal)
                 }
                 app->chat_menu_archive = n;
                 items[n++] = chat->archived ? "Restore from archive" : "Archive";
+                app->chat_menu_group = n;
+                items[n++] = "Move to group\xE2\x80\xA6";
                 snprintf(app->menu_chat, sizeof(app->menu_chat), "%s", chat->id);
                 menu_open(&app->menu, MT_CHAT, (int)i, mouse, items, n);
+                break;
+            }
+        for (size_t g = 0; g < app->nchat_groups; g++)
+            if (Clay_PointerOver(CLAY_IDI("ChatGroup", (uint32_t)g))) {
+                static const char *const items[] = { "Rename group\xE2\x80\xA6", "Ungroup" };
+                snprintf(app->menu_group, sizeof(app->menu_group), "%s", app->chat_groups[g]); /* copied: lists re-sort */
+                menu_open(&app->menu, MT_GROUP, (int)g, mouse, items, 2);
                 break;
             }
         for (size_t i = 0; i < app->ndocs; i++)
@@ -1813,6 +1834,26 @@ static void frame_draw_overlays(App *app, MainLoop *loop, int empty_act, bool mo
                 set_status(app, msg);
             }
         }
+        /* Picks that open another menu run last: menu_open replaces the one being read. */
+        bool move_menu = pick >= 0 && app->menu.tag == MT_CHAT && pick == app->chat_menu_group;
+        Vector2 move_at = app->menu.at;
+        if (pick >= 0 && app->menu.tag == MT_CHAT_GROUP) {
+            if (pick < app->group_menu_count) set_chat_group(app, app->menu_chat, app->group_menu_names[pick]);
+            else if (pick == app->group_menu_remove) set_chat_group(app, app->menu_chat, "");
+            else if (pick == app->group_menu_new) {
+                snprintf(app->prompt_project, sizeof(app->prompt_project), "%s", app->project_dir);
+                prompt_open(app->prompt, PT_NEW_GROUP, "New group", "", "Create");
+            }
+        }
+        if (pick >= 0 && app->menu.tag == MT_GROUP) {
+            if (pick == 0) {
+                snprintf(app->prompt_project, sizeof(app->prompt_project), "%s", app->project_dir);
+                prompt_open(app->prompt, PT_RENAME_GROUP, "Rename group", app->menu_group, "Rename");
+            } else {
+                char why[160];
+                if (!rename_chat_group(app, app->menu_group, "", why, sizeof(why))) set_status(app, why);
+            }
+        }
         if (pick >= 0 && app->menu.tag == MT_CHAT && pick == app->chat_menu_archive) {
             const ChatSummary *cs = find_chat(app, app->menu_chat);
             if (cs) set_chat_archived(app, app->menu_chat, !cs->archived);
@@ -1833,6 +1874,7 @@ static void frame_draw_overlays(App *app, MainLoop *loop, int empty_act, bool mo
             else if (pick == 0) begin_rename(app, app->menu_doc); /* a dirty open document is refused on OK */
             else reveal_document(app, app->menu_doc);
         }
+        if (move_menu) open_move_to_group_menu(app, move_at);
         /* Frosted glass behind a dialog (ui/backdrop.h): its snapshot goes when the last dialog closes. */
         if (!app->settings_open && !app->fonts_panel.open && !prompt_active(app->prompt) && !app->memory_sources_open)
             backdrop_release();

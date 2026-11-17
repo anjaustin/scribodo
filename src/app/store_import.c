@@ -392,6 +392,7 @@ static bool import_chats(Db *db, const char *project_dir, const char *pid, IdMap
         if (ok) ok = import_chat_titles(db, project_dir, list[i].id, cid, updated);
         if (ok && list[i].observer_ignore) ok = sdb_chat_set_observer(db, pid, cid, false);
         if (ok && list[i].archived) ok = sdb_chat_set_archived(db, pid, cid, true);
+        if (ok && list[i].group[0]) ok = sdb_chat_set_group(db, pid, cid, list[i].group);
         for (size_t k = 0; ok && k < n; k++) {
             uint64_t added = 0;
             if (msgs[k].memory_sources &&
@@ -1096,6 +1097,7 @@ static bool export_files_unlocked(StoreManager *manager, Db *db, const char *pid
         sdb_chat_archived_titles_free(old, nold);
         if (ok && n && cs[i].observer_ignore) ok = chat_store_set_observer_files(project_dir, cs[i].id, false);
         if (ok && n && cs[i].archived) ok = chat_store_set_archived_files(project_dir, cs[i].id, true);
+        if (ok && n && cs[i].group[0]) ok = chat_store_set_group_files(project_dir, cs[i].id, cs[i].group);
         chat_store_free_messages(m, n);
     }
     free(cs);

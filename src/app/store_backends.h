@@ -78,6 +78,8 @@ bool sdb_chat_archived_titles(Db *db, const char *project_id, const char *id, Ch
 void sdb_chat_archived_titles_free(ChatArchivedTitle *titles, size_t count);
 bool sdb_chat_set_observer(Db *db, const char *project_id, const char *id, bool read);
 bool sdb_chat_set_archived(Db *db, const char *project_id, const char *id, bool archived);
+bool sdb_chat_set_group(Db *db, const char *project_id, const char *id, const char *group);
+bool sdb_chat_rename_group(Db *db, const char *project_id, const char *from, const char *to);
 
 /* Move a project's .scribodo/ files into the store (see store_import.c).
  * True if it is in the store afterwards (or already was). */
