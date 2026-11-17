@@ -667,12 +667,13 @@ static volatile sig_atomic_t g_quit_signal;
 static void on_quit_signal(int sig) { g_quit_signal = sig; }
 
 /* The memory the chat model could have now, for a restart at another size: what macOS can hand out, less the
- * embedding and reranker weights, plus what the running chat model itself holds and would hand back.
+ * weights of any server macOS currently reports as available, plus what the running chat model would hand back.
  *
- * Counted carefully (red team 2026-11-16): the servers' weights are memory-mapped, and llama.cpp keeps them wired only
- * for three minutes after their last use; after that they are file pages, which sysmem_available counts as available.
- * So an idle embedding or reranker server looked free, and adding the whole chat model back counted its weights twice
- * unless they are pinned. Only a ready chat model gives anything back (a starting one has not taken it yet). */
+ * The servers' weights are memory-mapped; llama.cpp keeps them wired only while pinned or for three minutes after
+ * their last use, after which macOS counts them as available although the server still needs them. So a server whose
+ * weights are not wired (llm_server_weights_wired) has them held back, and the ready chat model gives back its
+ * weights only when they are wired (red team 2026-11-16, twice: counting idle weights as free overstated memory, and
+ * holding back wired ones counted them twice). Only a ready chat model gives anything back. */
 static long long model_file_bytes(LlmServer *s)
 {
     const LlmServerConfig *c = llm_server_config(s);
@@ -682,12 +683,12 @@ static long long model_file_bytes(LlmServer *s)
 static long long memory_for_model(App *app)
 {
     long long avail = sysmem_available();
-    if (app->embed) avail -= model_file_bytes(app->embed);
-    if (app->rerank) avail -= model_file_bytes(app->rerank);
+    if (app->embed && !llm_server_weights_wired(app->embed)) avail -= model_file_bytes(app->embed);
+    if (app->rerank && !llm_server_weights_wired(app->rerank)) avail -= model_file_bytes(app->rerank);
     if (llm_server_state(app->llm, NULL, 0) == LLM_READY) {
         const LlmServerConfig *cfg = llm_server_config(app->llm);
         long long back = llm_server_mem_need(cfg, cfg->ctx_total);
-        if (!llm_server_pinned(app->llm)) back -= model_file_bytes(app->llm); /* its weights may already count as free */
+        if (!llm_server_weights_wired(app->llm)) back -= model_file_bytes(app->llm); /* already counted as free */
         avail += back;
     }
     return avail > 0 ? avail : 0;
@@ -788,7 +789,8 @@ void apply_model_settings(App *app, bool context)
     if (!context) return;
     bool keep_changed = app->llm && llm_server_config(app->llm)->keep_resident != (app->model.keep_in_memory != 0);
     if (app->llm && (llm_server_slot_ctx(app->llm) != app->model.context || keep_changed)) {
-        if ((app->chat && chat_busy(app->chat)) || name_detection_job_busy(&app->names_job)) {
+        if ((app->chat && chat_busy(app->chat)) || name_detection_job_busy(&app->names_job) ||
+            llm_server_state(app->llm, NULL, 0) != LLM_READY) { /* a starting model's memory is not yet measurable */
             app->ctx_pending = true;
             set_status(app, "Saved. The new context size applies after the reply finishes and the model restarts");
             return;
@@ -1151,7 +1153,8 @@ static void frame_poll_workers(App *app)
     names_poll(app);
     import_poll(app);
     /* A context size chosen while a reply was being written: now. */
-    if (app->llm && app->ctx_pending && !chat_busy(app->chat) && !name_detection_job_busy(&app->names_job)) {
+    if (app->llm && app->ctx_pending && !chat_busy(app->chat) && !name_detection_job_busy(&app->names_job) &&
+        llm_server_state(app->llm, NULL, 0) == LLM_READY) {
         app->ctx_pending = false;
         fit_context(app, false);
     }

@@ -560,6 +560,7 @@ static void *memory_main(void *arg)
             continue;
         }
         if (!job->selected || job->paused) {
+            atomic_store(&job->working, false); /* cleared or paused: nothing runs until woken */
             pthread_cond_wait(&job->wake, &job->mu);
             continue;
         }

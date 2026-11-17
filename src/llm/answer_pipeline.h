@@ -70,6 +70,10 @@ extern const char *const answer_composer_instruction;
 /* Applies to requests that are questions: the stand-in for a request classifier. */
 bool answer_gate_applies(const char *question);
 char *answer_claim_request(const char *question, const char *reply);      /* owned JSON: what answer does the reply give */
+/* A reply longer than this (and its gap marker) is read as about its first 8,000 bytes and last 4,000, the gap marked;
+ * answer_claim_reply_cut says whether a reply of `bytes` (after neutralizing) is cut. */
+#define ANSWER_CLAIM_REPLY_BYTES 12000
+bool answer_claim_reply_cut(size_t bytes);
 bool answer_claim_parse(const char *response_body, char **answer, bool *parsed);
 /* "pass" | "pass_no_anchors" | "no_answer" | "echoes_question" | "not_in_span". The claim's anchor tokens (numbers in
  * digit or word form, capitalized words) must each occur in a verified span or one of the author's own turns; anchors

@@ -2481,12 +2481,34 @@ static void test_side_slot_bounds(void)
     CHECK(u && strstr(u, "AUTHOR: call me Sam"));
     free(u);
     free(prev);
-    /* The claim check reads the reply's opening only. */
+    /* The claim check reads a long reply's opening and close, the gap marked; at every length around the cut the
+     * request stays bounded and keeps the reply's last words (sanitize checks the in-place cut). */
+    for (size_t len = ANSWER_CLAIM_REPLY_BYTES - 2; len < ANSWER_CLAIM_REPLY_BYTES + 80; len++) {
+        char *reply = malloc(len + 1);
+        memset(reply, 'c', len);
+        memcpy(reply + len - 9, "THE END.", 8);
+        reply[len - 1] = 'z';
+        reply[len] = 0;
+        char *body = answer_claim_request("How far?", reply);
+        CHECK(body && strlen(body) < ANSWER_CLAIM_REPLY_BYTES + 4000 && strstr(body, "THE END.z"));
+        CHECK(!answer_claim_reply_cut(len) || (body && strstr(body, "[\xE2\x80\xA6]")));
+        free(body);
+        free(reply);
+    }
     memset(msg, 'c', big);
+    memcpy(msg + big - 20, "The answer is ten.", 18);
     msg[big] = 0;
     char *body = answer_claim_request("How far?", msg);
-    CHECK(body && strlen(body) < 12000 + 4000);
+    CHECK(body && strlen(body) < ANSWER_CLAIM_REPLY_BYTES + 4000 && strstr(body, "The answer is ten."));
     free(body);
+    /* Name detection centres on a phrase that states a name, not the first weak cue. */
+    memset(msg, 'q', big);
+    memcpy(msg + 10, "I'm not going back", 18);
+    memcpy(msg + 150000, "my name is Ada and I'll call you Quill", 38);
+    msg[big] = 0;
+    u = names_user_text(NULL, msg);
+    CHECK(u && strstr(u, "my name is Ada and I'll call you Quill"));
+    free(u);
     free(msg);
 }
 

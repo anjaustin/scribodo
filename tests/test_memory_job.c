@@ -301,6 +301,7 @@ typedef struct {
     pthread_mutex_t mu;
     pthread_cond_t cv;
     bool release, entered;
+    bool progress; /* what the runner reports: more work follows */
     bool check_idle_spacing;
     struct timespec previous_call;
     unsigned calls;
@@ -353,8 +354,9 @@ static bool runner(StoreManager *m, const char *p, const char *c, MemoryJobActio
     status->ingested_steps++;
     strcpy(status->scope.conversation_id, c);
     status->enabled = true;
+    bool progress = g->progress;
     pthread_mutex_unlock(&g->mu);
-    return false;
+    return progress;
 }
 
 static void gate_init(Gate *g)
@@ -425,6 +427,31 @@ static void test_latest_and_pause(void)
     memory_job_destroy(job);
     assert(g.calls == 2 && !strcmp(g.project, "/copied") && !strcmp(g.conversation, "C"));
     assert(g.action == MEMORY_JOB_RESUME);
+    gate_done(&g);
+}
+
+/* Red team 2026-11-16: a job paused or cleared after a step that made progress went on reporting work, which kept the
+ * model's grow-back waiting for as long as it stayed paused. */
+static void test_working_clears_when_idle(void)
+{
+    Gate g;
+    gate_init(&g);
+    g.progress = true;
+    MemoryJob *job = memory_job_create_with_runner(&manager, runner, &g);
+    assert(job && memory_job_select(job, "/p", "A", MEMORY_JOB_RESUME));
+    wait_entered(&g);
+    assert(memory_job_working(job));          /* a step is running */
+    memory_job_pause(job, true);
+    release_gate(&g);
+    bool idle = false;
+    for (unsigned i = 0; i < 5000 && !idle; i++, poll_pause()) idle = !memory_job_working(job);
+    assert(idle);                              /* paused: nothing runs */
+    memory_job_pause(job, false);
+    memory_job_clear(job);
+    idle = false;
+    for (unsigned i = 0; i < 5000 && !idle; i++, poll_pause()) idle = !memory_job_working(job);
+    assert(idle);                              /* cleared: nothing runs */
+    memory_job_destroy(job);
     gate_done(&g);
 }
 
@@ -1046,6 +1073,7 @@ int main(void)
     test_destroy_owns_inflight_control();
     test_latest_and_pause();
     test_clear_and_shutdown();
+    test_working_clears_when_idle();
     test_validation_and_identity();
     test_bounded_production();
     test_production_control_does_not_run_resources();

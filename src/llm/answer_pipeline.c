@@ -17,7 +17,6 @@
 /* The observer's slot, not the chat's: the chat waits for these extractions (and a send cancels the observer), and on
  * the chat's slot each one overwrote the conversation's cache, so the next turn read its whole prompt again. */
 #define ANSWER_SLOT 1
-#define ANSWER_CLAIM_REPLY_BYTES 12000 /* about 3,000 tokens of prose */
 
 
 #define EXTRACT_HTTP_TIMEOUT_MS 60000
@@ -344,16 +343,23 @@ bool answer_gate_applies(const char *question)
     return last && question[last - 1] == '?';
 }
 
+bool answer_claim_reply_cut(size_t bytes) { return bytes > ANSWER_CLAIM_REPLY_BYTES + 64; }
+
 char *answer_claim_request(const char *question, const char *reply)
 {
     if (!question || !reply) return NULL;
     char *q = llm_neutralize(question), *r = llm_neutralize(reply);
     /* The observer's slot shares the pool's 8K reserve (server.h): a reply can be up to half the conversation's
-     * context, so only its opening, where it gives its answer, is read (red team 2026-11-16). */
-    if (r && strlen(r) > ANSWER_CLAIM_REPLY_BYTES) {
-        size_t keep = ANSWER_CLAIM_REPLY_BYTES;
-        while (keep > 0 && ((unsigned char)r[keep] & 0xC0) == 0x80) keep--;
-        r[keep] = '\0';
+     * context, so a long one is read as its opening and its close, where an answer is given (red team 2026-11-16). */
+    size_t rl = r ? strlen(r) : 0;
+    if (r && answer_claim_reply_cut(rl)) {
+        /* The cut keeps head + gap + tail inside the original buffer: the tail starts at least a gap past the head. */
+        static const char gap[] = "\n[\xE2\x80\xA6]\n";
+        size_t g = sizeof(gap) - 1, head = ANSWER_CLAIM_REPLY_BYTES * 2 / 3, tail = rl - (ANSWER_CLAIM_REPLY_BYTES - head);
+        while (head > 0 && ((unsigned char)r[head] & 0xC0) == 0x80) head--;
+        while (tail < rl && ((unsigned char)r[tail] & 0xC0) == 0x80) tail++;
+        memmove(r + head + g, r + tail, rl - tail + 1); /* tail >= head + g: moves left or stays */
+        memcpy(r + head, gap, g);
     }
     char *user = NULL;
     if (q && r) {

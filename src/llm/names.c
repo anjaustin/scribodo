@@ -15,16 +15,29 @@
 #define NAMES_SLOT 1 /* the observer's slot: chat keeps slot 0 */
 
 static const char *const k_cues[] = { "name", "call me", "call you", "i'm ", "i am ", "how about" };
+/* Phrases that state a name outright; prose is full of the weak cues ("I'm", "name"), so the window is centred on one
+ * of these when the message has it (red team 2026-11-16: "I'm not going back..." first, "my name is Ada" last). */
+static const char *const k_strong_cues[] = { "my name is", "my name's", "call me", "call you", "your name is",
+                                             "you can be", "i'll call you", "name you" };
 
-/* The first cue in `m`, or NULL. */
-static const char *first_cue(const char *m)
+static const char *earliest(const char *m, const char *const *cues, size_t n)
 {
     const char *best = NULL;
-    for (size_t i = 0; m && i < sizeof(k_cues) / sizeof(k_cues[0]); i++) {
-        const char *p = strcasestr(m, k_cues[i]);
+    for (size_t i = 0; m && i < n; i++) {
+        const char *p = strcasestr(m, cues[i]);
         if (p && (!best || p < best)) best = p;
     }
     return best;
+}
+
+/* Any cue at all: whether the message is worth asking about. */
+static const char *first_cue(const char *m) { return earliest(m, k_cues, sizeof(k_cues) / sizeof(k_cues[0])); }
+
+/* Where to centre what the model is shown: the first strong cue, else the first cue. */
+static const char *best_cue(const char *m)
+{
+    const char *s = earliest(m, k_strong_cues, sizeof(k_strong_cues) / sizeof(k_strong_cues[0]));
+    return s ? s : first_cue(m);
 }
 
 bool names_worth_checking(const char *m) { return first_cue(m) != NULL; }
@@ -114,7 +127,7 @@ static bool fixed_phrasings(const char *msg, NameGuess *g)
 char *names_user_text(const char *assistant_prev, const char *author_msg)
 {
     if (!author_msg) return NULL;
-    const char *cue = first_cue(author_msg);
+    const char *cue = best_cue(author_msg);
     size_t at = cue ? (size_t)(cue - author_msg) : 0;
     char *said = utf8_window(author_msg, at > NAMES_AROUND_CUE ? at - NAMES_AROUND_CUE : 0, 2 * NAMES_AROUND_CUE);
     size_t pl = assistant_prev ? strlen(assistant_prev) : 0;

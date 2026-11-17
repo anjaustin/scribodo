@@ -1623,6 +1623,9 @@ static void gate_apply(ChatSession *s)
     if (parsed)
         verdict = answer_gate(answer, s->gate_question, (const char *const *)s->gate_spans, s->gate_nspans,
                               (const char *const *)s->gate_author, s->gate_nauthor);
+    /* A reply cut for the check may give its answer in the part not read: no claim found is then no verdict, not a
+     * refusal (a refusal's text is later replaced in the composer window). */
+    if (parsed && visible && answer_claim_reply_cut(strlen(visible)) && !strcmp(verdict, "no_answer")) verdict = "unavailable";
     bool withheld = !strcmp(verdict, "echoes_question") || !strcmp(verdict, "not_in_span");
     /* Quotation integrity: whatever the claim gate says, a reply that quotes text the verified spans, the
      * author's turns and the question do not contain is withheld, with the reason named. */

@@ -93,6 +93,11 @@ int llm_server_side_ctx(LlmServer *s);
 /* The weights are pinned in RAM: keep_resident was asked for and llama.cpp did not report failing to mlock them.
  * False until the server is ready. */
 bool llm_server_pinned(LlmServer *s);
+/* Whether the weights are wired now, so macOS already counts them as used: pinned, or used within the last
+ * LLM_RESIDENCY_S (llama.cpp keeps Metal buffers resident that long after their last use, then they become file
+ * pages macOS reports as available). Errs toward "not wired" once the window is past. */
+#define LLM_RESIDENCY_S 180
+bool llm_server_weights_wired(LlmServer *s);
 /* Change the context per conversation (each slot), restarting the server
  * (same object: chat and observer keep their pointer). False if out of
  * range (below 2048, or above the model's trained context when known).

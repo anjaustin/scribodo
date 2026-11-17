@@ -51,6 +51,7 @@ struct LlmServer {
     double restart_at;
     off_t log_start;        /* the log's size when this server was spawned: its own lines follow */
     atomic_bool pinned;     /* keep_resident, and llama.cpp did not report a failed mlock */
+    atomic_llong last_use_ms; /* when a caller last took the socket to send a request (llm_server_weights_wired) */
 };
 
 /* After start-up: did llama.cpp pin the weights? It warns and goes on when it cannot ("failed to mlock", "mlock not
@@ -730,7 +731,19 @@ LlmState llm_server_state(LlmServer *s, char *msg, size_t msglen)
     return st;
 }
 
-const char *llm_server_socket(LlmServer *s) { return s->sock; }
+const char *llm_server_socket(LlmServer *s)
+{
+    /* Every request takes the socket just before it sends: the time the weights were last needed. */
+    atomic_store(&s->last_use_ms, (long long)(now_s() * 1000.0));
+    return s->sock;
+}
+
+bool llm_server_weights_wired(LlmServer *s)
+{
+    if (atomic_load(&s->pinned)) return true;
+    long long last = atomic_load(&s->last_use_ms);
+    return last > 0 && now_s() * 1000.0 - (double)last < LLM_RESIDENCY_S * 1000.0;
+}
 
 bool llm_server_reconfigure(LlmServer *s, int slot_ctx, bool keep_resident)
 {
