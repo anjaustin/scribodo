@@ -55,6 +55,12 @@ typedef struct {
 } MemRefit;
 bool memfit_refit_due(const MemRefit *r);
 
+/* The status bar's context figure (user request 2026-11-17): "Context 3.2K / 40K", tokens the last turn left in the
+ * model's context (prompt and reply; `used` < 0: none yet, shown as "–") against the context per conversation the
+ * model runs with; " · 128K set" when that is smaller than the author's setting (memory). K = 1024 tokens, one
+ * decimal below 10K (none for whole Ks). Empty when `slot` <= 0 (no local model). */
+void memfit_context_label(int used, int slot, int wanted, char *out, int outlen);
+
 /* "5.4 GB" */
 void memfit_gb(long long bytes, char *out, int outlen);
 

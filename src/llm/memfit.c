@@ -68,6 +68,26 @@ MemFit memfit_context(long long avail, long long other, const LlmServerConfig *c
     return f;
 }
 
+static void tokens_k(int t, char *out, size_t n)
+{
+    if (t < 1000) snprintf(out, n, "%d", t);
+    else if (t < 10 * 1024 && t % 1024) snprintf(out, n, "%.1fK", t / 1024.0);
+    else snprintf(out, n, "%dK", (t + 512) / 1024);
+}
+
+void memfit_context_label(int used, int slot, int wanted, char *out, int outlen)
+{
+    if (!out || outlen <= 0) return;
+    out[0] = '\0';
+    if (slot <= 0) return;
+    char u[16] = "\xE2\x80\x93", s[16], w[16]; /* – */
+    if (used >= 0) tokens_k(used, u, sizeof(u));
+    tokens_k(slot, s, sizeof(s));
+    tokens_k(wanted, w, sizeof(w));
+    if (wanted > slot) snprintf(out, (size_t)outlen, "Context %s / %s \xC2\xB7 %s set", u, s, w);
+    else snprintf(out, (size_t)outlen, "Context %s / %s", u, s);
+}
+
 void memfit_gb(long long bytes, char *out, int outlen)
 {
     snprintf(out, (size_t)outlen, "%.1f GB", (double)bytes / 1e9);

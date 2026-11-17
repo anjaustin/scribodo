@@ -281,6 +281,18 @@ static void test_sse_parsing(void)
     CHECK(chat_parse_sse_line("data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}", &acc, &n, err, sizeof(err)) == -1);
     CHECK(strstr(err, "safety limit") != NULL && n == CHAT_MAX_RESPONSE_BYTES);
     free(acc);
+
+    /* The context figure (status bar): llama-server's timings on the last chunk, cached + read + written tokens. */
+    CHECK(chat_parse_sse_timings("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],"
+                                 "\"timings\":{\"cache_n\":3000,\"prompt_n\":120,\"predicted_n\":80,\"prompt_ms\":9.5}}") == 3200);
+    CHECK(chat_parse_sse_timings("data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}") == -1);
+    CHECK(chat_parse_sse_timings("data: {\"timings\":{\"cache_n\":1,\"prompt_n\":2}}") == -1);             /* incomplete */
+    CHECK(chat_parse_sse_timings("data: {\"timings\":{\"cache_n\":-1,\"prompt_n\":2,\"predicted_n\":3}}") == -1);
+    CHECK(chat_parse_sse_timings("data: {\"timings\":{\"cache_n\":1.5,\"prompt_n\":2,\"predicted_n\":3}}") == -1);
+    CHECK(chat_parse_sse_timings("data: {\"timings\":{\"cache_n\":1e300,\"prompt_n\":2,\"predicted_n\":3}}") == -1);
+    CHECK(chat_parse_sse_timings("data: {\"timings\":{\"cache_n\":\"1\",\"prompt_n\":2,\"predicted_n\":3}}") == -1);
+    CHECK(chat_parse_sse_timings("{\"timings\":{\"cache_n\":1,\"prompt_n\":2,\"predicted_n\":3}}") == -1); /* not SSE */
+    CHECK(chat_parse_sse_timings("data: {\"timings\":") == -1 && chat_parse_sse_timings(NULL) == -1);
 }
 
 /* Regression: a helper that fills stderr before writing stdout used to

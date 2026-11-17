@@ -62,6 +62,8 @@ Click the model's name in the toolbar, then **Model settings…**. Each row step
 
 A new context size or keep setting restarts the model, after any reply in progress.
 
+The status bar's right end shows the context: **Context 3.2K / 40K** is how much of the model's context the last reply in this chat filled (what was sent plus the reply, as the model counted it) out of the context it is running with. Until the chat's first reply it shows **–**. **· 128K set** means memory holds the model below your setting. It is shown for the local model only.
+
 ## Reviewed AI edits
 
 The assistant never changes your document by itself.

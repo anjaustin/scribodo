@@ -234,6 +234,13 @@ long chat_estimate_tokens(const char *text);
  * 1 = more to come, 0 = finished, 2 = finished at the length limit,
  * -1 = error (message in err). */
 int chat_parse_sse_line(const char *line, char **acc, size_t *acc_len, char *err, size_t errlen);
+/* Tokens a finished reply left in the server's context, from the "timings" llama-server adds to its last chunk
+ * (cache_n + prompt_n + predicted_n); -1 when `line` carries none or they are malformed. */
+int chat_parse_sse_timings(const char *line);
+/* Those tokens for the last finished local reply in this conversation (the status bar's context figure); -1 none yet:
+ * a new or newly opened chat, a failed or remote reply. Any thread. */
+int chat_context_used(ChatSession *s);
+void chat_context_used_reset(ChatSession *s);
 
 /* Use the configured remote model for the next requests (NULL: the local
  * one). Only the author's explicit choice calls this; nothing falls back.

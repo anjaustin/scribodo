@@ -116,6 +116,11 @@ static void update_labels(App *app)
         snprintf(app->status_left, sizeof(app->status_left), "Ln %d, Col %d   %zu words   UTF-8   %s",
                  st.line, st.column, st.words, st.crlf ? "CRLF" : "LF");
 
+    /* The context figure, for the local model only (a remote one has its own window). */
+    bool remote_ctx = app->chat && chat_remote_selected(app->chat);
+    memfit_context_label(app->chat ? chat_context_used(app->chat) : -1, app->llm && !remote_ctx ? llm_server_slot_ctx(app->llm) : 0,
+                         app->model.context, app->context_label, (int)sizeof(app->context_label));
+
     char msg[480];
     LlmState ls = app->llm ? llm_server_state(app->llm, msg, sizeof(msg)) : LLM_READY;
     if (!app->llm) snprintf(msg, sizeof(msg), "Fake model (testing)");
@@ -411,6 +416,7 @@ static void layout_status_bar(App *app)
         grow();
         if (app->status[0] && GetTime() - app->status_time < 6.0)
             label(app, app->status, FONT_UI, editor_path(app->editor) && editor_is_read_only(app->editor) ? COL_WARN : COL_TEXT);
+        if (app->context_label[0]) label(app, app->context_label, FONT_MONO, COL_MUTED); /* the model's context: figures */
     }
 }
 

@@ -86,8 +86,8 @@ def instrument_chat(source):
 {
     ChatSession *s = arg;
     if (!live_begin() || s->via_remote) { finish(s, true, "Live capture requires a private owned directory and local inference"); return NULL; }''')
-    source = replace_once(source, '    StreamCtx c = { .s = s, .rc = 1 };', r'''    live_text("request", "json", s->request);
-    StreamCtx c = { .s = s, .rc = 1, .live_stream = scribodo_live_open("stream", "sse") };
+    source = replace_once(source, '    StreamCtx c = { .s = s, .rc = 1, .ctx_used = -1 };', r'''    live_text("request", "json", s->request);
+    StreamCtx c = { .s = s, .rc = 1, .ctx_used = -1, .live_stream = scribodo_live_open("stream", "sse") };
     if (!live_capture_ok || !c.live_stream) {
         if (c.live_stream) fclose(c.live_stream);
         finish(s, true, "Live capture incomplete before inference"); return NULL;

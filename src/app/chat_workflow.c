@@ -436,6 +436,7 @@ void history_poll(App *app)
         chat_view_history_changed(app->chat_view);
         if (app->history_restore) {
             project_session_bind_chat(&app->session, app->history_project, app->history_id, app->history_title);
+            chat_context_used_reset(app->chat); /* another conversation: its figure comes with its next reply */
         }
         bool unchanged = app->attachment_revision == app->history_attachment_revision;
         if (app->history_restore && unchanged) {

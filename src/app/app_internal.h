@@ -339,6 +339,7 @@ typedef struct {
     /* Strings referenced by Clay must outlive the frame's render pass. */
     char doc_label[512];
     char status_left[256];
+    char context_label[96];  /* status bar: memfit_context_label */
     char model_label[512];
     char store_label[160];
     /* The optional remote model: configured or not; selected only by the

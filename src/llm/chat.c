@@ -68,6 +68,7 @@ struct ChatSession {
     bool worker_running;
     atomic_bool cancel;
     atomic_bool busy;
+    atomic_int ctx_used; /* chat_context_used */
     /* Request in flight (owned by the worker). */
     char *request;
     char *ctx_title, *ctx_text; /* copies of the ChatContext for the worker */
@@ -151,6 +152,7 @@ ChatSession *chat_create(LlmServer *server)
     pthread_mutex_init(&s->mu, NULL);
     atomic_init(&s->cancel, false);
     atomic_init(&s->busy, false);
+    atomic_init(&s->ctx_used, -1);
     atomic_init(&s->memory_attachment_epoch, 0);
     return s;
 }
@@ -191,6 +193,7 @@ void chat_clear(ChatSession *s)
     s->windowed = s->older = s->newer = false;
     s->history_stats = (ChatHistoryStats){0};
     s->notice[0] = s->notice_out[0] = '\0';
+    atomic_store(&s->ctx_used, -1);
     s->version++;
     s->finished_pending = s->user_done_pending = false;
     pthread_mutex_unlock(&s->mu);
@@ -248,6 +251,7 @@ bool chat_load_messages(ChatSession *s, const ChatMessage *msgs, size_t n)
     free(s->msgs);
     s->msgs = loaded;
     s->count = s->cap = n;
+    atomic_store(&s->ctx_used, -1); /* another conversation */
     s->version++;
     pthread_mutex_unlock(&s->mu);
     return true;
@@ -980,12 +984,35 @@ int chat_parse_sse_line(const char *line, char **acc, size_t *acc_len, char *err
     return rc;
 }
 
+int chat_parse_sse_timings(const char *line)
+{
+    if (!line || strncmp(line, "data:", 5) != 0 || !strstr(line, "\"timings\"")) return -1;
+    const char *p = line + 5;
+    while (*p == ' ') p++;
+    cJSON *j = json_parse(p);
+    cJSON *t = j ? cJSON_GetObjectItem(j, "timings") : NULL;
+    const char *keys[] = { "cache_n", "prompt_n", "predicted_n" };
+    double sum = 0;
+    bool ok = cJSON_IsObject(t);
+    for (int i = 0; ok && i < 3; i++) {
+        cJSON *v = cJSON_GetObjectItem(t, keys[i]);
+        ok = cJSON_IsNumber(v) && v->valuedouble >= 0 && v->valuedouble <= 1e8 && v->valuedouble == (double)(long)v->valuedouble;
+        if (ok) sum += v->valuedouble;
+    }
+    cJSON_Delete(j);
+    return ok && sum <= 1e8 ? (int)sum : -1;
+}
+
+int chat_context_used(ChatSession *s) { return s ? atomic_load(&s->ctx_used) : -1; }
+void chat_context_used_reset(ChatSession *s) { if (s) atomic_store(&s->ctx_used, -1); }
+
 typedef struct {
     ChatSession *s;
     char *raw;
     size_t raw_len;
     int rc;
     bool truncated;
+    int ctx_used; /* chat_parse_sse_timings; -1 none */
     char err[256];
 } StreamCtx;
 
@@ -1007,6 +1034,8 @@ static bool on_line(const char *line, size_t len, void *ctx)
     (void)len;
     StreamCtx *c = ctx;
     int rc = chat_parse_sse_line(line, &c->raw, &c->raw_len, c->err, sizeof(c->err));
+    int used = chat_parse_sse_timings(line);
+    if (used >= 0) c->ctx_used = used;
     if (c->raw) publish(c->s, c->raw);
     if (rc == 2) {
         c->truncated = true;
@@ -1670,7 +1699,7 @@ static void *server_worker(void *arg)
         finish(s, true, atomic_load(&s->cancel) ? "" : s->build_error[0] ? s->build_error : "Could not prepare the request");
         return NULL;
     }
-    StreamCtx c = { .s = s, .rc = 1 };
+    StreamCtx c = { .s = s, .rc = 1, .ctx_used = -1 };
     HttpResult r;
     bool ok = s->via_remote ? remote_request(&s->remote, "/chat/completions", s->request, on_line, &c, &s->cancel, 120000, &r)
                             : http_request(llm_server_socket(s->server), "POST", "/v1/chat/completions",
@@ -1710,6 +1739,7 @@ static void *server_worker(void *arg)
     http_result_free(&r);
     free(c.raw);
     s->last_truncated = c.truncated;
+    if (!error && !s->via_remote && c.ctx_used >= 0) atomic_store(&s->ctx_used, c.ctx_used);
     if (!error && !cancelled && s->gate_armed) gate_apply(s);
     gate_clear(s);
     finish(s, error, msg);

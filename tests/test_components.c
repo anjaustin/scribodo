@@ -399,6 +399,18 @@ static void test_memfit(void)
     char gb[32];
     memfit_gb(5400000000LL, gb, sizeof(gb));
     CHECK(!strcmp(gb, "5.4 GB"));
+
+    char cl[96];
+    memfit_context_label(3277, 40960, 40960, cl, sizeof(cl));
+    CHECK(!strcmp(cl, "Context 3.2K / 40K"));
+    memfit_context_label(-1, 40960, 131072, cl, sizeof(cl));
+    CHECK(!strcmp(cl, "Context \xE2\x80\x93 / 40K \xC2\xB7 128K set")); /* none yet; memory holds it below the setting */
+    memfit_context_label(812, 8192, 8192, cl, sizeof(cl));
+    CHECK(!strcmp(cl, "Context 812 / 8K"));
+    memfit_context_label(24000, 32768, 16384, cl, sizeof(cl)); /* a lowered setting, not yet applied: no "set" */
+    CHECK(!strcmp(cl, "Context 23K / 32K"));
+    memfit_context_label(10, 0, 32768, cl, sizeof(cl));
+    CHECK(!cl[0]); /* no local model */
 }
 
 static void test_owned_store_dependencies(void)
