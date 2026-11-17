@@ -35,6 +35,10 @@ typedef struct {
 } ModelSettingInfo;
 
 #define MODEL_SETTING_COUNT 8
+/* The largest context per conversation the panel offers: the model's trained context (llm_model_context_length),
+ * rounded down to the step. Call before model_settings_load, so a saved setting above the old ceiling survives.
+ * Ignored when `tokens` is 0 (unknown). */
+void model_settings_set_context_limit(int tokens);
 const ModelSettingInfo *model_setting_info(int i);
 double model_setting_get(const ModelSettings *m, int i);
 void model_setting_set(ModelSettings *m, int i, double v); /* clamped */

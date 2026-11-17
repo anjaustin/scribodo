@@ -192,6 +192,19 @@ first word to late. Greedy next-token probabilities over 457 identical-context s
 than 1.2 points; the only flip of the top token was at a 24.6% / 24.4% tie. Research tools under `tools/` keep the flags
 of their own experiments; a tool that reproduces the product from now on adds `--swa-full`.
 
+## Context ceiling (2026-11-16)
+
+The model file declares its trained context (`lfm3.context_length` = 262,144); `llm_model_context_length` reads it
+from the GGUF header with every length bounded, and the Model settings panel offers context per conversation up to it in
+8K steps (`model_settings_set_context_limit`, applied before the saved settings are read). 32K stays the default and the
+fallback when no model file can be read. A slot above the file's value is refused (`llm_server_set_slot_ctx`).
+
+Measured on this Mac with `--swa-full`: prefill runs at about 900 tokens a second at 3K and averages 570 over 30K (flash
+attention is off, so attention cost grows with the prompt); generation stays near 20 tokens a second at 30K. Planted
+facts at 10, 50 and 90% of a 30K prompt were all recalled.
+
+## Deployment security
+
 ## Deployment security
 
 - **No TCP port:** `--host <path>.sock` opens no TCP listener, and requests without the API key get 401 (independent review).

@@ -239,6 +239,23 @@ static void test_model_settings(void)
     CHECK(m.max_reply == 4096);                   /* at most half the context */
     model_setting_set(&m, 1, NAN);
     CHECK(m.temperature == 0.0);
+    /* The ceiling is the model's trained context, on the step grid; unknown (0) changes nothing. */
+    model_settings_set_context_limit(0);
+    model_setting_set(&m, 7, 1 << 20);
+    CHECK(m.context == 32768);
+    model_settings_set_context_limit(262144);
+    model_setting_set(&m, 7, 131072);
+    CHECK(m.context == 131072);
+    model_setting_set(&m, 7, 1 << 20);
+    CHECK(m.context == 262144 && model_setting_info(7)->max == 262144);
+    model_settings_set_context_limit(100000); /* rounded down to the 8K grid */
+    CHECK(model_setting_info(7)->max == 98304);
+    model_settings_defaults(&m);
+    CHECK(m.context == 32768);                /* the default stays 32K */
+    model_settings_set_context_limit(16384);  /* a model trained shorter than the default */
+    model_settings_defaults(&m);
+    CHECK(m.context == 16384);
+    model_settings_set_context_limit(32768);  /* as the other tests expect */
 
     ChatSampling sp = { 3000, 0.9, 0.8, 20, 0.1, 1.2, 0.3 };
     char *r = chat_apply_sampling("{\"messages\":[],\"max_tokens\":1024,\"temperature\":0.7,\"top_p\":0.95}", &sp, false);
@@ -249,6 +266,58 @@ static void test_model_settings(void)
     r = chat_apply_sampling("{\"messages\":[],\"max_tokens\":5000}", &sp, true);
     CHECK(r && strstr(r, "\"max_tokens\":5000") && strstr(r, "\"temperature\":0.3"));
     free(r);
+}
+
+/* A GGUF header with the given key-values, for llm_model_context_length. */
+static void write_gguf(const char *path, const char *arch, unsigned type, unsigned long long ctx, bool lie_about_length)
+{
+    FILE *f = fopen(path, "wb");
+    if (!f) return;
+    unsigned version = 3;
+    unsigned long long tensors = 0, kvs = 4;
+    fwrite("GGUF", 1, 4, f);
+    fwrite(&version, 4, 1, f);
+    fwrite(&tensors, 8, 1, f);
+    fwrite(&kvs, 8, 1, f);
+    #define KEY(s) do { unsigned long long kn_ = strlen(s); fwrite(&kn_, 8, 1, f); fwrite(s, 1, kn_, f); } while (0)
+    unsigned t;
+    KEY("general.architecture"); t = 8; fwrite(&t, 4, 1, f); KEY(arch);
+    /* an array of strings and one of u32, skipped by their sizes */
+    KEY("tokenizer.ggml.tokens"); t = 9; fwrite(&t, 4, 1, f);
+    unsigned et = 8; unsigned long long n = lie_about_length ? (1ull << 40) : 2; fwrite(&et, 4, 1, f); fwrite(&n, 8, 1, f);
+    KEY("a"); KEY("bb");
+    KEY("x.head_count_kv"); t = 9; fwrite(&t, 4, 1, f); et = 4; n = 3; fwrite(&et, 4, 1, f); fwrite(&n, 8, 1, f);
+    unsigned three[3] = { 1, 2, 3 }; fwrite(three, 4, 3, f);
+    char key[80];
+    snprintf(key, sizeof(key), "%s.context_length", arch);
+    KEY(key); fwrite(&type, 4, 1, f);
+    if (type == 10) fwrite(&ctx, 8, 1, f);
+    else { unsigned v = (unsigned)ctx; fwrite(&v, 4, 1, f); }
+    #undef KEY
+    fclose(f);
+}
+
+/* The model's trained context, from its file: the panel's ceiling (user request 2026-11-16: adjustable, not fixed). */
+static void test_model_context_length(void)
+{
+    char path[600];
+    snprintf(path, sizeof(path), "%s/ctx.gguf", g_dir);
+    write_gguf(path, "lfm3", 4, 262144, false);
+    CHECK(llm_model_context_length(path) == 262144);
+    write_gguf(path, "llama", 10, 131072, false); /* u64 */
+    CHECK(llm_model_context_length(path) == 131072);
+    write_gguf(path, "lfm3", 4, 262144, true);     /* an array claiming 2^40 strings: refused, not read */
+    CHECK(llm_model_context_length(path) == 0);
+    write_gguf(path, "lfm3", 6, 262144, false);    /* a float: not a context length */
+    CHECK(llm_model_context_length(path) == 0);
+    FILE *f = fopen(path, "r+b");                  /* truncated mid-header */
+    CHECK(f && ftruncate(fileno(f), 40) == 0);
+    if (f) fclose(f);
+    CHECK(llm_model_context_length(path) == 0);
+    f = fopen(path, "wb");                         /* not a GGUF */
+    if (f) { fputs("not a model at all, just text", f); fclose(f); }
+    CHECK(llm_model_context_length(path) == 0);
+    CHECK(llm_model_context_length("/nonexistent/model.gguf") == 0 && llm_model_context_length(NULL) == 0);
 }
 
 /* The memory check before the model starts (user request): the
@@ -338,6 +407,7 @@ int main(void)
         { "project_session_and_explorer_snapshot", test_project_session_and_explorer_snapshot },
         { "observer_rules_refilter", test_observer_rules_and_refilter },
         { "model_settings", test_model_settings },
+        { "model_context_length", test_model_context_length },
         { "memfit", test_memfit },
         { "owned_store_dependencies", test_owned_store_dependencies },
         { "observer_job_errors", test_observer_job_errors },

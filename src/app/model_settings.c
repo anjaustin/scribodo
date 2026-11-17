@@ -12,7 +12,7 @@
 
 #include "core/json.h"
 
-static const ModelSettingInfo k_info[MODEL_SETTING_COUNT] = {
+static ModelSettingInfo k_info[MODEL_SETTING_COUNT] = {
     { "Max reply length", "tokens per reply", 256, 8192, 256, true },
     { "Temperature", "higher: more varied", 0.0, 1.5, 0.05, false },
     { "Top-p", "keep the likeliest words up to this share", 0.05, 1.0, 0.05, false },
@@ -20,8 +20,19 @@ static const ModelSettingInfo k_info[MODEL_SETTING_COUNT] = {
     { "Min-p", "drop words this much less likely than the best", 0.0, 0.5, 0.01, false },
     { "Repeat penalty", "discourage repeating words", 1.0, 1.5, 0.01, false },
     { "Edit temperature", "for reviewed edits", 0.0, 1.5, 0.05, false },
+    /* The ceiling is the model's own trained context (model_settings_set_context_limit, from its file); 32K only
+     * until that is known, or when no model file can be read (UI scripts' fake model). */
     { "Context per conversation", "tokens; the model restarts to change it", 8192, 32768, 8192, true },
 };
+
+#define DEFAULT_CONTEXT 32768
+
+void model_settings_set_context_limit(int tokens)
+{
+    ModelSettingInfo *in = &k_info[7];
+    if (tokens < in->min) return; /* unknown, or smaller than the smallest step: keep what there is */
+    in->max = in->min + floor((tokens - in->min) / in->step) * in->step; /* on the step grid */
+}
 
 const ModelSettingInfo *model_setting_info(int i) { return i >= 0 && i < MODEL_SETTING_COUNT ? &k_info[i] : NULL; }
 
@@ -34,7 +45,7 @@ void model_settings_defaults(ModelSettings *m)
     m->min_p = 0.05;
     m->repeat_penalty = 1.05;
     m->edit_temperature = 0.4;
-    m->context = 32768;
+    m->context = DEFAULT_CONTEXT < k_info[7].max ? DEFAULT_CONTEXT : (int)k_info[7].max;
 }
 
 static double clampd(double v, double lo, double hi) { return isnan(v) ? lo : v < lo ? lo : v > hi ? hi : v; }

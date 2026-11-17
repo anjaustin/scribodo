@@ -148,6 +148,80 @@ void llm_server_embed_config(LlmServerConfig *c, const char *app_dir)
     c->mem_per_token = 0; /* the context is fixed */
 }
 
+/* GGUF (v2 and v3): magic, version, tensor count, key-value count, then the key-values: a string key (u64 length and
+ * bytes), a u32 type and a value. Strings and arrays are skipped by their declared sizes, which are bounded so a
+ * damaged file cannot make this read far or loop long. */
+#define GGUF_MAX_STRING (1u << 20)
+#define GGUF_MAX_ARRAY (1u << 24)
+
+static bool gguf_read(FILE *f, void *out, size_t n) { return fread(out, 1, n, f) == n; }
+
+static bool gguf_skip(FILE *f, unsigned long long n) { return n <= (1ull << 30) && fseeko(f, (off_t)n, SEEK_CUR) == 0; }
+
+static long long gguf_scalar_size(unsigned type)
+{
+    static const signed char sizes[] = { 1, 1, 2, 2, 4, 4, 4, 1, -1, -1, 8, 8, 8 }; /* 8 string, 9 array */
+    return type < sizeof(sizes) ? sizes[type] : -1;
+}
+
+static bool gguf_skip_value(FILE *f, unsigned type, int depth)
+{
+    if (type == 8) {
+        unsigned long long n;
+        return gguf_read(f, &n, 8) && n <= GGUF_MAX_STRING && gguf_skip(f, n);
+    }
+    if (type == 9) {
+        unsigned et;
+        unsigned long long n;
+        if (depth > 2 || !gguf_read(f, &et, 4) || !gguf_read(f, &n, 8) || n > GGUF_MAX_ARRAY) return false;
+        long long sz = gguf_scalar_size(et);
+        if (sz > 0) return gguf_skip(f, n * (unsigned long long)sz);
+        for (unsigned long long i = 0; i < n; i++)
+            if (!gguf_skip_value(f, et, depth + 1)) return false;
+        return true;
+    }
+    long long sz = gguf_scalar_size(type);
+    return sz > 0 && gguf_skip(f, (unsigned long long)sz);
+}
+
+int llm_model_context_length(const char *path)
+{
+    FILE *f = path ? fopen(path, "rb") : NULL;
+    if (!f) return 0;
+    char magic[4];
+    unsigned version;
+    unsigned long long tensors, kvs;
+    int found = 0;
+    char arch[64] = "";
+    if (gguf_read(f, magic, 4) && !memcmp(magic, "GGUF", 4) && gguf_read(f, &version, 4) && (version == 2 || version == 3) &&
+        gguf_read(f, &tensors, 8) && gguf_read(f, &kvs, 8) && kvs <= 65536) {
+        for (unsigned long long i = 0; i < kvs; i++) {
+            unsigned long long klen;
+            char key[256];
+            unsigned type;
+            if (!gguf_read(f, &klen, 8) || klen >= sizeof(key) || !gguf_read(f, key, (size_t)klen)) break;
+            key[klen] = '\0';
+            if (!gguf_read(f, &type, 4)) break;
+            if (!strcmp(key, "general.architecture") && type == 8) {
+                unsigned long long n;
+                if (!gguf_read(f, &n, 8) || n >= sizeof(arch) || !gguf_read(f, arch, (size_t)n)) break;
+                arch[n] = '\0';
+                continue;
+            }
+            size_t al = strlen(arch);
+            if (al && !strncmp(key, arch, al) && !strcmp(key + al, ".context_length") && (type == 4 || type == 5 || type == 10 || type == 11)) {
+                unsigned long long v = 0;
+                if (!gguf_read(f, &v, type >= 10 ? 8 : 4)) break;
+                found = v > 0 && v <= (1u << 30) ? (int)v : 0;
+                break;
+            }
+            if (!gguf_skip_value(f, type, 0)) break;
+        }
+    }
+    fclose(f);
+    return found;
+}
+
 void llm_server_default_config(LlmServerConfig *c, const char *app_dir)
 {
     memset(c, 0, sizeof(*c));
@@ -168,6 +242,7 @@ void llm_server_default_config(LlmServerConfig *c, const char *app_dir)
                      "%s/Library/Application Support/Scribodo/models/LFM3-1.7B-BF16.gguf", home);
     }
     snprintf(c->sha256, sizeof(c->sha256), "%s", LFM3_GGUF_SHA256);
+    c->ctx_train = llm_model_context_length(c->model_path);
     if (home) {
         snprintf(c->run_dir, sizeof(c->run_dir), "%s/Library/Application Support/Scribodo/run", home);
         snprintf(c->log_path, sizeof(c->log_path), "%s/Library/Logs/Scribodo/llama-server.log", home);
@@ -624,7 +699,7 @@ const char *llm_server_socket(LlmServer *s) { return s->sock; }
 bool llm_server_set_slot_ctx(LlmServer *s, int slot_ctx)
 {
     int slots = s->cfg.slots > 0 ? s->cfg.slots : 1;
-    if (slot_ctx < 2048 || slot_ctx > 32768) return false; /* the model's trained context */
+    if (slot_ctx < 2048 || (s->cfg.ctx_train > 0 && slot_ctx > s->cfg.ctx_train)) return false;
     if (s->cfg.ctx_total == slot_ctx * slots) return true;
     llm_server_stop(s);
     s->cfg.ctx_total = slot_ctx * slots;

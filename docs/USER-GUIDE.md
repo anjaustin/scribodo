@@ -52,6 +52,15 @@ A project is a folder of `.md` and `.txt` files.
 - **Copy** puts a reply's text on the clipboard for pasting into the document.
 - **Saving chats:** each message is saved to the local MariaDB project store, and past chats reopen from the Explorer. Before a project is moved into the store, or when running with `SCRIBODO_STORE=off`, the file backend uses `.scribodo/chats/` instead.
 
+### Model settings
+
+Click the model's name in the toolbar, then **Model settings…**. Each row steps with − and +; **Apply** saves, **Cancel** keeps what was saved.
+
+- **Max reply length**, **temperature**, **top-p**, **top-k**, **min-p**, **repeat penalty** and **edit temperature** shape the chat's replies (the observer always runs at temperature 0). A reply never takes more than half the context the model is actually running with, so an attached document always keeps room.
+- **Context per conversation** goes up to the model's own trained context, read from its file (262,144 tokens for LFM3), in 8K steps; 32K by default. A conversation's earlier turns stay in the model's cache, so the next turn reads only what is new. More context costs memory (about 28 KB a token) and the first reading of a long prompt takes longer; your memory system, not the window, is what brings in the rest of a manuscript or the notes. If the context you chose doesn't fit in memory, the model starts with the largest that does and the status bar says so.
+
+A new context size restarts the model, after any reply in progress.
+
 ## Reviewed AI edits
 
 The assistant never changes your document by itself.

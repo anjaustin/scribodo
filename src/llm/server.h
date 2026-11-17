@@ -34,6 +34,7 @@ typedef struct {
     char log_path[1024];
     char cache_path[1024];  /* verified-hash cache */
     int ctx_total;          /* -c (split evenly across slots) */
+    int ctx_train;          /* the model's trained context, from its file (0: unknown); a slot's ceiling */
     int slots;              /* -np */
     int batch;              /* -b and -ub */
     bool embedding;         /* an embedding server (Qwen3-Embedding), not the chat model */
@@ -75,11 +76,16 @@ void llm_server_tick(LlmServer *s);
 /* Current state; `msg` (optional) receives a human-readable status line. */
 LlmState llm_server_state(LlmServer *s, char *msg, size_t msglen);
 
+/* The trained context a GGUF model file declares (`<architecture>.context_length`), or 0 when the file is missing,
+ * malformed or silent. Only the header is read, with every length bounded. */
+int llm_model_context_length(const char *path);
+
 /* Context available to one request: -c is split evenly across slots. */
 int llm_server_slot_ctx(LlmServer *s);
 /* Change the context per conversation (each slot), restarting the server
  * (same object: chat and observer keep their pointer). False if out of
- * range. Callers make sure nothing is in flight. */
+ * range (below 2048, or above the model's trained context when known).
+ * Callers make sure nothing is in flight. */
 bool llm_server_set_slot_ctx(LlmServer *s, int slot_ctx);
 
 /* The estimated memory for `cfg` at `ctx_total` tokens: the model file

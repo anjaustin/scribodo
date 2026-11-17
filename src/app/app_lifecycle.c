@@ -295,7 +295,13 @@ int app_open_window(App *app, const char *script_path)
 int app_start_models(App *app, const char *script_path)
 {
     /* The local model. UI scripts use a fake model unless SCRIBODO_LLM=real. */
-    /* The author's model settings (UI scripts keep their own: startup_env_prepare). */
+    /* The author's model settings (UI scripts keep their own: startup_env_prepare), up to the model's own trained
+     * context, read from its file before the settings are, so a saved size above the default ceiling is kept. */
+    {
+        LlmServerConfig probe;
+        llm_server_default_config(&probe, GetApplicationDirectory());
+        model_settings_set_context_limit(probe.ctx_train);
+    }
     model_settings_load(&app->model);
     /* The verified-answer pipeline (default on since 2026-11-14) runs for conversations with memory on; it needs the
      * memory experiment and, with a real model, the pinned reranker file. */
