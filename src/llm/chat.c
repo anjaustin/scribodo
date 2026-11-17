@@ -1159,8 +1159,12 @@ static void build_begin(ChatSession *s, ChatBuild *b)
      * (red-team 003: a mismatch overflowed the context despite trimming). */
     b->slot_ctx = s->via_remote ? s->remote.context_tokens : s->server ? llm_server_slot_ctx(s->server) : SLOT_CTX_TOKENS;
     /* The reply's room in the budget follows the author's max reply length
-     * (the builders reserve MAX_REPLY_TOKENS). */
-    if (b->use_samp) b->slot_ctx -= b->samp.max_reply - MAX_REPLY_TOKENS;
+     * (the builders reserve MAX_REPLY_TOKENS), held to half the slot the
+     * model really has (chat_reply_reserve), which is also what is sent. */
+    if (b->use_samp) {
+        b->samp.max_reply = chat_reply_reserve(b->slot_ctx, b->samp.max_reply);
+        b->slot_ctx -= b->samp.max_reply - MAX_REPLY_TOKENS;
+    }
     /* The local tokenizer counts only for the local model; remote budgets are estimated. */
     b->counter = !s->via_remote && (s->server || (s->memory_enabled && !s->edit_passage)) ? server_count : NULL;
     b->base_ctx = b->slot_ctx;
@@ -1939,6 +1943,12 @@ void chat_set_names(ChatSession *s, const char *author, const char *assistant)
     snprintf(s->author_name, sizeof(s->author_name), "%s", author ? author : "");
     snprintf(s->assistant_name, sizeof(s->assistant_name), "%s", assistant ? assistant : "");
     pthread_mutex_unlock(&s->mu);
+}
+
+int chat_reply_reserve(int slot_ctx, int max_reply)
+{
+    int half = slot_ctx / 2;
+    return max_reply > half ? half : max_reply;
 }
 
 char *chat_apply_sampling(const char *request, const ChatSampling *sp, bool edit)

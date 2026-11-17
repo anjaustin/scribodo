@@ -503,6 +503,25 @@ static void test_request_builder(void)
     free(dense);
     CHECK(chat_estimate_tokens("0123456789") >= 10); /* fallback never assumes > 1.5 bytes/token */
 
+    /* User testing 2026-11-16: an 8K reply setting in the 8K slot low memory gave the model left the request no room,
+     * and the document reached it empty, "(too long: cut off)". The reply is held to half the real slot, and the
+     * document keeps a real share of what is left (the budget build_begin derives, MAX_REPLY_TOKENS being 1024). */
+    CHECK(chat_reply_reserve(8192, 8192) == 4096 && chat_reply_reserve(32768, 8192) == 8192 &&
+          chat_reply_reserve(8192, 2048) == 2048);
+    char *novel = malloc(60001);
+    for (int i = 0; i < 60000; i++) novel[i] = i % 7 ? 'a' + i % 26 : ' ';
+    novel[60000] = 0;
+    ChatContext nctx = { "Novel.md", novel, NULL, 0, false };
+    int slot = 8192 - (chat_reply_reserve(8192, 8192) - 1024);
+    req = chat_build_request(msgs, 1, &nctx, slot, dense_count, NULL, &trunc);
+    CHECK(req && trunc);
+    if (req) {
+        const char *b = strstr(req, "(too long: cut off) ---\\n"), *e = b ? strstr(b, "\\n--- END DOCUMENT") : NULL;
+        CHECK(b && e && e - b > 1500); /* well over a thousand characters of the novel, not an empty frame */
+    }
+    free(req);
+    free(novel);
+
     ChatMessage many[400];
     static char filler[2000];
     memset(filler, 'y', sizeof(filler) - 1);

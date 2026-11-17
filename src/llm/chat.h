@@ -254,6 +254,11 @@ typedef struct {
     double min_p, repeat_penalty, edit_temperature;
 } ChatSampling;
 void chat_set_sampling(ChatSession *s, const ChatSampling *sampling);
+/* The reply length a request reserves and asks for: the author's, held to half of `slot_ctx`, the context the model
+ * really runs with. The settings hold it to half of the context asked for, but low memory can start the model with
+ * less (memfit.h); without this an 8K reply in an 8K slot left the request no room, and an attached document went to
+ * the model empty, marked cut off (user testing 2026-11-16: "I can't see the attached document"). */
+int chat_reply_reserve(int slot_ctx, int max_reply);
 /* Exposed for tests: a request with the settings applied (malloc'd). */
 char *chat_apply_sampling(const char *request, const ChatSampling *sampling, bool edit);
 
