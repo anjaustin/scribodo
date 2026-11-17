@@ -83,7 +83,7 @@ Color theme_glass_ink(Color c); /* a coloured label on the sidebar */
  * secondary text) and a coloured label is mixed toward the text colour, so every one keeps its own contrast level over
  * any desktop (tests/test_theme_contrast.py). Off the glass these are the ordinary roles. */
 #define THEME_SIDE_MUTED    (theme_translucent() ? THEME_TEXT : THEME_TEXT_MUTED)
-#define THEME_SIDE_DIM      (theme_translucent() ? THEME_TEXT_MUTED : THEME_TEXT_DIM)
+#define THEME_SIDE_DIM      (theme_translucent() ? theme_glass_ink(THEME_TEXT_MUTED) : THEME_TEXT_DIM)
 #define THEME_FIELD         (g_theme->field)
 #define THEME_BG            (g_theme->bg)
 #define THEME_CARD          (g_theme->card)

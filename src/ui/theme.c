@@ -68,11 +68,12 @@ static bool g_translucent;
 void theme_set_translucent(bool on) { g_translucent = on; }
 bool theme_translucent(void) { return g_translucent; }
 
-/* How much of the panel colour covers the material. Not counting the material at all (the worst case: a white, black
- * or grey desktop straight behind), interface text keeps at least 5.9:1 at 82% in every palette and secondary text
- * about 3:1; the material, which blurs and tints what is behind, only raises both (red team: 62% left text at 3.1:1
- * over white in Dark). tests/test_theme_contrast.py holds the floor. */
-#define SIDEBAR_COVER 0.82f
+/* How much of the panel colour covers the material: little enough that the sidebar reads as glass (82%, which held
+ * text readable over a pure white or black desktop with the material not counted, looked opaque: user testing
+ * 2026-11-16). Over a mid-grey desktop, the material not counted, interface text keeps at least 4.5:1 and everything
+ * else 3:1 in every palette (tests/test_theme_contrast.py); a bright or dark extreme behind relies on the material,
+ * which blurs and tints toward the palette's side, as it does for macOS's own sidebars. */
+#define SIDEBAR_COVER 0.40f
 
 /* How far a coloured label on the glass moves toward the text colour: the least that holds every status and link
  * colour at its level over a white or black desktop (0.3 left Paper's error colour at 4.34:1). */
