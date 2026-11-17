@@ -666,14 +666,31 @@ static void choose_project(App *app, bool create)
 static volatile sig_atomic_t g_quit_signal;
 static void on_quit_signal(int sig) { g_quit_signal = sig; }
 
-/* The memory the chat model could have now: what's free, plus what the
- * running model holds (a restart hands it back). */
+/* The memory the chat model could have now, for a restart at another size: what macOS can hand out, less the
+ * embedding and reranker weights, plus what the running chat model itself holds and would hand back.
+ *
+ * Counted carefully (red team 2026-11-16): the servers' weights are memory-mapped, and llama.cpp keeps them wired only
+ * for three minutes after their last use; after that they are file pages, which sysmem_available counts as available.
+ * So an idle embedding or reranker server looked free, and adding the whole chat model back counted its weights twice
+ * unless they are pinned. Only a ready chat model gives anything back (a starting one has not taken it yet). */
+static long long model_file_bytes(LlmServer *s)
+{
+    const LlmServerConfig *c = llm_server_config(s);
+    return llm_server_mem_need(c, 0) - c->mem_fixed;
+}
+
 static long long memory_for_model(App *app)
 {
     long long avail = sysmem_available();
-    LlmState st = llm_server_state(app->llm, NULL, 0);
-    if (st == LLM_READY || st == LLM_STARTING) avail += llm_server_mem_need(llm_server_config(app->llm), llm_server_config(app->llm)->ctx_total);
-    return avail;
+    if (app->embed) avail -= model_file_bytes(app->embed);
+    if (app->rerank) avail -= model_file_bytes(app->rerank);
+    if (llm_server_state(app->llm, NULL, 0) == LLM_READY) {
+        const LlmServerConfig *cfg = llm_server_config(app->llm);
+        long long back = llm_server_mem_need(cfg, cfg->ctx_total);
+        if (!llm_server_pinned(app->llm)) back -= model_file_bytes(app->llm); /* its weights may already count as free */
+        avail += back;
+    }
+    return avail > 0 ? avail : 0;
 }
 
 /* What the author is told when memory decides the context (memfit.h). */
@@ -724,12 +741,23 @@ static void fit_context(App *app, bool announce)
 static void refit_context(App *app)
 {
     if (!app->llm || app->scripted) return;
+    if (!app->pin_warned && llm_server_config(app->llm)->keep_resident && llm_server_state(app->llm, NULL, 0) == LLM_READY &&
+        !llm_server_pinned(app->llm)) {
+        app->pin_warned = true; /* llama.cpp could not mlock the weights and went on without */
+        set_status(app, "Couldn't keep the model in memory (macOS refused to pin it); it may be swapped out when memory is short");
+    }
     double now = GetTime();
+    if (now - app->refit_checked_t < MEMFIT_REFIT_EVERY_S) return; /* the rest is looked at once a minute at most */
+    /* The memory job tokenizes and writes briefs on the chat server in the background; a restart under it counts as
+     * a failure there (red team 2026-11-16). */
+    MemoryJobStatus ms = { 0 };
+    bool memory_busy = app->memory_job && (memory_job_working(app->memory_job) ||
+                                           (memory_job_status(app->memory_job, &ms) && ms.controls_pending));
     MemRefit r = {
         .running = llm_server_slot_ctx(app->llm), .wanted = app->model.context,
         .ready = llm_server_state(app->llm, NULL, 0) == LLM_READY,
         .busy = (app->chat && chat_busy(app->chat)) || name_detection_job_busy(&app->names_job) ||
-                (app->observer && !observer_idle(app->observer)),
+                (app->observer && !observer_idle(app->observer)) || memory_busy,
         .blocked = app->settings_open || app->ctx_pending,
         .since_check_s = now - app->refit_checked_t,
         /* The whole session's input, from the window server: nothing is consumed from raylib's queues. */
@@ -739,8 +767,10 @@ static void refit_context(App *app)
     app->refit_checked_t = now;
     const ModelSettingInfo *in = model_setting_info(7);
     MemFit f = memfit_context(memory_for_model(app), 0, llm_server_config(app->llm), app->model.context, (int)in->min, (int)in->step);
+    /* Only ever larger, and exactly the size just measured: one look, one restart (red team: fit_context measured
+     * again and could have shrunk it). */
     if (f.slot_ctx <= r.running) return;
-    fit_context(app, false);
+    llm_server_reconfigure(app->llm, f.slot_ctx, app->model.keep_in_memory != 0);
     char msg[160];
     snprintf(msg, sizeof(msg), "More memory is free: the model restarted with a %dK context", llm_server_slot_ctx(app->llm) / 1024);
     set_status(app, msg);
@@ -780,31 +810,47 @@ static void open_model_settings(App *app)
 static void draw_model_settings(App *app, Rectangle screen)
 {
     backdrop_draw(screen);
-    float w = 620, rowh = 44, h = 110 + rowh * MODEL_SETTING_COUNT + 56 + (app->llm ? 26 : 0);
+    /* Full rows (label and hint) when they fit; in a short window (the minimum is 480 points tall) the subtitle and
+     * hints go and the rows share the height, so Apply is always on screen (red team 2026-11-16). */
+    float w = 620, top = 80, bottom = 86 + (app->llm ? 26 : 0), rowh = 44;
+    bool compact = top + rowh * MODEL_SETTING_COUNT + bottom > screen.height - 16;
+    if (compact) {
+        top = 52;
+        rowh = floorf((screen.height - 16 - top - bottom) / MODEL_SETTING_COUNT);
+        if (rowh > 44) rowh = 44;
+        if (rowh < 30) rowh = 30;
+    }
+    float h = top + rowh * MODEL_SETTING_COUNT + bottom;
     Rectangle p = { (screen.width - w) / 2, (screen.height - h) / 2, w, h };
     widget_shadow(p, RADIUS_M, 16);
     widget_round_rect(p, RADIUS_M, THEME_SURFACE);
     widget_round_outline(p, RADIUS_M, 1.0f, THEME_BORDER_STRONG);
     const SFont *ui = &app->fonts[FONT_UI];
     widget_text(ui, "Model settings (chat)", p.x + 24, p.y + 16, w - 48, THEME_TEXT_STRONG);
-    widget_text(ui, "The observer always uses temperature 0, so its findings stay reproducible.", p.x + 24, p.y + 44,
-                w - 48, THEME_TEXT_MUTED);
+    if (!compact)
+        widget_text(ui, "The observer always uses temperature 0, so its findings stay reproducible.", p.x + 24, p.y + 44,
+                    w - 48, THEME_TEXT_MUTED);
     for (int i = 0; i < MODEL_SETTING_COUNT; i++) {
         const ModelSettingInfo *in = model_setting_info(i);
-        float y = p.y + 80 + rowh * (float)i;
-        widget_text(ui, in->label, p.x + 24, y, 230, THEME_TEXT);
-        widget_text(ui, in->hint, p.x + 24, y + 18, 330, THEME_TEXT_DIM);
+        float y = p.y + top + rowh * (float)i;
+        if (compact) {
+            widget_text(ui, in->label, p.x + 24, y + (rowh - ui->line_height) / 2, 330, THEME_TEXT);
+        } else {
+            widget_text(ui, in->label, p.x + 24, y, 230, THEME_TEXT);
+            widget_text(ui, in->hint, p.x + 24, y + 18, 330, THEME_TEXT_DIM);
+        }
         double v = model_setting_get(&app->model_edit, i);
         char val[32];
         if (in->toggle) snprintf(val, sizeof(val), "%s", v != 0 ? "On" : "Off");
         else if (in->integer) snprintf(val, sizeof(val), "%d", (int)v);
         else snprintf(val, sizeof(val), "%.2f", v);
-        app->set_minus[i] = (Rectangle){ p.x + w - 200, y + 4, 36, 28 };
-        app->set_plus[i] = (Rectangle){ p.x + w - 60, y + 4, 36, 28 };
+        float by_row = y + (compact ? (rowh - 28) / 2 : 4);
+        app->set_minus[i] = (Rectangle){ p.x + w - 200, by_row, 36, 28 };
+        app->set_plus[i] = (Rectangle){ p.x + w - 60, by_row, 36, 28 };
         if (widget_button(app->set_minus[i], "\xE2\x88\x92", NULL, WIDGET_OUTLINE, true)) model_setting_set(&app->model_edit, i, v - in->step);
         const SFont *mono = &app->fonts[FONT_MONO];
         float vw = sfont_measure_utf8(mono, val, (int)strlen(val));
-        widget_text(mono, val, p.x + w - 110 - vw / 2, y + 4 + (28 - mono->line_height) / 2, 0, THEME_TEXT);
+        widget_text(mono, val, p.x + w - 110 - vw / 2, by_row + (28 - mono->line_height) / 2, 0, THEME_TEXT);
         if (widget_button(app->set_plus[i], "+", NULL, WIDGET_OUTLINE, true)) model_setting_set(&app->model_edit, i, v + in->step);
     }
     model_settings_clamp(&app->model_edit);
@@ -1118,6 +1164,7 @@ static void frame_poll_workers(App *app)
     if (chat_trim_saved(app->chat)) chat_view_history_changed(app->chat_view);
     /* The observer shares the model: it yields whenever chat is active. */
     observer_set_chat_active(app->observer, chat_busy(app->chat));
+    if (chat_busy(app->chat)) name_detection_job_cancel(&app->names_job); /* the shared pool is the chat's now */
     if (!history_read_busy(app) && observer_version(app->observer) != app->findings_version) {
         app->findings_version = observer_version(app->observer);
         refresh_findings(app);

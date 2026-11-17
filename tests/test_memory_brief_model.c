@@ -27,6 +27,7 @@ LlmState llm_server_state(LlmServer *s, char *msg, size_t n) { (void)msg; (void)
 const char *llm_server_socket(LlmServer *s) { return s->socket; }
 const char *llm_server_key(LlmServer *s) { (void)s; return "brief-test-key"; }
 int llm_server_slot_ctx(LlmServer *s) { (void)s; return 16384; }
+int llm_server_side_ctx(LlmServer *s) { (void)s; return 8192; } /* the pool's reserve: briefs run on slot 1 */
 void http_result_free(HttpResult *r) { free(r->body); memset(r, 0, sizeof(*r)); }
 
 static bool transport(const char *socket, const char *path, const char *body, atomic_bool *cancel, HttpResult *r)

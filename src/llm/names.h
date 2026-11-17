@@ -33,5 +33,8 @@ bool names_detect_cancel(LlmServer *server, const char *assistant_prev, const ch
 
 /* Exposed for tests: is `name` in `text` as whole words? */
 bool names_in_text(const char *name, const char *text);
+/* Exposed for tests: what the model is shown (malloc'd): the author's words around the first cue and the end of the
+ * reply before them, each bounded, so the request fits the observer slot's reserve however much was pasted. */
+char *names_user_text(const char *assistant_prev, const char *author_msg);
 
 #endif

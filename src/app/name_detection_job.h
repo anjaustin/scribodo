@@ -25,6 +25,8 @@ void name_detection_job_set_server(NameDetectionJob *job, LlmServer *server);
 bool name_detection_job_start(NameDetectionJob *job, const char *assistant_prev, const char *author_msg);
 bool name_detection_job_poll(NameDetectionJob *job, NameGuess *result, bool *succeeded);
 bool name_detection_job_busy(const NameDetectionJob *job);
+/* Stops a running check (a reply is being written: the model is the chat's). Nothing is offered from it. */
+void name_detection_job_cancel(NameDetectionJob *job);
 void name_detection_job_destroy(NameDetectionJob *job);
 
 #endif

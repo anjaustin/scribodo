@@ -55,6 +55,8 @@ void memory_job_clear(MemoryJob *job);
 void memory_job_pause(MemoryJob *job, bool paused);
 /* Snapshot, not a consuming poll. False only for invalid arguments. */
 bool memory_job_status(MemoryJob *job, MemoryJobStatus *out);
+/* The worker is doing something (a step runs, or the last one made progress): it may be using the chat server. */
+bool memory_job_working(MemoryJob *job);
 
 /* Capacity includes the in-flight head. Full queues reject controls without
  * changing navigation or previously accepted intent. RESUME is latest-only. */

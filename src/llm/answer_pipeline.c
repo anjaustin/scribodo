@@ -17,6 +17,7 @@
 /* The observer's slot, not the chat's: the chat waits for these extractions (and a send cancels the observer), and on
  * the chat's slot each one overwrote the conversation's cache, so the next turn read its whole prompt again. */
 #define ANSWER_SLOT 1
+#define ANSWER_CLAIM_REPLY_BYTES 12000 /* about 3,000 tokens of prose */
 
 
 #define EXTRACT_HTTP_TIMEOUT_MS 60000
@@ -347,6 +348,13 @@ char *answer_claim_request(const char *question, const char *reply)
 {
     if (!question || !reply) return NULL;
     char *q = llm_neutralize(question), *r = llm_neutralize(reply);
+    /* The observer's slot shares the pool's 8K reserve (server.h): a reply can be up to half the conversation's
+     * context, so only its opening, where it gives its answer, is read (red team 2026-11-16). */
+    if (r && strlen(r) > ANSWER_CLAIM_REPLY_BYTES) {
+        size_t keep = ANSWER_CLAIM_REPLY_BYTES;
+        while (keep > 0 && ((unsigned char)r[keep] & 0xC0) == 0x80) keep--;
+        r[keep] = '\0';
+    }
     char *user = NULL;
     if (q && r) {
         size_t cap = strlen(q) + strlen(r) + sizeof(k_claim_task) + 64;

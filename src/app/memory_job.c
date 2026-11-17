@@ -50,6 +50,7 @@ struct MemoryJob {
     GenerativeGate *generative_gate;
     bool briefs_enabled;
     atomic_bool generation_cancel;
+    atomic_bool working; /* a step is running, or the last one made progress (another follows in 10 ms) */
     MemoryJobRunner runner;
     void *context;
     pthread_t thread;
@@ -583,6 +584,7 @@ static void *memory_main(void *arg)
         }
         pthread_mutex_unlock(&job->mu);
         bool progress = false;
+        atomic_store(&job->working, true);
         if (!identity_matches(job, &request)) {
             status.enabled = false;
             reason(&status, "Memory paused: project/store identity changed; select again.");
@@ -591,6 +593,7 @@ static void *memory_main(void *arg)
                 request.action, first, &status, job->context) :
                 production_step(job, &request, &state, &status);
         }
+        atomic_store(&job->working, progress);
         bool identity_ok = identity_matches(job, &request);
         pthread_mutex_lock(&job->mu);
         if (job->stopping) break;
@@ -613,6 +616,7 @@ static MemoryJob *create_job(StoreManager *manager, SemanticClient *vectors, Llm
     if (!manager || (!vectors && !runner)) return NULL;
     MemoryJob *job = calloc(1, sizeof(*job));
     if (job) atomic_init(&job->generation_cancel, false);
+    if (job) atomic_init(&job->working, false);
     if (!job) return NULL;
     job->manager = manager;
     job->vectors = vectors;
@@ -790,6 +794,8 @@ void memory_job_pause(MemoryJob *job, bool paused)
     }
     pthread_mutex_unlock(&job->mu);
 }
+
+bool memory_job_working(MemoryJob *job) { return job && atomic_load(&job->working); }
 
 bool memory_job_status(MemoryJob *job, MemoryJobStatus *out)
 {

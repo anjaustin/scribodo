@@ -348,7 +348,7 @@ bool memory_brief_generate(LlmServer *server, GenerativeGate *gate, const Memory
     ok = ok && body && !stopped(&guard);
     if (ok) {
         long prompt = memory_request_tokens(body, &tokenizer);
-        int context = server ? llm_server_slot_ctx(server) : 16384;
+        int context = server ? llm_server_side_ctx(server) : 16384; /* slot 1: the pool's reserve */
         ok = prompt >= 0 && context > 256 && prompt <= context - 256 && !stopped(&guard);
     }
     char *json = NULL;

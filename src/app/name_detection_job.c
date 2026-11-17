@@ -79,6 +79,11 @@ bool name_detection_job_poll(NameDetectionJob *job, NameGuess *result, bool *suc
     return true;
 }
 
+void name_detection_job_cancel(NameDetectionJob *job)
+{
+    if (job && atomic_load(&job->state) == 1) atomic_store(&job->cancel, true);
+}
+
 bool name_detection_job_busy(const NameDetectionJob *job)
 {
     return job && atomic_load(&job->state) != 0;

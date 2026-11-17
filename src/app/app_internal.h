@@ -320,6 +320,7 @@ typedef struct {
     int model_menu_settings; /* which item of the model menu opens the panel */
     bool ctx_pending;        /* a context change waiting for the reply to finish */
     double refit_checked_t;  /* GetTime() of the last look at memory for growing the context back (memfit.h) */
+    bool pin_warned;         /* told once this session that the weights could not be pinned */
     long long mem_for_model; /* the panel's readout: memory the model could have (bytes) */
     char mem_msg[400];       /* startup: the context was reduced for memory */
     /* Who is who (stored names) and the two-step "Names..." prompt. */

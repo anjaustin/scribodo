@@ -46,6 +46,15 @@ click_element MenuItem0
 click_element SetPlus8
 click_element SetApply
 expect file "$DIR/model-settings.json" "{\"max_reply\":4096,\"temperature\":0.75,\"top_p\":0.95,\"top_k\":40,\"min_p\":0.05,\"repeat_penalty\":1.05,\"edit_temperature\":0.4,\"context\":8192,\"keep_in_memory\":1}"
+# At the smallest window the rows share the height and the buttons stay on screen (red team 2026-11-16).
+resize 900 480
+click_element ModelPicker
+click_element MenuItem0
+expect element_y SetApply 300 450
+expect element_y SetPlus8 60 450
+click_element SetCancel
+expect element_w SetApply 0 0
+resize 1200 800
 # A message still goes through with the new settings.
 click_element ChatInput
 type "hello"

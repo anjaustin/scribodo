@@ -14,13 +14,40 @@
 
 #define NAMES_SLOT 1 /* the observer's slot: chat keeps slot 0 */
 
-bool names_worth_checking(const char *m)
+static const char *const k_cues[] = { "name", "call me", "call you", "i'm ", "i am ", "how about" };
+
+/* The first cue in `m`, or NULL. */
+static const char *first_cue(const char *m)
 {
-    if (!m) return false;
-    static const char *const cues[] = { "name", "call me", "call you", "i'm ", "i am ", "how about" };
-    for (size_t i = 0; i < sizeof(cues) / sizeof(cues[0]); i++)
-        if (strcasestr(m, cues[i])) return true;
-    return false;
+    const char *best = NULL;
+    for (size_t i = 0; m && i < sizeof(k_cues) / sizeof(k_cues[0]); i++) {
+        const char *p = strcasestr(m, k_cues[i]);
+        if (p && (!best || p < best)) best = p;
+    }
+    return best;
+}
+
+bool names_worth_checking(const char *m) { return first_cue(m) != NULL; }
+
+static char *utf8_window(const char *s, size_t start, size_t len);
+
+/* The request runs on the observer's slot, which shares one pool with the chat (server.h `reserve`): it must stay
+ * well inside that 8K, whatever was pasted (red team 2026-11-16: a 9,600-token request there made an 8K chat fail).
+ * So the model sees the author's words around the first cue and the end of the reply before them, each bounded. */
+#define NAMES_AROUND_CUE 1200 /* bytes on each side of the cue */
+#define NAMES_PREV_TAIL 1200  /* bytes of the reply before */
+
+/* `len` bytes of `s` from `start`, moved inward to UTF-8 boundaries. */
+static char *utf8_window(const char *s, size_t start, size_t len)
+{
+    size_t n = strlen(s);
+    if (start > n) start = n;
+    if (len > n - start) len = n - start;
+    while (start < n && ((unsigned char)s[start] & 0xC0) == 0x80) start++, len = len ? len - 1 : 0;
+    while (len > 0 && start + len < n && ((unsigned char)s[start + len] & 0xC0) == 0x80) len--;
+    char *out = malloc(len + 1);
+    if (out) memcpy(out, s + start, len), out[len] = '\0';
+    return out;
 }
 
 bool names_in_text(const char *name, const char *text)
@@ -84,6 +111,22 @@ static bool fixed_phrasings(const char *msg, NameGuess *g)
     return g->author[0] || g->assistant[0];
 }
 
+char *names_user_text(const char *assistant_prev, const char *author_msg)
+{
+    if (!author_msg) return NULL;
+    const char *cue = first_cue(author_msg);
+    size_t at = cue ? (size_t)(cue - author_msg) : 0;
+    char *said = utf8_window(author_msg, at > NAMES_AROUND_CUE ? at - NAMES_AROUND_CUE : 0, 2 * NAMES_AROUND_CUE);
+    size_t pl = assistant_prev ? strlen(assistant_prev) : 0;
+    char *before = utf8_window(assistant_prev ? assistant_prev : "", pl > NAMES_PREV_TAIL ? pl - NAMES_PREV_TAIL : 0, NAMES_PREV_TAIL);
+    size_t ul = (said ? strlen(said) : 0) + (before ? strlen(before) : 0) + 64;
+    char *user = said && before ? malloc(ul) : NULL;
+    if (user) snprintf(user, ul, "ASSISTANT (before): %s\n\nAUTHOR: %s", before, said);
+    free(said);
+    free(before);
+    return user;
+}
+
 bool names_detect_cancel(LlmServer *server, const char *assistant_prev, const char *author_msg, NameGuess *out,
                          atomic_bool *cancel)
 {
@@ -100,10 +143,8 @@ bool names_detect_cancel(LlmServer *server, const char *assistant_prev, const ch
         "author says is their own, exactly as they wrote it, or null. assistant_name: the name the author gives the "
         "assistant (what the author wants to call it), exactly as they wrote it, or null. Names of story characters "
         "are neither. Use null unless the author's message itself states the name.";
-    size_t ul = strlen(author_msg) + (assistant_prev ? strlen(assistant_prev) : 0) + 64;
-    char *user = malloc(ul);
+    char *user = names_user_text(assistant_prev, author_msg);
     if (!user) return false;
-    snprintf(user, ul, "ASSISTANT (before): %s\n\nAUTHOR: %s", assistant_prev ? assistant_prev : "", author_msg);
     cJSON *root = cJSON_CreateObject();
     cJSON *msgs = cJSON_AddArrayToObject(root, "messages");
     cJSON *m = cJSON_CreateObject();

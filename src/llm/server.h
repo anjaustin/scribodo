@@ -87,6 +87,12 @@ int llm_model_context_length(const char *path);
 int llm_server_slot_ctx(LlmServer *s);
 /* The -c that gives each conversation `slot_ctx` tokens under `cfg`'s layout (for memory estimates). */
 int llm_server_pool_ctx(const LlmServerConfig *cfg, int slot_ctx);
+/* What a request on the other slot (observer, names, briefs, the pipeline) may use: the reserve in a shared pool,
+ * else a slot's even share. */
+int llm_server_side_ctx(LlmServer *s);
+/* The weights are pinned in RAM: keep_resident was asked for and llama.cpp did not report failing to mlock them.
+ * False until the server is ready. */
+bool llm_server_pinned(LlmServer *s);
 /* Change the context per conversation (each slot), restarting the server
  * (same object: chat and observer keep their pointer). False if out of
  * range (below 2048, or above the model's trained context when known).

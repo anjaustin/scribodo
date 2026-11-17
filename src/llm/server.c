@@ -49,7 +49,25 @@ struct LlmServer {
     atomic_bool stopping;
     int restarts;
     double restart_at;
+    off_t log_start;        /* the log's size when this server was spawned: its own lines follow */
+    atomic_bool pinned;     /* keep_resident, and llama.cpp did not report a failed mlock */
 };
+
+/* After start-up: did llama.cpp pin the weights? It warns and goes on when it cannot ("failed to mlock", "mlock not
+ * supported"), so the log this server wrote is read for that (red team 2026-11-16: the failure was silent). */
+static bool log_reports_mlock_failure(const char *path, off_t from)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return false;
+    bool failed = false;
+    if (fseeko(f, from, SEEK_SET) == 0) {
+        char line[1024];
+        for (int n = 0; n < 20000 && fgets(line, sizeof(line), f); n++)
+            if (strstr(line, "failed to mlock") || strstr(line, "mlock not supported")) { failed = true; break; }
+    }
+    fclose(f);
+    return failed;
+}
 
 static double now_s(void)
 {
@@ -532,6 +550,9 @@ static bool spawn_server(LlmServer *s)
     posix_spawn_file_actions_t fa;
     posix_spawn_file_actions_init(&fa);
     posix_spawn_file_actions_addopen(&fa, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+    struct stat log_st;
+    s->log_start = stat(s->cfg.log_path, &log_st) == 0 ? log_st.st_size : 0;
+    atomic_store(&s->pinned, false);
     posix_spawn_file_actions_addopen(&fa, STDOUT_FILENO, s->cfg.log_path, O_WRONLY | O_CREAT | O_APPEND, 0644);
     posix_spawn_file_actions_adddup2(&fa, STDOUT_FILENO, STDERR_FILENO);
     /* The server gets stdin, stdout and stderr and nothing else of ours: not
@@ -592,6 +613,8 @@ static void *start_thread(void *arg)
         HttpResult r;
         if (http_request(s->sock, "GET", "/health", NULL, NULL, NULL, NULL, NULL, 1000, &r) && r.status == 200) {
             http_result_free(&r);
+            /* Before READY, so no reader sees a ready server that is not yet marked pinned. */
+            atomic_store(&s->pinned, s->cfg.keep_resident && !log_reports_mlock_failure(s->cfg.log_path, s->log_start));
             set_state(s, LLM_READY, s->cfg.embedding ? "Qwen3-Embedding \xC2\xB7 local"
                                     : s->cfg.rerank ? "Qwen3-Reranker \xC2\xB7 BF16 \xC2\xB7 local" : "LFM3-1.7B \xC2\xB7 BF16 \xC2\xB7 local");
             s->ready_since = now_s();
@@ -739,6 +762,10 @@ int llm_server_slot_ctx(LlmServer *s)
     if (s->cfg.reserve > 0) return s->cfg.ctx_total > s->cfg.reserve ? s->cfg.ctx_total - s->cfg.reserve : s->cfg.ctx_total;
     return s->cfg.ctx_total / slots;
 }
+
+bool llm_server_pinned(LlmServer *s) { return atomic_load(&s->pinned); }
+
+int llm_server_side_ctx(LlmServer *s) { return s->cfg.reserve > 0 ? s->cfg.reserve : llm_server_slot_ctx(s); }
 
 int llm_server_pool_ctx(const LlmServerConfig *cfg, int slot_ctx)
 {

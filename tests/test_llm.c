@@ -27,6 +27,7 @@
 #include "../src/app/chat_store.h"
 #include "../src/app/local_models.h"
 #include "core/experiments.h"
+#include "llm/answer_pipeline.h"
 #include "llm/memory_tokens.h"
 #include "llm/context_planner.h"
 #include "llm/generative_gate.h"
@@ -2450,6 +2451,45 @@ static void test_multi_doc_request(void)
 }
 
 /* Who is who comes from stored facts, stated in the system message. */
+/* Red team 2026-11-16: requests on the observer's slot share the pool's 8K reserve, so what they carry is bounded
+ * whatever was pasted. */
+static void test_side_slot_bounds(void)
+{
+    size_t big = 200000;
+    char *msg = malloc(big + 1), *prev = malloc(big + 1);
+    memset(msg, 'a', big);
+    memset(prev, 'b', big);
+    memcpy(msg + 120000, " my name is Ada ", 16);
+    msg[big] = prev[big] = 0;
+    char *u = names_user_text(prev, msg);
+    CHECK(u && strlen(u) <= 2 * 1200 + 1200 + 64 && strstr(u, "my name is Ada")); /* the cue and its surroundings */
+    free(u);
+    /* Two-byte characters cut at a boundary, never inside one. */
+    for (size_t i = 0; i + 1 < big; i += 2) msg[i] = (char)0xC3, msg[i + 1] = (char)0xA9; /* é */
+    memcpy(msg + 100001, "name", 4);
+    u = names_user_text(NULL, msg);
+    CHECK(u && strstr(u, "name"));
+    if (u) {
+        const unsigned char *p = (const unsigned char *)strstr(u, "AUTHOR: ") + 8;
+        CHECK(*p != 0 && (*p & 0xC0) != 0x80);                                 /* starts on a character */
+        size_t n = strlen((const char *)p);
+        CHECK(n > 0 && !((p[n - 1] & 0xE0) == 0xC0));                          /* does not end on a lead byte */
+    }
+    free(u);
+    CHECK(names_user_text(NULL, NULL) == NULL);
+    u = names_user_text(NULL, "call me Sam");
+    CHECK(u && strstr(u, "AUTHOR: call me Sam"));
+    free(u);
+    free(prev);
+    /* The claim check reads the reply's opening only. */
+    memset(msg, 'c', big);
+    msg[big] = 0;
+    char *body = answer_claim_request("How far?", msg);
+    CHECK(body && strlen(body) < 12000 + 4000);
+    free(body);
+    free(msg);
+}
+
 static void test_names_as_facts(void)
 {
     ChatMessage m = { .role = CHAT_USER, .content = "hello" };
@@ -3185,6 +3225,7 @@ int main(int argc, char **argv)
         { "observer_redteam", test_observer_redteam },
         { "recent_and_renames", test_recent_and_renames },
         { "multi_doc_request", test_multi_doc_request },
+        { "side_slot_bounds", test_side_slot_bounds },
         { "names_as_facts", test_names_as_facts },
         { "speaker_labels", test_speaker_labels },
         { "truncated_stream_is_an_error", test_truncated_stream_is_an_error },
