@@ -97,7 +97,8 @@ static void splitter(Clay_ElementId id, bool active)
     CLAY({ .id = id,
            .layout = { .sizing = { CLAY_SIZING_FIXED(SPLITTER_W), CLAY_SIZING_GROW(0) },
                        .childAlignment = { .x = CLAY_ALIGN_X_CENTER } },
-           .backgroundColor = hot ? COL_ACCENT : COL_PANEL }) {
+           /* The Explorer's splitter is part of the sidebar: on the glass it is glass too, its line kept. */
+           .backgroundColor = hot ? COL_ACCENT : id.id == CLAY_ID("SplitLeft").id ? COL_SIDEBAR : COL_PANEL }) {
         CLAY({ .layout = { .sizing = { CLAY_SIZING_FIXED(1), CLAY_SIZING_GROW(0) } },
                .backgroundColor = hot ? COL_ACCENT : COL_BORDER }) {}
     }

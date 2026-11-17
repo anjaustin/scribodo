@@ -14,6 +14,9 @@ static uint64_t g_pressed_label;
 static bool g_has_pressed;
 static const SFont *g_font;
 static bool g_locked;
+static bool g_on_sidebar;
+
+void widget_set_on_sidebar(bool on) { g_on_sidebar = on; }
 
 void widget_set_font(const SFont *f) { g_font = f; }
 
@@ -132,8 +135,8 @@ static bool draw_button(Rectangle r, const char *label, const SFont *f, WidgetKi
     bool held = false;
     bool clicked = press_rule(r, label, enabled, &held);
 
-    /* Disabled: the placeholder colour, one step up on the sidebar's glass (ui/theme.h THEME_SIDE_DIM). */
-    Color fill = BLANK, text = enabled ? THEME_TEXT : THEME_SIDE_DIM;
+    /* Disabled: the placeholder colour, one step up for a control on the sidebar's glass (widget_set_on_sidebar). */
+    Color fill = BLANK, text = enabled ? THEME_TEXT : g_on_sidebar ? THEME_SIDE_DIM : THEME_TEXT_DIM;
     switch (kind) {
     case WIDGET_PRIMARY:
         fill = enabled ? THEME_ACCENT : THEME_CARD;

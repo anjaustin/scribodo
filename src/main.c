@@ -1564,9 +1564,11 @@ static int frame_draw_panes(App *app, Clay_RenderCommandArray cmds, const FrameR
     clay_render(cmds, app->font_ptrs);
     widget_frame_begin();
     widget_set_locked(modal); /* nothing behind a prompt or menu reacts */
+    widget_set_on_sidebar(true); /* the toolbar's Open */
     if (widget_icon_button(rects->open_rect, &(WidgetIcon){ icon_texture(ICON_OPEN), icon_size(ICON_OPEN) }, "Open\xE2\x80\xA6", NULL,
                            WIDGET_QUIET, true, false))
         choose_project(app, false);
+    widget_set_on_sidebar(false);
     if (editor_path(app->editor)) editor_draw(app->editor, app->editor_rect, app->focus == FOCUS_DOC);
     int empty_act = editor_path(app->editor) ? 0 : draw_empty(app, app->editor_rect);
     if (review_active(app->review)) {
@@ -1591,6 +1593,7 @@ static int frame_draw_panes(App *app, Clay_RenderCommandArray cmds, const FrameR
 
 static void frame_draw_toolbar(App *app, const FrameRects *rects)
 {
+    widget_set_on_sidebar(true); /* Save, Recall, Observer: on the toolbar */
     bool can_save = (editor_is_dirty(app->editor) || editor_overwrite_armed(app->editor)) &&
                     !editor_is_read_only(app->editor);
     if (widget_icon_button(rects->save_rect, &(WidgetIcon){ icon_texture(ICON_SAVE), icon_size(ICON_SAVE) }, "Save", NULL, WIDGET_QUIET,
@@ -1613,6 +1616,7 @@ static void frame_draw_toolbar(App *app, const FrameRects *rects)
         widget_checkbox(orr, "Observer reads this chat", NULL, &reads);
         if (reads != was) set_chat_observer(app, app->chat_id, reads);
     }
+    widget_set_on_sidebar(false);
 }
 
 static void frame_draw_chat_controls(App *app, const FrameRects *rects)

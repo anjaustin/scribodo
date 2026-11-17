@@ -19,6 +19,9 @@ typedef enum {
 
 /* The font a control uses when given none (the interface font; set again whenever fonts reload). */
 void widget_set_font(const SFont *f);
+/* Controls drawn between true and false are on the sidebar (the toolbar): with the translucent sidebar on, their
+ * disabled text is one step stronger (ui/theme.h THEME_SIDE_DIM). Everywhere else keeps the placeholder colour. */
+void widget_set_on_sidebar(bool on);
 /* Once per frame before any control: a press is owned by the control it began on this frame, or by none. */
 void widget_frame_begin(void);
 /* While locked (a dialog, menu or prompt is open over the panes), controls draw but do not react, as raygui's
