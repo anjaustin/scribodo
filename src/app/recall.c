@@ -117,7 +117,8 @@ static bool list_conversations(Db *db, const char *project_id, ConversationRow *
                   "SELECT c.id, c.title, COALESCE(s.enabled,0), COALESCE(s.tokenizer,'')"
                   " FROM conversations c LEFT JOIN memory_scopes s"
                   " ON s.project_id=c.project_id AND s.conversation_id=c.id"
-                  " WHERE c.project_id=? ORDER BY c.updated_at DESC, c.id LIMIT ?",
+                  " WHERE c.project_id=? AND c.archived=0" /* archived chats are set aside (user request 2026-11-17) */
+                  " ORDER BY c.updated_at DESC, c.id LIMIT ?",
                   (DbArg[]){ DB_S(project_id), DB_I(RECALL_CONVERSATIONS_MAX + 1) }, 2, &rows))
         return false;
     bool ok = rows.ncols == 4;

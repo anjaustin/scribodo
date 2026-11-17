@@ -157,7 +157,8 @@ bool chat_store_title_line_files(const char *project_dir, const char *id, const 
     return ok;
 }
 
-bool chat_store_set_observer_files(const char *project_dir, const char *id, bool read)
+/* A setting line appended to a stored chat's file: {"type":type,key:value,"ts":…}; the latest one counts. */
+static bool append_flag_line(const char *project_dir, const char *id, const char *type, const char *key, bool value)
 {
     char path[1200];
     if (!path_for(project_dir, id, path, sizeof(path))) return false;
@@ -167,13 +168,23 @@ bool chat_store_set_observer_files(const char *project_dir, const char *id, bool
     if (fd < 0) return false;
     bool ok = ensure_trailing_newline(fd);
     cJSON *j = cJSON_CreateObject();
-    ok = ok && j && cJSON_AddStringToObject(j, "type", "observer") && cJSON_AddBoolToObject(j, "read", read) &&
+    ok = ok && j && cJSON_AddStringToObject(j, "type", type) && cJSON_AddBoolToObject(j, key, value) &&
          cJSON_AddNumberToObject(j, "ts", (double)time(NULL));
     ok = ok && write_line(fd, j);
     cJSON_Delete(j);
     ok = ok && fsync(fd) == 0;
     close(fd);
     return ok;
+}
+
+bool chat_store_set_observer_files(const char *project_dir, const char *id, bool read)
+{
+    return append_flag_line(project_dir, id, "observer", "read", read);
+}
+
+bool chat_store_set_archived_files(const char *project_dir, const char *id, bool archived)
+{
+    return append_flag_line(project_dir, id, "archive", "archived", archived);
 }
 
 /* Validate the descriptor we actually read, not a racy stat-before-fopen.
@@ -312,6 +323,13 @@ bool chat_store_list_files_checked(const char *project_dir, ChatSummary **out, s
                     if (allocation_error) { cJSON_Delete(j); lines_ok = false; break; }
                     cJSON *rd = j ? cJSON_GetObjectItem(j, "read") : NULL;
                     if (cJSON_IsBool(rd)) c->observer_ignore = !cJSON_IsTrue(rd);
+                    cJSON_Delete(j);
+                } else if (strstr(line, "\"type\":\"archive\"")) { /* the latest one counts */
+                    bool allocation_error;
+                    cJSON *j = json_parse_checked(line, &allocation_error);
+                    if (allocation_error) { cJSON_Delete(j); lines_ok = false; break; }
+                    cJSON *ty = j ? cJSON_GetObjectItem(j, "type") : NULL, *ar = j ? cJSON_GetObjectItem(j, "archived") : NULL;
+                    if (ty && cJSON_IsString(ty) && ty->valuestring && !strcmp(ty->valuestring, "archive") && cJSON_IsBool(ar)) c->archived = cJSON_IsTrue(ar);
                     cJSON_Delete(j);
                 }
                 first = false;
@@ -581,6 +599,11 @@ bool chat_store_rename(StoreManager *manager, const char *project_dir, const cha
 bool chat_store_set_observer(StoreManager *manager, const char *project_dir, const char *id, bool read)
 {
     return project_store_chat_set_observer(manager, project_dir, id, read);
+}
+
+bool chat_store_set_archived(StoreManager *manager, const char *project_dir, const char *id, bool archived)
+{
+    return project_store_chat_set_archived(manager, project_dir, id, archived);
 }
 
 size_t chat_store_list(StoreManager *manager, const char *project_dir, ChatSummary **out)

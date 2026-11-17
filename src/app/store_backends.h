@@ -77,6 +77,7 @@ typedef struct {
 bool sdb_chat_archived_titles(Db *db, const char *project_id, const char *id, ChatArchivedTitle **out, size_t *count);
 void sdb_chat_archived_titles_free(ChatArchivedTitle *titles, size_t count);
 bool sdb_chat_set_observer(Db *db, const char *project_id, const char *id, bool read);
+bool sdb_chat_set_archived(Db *db, const char *project_id, const char *id, bool archived);
 
 /* Move a project's .scribodo/ files into the store (see store_import.c).
  * True if it is in the store afterwards (or already was). */

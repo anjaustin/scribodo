@@ -920,12 +920,19 @@ static const char *const k_migration_020[] = {
     NULL,
 };
 
+/* 021 (user request 2026-11-17): chats the author archived. Hidden from the chat list (under Archived) and set aside
+ * from memory recall until restored; nothing is deleted. One re-runnable statement. */
+static const char *const k_migration_021[] = {
+    "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS archived TINYINT(1) NOT NULL DEFAULT 0",
+    NULL,
+};
+
 static const char *const *const k_migrations[] = { k_migration_001, k_migration_002, k_migration_003, k_migration_004,
                                                    k_migration_005, k_migration_006, k_migration_007, k_migration_008,
                                                    k_migration_009, k_migration_010, k_migration_011, k_migration_012,
                                                    k_migration_013, k_migration_014, k_migration_015, k_migration_016,
                                                    k_migration_017, k_migration_018, k_migration_019,
-                                                   k_migration_020 };
+                                                   k_migration_020, k_migration_021 };
 
 int db_schema_version(Db *db)
 {

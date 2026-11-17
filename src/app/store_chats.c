@@ -24,6 +24,7 @@ typedef struct {
     const char *title;
     double updated;
     bool observer_ignore;
+    bool archived;
 } ChatSummaryRow;
 
 typedef struct {
@@ -50,9 +51,9 @@ static bool bool_cell(const DbRows *rows, size_t row, size_t col, bool *out)
 
 static bool chat_summary_row(const DbRows *rows, size_t row, ChatSummaryRow *out)
 {
-    bool ok = db_rows_has_columns(rows, 4) && db_cell_text(rows, row, 0, &out->id) &&
+    bool ok = db_rows_has_columns(rows, 5) && db_cell_text(rows, row, 0, &out->id) &&
            db_cell_text(rows, row, 1, &out->title) && db_cell_double(rows, row, 2, &out->updated) &&
-           bool_cell(rows, row, 3, &out->observer_ignore);
+           bool_cell(rows, row, 3, &out->observer_ignore) && bool_cell(rows, row, 4, &out->archived);
     return ok && out->updated >= 0 && out->updated < 0x1p63 &&
            strlen(out->id) < sizeof(((ChatSummary *)0)->id) && strlen(out->title) < sizeof(((ChatSummary *)0)->title);
 }
@@ -163,10 +164,11 @@ bool sdb_chat_list_checked(Db *db, const char *project_id, ChatSummary **out, si
     *out = NULL;
     *count = 0;
     DbRows r;
-    if (!db_query(db, "SELECT id, title, updated_at, observer_ignore FROM conversations WHERE project_id = ? ORDER BY updated_at DESC",
+    if (!db_query(db, "SELECT id, title, updated_at, observer_ignore, archived FROM conversations WHERE project_id = ?"
+                      " ORDER BY updated_at DESC",
                   (DbArg[1]){ DB_S(project_id) }, 1, &r))
         return false;
-    bool ok = db_rows_has_columns(&r, 4);
+    bool ok = db_rows_has_columns(&r, 5);
     ChatSummary *list = ok && r.nrows ? calloc(r.nrows, sizeof(ChatSummary)) : NULL;
     if (r.nrows && !list) {
         db_rows_free(&r);
@@ -182,6 +184,7 @@ bool sdb_chat_list_checked(Db *db, const char *project_id, ChatSummary **out, si
         snprintf(c->title, sizeof(c->title), "%s", row.title);
         c->updated = (time_t)row.updated;
         c->observer_ignore = row.observer_ignore;
+        c->archived = row.archived;
     }
     db_rows_free(&r);
     if (!ok) {
@@ -303,6 +306,13 @@ bool sdb_chat_set_observer(Db *db, const char *project_id, const char *id, bool 
     uint64_t changed = 0;
     DbArg a[3] = { DB_I(read ? 0 : 1), DB_S(id), DB_S(project_id) };
     return db_run(db, "UPDATE conversations SET observer_ignore = ? WHERE id = ? AND project_id = ?", a, 3, &changed);
+}
+
+bool sdb_chat_set_archived(Db *db, const char *project_id, const char *id, bool archived)
+{
+    uint64_t changed = 0;
+    DbArg a[3] = { DB_I(archived ? 1 : 0), DB_S(id), DB_S(project_id) };
+    return db_run(db, "UPDATE conversations SET archived = ? WHERE id = ? AND project_id = ?", a, 3, &changed);
 }
 
 bool sdb_chat_rename(Db *db, const char *project_id, const char *id, const char *title)

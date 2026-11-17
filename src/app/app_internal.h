@@ -313,6 +313,8 @@ typedef struct {
         };
     };
     uint64_t drawn_explorer_generation;
+    bool chats_archived_open; /* the Explorer's Archived chats are shown (closed when the app starts) */
+    int chat_menu_archive;    /* the chat menu's Archive / Restore item (after the memory items, which tests pin) */
     /* The chat model's settings, and the panel that edits them. */
     ModelSettings model, model_edit;
     bool settings_open;
@@ -503,6 +505,7 @@ bool history_read_busy(App *app);
 const ChatSummary *find_chat(const App *app, const char *id);
 bool open_chat_stored(const App *app);
 void set_chat_observer(App *app, const char *id, bool read);
+void set_chat_archived(App *app, const char *id, bool archived);
 void names_poll(App *app);
 void names_answer(App *app, bool save);
 void on_message_done(ChatSession *s, size_t index, void *ctx);

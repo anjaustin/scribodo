@@ -38,6 +38,7 @@ struct ProjectStoreOps {
     bool (*chat_append)(ProjectStore *, const char *, const char *, const ChatMessage *);
     bool (*chat_rename)(ProjectStore *, const char *, const char *);
     bool (*chat_set_observer)(ProjectStore *, const char *, bool);
+    bool (*chat_set_archived)(ProjectStore *, const char *, bool);
     size_t (*chat_list)(ProjectStore *, ChatSummary **);
     bool (*chat_load)(ProjectStore *, const char *, ChatMessage **, size_t *);
     cJSON *(*observer_state_load)(ProjectStore *);
@@ -169,6 +170,11 @@ static bool file_chat_set_observer(ProjectStore *store, const char *id, bool rea
     return chat_store_set_observer_files(store->project_dir, id, read);
 }
 
+static bool file_chat_set_archived(ProjectStore *store, const char *id, bool archived)
+{
+    return chat_store_set_archived_files(store->project_dir, id, archived);
+}
+
 static size_t file_chat_list(ProjectStore *store, ChatSummary **out)
 {
     return chat_store_list_files(store->project_dir, out);
@@ -194,6 +200,11 @@ static bool db_chat_set_observer(ProjectStore *store, const char *id, bool read)
     return sdb_chat_set_observer(store->db, store->project_id, id, read);
 }
 
+static bool db_chat_set_archived(ProjectStore *store, const char *id, bool archived)
+{
+    return sdb_chat_set_archived(store->db, store->project_id, id, archived);
+}
+
 static size_t db_chat_list(ProjectStore *store, ChatSummary **out)
 {
     return sdb_chat_list(store->db, store->project_id, out);
@@ -211,6 +222,7 @@ static bool paused_chat_append(ProjectStore *store, const char *id, const char *
 
 static bool paused_chat_rename(ProjectStore *store, const char *id, const char *title) { return false; }
 static bool paused_chat_set_observer(ProjectStore *store, const char *id, bool read) { return false; }
+static bool paused_chat_set_archived(ProjectStore *store, const char *id, bool archived) { return false; }
 
 static size_t paused_chat_list(ProjectStore *store, ChatSummary **out)
 {
@@ -279,7 +291,7 @@ static const ProjectStoreOps file_ops = {
     .revisions_list = file_revisions_list, .revisions_record = file_revisions_record,
     .revisions_snapshot = file_revisions_snapshot, .revisions_load = file_revisions_load,
     .chat_append = file_chat_append, .chat_rename = file_chat_rename,
-    .chat_set_observer = file_chat_set_observer, .chat_list = file_chat_list, .chat_load = file_chat_load,
+    .chat_set_observer = file_chat_set_observer, .chat_set_archived = file_chat_set_archived, .chat_list = file_chat_list, .chat_load = file_chat_load,
     .observer_state_load = file_observer_state_load, .observer_state_save = file_observer_state_save,
     .observer_rules_get = file_observer_rules_get, .observer_rules_set = file_observer_rules_set
 };
@@ -288,7 +300,7 @@ static const ProjectStoreOps db_ops = {
     .revisions_list = db_revisions_list, .revisions_record = db_revisions_record,
     .revisions_snapshot = db_revisions_snapshot, .revisions_load = db_revisions_load,
     .chat_append = db_chat_append, .chat_rename = db_chat_rename,
-    .chat_set_observer = db_chat_set_observer, .chat_list = db_chat_list, .chat_load = db_chat_load,
+    .chat_set_observer = db_chat_set_observer, .chat_set_archived = db_chat_set_archived, .chat_list = db_chat_list, .chat_load = db_chat_load,
     .observer_state_load = db_observer_state_load, .observer_state_save = db_observer_state_save,
     .observer_rules_get = db_observer_rules_get, .observer_rules_set = db_observer_rules_set
 };
@@ -297,7 +309,7 @@ static const ProjectStoreOps paused_ops = {
     .revisions_list = paused_revisions_list, .revisions_record = paused_revisions_record,
     .revisions_snapshot = paused_revisions_snapshot, .revisions_load = paused_revisions_load,
     .chat_append = paused_chat_append, .chat_rename = paused_chat_rename,
-    .chat_set_observer = paused_chat_set_observer, .chat_list = paused_chat_list, .chat_load = paused_chat_load,
+    .chat_set_observer = paused_chat_set_observer, .chat_set_archived = paused_chat_set_archived, .chat_list = paused_chat_list, .chat_load = paused_chat_load,
     .observer_state_load = paused_observer_state_load, .observer_state_save = paused_observer_state_save,
     .observer_rules_get = paused_observer_rules_get, .observer_rules_set = paused_observer_rules_set
 };
@@ -584,6 +596,17 @@ bool project_store_chat_set_observer(StoreManager *manager, const char *project_
     int lock = begin_operation(manager, project_dir, &store);
     if (store.ops == &file_ops && lock < 0) return false;
     bool ok = store.ops->chat_set_observer(&store, id, read);
+    project_store_file_unlock(lock);
+    return ok;
+}
+
+bool project_store_chat_set_archived(StoreManager *manager, const char *project_dir, const char *id, bool archived)
+{
+    if (!project_dir || !project_dir[0]) return false;
+    ProjectStore store;
+    int lock = begin_operation(manager, project_dir, &store);
+    if (store.ops == &file_ops && lock < 0) return false;
+    bool ok = store.ops->chat_set_archived(&store, id, archived);
     project_store_file_unlock(lock);
     return ok;
 }

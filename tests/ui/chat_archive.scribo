@@ -1,0 +1,28 @@
+# Archive (user request 2026-11-17): an archived chat leaves the list for an
+# "Archived (n)" heading at the end, closed until clicked; the observer skips
+# it; Restore brings it back. The setting survives a reload of the list.
+open "$DIR/chapter.md"
+click_element ChatInput
+type "Ingrid rows across the fjord."
+key ENTER
+wait_chat
+expect explorer_has "Ingrid rows across the fjord."
+right_click_element ChatItem0
+click_element MenuItem5
+expect status "Chat archived"
+expect explorer_has "Archived (1)"
+expect explorer_not "Ingrid rows across the fjord."
+observer on
+click_element ObserverToggle
+wait_observer
+expect findings_not "Ingrid"
+# Open the heading: the chat is listed under it and can be restored.
+click_element ArchivedChats
+expect explorer_has "Ingrid rows across the fjord."
+right_click_element ChatItem0
+click_element MenuItem5
+expect status "Chat restored"
+expect explorer_not "Archived (1)"
+expect explorer_has "Ingrid rows across the fjord."
+wait_observer
+expect findings_has "Ingrid is mentioned."

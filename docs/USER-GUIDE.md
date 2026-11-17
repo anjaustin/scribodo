@@ -48,6 +48,7 @@ A project is a folder of `.md` and `.txt` files.
 - **Attached documents:** the chips under the chat show which project documents the assistant sees. A new chat starts with the open document attached; **+ Attach** adds others, and × removes one. Documents are read when you send (the open one including unsaved edits), never copied. Each message remembers what it was sent with, and reopening a chat restores its attachments.
 - **Note turns:** the composer's **Note** toggle marks a message as your note rather than a question, so the answer checks do not treat it as one.
 - **Rename a chat:** right-click it in the Explorer.
+- **Archive a chat:** right-click it and choose **Archive**. It moves under **Archived (n)** at the end of the chat list, closed until you click it. Nothing is deleted: an archived chat still opens and can be continued, but Recall lists none of it and the observer stops reading it. **Restore from archive** (same menu) brings it back; the observer resumes where it left off.
 - **Reply actions** (Copy, Apply to document, Note, Canon) show under the latest reply and under any message you point at.
 - **Copy** puts a reply's text on the clipboard for pasting into the document.
 - **Saving chats:** each message is saved to the local MariaDB project store, and past chats reopen from the Explorer. Before a project is moved into the store, or when running with `SCRIBODO_STORE=off`, the file backend uses `.scribodo/chats/` instead.
@@ -97,7 +98,7 @@ messages and saved document text, best match first.
 - No model is involved. Matching is plain text, retracted canon is excluded, and other projects are never searched.
 - "Nothing matched" means nothing matched in what was searched, not that the book never says it.
 - Click a canon row to open the entry; click an excerpt to select its source passage.
-- Memory excerpts need the project store and a conversation whose memory you enabled.
+- Memory excerpts need the project store and a conversation whose memory you enabled. Archived chats are left out until restored.
 
 See [MEMORY-016](MEMORY-016-recall-view.md) and the contract in
 [MEMORY-015](MEMORY-015-effective-memory-contract.md).

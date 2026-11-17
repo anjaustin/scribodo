@@ -57,6 +57,7 @@
  *   expect findings_not "substring"
  *   expect attached "a.md,b.md"  the chat's attached documents, in order
  *   expect explorer_has "row"    a row the Explorer lists (exact)
+ *   expect explorer_not "row"    a row the Explorer does not list (exact)
  *   expect observer_status "substring"
  *   expect running no            (only valid as the last command, after close)
  *   store_offline yes|no         force this test's StoreManager offline/online

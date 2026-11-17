@@ -73,3 +73,25 @@ expect recall_not "canon|"
 # Hiding the panel removes its input.
 click_element RecallToggle
 expect element_w RecallInput 0 0
+# An archived chat is set aside (user request 2026-11-17): recall lists no excerpt of it until it is restored.
+right_click_element ChatItem0
+click_element MenuItem5
+expect status "Chat archived"
+click_element RecallToggle
+click_element RecallInput
+key A cmd
+type "amber key"
+key ENTER
+wait_recall 1800
+expect recall "canon|"
+expect recall_not "chat|"
+click_element ArchivedChats
+right_click_element ChatItem0
+click_element MenuItem5
+expect status "Chat restored"
+click_element RecallInput
+key A cmd
+type "amber key"
+key ENTER
+wait_recall 1800
+expect recall "chat|Memory fixture|seq=0|author|start=0|"

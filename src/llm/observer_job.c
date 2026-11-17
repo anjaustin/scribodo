@@ -421,7 +421,7 @@ static bool find_chat_job(StoreManager *store, const char *project, cJSON *chats
     }
     bool found = false;
     for (size_t i = 0; i < nc && !found; i++) {
-        if (list[i].observer_ignore) continue; /* the author said not to read it */
+        if (list[i].observer_ignore || list[i].archived) continue; /* the author said not to read it, or archived it */
         ChatMessage *msgs = NULL;
         size_t n = 0;
         if (!chat_store_load(store, project, list[i].id, &msgs, &n)) {

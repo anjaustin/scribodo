@@ -257,12 +257,25 @@ static char *host_explorer_text(void *ctx)
     size_t cap = 2;
     for (size_t i = 0; i < app->ndocs; i++) cap += strlen(app->docs[i]) + 1;
     for (size_t i = 0; i < app->nchats; i++) cap += sizeof(app->chat_labels[0]) + 1;
+    cap += 48; /* "Archived (n)" */
     cap += (sizeof(app->ent_labels[0]) + 1) * ENT_SHOW + (sizeof(app->ent_row_labels[0]) + 1) * ENT_ROWS;
     char *s = malloc(cap);
     if (!s) return NULL;
     s[0] = '\0';
     for (size_t i = 0; i < app->ndocs; i++) strcat(strcat(s, app->docs[i]), "\n");
-    for (size_t i = 0; i < app->nchats; i++) strcat(strcat(s, app->chat_labels ? app->chat_labels[i] : app->chats[i].title), "\n");
+    /* Chats as the Explorer draws them: archived ones under their heading, listed only while it is open. */
+    size_t narchived = 0;
+    for (size_t i = 0; i < app->nchats; i++) {
+        if (app->chats[i].archived) { narchived++; continue; }
+        strcat(strcat(s, app->chat_labels ? app->chat_labels[i] : app->chats[i].title), "\n");
+    }
+    if (narchived) {
+        char head[48];
+        snprintf(head, sizeof(head), "Archived (%zu)\n", narchived);
+        strcat(s, head);
+    }
+    for (size_t i = 0; app->chats_archived_open && i < app->nchats; i++)
+        if (app->chats[i].archived) strcat(strcat(s, app->chat_labels ? app->chat_labels[i] : app->chats[i].title), "\n");
     /* Entities, and the open one's rows (without their indent). */
     for (size_t i = 0; i < app->nents && i < ENT_SHOW; i++) strcat(strcat(s, app->ent_labels[i]), "\n");
     for (size_t i = 0; app->ent_open[0] && i < app->ent.nrows && i < ENT_ROWS; i++)

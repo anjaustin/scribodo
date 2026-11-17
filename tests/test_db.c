@@ -580,6 +580,22 @@ static void test_backends(void)
         CHECK(on >= 1 && !ol[0].observer_ignore);
         free(ol);
     }
+    /* Archived (user request 2026-11-17): kept with it, and restored. */
+    {
+        CHECK(sdb_chat_set_archived(db, pid, "20261104-150000-abcd", true));
+        ChatSummary *al = NULL;
+        size_t an = sdb_chat_list(db, pid, &al);
+        bool found = false;
+        for (size_t i = 0; i < an; i++)
+            if (!strcmp(al[i].id, "20261104-150000-abcd")) found = al[i].archived;
+            else CHECK(!al[i].archived);
+        CHECK(found);
+        free(al);
+        CHECK(sdb_chat_set_archived(db, pid, "20261104-150000-abcd", false));
+        an = sdb_chat_list(db, pid, &al);
+        for (size_t i = 0; i < an; i++) CHECK(!al[i].archived);
+        free(al);
+    }
     ChatSummary *cs = NULL;
     size_t nc = sdb_chat_list(db, pid, &cs);
     CHECK(nc == 1 && !strcmp(cs[0].title, "Comparing chapters"));
@@ -703,6 +719,7 @@ static void test_import(void)
     CHECK(rename(rv_old, rv_new) == 0);
     CHECK(renames_record(proj, "ch1.md", "Chapter One.md"));
     CHECK(chat_store_set_observer(g_store, proj, "20261104-160000-abcd", false)); /* carried into the store */
+    CHECK(chat_store_set_archived(g_store, proj, "20261104-160000-abcd", true));  /* so is the archive */
     cJSON *ost = cJSON_CreateObject();
     cJSON *odocs = cJSON_AddObjectToObject(ost, "docs");
     cJSON *ohashes = cJSON_AddArrayToObject(odocs, "Chapter One.md");
@@ -811,7 +828,7 @@ static void test_import(void)
     {
         ChatSummary *il = NULL;
         size_t in = chat_store_list(g_store, proj, &il);
-        CHECK(in == 1 && il[0].observer_ignore); /* the setting came along */
+        CHECK(in == 1 && il[0].observer_ignore && il[0].archived); /* the settings came along */
         free(il);
     }
     ost = project_store_observer_state_load(g_store, proj);

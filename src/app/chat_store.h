@@ -25,6 +25,7 @@ typedef struct {
     time_t updated;
     long updated_nsec; /* orders chats changed within one second */
     bool observer_ignore; /* the author told the observer not to read it */
+    bool archived;        /* the author archived it: listed under Archived, set aside from memory recall */
 } ChatSummary;
 
 /* Directory for a project rooted at `project_dir` (created on demand). */
@@ -56,6 +57,10 @@ bool chat_store_rename(StoreManager *manager, const char *project_dir, const cha
 /* Whether the observer reads this chat (the author's choice; a line is
  * appended to the chat's file, or the store updated). */
 bool chat_store_set_observer(StoreManager *manager, const char *project_dir, const char *id, bool read);
+
+/* Archive a stored conversation, or restore it (a line is appended to the chat's file, or the store updated). An
+ * archived chat is set aside from memory recall; nothing of it is deleted. */
+bool chat_store_set_archived(StoreManager *manager, const char *project_dir, const char *id, bool archived);
 
 /* List conversations, newest first. Caller frees *out. */
 size_t chat_store_list(StoreManager *manager, const char *project_dir, ChatSummary **out);

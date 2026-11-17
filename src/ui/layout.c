@@ -67,6 +67,14 @@ static void list_item(App *app, Clay_ElementId id, const char *s, bool active)
     }
 }
 
+/* A list row indented under a heading row (archived chats). */
+static void list_item_under(App *app, Clay_ElementId id, const char *s, bool active)
+{
+    CLAY({ .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) }, .padding = { 14, 0, 0, 0 } } }) {
+        list_item(app, id, s, active);
+    }
+}
+
 /* Inactive placeholder text: deliberately not styled like a row. */
 static void coming_soon(App *app, const char *s)
 {
@@ -269,9 +277,23 @@ static void layout_explorer(App *app)
         }
         section_header(app, "CHATS", ICON_CHATS);
         list_item(app, CLAY_ID("NewChatItem"), "+ New chat", false);
-        for (size_t i = 0; i < app->nchats; i++)
+        /* Chats, newest first; archived ones under one heading at the end, closed until clicked. Row ids stay the
+         * chats' list indices, so a click finds its chat whichever section draws it. */
+        size_t narchived = 0;
+        for (size_t i = 0; i < app->nchats; i++) {
+            if (app->chats[i].archived) { narchived++; continue; }
             list_item(app, CLAY_IDI("ChatItem", (uint32_t)i), app->chat_labels ? app->chat_labels[i] : app->chats[i].title,
                       !strcmp(app->chat_id, app->chats[i].id));
+        }
+        if (narchived) {
+            char head[48];
+            snprintf(head, sizeof(head), "%s Archived (%zu)", app->chats_archived_open ? "\xE2\x96\xBE" : "\xE2\x96\xB8", narchived);
+            list_item(app, CLAY_ID("ArchivedChats"), head, false);
+            for (size_t i = 0; app->chats_archived_open && i < app->nchats; i++)
+                if (app->chats[i].archived)
+                    list_item_under(app, CLAY_IDI("ChatItem", (uint32_t)i), app->chat_labels ? app->chat_labels[i] : app->chats[i].title,
+                                    !strcmp(app->chat_id, app->chats[i].id));
+        }
         if (!app->project_dir[0]) coming_soon(app, "Open a project to save chats");
         section_header(app, "HISTORY", ICON_HISTORY);
         if (app->nrevs == 0) coming_soon(app, editor_path(app->editor) ? "No revisions yet" : "Open a document");

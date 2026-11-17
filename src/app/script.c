@@ -554,12 +554,13 @@ static int expect_panels(Script *s, ScriptHost *h, Tokens *t, const char *what, 
         ok = c && strstr(c, t->tok[2]);
         show(detail, detail_cap, "observer", c);
         free(c);
-    } else if (!strcmp(what, "explorer_has") && t->n == 3 && h->explorer_text) {
+    } else if ((!strcmp(what, "explorer_has") || !strcmp(what, "explorer_not")) && t->n == 3 && h->explorer_text) {
         char *c = h->explorer_text(h->ctx);
-        ok = false;
-        for (char *save = NULL, *l = c ? strtok_r(c, "\n", &save) : NULL; l && !ok; l = strtok_r(NULL, "\n", &save))
-            ok = !strcmp(l, t->tok[2]);
-        snprintf(detail, detail_cap, "not listed");
+        bool listed = false;
+        for (char *save = NULL, *l = c ? strtok_r(c, "\n", &save) : NULL; l && !listed; l = strtok_r(NULL, "\n", &save))
+            listed = !strcmp(l, t->tok[2]);
+        ok = c && (what[9] == 'h' ? listed : !listed); /* explorer_has / explorer_not */
+        snprintf(detail, detail_cap, listed ? "listed" : "not listed");
         free(c);
     } else if (!strcmp(what, "findings_count") && t->n == 3 && h->findings_text) {
         char *c = h->findings_text(h->ctx);

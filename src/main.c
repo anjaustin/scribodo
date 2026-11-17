@@ -1284,6 +1284,7 @@ static void frame_left_click(App *app, Vector2 mouse, bool modal, bool trace)
             if (close_record(app, false) && record_view_open(app->record, REC_NOTE, NULL, "", NULL, 0))
                 app->focus = FOCUS_RECORD;
         }
+        else if (Clay_PointerOver(CLAY_ID("ArchivedChats"))) app->chats_archived_open = !app->chats_archived_open;
         else if (Clay_PointerOver(CLAY_ID("Explorer"))) {
             app->focus = FOCUS_NONE;
             char full[PATH_MAX + 256];
@@ -1402,10 +1403,18 @@ static void frame_explorer_menu(App *app, Vector2 mouse, bool modal)
                 static char reads_item[64];
                 snprintf(reads_item, sizeof(reads_item), "%s Observer reads this chat",
                          chat->observer_ignore ? "  " : "\xE2\x9C\x93");
-                const char *items[] = { "Rename\xE2\x80\xA6", reads_item, "Enable local memory (experimental)",
-                                        "Disable local memory", "Rebuild local memory" };
+                /* New items go after the memory ones: scripts pick those by position. */
+                const char *items[8] = { "Rename\xE2\x80\xA6", reads_item };
+                int n = 2;
+                if (app->memory_experiment) {
+                    items[n++] = "Enable local memory (experimental)";
+                    items[n++] = "Disable local memory";
+                    items[n++] = "Rebuild local memory";
+                }
+                app->chat_menu_archive = n;
+                items[n++] = chat->archived ? "Restore from archive" : "Archive";
                 snprintf(app->menu_chat, sizeof(app->menu_chat), "%s", chat->id);
-                menu_open(&app->menu, MT_CHAT, (int)i, mouse, items, app->memory_experiment ? 5 : 2);
+                menu_open(&app->menu, MT_CHAT, (int)i, mouse, items, n);
                 break;
             }
         for (size_t i = 0; i < app->ndocs; i++)
@@ -1804,7 +1813,10 @@ static void frame_draw_overlays(App *app, MainLoop *loop, int empty_act, bool mo
                 set_status(app, msg);
             }
         }
-        if (pick == 1 && app->menu.tag == MT_CHAT) {
+        if (pick >= 0 && app->menu.tag == MT_CHAT && pick == app->chat_menu_archive) {
+            const ChatSummary *cs = find_chat(app, app->menu_chat);
+            if (cs) set_chat_archived(app, app->menu_chat, !cs->archived);
+        } else if (pick == 1 && app->menu.tag == MT_CHAT) {
             const ChatSummary *cs = find_chat(app, app->menu_chat);
             if (cs) set_chat_observer(app, app->menu_chat, cs->observer_ignore);
         } else if (pick >= 2 && pick <= 4 && app->menu.tag == MT_CHAT && app->memory_experiment) {

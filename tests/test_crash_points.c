@@ -39,9 +39,9 @@
 
 bool admin_name(const char *sql_fmt, const char *name);
 
-#define LATEST_SCHEMA 20
+#define LATEST_SCHEMA 21
 /* Statements across k_migrations (src/app/db.c, with memory_brief_schema.h): the column checklist updates it. */
-#define MIGRATION_STATEMENTS 86
+#define MIGRATION_STATEMENTS 87
 
 static const char *const k_points[] = { "migration.statement", "migration.receipt" };
 
@@ -186,9 +186,11 @@ static void run_point(const char *point)
         if (!recovered) fprintf(stderr, "    %s#%ld: %s\n", point, k, err);
         CHECK(recovered && db_schema_version(db) == LATEST_SCHEMA);
         DbRows rows;
+        char latest[16];
+        snprintf(latest, sizeof(latest), "%d", LATEST_SCHEMA);
         bool receipts = db_query(db, "SELECT COUNT(*), COUNT(DISTINCT version), MIN(version), MAX(version) FROM schema_migrations", NULL, 0, &rows) &&
-                        rows.nrows == 1 && !strcmp(db_cell(&rows, 0, 0), "20") && !strcmp(db_cell(&rows, 0, 1), "20") &&
-                        !strcmp(db_cell(&rows, 0, 2), "1") && !strcmp(db_cell(&rows, 0, 3), "20");
+                        rows.nrows == 1 && !strcmp(db_cell(&rows, 0, 0), latest) && !strcmp(db_cell(&rows, 0, 1), latest) &&
+                        !strcmp(db_cell(&rows, 0, 2), "1") && !strcmp(db_cell(&rows, 0, 3), latest);
         if (rows.nrows) db_rows_free(&rows);
         CHECK(receipts);
         char *fp = schema_fingerprint(db, name);

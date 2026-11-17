@@ -50,6 +50,20 @@ void set_chat_observer(App *app, const char *id, bool read)
     if (read && app->observer) observer_poke(app->observer);
 }
 
+void set_chat_archived(App *app, const char *id, bool archived)
+{
+    char cid[40];
+    snprintf(cid, sizeof(cid), "%s", id); /* the list is refreshed below */
+    if (!chat_store_set_archived(app->store, app->project_dir, cid, archived)) {
+        set_status(app, store_says(app, archived ? "Couldn't archive that chat" : "Couldn't restore that chat"));
+        return;
+    }
+    set_status(app, archived ? "Chat archived: memory and the observer set it aside until you restore it (Archived, at the end of Chats)"
+                             : "Chat restored: memory and the observer use it again");
+    app->lists_dirty = true; /* refreshed after this frame is drawn (rows point into the lists) */
+    if (!archived && app->observer) observer_poke(app->observer);
+}
+
 /* After a reply: did the author's message before it say a name? Checked in
  * the background (the local model, structured output, verified against the
  * author's words). */

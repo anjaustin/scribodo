@@ -372,7 +372,11 @@ static void chat_unterminated_list_faults(void)
 {
     const char *cases[] = {
         "{\"type\":\"meta\",\"title\":\"No final newline\"}",
-        "{\"type\":\"meta\",\"title\":\"Observer\"}\n{\"type\":\"observer\",\"read\":false}"
+        "{\"type\":\"meta\",\"title\":\"Observer\"}\n{\"type\":\"observer\",\"read\":false}",
+        /* archived, restored, archived again; a malformed line and an observer line quoting the type change nothing */
+        "{\"type\":\"meta\",\"title\":\"Archive\"}\n{\"type\":\"archive\",\"archived\":true}\n"
+        "{\"type\":\"archive\",\"archived\":false}\n{\"type\":\"archive\",\"archived\":true}\n"
+        "{\"type\":\"archive\",\"archived\":\"no\"}\n{\"type\":\"observer\",\"read\":true,\"x\":\"\\\"type\\\":\\\"archive\\\"\"}"
     };
     char path[900];
     snprintf(path, sizeof(path), "%s/.scribodo/chats/abcd.jsonl", project);
@@ -388,8 +392,9 @@ static void chat_unterminated_list_faults(void)
         CHECK(chat_store_list_checked(store, project, &chats, &n) && n == 1);
         long count = fault_alloc_count();
         if (chats && n == 1) {
-            CHECK(!strcmp(chats[0].title, c == 0 ? "No final newline" : "Observer"));
+            CHECK(!strcmp(chats[0].title, c == 0 ? "No final newline" : c == 1 ? "Observer" : "Archive"));
             CHECK(chats[0].observer_ignore == (c == 1));
+            CHECK(chats[0].archived == (c == 2));
         }
         free(chats);
         for (long i = 0; i < count * 2; i++) {
