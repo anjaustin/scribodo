@@ -39,9 +39,9 @@
 
 bool admin_name(const char *sql_fmt, const char *name);
 
-#define LATEST_SCHEMA 22
+#define LATEST_SCHEMA 23
 /* Statements across k_migrations (src/app/db.c, with memory_brief_schema.h): the column checklist updates it. */
-#define MIGRATION_STATEMENTS 88
+#define MIGRATION_STATEMENTS 89
 
 static const char *const k_points[] = { "migration.statement", "migration.receipt" };
 

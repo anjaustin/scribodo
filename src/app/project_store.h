@@ -72,6 +72,7 @@ bool project_store_chat_set_observer(StoreManager *manager, const char *project_
 bool project_store_chat_set_archived(StoreManager *manager, const char *project_dir, const char *id, bool archived);
 bool project_store_chat_set_group(StoreManager *manager, const char *project_dir, const char *id, const char *group);
 bool project_store_chat_rename_group(StoreManager *manager, const char *project_dir, const char *from, const char *to);
+bool project_store_chat_delete(StoreManager *manager, const char *project_dir, const char *id, ChatDeleteStats *out);
 size_t project_store_chat_list(StoreManager *manager, const char *project_dir, ChatSummary **out);
 bool project_store_chat_list_checked(StoreManager *manager, const char *project_dir, ChatSummary **out, size_t *count);
 bool project_store_chat_load(StoreManager *manager, const char *project_dir, const char *id, ChatMessage **messages, size_t *count);

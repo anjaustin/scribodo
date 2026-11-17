@@ -79,6 +79,12 @@ void sdb_chat_archived_titles_free(ChatArchivedTitle *titles, size_t count);
 bool sdb_chat_set_observer(Db *db, const char *project_id, const char *id, bool read);
 bool sdb_chat_set_archived(Db *db, const char *project_id, const char *id, bool archived);
 bool sdb_chat_set_group(Db *db, const char *project_id, const char *id, const char *group);
+/* Delete a conversation and what memory and the observer derived from it, in one transaction (user request
+ * 2026-11-17, "forget it too"). Notes and canon saved from it stay; their source line loses the chat. A finding loses
+ * its quotes of it, and one left with no source goes with its links and mentions, and so does an entity nothing names
+ * any more. The chat's points in the semantic index are listed in forgotten_conversations for removal after the
+ * commit (semantic_forget_pending). False, with nothing changed, when it is not this project's. */
+bool sdb_chat_delete(Db *db, const char *project_id, const char *id, ChatDeleteStats *out);
 bool sdb_chat_rename_group(Db *db, const char *project_id, const char *from, const char *to);
 
 /* Move a project's .scribodo/ files into the store (see store_import.c).

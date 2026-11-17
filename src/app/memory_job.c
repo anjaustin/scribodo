@@ -33,6 +33,7 @@ typedef struct {
     bool verification_pending, verification_progress;
     double next_verification_ms;
     double next_maintenance_ms;
+    double next_forget_ms; /* deleted chats' index points: retried at most once a minute */
     bool namespace_registered;
     MemoryScope scope, document_scope;
     MemoryDocumentSet documents;
@@ -240,6 +241,14 @@ static bool production_maintenance(MemoryJob *job, const MemoryRequest *request,
         bool delivered = bounded && memory_vectors_retire_namespace_on_db(bounded, db, &retired, why, sizeof(why));
         semantic_client_destroy(bounded);
         if (memory_gc_namespace_ack(db, &retired, delivered) && delivered) { status->gc_namespaces++; progress = true; }
+    }
+    /* A deleted chat's semantic-index points the delete could not remove at once (sdb_chat_delete): retried here. */
+    if (maintained && admitted(job, request) && now >= state->next_forget_ms) {
+        state->next_forget_ms = now + 60000;
+        SemanticClient *bounded = semantic_client_bounded(job->vectors, NULL, memory_budget_now_ms() + 1500);
+        size_t left = 0;
+        if (bounded) (void)semantic_forget_pending(bounded, db, request->identity.project_id, &left);
+        semantic_client_destroy(bounded);
     }
     if (busy || progress || !job->briefs_enabled || !job->generative_gate ||
         (job->tokenizer.server && llm_server_state(job->tokenizer.server, NULL, 0) != LLM_READY) || status->documents_pending ||

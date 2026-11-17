@@ -73,6 +73,15 @@ bool chat_store_set_group(StoreManager *manager, const char *project_dir, const 
 /* Every chat filed under `from` is filed under `to` instead ("" ungroups them; an existing name merges the two). */
 bool chat_store_rename_group(StoreManager *manager, const char *project_dir, const char *from, const char *to);
 
+/* Delete a stored conversation (user request 2026-11-17). In the project store, what memory and the observer derived
+ * from it goes too (sdb_chat_delete) and its semantic-index points are listed for removal (semantic_forget_pending);
+ * in the file store its file is removed. Cannot be undone; backups made before keep it. */
+typedef struct {
+    uint64_t messages, memory_rows, findings, finding_sources, entities;
+    bool derived; /* the project store: what memory and the observer derived went too (the file store: only the file) */
+} ChatDeleteStats;
+bool chat_store_delete(StoreManager *manager, const char *project_dir, const char *id, ChatDeleteStats *out);
+
 /* List conversations, newest first. Caller frees *out. */
 size_t chat_store_list(StoreManager *manager, const char *project_dir, ChatSummary **out);
 bool chat_store_list_checked(StoreManager *manager, const char *project_dir, ChatSummary **out, size_t *count);

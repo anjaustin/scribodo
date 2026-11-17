@@ -934,12 +934,23 @@ static const char *const k_migration_022[] = {
     NULL,
 };
 
+/* 023 (user request 2026-11-17: a deleted chat is forgotten): chats deleted whose points in the semantic index are
+ * still to be removed. Written in the delete's transaction; a row goes once its points are gone, and a failed removal
+ * is retried later. One re-runnable statement. */
+static const char *const k_migration_023[] = {
+    "CREATE TABLE IF NOT EXISTS forgotten_conversations (project_id VARCHAR(40) NOT NULL, conversation_id VARCHAR(40) NOT NULL,"
+    " deleted_at DOUBLE NOT NULL, PRIMARY KEY (project_id, conversation_id),"
+    " FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+    NULL,
+};
+
 static const char *const *const k_migrations[] = { k_migration_001, k_migration_002, k_migration_003, k_migration_004,
                                                    k_migration_005, k_migration_006, k_migration_007, k_migration_008,
                                                    k_migration_009, k_migration_010, k_migration_011, k_migration_012,
                                                    k_migration_013, k_migration_014, k_migration_015, k_migration_016,
                                                    k_migration_017, k_migration_018, k_migration_019,
-                                                   k_migration_020, k_migration_021, k_migration_022 };
+                                                   k_migration_020, k_migration_021, k_migration_022,
+                                                   k_migration_023 };
 
 int db_schema_version(Db *db)
 {

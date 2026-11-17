@@ -41,6 +41,7 @@ struct ProjectStoreOps {
     bool (*chat_set_archived)(ProjectStore *, const char *, bool);
     bool (*chat_set_group)(ProjectStore *, const char *, const char *);
     bool (*chat_rename_group)(ProjectStore *, const char *, const char *);
+    bool (*chat_delete)(ProjectStore *, const char *, ChatDeleteStats *);
     size_t (*chat_list)(ProjectStore *, ChatSummary **);
     bool (*chat_load)(ProjectStore *, const char *, ChatMessage **, size_t *);
     cJSON *(*observer_state_load)(ProjectStore *);
@@ -187,6 +188,11 @@ static bool file_chat_rename_group(ProjectStore *store, const char *from, const 
     return chat_store_rename_group_files(store->project_dir, from, to);
 }
 
+static bool file_chat_delete(ProjectStore *store, const char *id, ChatDeleteStats *out)
+{
+    return chat_store_delete_files(store->project_dir, id, out);
+}
+
 static size_t file_chat_list(ProjectStore *store, ChatSummary **out)
 {
     return chat_store_list_files(store->project_dir, out);
@@ -227,6 +233,11 @@ static bool db_chat_rename_group(ProjectStore *store, const char *from, const ch
     return sdb_chat_rename_group(store->db, store->project_id, from, to);
 }
 
+static bool db_chat_delete(ProjectStore *store, const char *id, ChatDeleteStats *out)
+{
+    return sdb_chat_delete(store->db, store->project_id, id, out);
+}
+
 static size_t db_chat_list(ProjectStore *store, ChatSummary **out)
 {
     return sdb_chat_list(store->db, store->project_id, out);
@@ -247,6 +258,7 @@ static bool paused_chat_set_observer(ProjectStore *store, const char *id, bool r
 static bool paused_chat_set_archived(ProjectStore *store, const char *id, bool archived) { return false; }
 static bool paused_chat_set_group(ProjectStore *store, const char *id, const char *group) { return false; }
 static bool paused_chat_rename_group(ProjectStore *store, const char *from, const char *to) { return false; }
+static bool paused_chat_delete(ProjectStore *store, const char *id, ChatDeleteStats *out) { return false; }
 
 static size_t paused_chat_list(ProjectStore *store, ChatSummary **out)
 {
@@ -316,7 +328,8 @@ static const ProjectStoreOps file_ops = {
     .revisions_snapshot = file_revisions_snapshot, .revisions_load = file_revisions_load,
     .chat_append = file_chat_append, .chat_rename = file_chat_rename,
     .chat_set_observer = file_chat_set_observer, .chat_set_archived = file_chat_set_archived,
-    .chat_set_group = file_chat_set_group, .chat_rename_group = file_chat_rename_group, .chat_list = file_chat_list, .chat_load = file_chat_load,
+    .chat_set_group = file_chat_set_group, .chat_rename_group = file_chat_rename_group,
+    .chat_delete = file_chat_delete, .chat_list = file_chat_list, .chat_load = file_chat_load,
     .observer_state_load = file_observer_state_load, .observer_state_save = file_observer_state_save,
     .observer_rules_get = file_observer_rules_get, .observer_rules_set = file_observer_rules_set
 };
@@ -326,7 +339,8 @@ static const ProjectStoreOps db_ops = {
     .revisions_snapshot = db_revisions_snapshot, .revisions_load = db_revisions_load,
     .chat_append = db_chat_append, .chat_rename = db_chat_rename,
     .chat_set_observer = db_chat_set_observer, .chat_set_archived = db_chat_set_archived,
-    .chat_set_group = db_chat_set_group, .chat_rename_group = db_chat_rename_group, .chat_list = db_chat_list, .chat_load = db_chat_load,
+    .chat_set_group = db_chat_set_group, .chat_rename_group = db_chat_rename_group,
+    .chat_delete = db_chat_delete, .chat_list = db_chat_list, .chat_load = db_chat_load,
     .observer_state_load = db_observer_state_load, .observer_state_save = db_observer_state_save,
     .observer_rules_get = db_observer_rules_get, .observer_rules_set = db_observer_rules_set
 };
@@ -336,7 +350,8 @@ static const ProjectStoreOps paused_ops = {
     .revisions_snapshot = paused_revisions_snapshot, .revisions_load = paused_revisions_load,
     .chat_append = paused_chat_append, .chat_rename = paused_chat_rename,
     .chat_set_observer = paused_chat_set_observer, .chat_set_archived = paused_chat_set_archived,
-    .chat_set_group = paused_chat_set_group, .chat_rename_group = paused_chat_rename_group, .chat_list = paused_chat_list, .chat_load = paused_chat_load,
+    .chat_set_group = paused_chat_set_group, .chat_rename_group = paused_chat_rename_group,
+    .chat_delete = paused_chat_delete, .chat_list = paused_chat_list, .chat_load = paused_chat_load,
     .observer_state_load = paused_observer_state_load, .observer_state_save = paused_observer_state_save,
     .observer_rules_get = paused_observer_rules_get, .observer_rules_set = paused_observer_rules_set
 };
@@ -656,6 +671,18 @@ bool project_store_chat_rename_group(StoreManager *manager, const char *project_
     int lock = begin_operation(manager, project_dir, &store);
     if (store.ops == &file_ops && lock < 0) return false;
     bool ok = store.ops->chat_rename_group(&store, from, to);
+    project_store_file_unlock(lock);
+    return ok;
+}
+
+bool project_store_chat_delete(StoreManager *manager, const char *project_dir, const char *id, ChatDeleteStats *out)
+{
+    if (out) memset(out, 0, sizeof(*out));
+    if (!project_dir || !project_dir[0]) return false;
+    ProjectStore store;
+    int lock = begin_operation(manager, project_dir, &store);
+    if (store.ops == &file_ops && lock < 0) return false;
+    bool ok = store.ops->chat_delete(&store, id, out);
     project_store_file_unlock(lock);
     return ok;
 }

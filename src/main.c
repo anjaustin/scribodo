@@ -1199,6 +1199,7 @@ static void frame_poll_workers(App *app)
     }
     history_poll(app);
     memory_tick(app);
+    chat_delete_tick(app);
     /* Changes made here mark the lists at once; this catches the rest
      * (files added in Finder, other windows). Store queries cost more
      * than a directory read, so they're polled less often. */
@@ -1214,14 +1215,17 @@ static bool frame_close_requested(App *app)
         /* Notes save themselves; uncommitted canon text counts as unsaved. */
         bool note_lost = record_view_active(app->record) && record_view_kind(app->record) == REC_NOTE &&
                          record_view_dirty(app->record) && !save_note(app);
-        bool unsaved = editor_is_dirty(app->editor) || record_unsaved_canon(app) || note_lost || unsaved_chat(app) || memory_controls_pending(app);
+        bool unsaved = editor_is_dirty(app->editor) || record_unsaved_canon(app) || note_lost || unsaved_chat(app) || memory_controls_pending(app) ||
+                       app->chat_delete_pending[0];
         if (!unsaved || (app->close_armed && GetTime() - app->close_armed_at < 5.0)) {
             return true;
         }
         glfwSetWindowShouldClose(GetWindowHandle(), 0);
         app->close_armed = true;
         app->close_armed_at = GetTime();
-        set_status(app, memory_controls_pending(app)
+        set_status(app, app->chat_delete_pending[0]
+            ? "A chat is still being deleted (memory is finishing with it); wait, or close again to keep it"
+            : memory_controls_pending(app)
             ? "Memory settings are not committed yet; wait, or close again to discard pending settings and other unsaved changes"
             : "Unsaved changes — save or copy what you need, or close again to discard");
     }
@@ -1427,6 +1431,8 @@ static void frame_explorer_menu(App *app, Vector2 mouse, bool modal)
                 items[n++] = chat->archived ? "Restore from archive" : "Archive";
                 app->chat_menu_group = n;
                 items[n++] = "Move to group\xE2\x80\xA6";
+                app->chat_menu_delete = n;
+                items[n++] = "Delete\xE2\x80\xA6";
                 snprintf(app->menu_chat, sizeof(app->menu_chat), "%s", chat->id);
                 menu_open(&app->menu, MT_CHAT, (int)i, mouse, items, n);
                 break;
@@ -1836,6 +1842,8 @@ static void frame_draw_overlays(App *app, MainLoop *loop, int empty_act, bool mo
         }
         /* Picks that open another menu run last: menu_open replaces the one being read. */
         bool move_menu = pick >= 0 && app->menu.tag == MT_CHAT && pick == app->chat_menu_group;
+        bool delete_menu = pick >= 0 && app->menu.tag == MT_CHAT && pick == app->chat_menu_delete;
+        if (pick == 0 && app->menu.tag == MT_CHAT_DELETE) request_chat_delete(app, app->menu_chat);
         Vector2 move_at = app->menu.at;
         if (pick >= 0 && app->menu.tag == MT_CHAT_GROUP) {
             if (pick < app->group_menu_count) set_chat_group(app, app->menu_chat, app->group_menu_names[pick]);
@@ -1875,6 +1883,14 @@ static void frame_draw_overlays(App *app, MainLoop *loop, int empty_act, bool mo
             else reveal_document(app, app->menu_doc);
         }
         if (move_menu) open_move_to_group_menu(app, move_at);
+        if (delete_menu) {
+            /* Confirmed by a second pick. The menu opens at the chat menu's corner, so its first item is not under the
+             * Delete… just clicked (a double-click cannot confirm). */
+            static const char *const confirm[] = { "Delete chat and what memory learned", "Cancel" };
+            menu_open(&app->menu, MT_CHAT_DELETE, 0, move_at, confirm, 2);
+            set_status(app, "Deleting removes this chat, what memory learned from it and the observer's findings from it; "
+                            "notes and canon you saved stay. It can't be undone.");
+        }
         /* Frosted glass behind a dialog (ui/backdrop.h): its snapshot goes when the last dialog closes. */
         if (!app->settings_open && !app->fonts_panel.open && !prompt_active(app->prompt) && !app->memory_sources_open)
             backdrop_release();

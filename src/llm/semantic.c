@@ -516,6 +516,17 @@ bool semantic_index_text(SemanticClient *client, const char *project_id, const c
     if (!strcmp(kind, "draft")) snprintf(key, sizeof(key), "doc:%s:%s", document_id ? document_id : "", h);
     else snprintf(key, sizeof(key), "chat:%s:%ld:%zu", conversation_id ? conversation_id : "", seq, start);
     if (marked(db, project_id, key, h)) return true;
+    /* A deleted chat's text is never indexed again (red team 2026-11-17): the chat must exist before the point is
+     * written, and if a delete committed meanwhile, its points go again. */
+    bool chat = strcmp(kind, "draft") != 0;
+    DbRows live;
+    if (chat) {
+        bool exists = conversation_id && db_query(db, "SELECT id FROM conversations WHERE id = ? AND project_id = ?",
+                                                  (DbArg[2]){ DB_S(conversation_id), DB_S(project_id) }, 2, &live);
+        bool present = exists && live.nrows == 1;
+        if (exists) db_rows_free(&live);
+        if (!present) return false;
+    }
     Pending p = { .text = text };
     snprintf(p.key, sizeof(p.key), "%s", key);
     snprintf(p.hash, sizeof(p.hash), "%s", h);
@@ -527,7 +538,19 @@ bool semantic_index_text(SemanticClient *client, const char *project_id, const c
     cJSON_AddNumberToObject(p.payload, "seq", (double)seq);
     cJSON_AddNumberToObject(p.payload, "start", (double)start);
     cJSON_AddNumberToObject(p.payload, "len", (double)len);
-    return upsert(client, db, project_id, &p, 1);
+    bool ok = upsert(client, db, project_id, &p, 1);
+    if (chat && db_query(db, "SELECT id FROM conversations WHERE id = ? AND project_id = ?",
+                         (DbArg[2]){ DB_S(conversation_id), DB_S(project_id) }, 2, &live)) {
+        bool gone = live.nrows == 0;
+        db_rows_free(&live);
+        if (gone) {
+            (void)semantic_forget_conversation(client, project_id, conversation_id);
+            db_run(db, "DELETE FROM semantic_marks WHERE project_id = ? AND point_key = ?",
+                   (DbArg[2]){ DB_S(project_id), DB_S(key) }, 2, NULL);
+            return false;
+        }
+    }
+    return ok;
 }
 
 bool semantic_prune_doc(SemanticClient *client, const char *project_id, const char *document_id, const char *const *piece_hashes, size_t n)
@@ -803,6 +826,79 @@ long semantic_rebuild(SemanticClient *client, const char *project_id, char *err,
     }
     set_rebuild_pending(db, project_id, false);
     return count;
+}
+
+static bool forget_id_ok(const char *id)
+{
+    size_t n = id ? strlen(id) : 0;
+    if (!n || n >= 41) return false;
+    for (size_t i = 0; i < n; i++)
+        if (!((id[i] >= '0' && id[i] <= '9') || (id[i] >= 'a' && id[i] <= 'z') || id[i] == '-')) return false;
+    return true;
+}
+
+bool semantic_forget_conversation(SemanticClient *client, const char *project_id, const char *conversation_id)
+{
+    char database[64] = "";
+    if (!client || !forget_id_ok(project_id) || !forget_id_ok(conversation_id) ||
+        !semantic_database(client, database, sizeof(database)))
+        return false;
+    cJSON *list = NULL;
+    if (!qdrant(client, "GET", "/collections", NULL, &list)) return false;
+    char legacy[160], memory[200];
+    snprintf(legacy, sizeof(legacy), "%s__%s", database, project_id);
+    snprintf(memory, sizeof(memory), "%s__%s__memory_v2__", database, project_id);
+    const cJSON *collections = cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(list, "result"), "collections");
+    bool ok = cJSON_IsArray(collections);
+    const cJSON *c;
+    cJSON_ArrayForEach(c, collections) {
+        const cJSON *name = cJSON_GetObjectItemCaseSensitive(c, "name");
+        if (!ok || !cJSON_IsString(name) || !name->valuestring) continue;
+        const char *nm = name->valuestring;
+        if (strcmp(nm, legacy) && strncmp(nm, memory, strlen(memory))) continue; /* another project's */
+        if (strlen(nm) > 200 || strspn(nm, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") != strlen(nm)) {
+            ok = false; /* this project's, but not a name to put in a path: not purged, so not reported purged */
+            continue;
+        }
+        char path[260];
+        snprintf(path, sizeof(path), "/collections/%s/points/delete?wait=true", nm);
+        cJSON *body = cJSON_CreateObject();
+        cJSON *must = body ? cJSON_AddArrayToObject(cJSON_AddObjectToObject(body, "filter"), "must") : NULL;
+        const char *keys[2] = { "project_id", "conversation_id" }, *values[2] = { project_id, conversation_id };
+        for (int k = 0; must && k < 2; k++) {
+            cJSON *m = cJSON_CreateObject();
+            cJSON_AddStringToObject(m, "key", keys[k]);
+            cJSON_AddStringToObject(cJSON_AddObjectToObject(m, "match"), "value", values[k]);
+            cJSON_AddItemToArray(must, m);
+        }
+        ok = must && qdrant(client, "POST", path, body, NULL);
+        cJSON_Delete(body);
+    }
+    cJSON_Delete(list);
+    return ok;
+}
+
+bool semantic_forget_pending(SemanticClient *client, Db *db, const char *project_id, size_t *left)
+{
+    if (left) *left = 0;
+    if (!client || !db || !project_id) return false;
+    DbRows r;
+    if (!db_query(db, "SELECT conversation_id FROM forgotten_conversations WHERE project_id = ? ORDER BY deleted_at",
+                  (DbArg[1]){ DB_S(project_id) }, 1, &r))
+        return false;
+    bool ok = db_rows_has_columns(&r, 1);
+    size_t stay = 0;
+    for (size_t i = 0; ok && i < r.nrows; i++) {
+        const char *cid;
+        if (!db_cell_text(&r, i, 0, &cid)) { ok = false; break; }
+        if (semantic_forget_conversation(client, project_id, cid))
+            ok = db_run(db, "DELETE FROM forgotten_conversations WHERE project_id = ? AND conversation_id = ?",
+                        (DbArg[2]){ DB_S(project_id), DB_S(cid) }, 2, NULL);
+        else stay++;
+    }
+    db_rows_free(&r);
+    if (left) *left = stay;
+    return ok && !stay;
 }
 
 bool semantic_forget_collection(SemanticClient *client, const char *project_id)

@@ -95,3 +95,18 @@ type "amber key"
 key ENTER
 wait_recall 1800
 expect recall "chat|Memory fixture|seq=0|author|start=0|"
+# Deleted (user request 2026-11-17): the open chat with memory on goes once memory lets go of it, with what memory
+# learned; recall then finds canon only, and the chat list is empty.
+right_click_element ChatItem0
+click_element MenuItem7
+click_element MenuItem0
+wait_status "Chat deleted" 3600
+expect status_not "removed later"
+expect explorer_not "Memory fixture"
+click_element RecallInput
+key A cmd
+type "amber key"
+key ENTER
+wait_recall 1800
+expect recall "canon|"
+expect recall_not "chat|"

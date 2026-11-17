@@ -1,0 +1,32 @@
+# Delete (user request 2026-11-17): Delete… asks once more; Cancel keeps the
+# chat; confirmed, it leaves the list. The open chat is closed first.
+open "$DIR/chapter.md"
+click_element ChatInput
+type "Ingrid rows across the fjord."
+key ENTER
+wait_chat
+click_element NewChatButton
+click_element ChatInput
+type "The lighthouse keeper waits."
+key ENTER
+wait_chat
+# Newest first: ChatItem0 is the open lighthouse chat, ChatItem1 Ingrid. Item 7 is Delete.
+right_click_element ChatItem1
+click_element MenuItem7
+expect status "It can't be undone"
+click_element MenuItem1
+expect explorer_has "Ingrid rows across the fjord."
+right_click_element ChatItem1
+click_element MenuItem7
+click_element MenuItem0
+expect status "Chat deleted"
+expect explorer_not "Ingrid rows across the fjord."
+expect explorer_has "The lighthouse keeper waits."
+expect chat_count 2
+# The open chat: the pane is cleared and the chat goes.
+right_click_element ChatItem0
+click_element MenuItem7
+click_element MenuItem0
+expect status "Chat deleted"
+expect chat_count 0
+expect explorer_not "The lighthouse keeper waits."

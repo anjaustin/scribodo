@@ -99,6 +99,7 @@ No REDTEAM-002 exists.
 | [020](REDTEAM-020-selection-tooling.md), [021](REDTEAM-021-verified-pipeline.md) | The selection-measurement tooling; the verified-answer pipeline |
 | [022](REDTEAM-022-end-to-end.md) | The whole product, end to end |
 | [023](REDTEAM-023-native-services-and-batch.md) | The native services and the micro-batch |
+| [024](REDTEAM-024-chat-lifecycle.md) | Archive, groups and delete for chats |
 
 ## Outside `docs/`
 

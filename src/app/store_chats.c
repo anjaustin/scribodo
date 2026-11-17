@@ -333,6 +333,111 @@ bool sdb_chat_rename_group(Db *db, const char *project_id, const char *from, con
            db_run(db, "UPDATE conversations SET chat_group = ? WHERE project_id = ? AND chat_group = ?", a, 3, &changed);
 }
 
+/* Ids as generated (chat_store_new_id) or rebased on import: digits, lowercase letters and '-'. Nothing a LIKE
+ * pattern could misread. */
+static bool chat_id_ok(const char *id)
+{
+    size_t n = id ? strlen(id) : 0;
+    if (!n || n >= 40) return false;
+    for (size_t i = 0; i < n; i++)
+        if (!((id[i] >= '0' && id[i] <= '9') || (id[i] >= 'a' && id[i] <= 'z') || id[i] == '-')) return false;
+    return true;
+}
+
+typedef struct {
+    char (*ids)[41];
+    size_t n;
+} IdList;
+
+static bool id_list_query(Db *db, const char *sql, const DbArg *args, size_t nargs, IdList *out)
+{
+    DbRows r;
+    if (!db_query(db, sql, args, nargs, &r)) return false;
+    bool ok = db_rows_has_columns(&r, 1);
+    char (*grown)[41] = ok && r.nrows ? realloc(out->ids, (out->n + r.nrows) * sizeof(*out->ids)) : out->ids;
+    if (r.nrows && !grown) ok = false;
+    else out->ids = grown;
+    for (size_t i = 0; ok && i < r.nrows; i++) {
+        const char *v;
+        ok = db_cell_text(&r, i, 0, &v) && strlen(v) < sizeof(out->ids[0]);
+        if (ok) snprintf(out->ids[out->n++], sizeof(out->ids[0]), "%s", v);
+    }
+    db_rows_free(&r);
+    return ok;
+}
+
+bool sdb_chat_delete(Db *db, const char *project_id, const char *id, ChatDeleteStats *out)
+{
+    if (out) memset(out, 0, sizeof(*out));
+    if (!db || !project_id || !chat_id_ok(id) || db_in_transaction(db) || !db_begin(db)) return false;
+    ChatDeleteStats st = {0};
+    DbArg pc[2] = { DB_S(project_id), DB_S(id) };
+    IdList found = {0}, findings = {0}, entities = {0};
+    bool ok = id_list_query(db, "SELECT id FROM conversations WHERE project_id = ? AND id = ? FOR UPDATE", pc, 2, &found) &&
+              found.n == 1;
+    uint64_t n = 0;
+    /* Memory, in the order memory_gc deletes it (brief inputs restrict their units), then its scopes. */
+    static const char *const memory[] = { "memory_brief_inputs", "memory_briefs", "memory_brief_state", "memory_outbox",
+                                          "memory_receipts", "memory_document_receipts", "memory_units" };
+    for (size_t i = 0; ok && i < sizeof(memory) / sizeof(memory[0]); i++) {
+        char sql[256];
+        snprintf(sql, sizeof(sql), "DELETE t FROM %s t JOIN memory_scopes s ON s.id = t.scope_id"
+                                   " WHERE s.project_id = ? AND s.conversation_id = ?", memory[i]);
+        ok = db_run(db, sql, pc, 2, &n);
+        st.memory_rows += n;
+    }
+    ok = ok && db_run(db, "DELETE FROM memory_scopes WHERE project_id = ? AND conversation_id = ?", pc, 2, &n);
+    st.memory_rows += ok ? n : 0;
+    /* Findings: their quotes of this chat go; one with no source left goes too, with what it made. */
+    ok = ok && id_list_query(db, "SELECT DISTINCT s.record_id FROM source_refs s JOIN records r ON r.id = s.record_id"
+                                 " WHERE r.project_id = ? AND r.kind = 'finding' AND s.kind = 'chat' AND s.conversation_id = ?",
+                             pc, 2, &findings);
+    ok = ok && db_run(db, "DELETE s FROM source_refs s JOIN records r ON r.id = s.record_id"
+                          " WHERE r.project_id = ? AND r.kind = 'finding' AND s.kind = 'chat' AND s.conversation_id = ?",
+                      pc, 2, &st.finding_sources);
+    for (size_t i = 0; ok && i < findings.n; i++) {
+        IdList left = {0};
+        DbArg f[1] = { DB_S(findings.ids[i]) };
+        ok = id_list_query(db, "SELECT CAST(COUNT(*) AS CHAR) FROM source_refs WHERE record_id = ?", f, 1, &left) && left.n == 1;
+        bool orphan = ok && !strcmp(left.ids[0], "0");
+        free(left.ids);
+        if (!orphan) continue;
+        DbArg fp[2] = { DB_S(findings.ids[i]), DB_S(project_id) };
+        ok = id_list_query(db, "SELECT entity_id FROM entity_mentions WHERE finding_id = ?", f, 1, &entities) &&
+             db_run(db, "DELETE FROM links WHERE finding_id = ? AND project_id = ?", fp, 2, NULL) &&
+             db_run(db, "DELETE FROM records WHERE id = ? AND project_id = ?", fp, 2, &n); /* versions, mentions cascade */
+        st.findings += ok ? n : 0;
+    }
+    for (size_t i = 0; ok && i < entities.n; i++) {
+        DbArg e[5] = { DB_S(entities.ids[i]), DB_S(project_id), DB_S(entities.ids[i]), DB_S(entities.ids[i]),
+                       DB_S(entities.ids[i]) };
+        ok = db_run(db, "DELETE FROM entities WHERE id = ? AND project_id = ?"
+                        " AND NOT EXISTS (SELECT 1 FROM entity_mentions WHERE entity_id = ?)"
+                        " AND NOT EXISTS (SELECT 1 FROM links WHERE from_entity = ? OR to_entity = ?)", e, 5, &n);
+        st.entities += ok ? n : 0;
+    }
+    char marks[64];
+    snprintf(marks, sizeof(marks), "chat:%s:%%", id);
+    ok = ok && db_run(db, "DELETE FROM conversation_titles WHERE conversation_id = ?", (DbArg[1]){ DB_S(id) }, 1, NULL) &&
+         db_run(db, "DELETE FROM semantic_marks WHERE project_id = ? AND point_key LIKE ?",
+                (DbArg[2]){ DB_S(project_id), DB_S(marks) }, 2, NULL) &&
+         db_run(db, "INSERT IGNORE INTO forgotten_conversations (project_id, conversation_id, deleted_at) VALUES (?,?,?)",
+                (DbArg[3]){ DB_S(project_id), DB_S(id), DB_D(now_s()) }, 3, NULL) &&
+         db_run(db, "DELETE FROM messages WHERE conversation_id = ?", (DbArg[1]){ DB_S(id) }, 1, &st.messages) &&
+         db_run(db, "DELETE FROM conversations WHERE project_id = ? AND id = ?", pc, 2, &n) && n == 1;
+    free(found.ids);
+    free(findings.ids);
+    free(entities.ids);
+    if (!ok) {
+        db_rollback(db);
+        return false;
+    }
+    if (!db_commit(db)) return false;
+    st.derived = true;
+    if (out) *out = st;
+    return true;
+}
+
 bool sdb_chat_rename(Db *db, const char *project_id, const char *id, const char *title)
 {
     /* The previous title is kept (delete nothing, only archive; red-team 2026-11-14): one transaction, the old

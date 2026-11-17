@@ -125,6 +125,12 @@ bool sdb_record_append(Db *db, const char *project_id, RecordKind kind, const ch
         records_append_mark_taken(true);
         return false;
     }
+    /* A finding's next version is of a finding that exists: one deleted with its chat while the observer re-checked
+     * it is not made again (red team 2026-11-17: a deleted chat's quote came back). */
+    if (ok && kind == REC_FINDING && mode == RECORD_APPEND_NEXT && inserted == 1) {
+        db_rollback(db);
+        return false;
+    }
     /* The record must be this project's and this kind (never an id from
      * elsewhere), and its row is locked so version numbers can't race. */
     DbRows r;
@@ -166,6 +172,9 @@ bool sdb_record_append(Db *db, const char *project_id, RecordKind kind, const ch
             if (exists(db, "SELECT id FROM revisions WHERE id = ? AND document_id = ?", s->revision, doc)) rev = s->revision;
         } else if (exists(db, "SELECT id FROM conversations WHERE id = ? AND project_id = ?", s->chat, project_id)) {
             conv = s->chat;
+        } else if (kind == REC_FINDING) {
+            ok = false; /* the observer's finding about a chat deleted meanwhile is not kept (red team 2026-11-17) */
+            break;
         }
         DbArg a[10] = { DB_S(id), DB_I(ver), DB_S(s->kind == SRC_DOC ? "doc" : "chat"), DB_S(nz(doc)), DB_S(rev),
                         DB_S(conv), DB_I(s->kind == SRC_CHAT ? s->message : 0), DB_I(s->start), DB_I(s->len),

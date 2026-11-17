@@ -1,6 +1,7 @@
 /* Chat: sending, replies done, history windows, attachments, names noticed in chat. Moved from src/main.c (AUDIT-004 F3). */
 #define _DARWIN_C_SOURCE
 #include "app/app_internal.h"
+#include "llm/memory_budget.h"
 
 static void names_check(App *app, size_t reply_index);
 
@@ -149,6 +150,83 @@ void open_move_to_group_menu(App *app, Vector2 at)
         items[n++] = "Remove from group";
     }
     menu_open(&app->menu, MT_CHAT_GROUP, 0, at, items, n);
+}
+
+void request_chat_delete(App *app, const char *id)
+{
+    if (app->chat_delete_pending[0]) { set_status(app, "Another chat is being deleted; try again in a moment"); return; }
+    if (!find_chat(app, id)) { set_status(app, "That chat is no longer in this project"); return; }
+    if (!strcmp(id, app->chat_id) && !strcmp(app->chat_project, app->project_dir)) {
+        /* The open chat: closed first, as New chat would, so nothing writes to it while it goes. */
+        if (chat_busy(app->chat)) { set_status(app, "Stop the reply before deleting this chat"); return; }
+        if (unsaved_chat(app)) { set_status(app, "This chat has unsaved messages; keep or discard them first"); return; }
+        if (app->history_pending) { set_status(app, "Wait for the history to load, then delete the chat"); return; }
+        cancel_history(app);
+        chat_clear(app->chat);
+        chat_view_history_changed(app->chat_view);
+        project_session_clear_chat(&app->session);
+        attach_reset(app);
+    }
+    snprintf(app->chat_delete_pending, sizeof(app->chat_delete_pending), "%s", id);
+    snprintf(app->chat_delete_project, sizeof(app->chat_delete_project), "%s", app->project_dir);
+    set_status(app, "Deleting the chat\xE2\x80\xA6");
+    chat_delete_tick(app);
+}
+
+/* Deleted chats' index points still listed (Qdrant was down at the delete): retried every five minutes, briefly. */
+static void forget_retry(App *app)
+{
+    if (GetTime() < app->chat_forget_retry_at) return;
+    app->chat_forget_retry_at = GetTime() + 300.0;
+    Db *db = app->semantic && app->project_dir[0] && store_online(app->store) ? store_db(app->store) : NULL;
+    StoreProjectIdentity identity;
+    if (!db || !store_project_identity(app->store, app->project_dir, &identity)) return;
+    SemanticClient *bounded = semantic_client_bounded(app->semantic, NULL, memory_budget_now_ms() + 1500);
+    size_t left = 0;
+    if (bounded) (void)semantic_forget_pending(bounded, db, identity.project_id, &left);
+    semantic_client_destroy(bounded);
+}
+
+void chat_delete_tick(App *app)
+{
+    if (!app->chat_delete_pending[0]) { forget_retry(app); return; }
+    if (strcmp(app->chat_delete_project, app->project_dir)) { /* the project changed: nothing was done */
+        app->chat_delete_pending[0] = '\0';
+        set_status(app, "The project changed; the chat was not deleted");
+        return;
+    }
+    /* Memory works only on the open chat: wait until it has let go of this one (no step or consent change running). */
+    if (app->memory_job && (memory_job_working(app->memory_job) || memory_controls_pending(app) ||
+                            !strcmp(app->memory_bound_chat, app->chat_delete_pending)))
+        return;
+    char id[40];
+    snprintf(id, sizeof(id), "%s", app->chat_delete_pending);
+    app->chat_delete_pending[0] = '\0';
+    ChatDeleteStats st;
+    if (!chat_store_delete(app->store, app->project_dir, id, &st)) {
+        set_status(app, store_says(app, "Couldn't delete that chat; nothing was changed"));
+        return;
+    }
+    /* Its points in the semantic index, now (briefly bounded); what fails stays listed and memory retries it. */
+    size_t left = 0;
+    Db *db = app->semantic ? store_db(app->store) : NULL;
+    SemanticClient *bounded = db ? semantic_client_bounded(app->semantic, NULL, memory_budget_now_ms() + 3000) : NULL;
+    if (bounded) {
+        StoreProjectIdentity identity;
+        if (store_project_identity(app->store, app->project_dir, &identity))
+            (void)semantic_forget_pending(bounded, db, identity.project_id, &left);
+        semantic_client_destroy(bounded);
+    }
+    char msg[240];
+    if (!st.derived) snprintf(msg, sizeof(msg), "Chat deleted (its file; without the project store there is no memory of it)");
+    else if (st.findings)
+        snprintf(msg, sizeof(msg), "Chat deleted, with what memory learned from it and %llu observer finding%s",
+                 (unsigned long long)st.findings, st.findings == 1 ? "" : "s");
+    else snprintf(msg, sizeof(msg), "Chat deleted, with what memory learned from it");
+    if (left) snprintf(msg + strlen(msg), sizeof(msg) - strlen(msg), "; its search entries are removed later");
+    set_status(app, msg);
+    app->lists_dirty = true;
+    refresh_findings(app);
 }
 
 /* After a reply: did the author's message before it say a name? Checked in
@@ -575,6 +653,10 @@ void page_chat(App *app, ChatPageAction action)
 
 void open_chat(App *app, const ChatSummary *c)
 {
+    if (app->chat_delete_pending[0] && !strcmp(c->id, app->chat_delete_pending)) {
+        set_status(app, "That chat is being deleted"); /* red team 2026-11-17: reopened, it was deleted later anyway */
+        return;
+    }
     if (chat_busy(app->chat)) {
         set_status(app, "Wait for the reply to finish (or press Stop)");
         return;

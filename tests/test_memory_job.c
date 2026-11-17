@@ -85,6 +85,9 @@ bool memory_vectors_create_on_db(SemanticClient *client, Db *db, const MemorySco
 SemanticClient *semantic_client_bounded(SemanticClient *client, atomic_bool *cancel, double deadline)
 { (void)cancel; (void)deadline; return client; }
 void semantic_client_destroy(SemanticClient *client) { (void)client; }
+static int forget_calls;
+bool semantic_forget_pending(SemanticClient *client, Db *db, const char *project_id, size_t *left)
+{ (void)client; (void)db; (void)project_id; forget_calls++; if (left) *left = 0; return true; }
 bool generative_gate_fence_valid(GenerativeGate *gate, uint64_t fence) { return gate && fence; }
 bool memory_brief_claim(Db *db, const MemoryScope *scope, const char *owner, MemoryBriefLease *out, bool *claimed)
 { (void)db; (void)scope; (void)owner; *out = (MemoryBriefLease){0}; *claimed = false; return true; }

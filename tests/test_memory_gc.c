@@ -2,6 +2,7 @@
 #define _DARWIN_C_SOURCE
 #include "app/memory_gc.h"
 #include "llm/memory_vectors.h"
+#include "app/store_backends.h"
 #include "test_util.h"
 #include <arpa/inet.h>
 #include <poll.h>
@@ -309,6 +310,121 @@ static void project_queue(void)
     CHECK(!db_in_transaction(db));
 }
 
+/* Deleting a chat forgets what memory and the observer derived from it (user request 2026-11-17), in one
+ * transaction: every memory row in the order brief inputs allow, the findings only it sourced with their links,
+ * mentions and the entities nothing else names; never another chat's rows, the author's note, or a finding's other
+ * source. */
+static uint64_t gone_rows(void)
+{
+    return scalar("SELECT (SELECT COUNT(*) FROM memory_units WHERE conversation_id='cd-gone')"
+                  "+(SELECT COUNT(*) FROM memory_outbox o JOIN memory_scopes s ON s.id=o.scope_id WHERE s.conversation_id='cd-gone')"
+                  "+(SELECT COUNT(*) FROM memory_receipts WHERE conversation_id='cd-gone')"
+                  "+(SELECT COUNT(*) FROM memory_document_receipts WHERE conversation_id='cd-gone')"
+                  "+(SELECT COUNT(*) FROM memory_briefs WHERE conversation_id='cd-gone')"
+                  "+(SELECT COUNT(*) FROM memory_brief_inputs WHERE scope_id='cd-s')"
+                  "+(SELECT COUNT(*) FROM memory_brief_state WHERE scope_id='cd-s')"
+                  "+(SELECT COUNT(*) FROM memory_scopes WHERE conversation_id='cd-gone')"
+                  "+(SELECT COUNT(*) FROM memory_gc_scopes WHERE conversation_id='cd-gone')");
+}
+
+static void chat_delete_forgets(void)
+{
+    run("INSERT INTO projects(id,name,path,path_hash,created_at,updated_at) VALUES('cd','cd','/cd','cd',1,1)");
+    run("INSERT INTO conversations(id,project_id,title,created_at,updated_at) VALUES"
+        " ('cd-gone','cd','gone',1,1),('cd-kept','cd','kept',1,1)");
+    run("INSERT INTO conversation_titles(conversation_id,title,replaced_at) VALUES('cd-gone','older title',1)");
+    run("INSERT INTO memory_scopes(id,project_id,conversation_id,enabled,generation) VALUES('cd-s','cd','cd-gone',1,1),"
+        " ('cd-k','cd','cd-kept',1,1)");
+    run("INSERT INTO memory_gc_scopes(scope_id,project_id,conversation_id) VALUES('cd-s','cd','cd-gone')");
+    run("INSERT INTO messages(conversation_id,seq,role,content,created_at) SELECT 'cd-gone',seq,'user','secret',1 FROM seq_0_to_9");
+    run("INSERT INTO messages(conversation_id,seq,role,content,created_at) VALUES('cd-kept',0,'user','kept',1)");
+    const char *scopes[2][3] = { { "cd-s", "cd-gone", "g" }, { "cd-k", "cd-kept", "k" } };
+    for (int k = 0; k < 2; k++) {
+        char sql[1200];
+        snprintf(sql, sizeof(sql), "INSERT INTO memory_units(id,scope_id,project_id,conversation_id,message_id,sequence,history_epoch,"
+            "policy_epoch,generation,byte_start,source_hash,text_hash,text,tokens,tokenizer,role)"
+            " SELECT SHA2(CONCAT('cd-%s-',seq),256),'%s','cd','%s',id,seq,1,1,1,0,source_hash,SHA2('t',256),'secret',1,'test','user'"
+            " FROM messages WHERE conversation_id='%s'", scopes[k][2], scopes[k][0], scopes[k][1], scopes[k][1]);
+        run(sql);
+        snprintf(sql, sizeof(sql), "INSERT INTO memory_outbox(scope_id,unit_id,generation) SELECT scope_id,id,generation"
+            " FROM memory_units WHERE scope_id='%s'", scopes[k][0]);
+        run(sql);
+    }
+    run("INSERT INTO memory_receipts(scope_id,project_id,conversation_id,message_id,generation,sequence,source_hash,byte_offset,complete,eligible)"
+        " SELECT 'cd-s','cd','cd-gone',id,1,seq,source_hash,6,1,1 FROM messages WHERE conversation_id='cd-gone'");
+    run("INSERT INTO documents(id,project_id,name,created_at) VALUES('cd-d','cd','book.md',1)");
+    run("INSERT INTO revisions(id,document_id,hash,content,origin,created_at) VALUES('cd-r','cd-d','h','the book','save',1)");
+    run("INSERT INTO memory_document_receipts(scope_id,project_id,conversation_id,generation,document_id,revision_id,source_hash,source_bytes)"
+        " SELECT 'cd-s','cd','cd-gone',1,'cd-d','cd-r',source_hash,OCTET_LENGTH(content) FROM revisions WHERE id='cd-r'");
+    run("INSERT INTO memory_briefs(id,scope_id,project_id,conversation_id,history_epoch,policy_epoch,generation,"
+        "begin_sequence,begin_byte,end_sequence,end_byte,previous_sequence,previous_byte_end,input_digest,tokenizer,"
+        "model_fingerprint,prompt_schema,summary_json,summary_tokens,input_count)"
+        " SELECT SHA2(CONCAT('cd-brief-',seq),256),'cd-s','cd','cd-gone',1,1,1,seq,0,seq,6,-1,0,"
+        " SHA2('input',256),'test','test-model','test-v1','{}',1,1 FROM seq_1_to_5");
+    run("INSERT INTO memory_brief_inputs(brief_id,ordinal,unit_id,scope_id,generation,source_hash,text_hash)"
+        " SELECT SHA2(CONCAT('cd-brief-',m.seq),256),1,u.id,u.scope_id,u.generation,u.source_hash,u.text_hash"
+        " FROM messages m JOIN memory_units u ON u.message_id=m.id WHERE u.scope_id='cd-s' AND m.seq BETWEEN 1 AND 5");
+    run("INSERT INTO memory_brief_state(scope_id,generation) VALUES('cd-s',1)");
+    /* f1: only this chat; f2: this chat and the book; f3: the other chat; n1: the author's note quoting this chat. */
+    run("INSERT INTO records(id,project_id,kind,created_at) VALUES('cd-f1','cd','finding',1),('cd-f2','cd','finding',1),"
+        " ('cd-f3','cd','finding',1),('cd-n1','cd','note',1)");
+    run("INSERT INTO record_versions(record_id,ver,status,content,created_at) VALUES('cd-f1',1,'new','x',1),"
+        " ('cd-f2',1,'new','x',1),('cd-f3',1,'new','x',1),('cd-n1',1,'active','my note',1)");
+    run("INSERT INTO source_refs(record_id,ver,kind,document_id,conversation_id,message_seq,start,len,quote) VALUES"
+        " ('cd-f1',1,'chat',NULL,'cd-gone',0,0,6,'secret'),('cd-f2',1,'chat',NULL,'cd-gone',1,0,6,'secret'),"
+        " ('cd-f2',1,'doc','cd-d',NULL,NULL,0,4,'the '),('cd-f3',1,'chat',NULL,'cd-kept',0,0,4,'kept'),"
+        " ('cd-n1',1,'chat',NULL,'cd-gone',2,0,6,'secret')");
+    run("INSERT INTO entities(id,project_id,name,norm_name,type) VALUES('cd-e1','cd','Only','only','entity'),"
+        " ('cd-e2','cd','Shared','shared','entity'),('cd-e3','cd','Linked','linked','entity')");
+    run("INSERT INTO entity_mentions(entity_id,finding_id) VALUES('cd-e1','cd-f1'),('cd-e2','cd-f1'),('cd-e2','cd-f3'),"
+        " ('cd-e3','cd-f1')");
+    run("INSERT INTO links(project_id,from_entity,relation,to_entity,finding_id) VALUES('cd','cd-e1','knows','cd-e2','cd-f1'),"
+        " ('cd','cd-e3','owns','cd-e2','cd-f3')");
+    run("INSERT INTO semantic_marks(project_id,point_key,content_hash) VALUES('cd','chat:cd-gone:0:0','h'),"
+        " ('cd','chat:cd-kept:0:0','h')");
+    CHECK(gone_rows() > 30);
+    uint64_t kept_units = scalar("SELECT COUNT(*) FROM memory_units WHERE conversation_id='cd-kept'");
+
+    ChatDeleteStats st;
+    CHECK(!sdb_chat_delete(db, "cd", "cd-missing", &st) && !st.messages);
+    CHECK(!sdb_chat_delete(db, "p", "cd-gone", &st));                  /* another project's id: nothing */
+    CHECK(!sdb_chat_delete(db, "cd", "cd-gone%", &st) && !sdb_chat_delete(db, "cd", "CD-GONE", &st));
+    CHECK(scalar("SELECT COUNT(*) FROM conversations WHERE id='cd-gone'") == 1);
+    CHECK(sdb_chat_delete(db, "cd", "cd-gone", &st));
+    CHECK(st.messages == 10 && st.findings == 1 && st.finding_sources == 2 && st.entities == 1 && st.memory_rows > 30);
+    CHECK(!db_in_transaction(db));
+    CHECK(gone_rows() == 0);
+    CHECK(scalar("SELECT COUNT(*) FROM messages WHERE conversation_id='cd-gone'") == 0);
+    CHECK(scalar("SELECT COUNT(*) FROM conversations WHERE id='cd-gone'") == 0);
+    CHECK(scalar("SELECT COUNT(*) FROM conversation_titles WHERE conversation_id='cd-gone'") == 0);
+    CHECK(scalar("SELECT COUNT(*) FROM semantic_marks WHERE project_id='cd'") == 1); /* the other chat's mark stays */
+    CHECK(scalar("SELECT COUNT(*) FROM forgotten_conversations WHERE project_id='cd' AND conversation_id='cd-gone'") == 1);
+    /* f1 gone with its link; f2 keeps its book quote only; f3 and the note stay, the note without its chat. */
+    CHECK(scalar("SELECT COUNT(*) FROM records WHERE id='cd-f1'") == 0);
+    CHECK(scalar("SELECT COUNT(*) FROM source_refs WHERE record_id='cd-f2'") == 1);
+    CHECK(scalar("SELECT COUNT(*) FROM source_refs WHERE record_id='cd-f2' AND kind='doc'") == 1);
+    CHECK(scalar("SELECT COUNT(*) FROM records WHERE id IN ('cd-f2','cd-f3','cd-n1')") == 3);
+    CHECK(scalar("SELECT COUNT(*) FROM source_refs WHERE record_id='cd-n1' AND conversation_id IS NULL AND quote='secret'") == 1);
+    CHECK(scalar("SELECT COUNT(*) FROM links WHERE project_id='cd'") == 1);
+    /* e1 named by nothing now; e2 still by f3; e3 still in a link. */
+    CHECK(scalar("SELECT COUNT(*) FROM entities WHERE id='cd-e1'") == 0);
+    CHECK(scalar("SELECT COUNT(*) FROM entities WHERE id IN ('cd-e2','cd-e3')") == 2);
+    CHECK(scalar("SELECT COUNT(*) FROM memory_units WHERE conversation_id='cd-kept'") == kept_units && kept_units == 1);
+    CHECK(scalar("SELECT COUNT(*) FROM messages WHERE conversation_id='cd-kept'") == 1);
+    CHECK(!sdb_chat_delete(db, "cd", "cd-gone", &st)); /* once */
+    /* The observer, mid-job when the chat went (red team 2026-11-17): its finding about the chat, or the next version
+     * of a finding deleted with it, is not made again. The author's note is kept, without the chat. */
+    SourceRef src = { .kind = SRC_CHAT, .message = 0, .start = 0, .len = 6, .quote = "secret" };
+    snprintf(src.chat, sizeof(src.chat), "cd-gone");
+    CHECK(!sdb_record_append(db, "cd", REC_FINDING, "cd-f9", "new", "x", &src, 1, NULL, RECORD_APPEND_FRESH, NULL));
+    CHECK(!sdb_record_append(db, "cd", REC_FINDING, "cd-f1", "dismissed", "x", NULL, 0, NULL, RECORD_APPEND_NEXT, NULL));
+    CHECK(scalar("SELECT COUNT(*) FROM records WHERE id IN ('cd-f1','cd-f9')") == 0);
+    CHECK(sdb_record_append(db, "cd", REC_FINDING, "cd-f3", "dismissed", "x", NULL, 0, NULL, RECORD_APPEND_NEXT, NULL));
+    CHECK(sdb_record_append(db, "cd", REC_NOTE, "cd-n2", "active", "kept", &src, 1, NULL, RECORD_APPEND_FRESH, NULL));
+    CHECK(scalar("SELECT COUNT(*) FROM source_refs WHERE record_id='cd-n2' AND conversation_id IS NULL") == 1);
+    CHECK(!db_in_transaction(db));
+}
+
 typedef struct {
     atomic_bool started;
     bool ok;
@@ -570,8 +686,9 @@ int main(void)
                                 {"floor-safe scope admission",floor_admission},
                                 {"project-wide disabled-scope maintenance",project_queue},
                                  {"project maintenance generation race",project_generation_race},
-                                 {"namespace cleanup without surviving scopes",orphaned_namespace_jobs}};
-        result=run_tests(tests,6);
+                                 {"namespace cleanup without surviving scopes",orphaned_namespace_jobs},
+                                 {"chat delete forgets what was derived",chat_delete_forgets}};
+        result=run_tests(tests,7);
         const TestCase race_tests[] = {{"late creator postcheck", late_creator}};
         if (run_tests(race_tests, 1)) result = 1;
     } else fprintf(stderr,"%s\n",err);

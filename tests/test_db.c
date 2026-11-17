@@ -543,10 +543,12 @@ static void test_backends(void)
         store_new_id('f', ofid2, sizeof(ofid2));
         SourceRef cs = { .kind = SRC_CHAT, .message = 0, .start = 0, .len = 3, .quote = "com" };
         snprintf(cs.chat, sizeof(cs.chat), "20261104-150000-abcd"); /* pid's chat */
-        CHECK(sdb_record_append(db, other, REC_FINDING, ofid2, "new", "Elsewhere.", &cs, 1, NULL, true, NULL));
+        /* A finding about a chat not in its project (another's, or one deleted meanwhile) is refused, never linked
+         * elsewhere (red team 2026-11-17; it was kept with no chat, quote included). */
+        CHECK(!sdb_record_append(db, other, REC_FINDING, ofid2, "new", "Elsewhere.", &cs, 1, NULL, true, NULL));
         DbRows cr;
-        CHECK(db_query(db, "SELECT conversation_id FROM source_refs WHERE record_id = ?", (DbArg[1]){ DB_S(ofid2) }, 1, &cr) &&
-              cr.nrows == 1 && db_cell(&cr, 0, 0) == NULL);
+        CHECK(db_query(db, "SELECT COUNT(*) FROM records WHERE id = ?", (DbArg[1]){ DB_S(ofid2) }, 1, &cr) &&
+              cr.nrows == 1 && !strcmp(db_cell(&cr, 0, 0), "0"));
         db_rows_free(&cr);
     }
     ChatMessage *msgs = NULL;
@@ -1622,6 +1624,37 @@ static void test_semantic(void)
           !strcmp(db_cell(&r, 0, 0), "0"));
     db_rows_free(&r);
     llm_server_destroy(down);
+    /* A deleted chat's points go (user request 2026-11-17): by conversation, now or from the pending list. */
+    ChatMessage fm = { .role = CHAT_USER, .content = "ferry" };
+    CHECK(sdb_chat_append(db, pid, "20261117-100000-aaaa", "Ferry", &fm) && sdb_chat_append(db, pid, "20261117-100000-bbbb", "Ferry", &fm));
+    CHECK(semantic_index_text(semantic, pid, "chat", NULL, NULL, "20261117-100000-aaaa", 0, 0, 30, "The ferry leaves at dawn for Sula."));
+    CHECK(semantic_index_text(semantic, pid, "chat", NULL, NULL, "20261117-100000-bbbb", 0, 0, 30, "The ferry leaves at dusk for Sula."));
+    n = semantic_search(semantic, pid, "ferry to Sula", "chat", 5, &h);
+    CHECK(n == 2);
+    semantic_hits_free(h, n);
+    CHECK(!semantic_forget_conversation(semantic, pid, "20261117-100000-aaaa%")); /* never a pattern */
+    CHECK(semantic_forget_conversation(semantic, pid, "20261117-100000-aaaa"));
+    n = semantic_search(semantic, pid, "ferry to Sula", "chat", 5, &h);
+    CHECK(n == 1 && !strcmp(h[0].conversation_id, "20261117-100000-bbbb"));
+    semantic_hits_free(h, n);
+    n = semantic_canon_for(semantic, pid, "Zoë's brown eyes narrowed.", 3, &h);
+    CHECK(n >= 1); /* nothing else went */
+    semantic_hits_free(h, n);
+    CHECK(db_run(db, "INSERT INTO forgotten_conversations (project_id, conversation_id, deleted_at) VALUES (?,?,1)",
+                 (DbArg[2]){ DB_S(pid), DB_S("20261117-100000-bbbb") }, 2, NULL));
+    size_t left = 9;
+    CHECK(semantic_forget_pending(semantic, db, pid, &left) && left == 0);
+    n = semantic_search(semantic, pid, "ferry to Sula", "chat", 5, &h);
+    CHECK(n == 0);
+    semantic_hits_free(h, n);
+    CHECK(db_query(db, "SELECT COUNT(*) FROM forgotten_conversations WHERE project_id = ?", (DbArg[1]){ DB_S(pid) }, 1, &r) &&
+          !strcmp(db_cell(&r, 0, 0), "0"));
+    db_rows_free(&r);
+    /* A chat that does not exist (deleted while the observer read it) is never indexed (red team 2026-11-17). */
+    CHECK(!semantic_index_text(semantic, pid, "chat", NULL, NULL, "20261117-100000-cccc", 1, 0, 30, "The ferry leaves at noon."));
+    n = semantic_search(semantic, pid, "ferry to Sula", "chat", 5, &h);
+    CHECK(n == 0);
+    semantic_hits_free(h, n);
     semantic_drop(semantic, pid);
     semantic_client_destroy(semantic);
     store_stop(g_store);

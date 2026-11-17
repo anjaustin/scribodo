@@ -93,7 +93,7 @@ enum { FOCUS_NONE, FOCUS_DOC, FOCUS_CHAT, FOCUS_RECORD, FOCUS_RECALL };
 enum { DRAG_NONE, DRAG_EXPLORER, DRAG_OBSERVER, DRAG_CHAT };
 enum { PT_NEW_DOC = 1, PT_RENAME_DOC, PT_RENAME_CHAT, PT_ATTACH_NAME, PT_NAME_AUTHOR, PT_NAME_ASSISTANT, PT_NEW_GROUP,
        PT_RENAME_GROUP };  /* what the name prompt is for */
-enum { MT_DOC = 1, MT_CHAT, MT_ATTACH, MT_MODEL, MT_APP, MT_CHAT_GROUP, MT_GROUP };  /* what a context menu is for */
+enum { MT_DOC = 1, MT_CHAT, MT_ATTACH, MT_MODEL, MT_APP, MT_CHAT_GROUP, MT_GROUP, MT_CHAT_DELETE };  /* what a context menu is for */
 #define MAX_ATTACH CHAT_CONTROLLER_MAX_ATTACH
 
 #define COL_BG THEME_CLAY(THEME_BG)
@@ -320,11 +320,15 @@ typedef struct {
     bool chats_archived_open; /* the Explorer's Archived chats are shown (closed when the app starts) */
     int chat_menu_archive;    /* the chat menu's Archive / Restore item (after the memory items, which tests pin) */
     int chat_menu_group;      /* ...and its Move to group item */
+    int chat_menu_delete;     /* ...and its Delete item */
+    /* A confirmed delete waits here until memory has let go of the chat (chat_delete_tick). */
+    char chat_delete_pending[40], chat_delete_project[PATH_MAX];
+    double chat_forget_retry_at; /* GetTime() of the next retry of deleted chats' index points */
     /* The Move to group menu: its groups by item, then New group and (when grouped) Remove from group. */
     char group_menu_names[12][48];
     int group_menu_count, group_menu_new, group_menu_remove;
     /* Groups whose chats the Explorer hides (by name; open unless listed here). */
-    char chat_groups_closed[16][48];
+    char chat_groups_closed[64][48];
     int nchat_groups_closed;
     /* The chat model's settings, and the panel that edits them. */
     ModelSettings model, model_edit;
@@ -525,6 +529,10 @@ bool rename_chat_group(App *app, const char *from, const char *to, char *why, si
 bool chat_group_closed(const App *app, const char *group);
 void chat_group_toggle(App *app, const char *group);
 void open_move_to_group_menu(App *app, Vector2 at);
+/* Delete a chat (user request 2026-11-17): the open one is closed first; the delete runs once memory has let go. */
+void request_chat_delete(App *app, const char *id);
+void chat_delete_tick(App *app);
+bool memory_controls_pending(App *app);
 void names_poll(App *app);
 void names_answer(App *app, bool save);
 void on_message_done(ChatSession *s, size_t index, void *ctx);

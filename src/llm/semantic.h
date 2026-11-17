@@ -88,4 +88,12 @@ bool semantic_drop(SemanticClient *client, const char *project_id);
  * database or a wiped Qdrant would. The next sync rebuilds the index. */
 bool semantic_forget_collection(SemanticClient *client, const char *project_id);
 
+/* A deleted chat's points (user request 2026-11-17): every point whose payload names this project and conversation,
+ * in the project's legacy collection and in each of its memory collections (any embedding, any generation). Missing
+ * collections are already clean. */
+bool semantic_forget_conversation(SemanticClient *client, const char *project_id, const char *conversation_id);
+/* Each chat listed in forgotten_conversations for the project (sdb_chat_delete) whose points are removed is taken off
+ * the list. `left`: how many stay listed (a failure is retried on a later call). */
+bool semantic_forget_pending(SemanticClient *client, Db *db, const char *project_id, size_t *left);
+
 #endif

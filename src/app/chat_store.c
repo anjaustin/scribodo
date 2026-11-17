@@ -166,9 +166,16 @@ static bool append_setting_line(const char *project_dir, const char *id, cJSON *
     bool ok = j && path_for(project_dir, id, path, sizeof(path)) && cJSON_AddNumberToObject(j, "ts", (double)time(NULL));
     int fd = ok ? open(path, O_RDWR | O_APPEND) : -1; /* only stored chats: never created here */
     struct stat st;
-    ok = fd >= 0 && fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && ensure_trailing_newline(fd) && write_line(fd, j) &&
-         fsync(fd) == 0;
-    if (ok) {
+    ok = fd >= 0 && fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && ensure_trailing_newline(fd);
+    off_t before = ok ? lseek(fd, 0, SEEK_END) : -1;
+    ok = ok && write_line(fd, j) && fsync(fd) == 0;
+    char *line = ok ? cJSON_PrintUnformatted(j) : NULL;
+    struct stat now;
+    /* Only when the file holds exactly what it did plus this line: a message another process appended meanwhile
+     * keeps the time it gave the file (red team 2026-11-17). */
+    bool alone = line && fstat(fd, &now) == 0 && before >= 0 && now.st_size == before + (off_t)strlen(line) + 1;
+    free(line);
+    if (ok && alone) {
         struct timespec times[2] = { st.st_atimespec, st.st_mtimespec };
         (void)futimens(fd, times); /* best effort: a failure only reorders the list */
     }
@@ -675,6 +682,24 @@ bool chat_store_set_observer(StoreManager *manager, const char *project_dir, con
 bool chat_store_set_archived(StoreManager *manager, const char *project_dir, const char *id, bool archived)
 {
     return project_store_chat_set_archived(manager, project_dir, id, archived);
+}
+
+bool chat_store_delete_files(const char *project_dir, const char *id, ChatDeleteStats *out)
+{
+    if (out) memset(out, 0, sizeof(*out));
+    char path[1200];
+    if (!path_for(project_dir, id, path, sizeof(path))) return false;
+    ChatMessage *msgs = NULL;
+    size_t n = 0;
+    if (chat_store_load_path(path, &msgs, &n)) chat_store_free_messages(msgs, n);
+    if (unlink(path) != 0) return false;
+    if (out) out->messages = n;
+    return true;
+}
+
+bool chat_store_delete(StoreManager *manager, const char *project_dir, const char *id, ChatDeleteStats *out)
+{
+    return project_store_chat_delete(manager, project_dir, id, out);
 }
 
 bool chat_store_set_group(StoreManager *manager, const char *project_dir, const char *id, const char *group)

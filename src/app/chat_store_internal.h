@@ -26,6 +26,7 @@ bool chat_store_load_path(const char *path, ChatMessage **messages, size_t *coun
 bool chat_store_set_observer_files(const char *project_dir, const char *id, bool read);
 bool chat_store_set_archived_files(const char *project_dir, const char *id, bool archived);
 bool chat_store_set_group_files(const char *project_dir, const char *id, const char *group);
+bool chat_store_delete_files(const char *project_dir, const char *id, ChatDeleteStats *out);
 bool chat_store_rename_group_files(const char *project_dir, const char *from, const char *to);
 size_t chat_store_list_files(const char *project_dir, ChatSummary **out);
 bool chat_store_list_files_checked(const char *project_dir, ChatSummary **out, size_t *count);
