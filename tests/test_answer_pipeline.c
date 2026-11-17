@@ -109,7 +109,8 @@ static void test_extraction_request_and_parse(void)
     CHECK(cJSON_IsFalse(cJSON_GetObjectItem(j, "stream")));
     CHECK(cJSON_GetObjectItem(j, "temperature")->valuedouble == 0);
     CHECK(cJSON_GetObjectItem(j, "max_tokens")->valuedouble == 256);
-    CHECK(cJSON_GetObjectItem(j, "id_slot")->valuedouble == 0);
+    /* The observer's slot: on the chat's, each extraction overwrote the conversation's cache (2026-11-16). */
+    CHECK(cJSON_GetObjectItem(j, "id_slot")->valuedouble == 1);
     CHECK(cJSON_IsFalse(cJSON_GetObjectItem(j, "cache_prompt")));
     CHECK(cJSON_IsFalse(cJSON_GetObjectItem(cJSON_GetObjectItem(j, "chat_template_kwargs"), "enable_thinking")));
     const cJSON *format = cJSON_GetObjectItem(j, "response_format");

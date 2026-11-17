@@ -14,6 +14,10 @@
 #include "llm/llm_text.h"
 #include "llm/memory_budget.h"
 #include "llm/memory_vectors.h"
+/* The observer's slot, not the chat's: the chat waits for these extractions (and a send cancels the observer), and on
+ * the chat's slot each one overwrote the conversation's cache, so the next turn read its whole prompt again. */
+#define ANSWER_SLOT 1
+
 
 #define EXTRACT_HTTP_TIMEOUT_MS 60000
 
@@ -263,7 +267,7 @@ char *answer_extraction_request(const char *question, const char *unit_text)
     if (ok) { ok = cJSON_AddItemToArray(messages, turn); if (ok) turn = NULL; }
     if (ok) { ok = cJSON_AddItemToObject(root, "messages", messages); if (ok) messages = NULL; }
     if (ok) ok = cJSON_AddBoolToObject(root, "stream", false) && cJSON_AddNumberToObject(root, "max_tokens", 256) &&
-                 cJSON_AddNumberToObject(root, "temperature", 0) && cJSON_AddNumberToObject(root, "id_slot", 0) &&
+                 cJSON_AddNumberToObject(root, "temperature", 0) && cJSON_AddNumberToObject(root, "id_slot", ANSWER_SLOT) &&
                  cJSON_AddBoolToObject(root, "cache_prompt", false);
     const char *seed = getenv("SCRIBODO_SEED");
     if (ok && seed && seed[0]) ok = cJSON_AddNumberToObject(root, "seed", atoi(seed)) != NULL;
@@ -359,7 +363,7 @@ char *answer_claim_request(const char *question, const char *reply)
     if (ok) { ok = cJSON_AddItemToArray(messages, turn); if (ok) turn = NULL; }
     if (ok) { ok = cJSON_AddItemToObject(root, "messages", messages); if (ok) messages = NULL; }
     if (ok) ok = cJSON_AddBoolToObject(root, "stream", false) && cJSON_AddNumberToObject(root, "max_tokens", 96) &&
-                 cJSON_AddNumberToObject(root, "temperature", 0) && cJSON_AddNumberToObject(root, "id_slot", 0) &&
+                 cJSON_AddNumberToObject(root, "temperature", 0) && cJSON_AddNumberToObject(root, "id_slot", ANSWER_SLOT) &&
                  cJSON_AddBoolToObject(root, "cache_prompt", false);
     const char *seed = getenv("SCRIBODO_SEED");
     if (ok && seed && seed[0]) ok = cJSON_AddNumberToObject(root, "seed", atoi(seed)) != NULL;

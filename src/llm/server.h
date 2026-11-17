@@ -37,6 +37,8 @@ typedef struct {
     int ctx_train;          /* the model's trained context, from its file (0: unknown); a slot's ceiling */
     bool keep_resident;     /* chat: pin the weights in RAM (--load-mode mmap+mlock) */
     int slots;              /* -np */
+    int reserve;            /* >0: one KV pool shared by the slots (-kvu), ctx_total = the conversation's context + this
+                             * room for the other slot's work (the observer); 0: -c split evenly across the slots */
     int batch;              /* -b and -ub */
     bool embedding;         /* an embedding server (Qwen3-Embedding), not the chat model */
     bool rerank;            /* the cross-encoder (Qwen3-Reranker), scored through /completion */
@@ -81,8 +83,10 @@ LlmState llm_server_state(LlmServer *s, char *msg, size_t msglen);
  * malformed or silent. Only the header is read, with every length bounded. */
 int llm_model_context_length(const char *path);
 
-/* Context available to one request: -c is split evenly across slots. */
+/* Context available to one conversation: the pool less the reserve (shared pool), or -c split evenly across slots. */
 int llm_server_slot_ctx(LlmServer *s);
+/* The -c that gives each conversation `slot_ctx` tokens under `cfg`'s layout (for memory estimates). */
+int llm_server_pool_ctx(const LlmServerConfig *cfg, int slot_ctx);
 /* Change the context per conversation (each slot), restarting the server
  * (same object: chat and observer keep their pointer). False if out of
  * range (below 2048, or above the model's trained context when known).

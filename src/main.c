@@ -783,8 +783,7 @@ static void draw_model_settings(App *app, Rectangle screen)
     float by = p.y + h - 48;
     if (app->llm) { /* the memory readout for the context being chosen */
         const LlmServerConfig *cfg = llm_server_config(app->llm);
-        int slots = cfg->slots > 0 ? cfg->slots : 1;
-        long long need = llm_server_mem_need(cfg, app->model_edit.context * slots);
+        long long need = llm_server_mem_need(cfg, llm_server_pool_ctx(cfg, app->model_edit.context));
         long long room = app->mem_for_model - MEMFIT_HEADROOM;
         char a[32], b[32], line[200];
         memfit_gb(need, a, sizeof(a));

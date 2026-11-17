@@ -203,6 +203,27 @@ Measured on this Mac with `--swa-full`: prefill runs at about 900 tokens a secon
 attention is off, so attention cost grows with the prompt); generation stays near 20 tokens a second at 30K. Planted
 facts at 10, 50 and 90% of a 30K prompt were all recalled.
 
+## One pool for chat and observer (2026-11-16)
+
+`-np 2 -kvu -c <context + 8192>`: one KV pool both slots draw from, instead of `-c` split evenly, so the conversation's
+context is paid for once. The observer's requests are bounded (a passage of at most 3,000 bytes, a statement of at most
+2,400, at most 1,400 tokens out), so 8K covers them beside a full conversation.
+
+| Context per conversation | Two equal slots | One pool + 8K |
+|---|---|---|
+| 32K | 1.75 GB (`-c 65536`) | 1.3 GB (`-c 40960`) |
+| 128K | about 7 GB | 4.4 GB (`-c 139264`) |
+
+The attention scratch is then sized for one sequence the length of the pool: 33.4 KiB a token by llama.cpp's projection
+at 40,960 cells, 33.1 at 139,264, so the fit uses 34 over the pool (`llm_server_pool_ctx`). Output is unchanged: 480
+greedy steps over 20 captured requests, every top-10 probability identical to the two-slot layout. Turns resume from the
+cache as before (0.1 s), and an observer request on slot 1 leaves the chat's cache in place.
+
+**If the pool fills**, llama.cpp purges the idle slot's cache and continues (measured on a 16K pool: nothing fails; the
+chat then reads its prompt once more). **Every request names its slot:** the chat 0; the observer, name detection,
+memory briefs and the verified-answer pipeline's extractions 1. The observer named none and the pipeline used 0, so
+either could overwrite the conversation's cache and make the next turn read its whole prompt again.
+
 ## Keeping the model in memory (2026-11-16)
 
 `--load-mode mmap+mlock` when the author's **Keep the model in memory** is on (the default): the weights are pinned, and

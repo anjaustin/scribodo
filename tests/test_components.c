@@ -333,13 +333,19 @@ static void test_memfit(void)
     LlmServerConfig cfg;
     llm_server_default_config(&cfg, "");
     snprintf(cfg.model_path, sizeof(cfg.model_path), "%s", path);
-    /* file + fixed + per token x ctx_total (two slots of 32K) */
-    long long at32 = llm_server_mem_need(&cfg, 65536);
-    CHECK(at32 == 3000 * MiB + cfg.mem_fixed + (long long)cfg.mem_per_token * 65536);
-    /* The measured LFM3 numbers at the chat server's micro-batch of 128 with --swa-full (KV + Metal compute + CPU
-     * compute at 64K cells: 1408 + 294.5 + 37 MiB allocated, 74 by llama.cpp's projection, 2026-11-16) are covered by
-     * the per-token cost alone, projection included, and the micro-batch is the one measured. */
-    CHECK((long long)cfg.mem_per_token * 65536 >= (1408 + 295 + 74) * MiB);
+    /* One pool (-kvu): a conversation's context plus the observer's reserve; two equal slots without a reserve. */
+    CHECK(cfg.reserve == 8192 && llm_server_pool_ctx(&cfg, 32768) == 40960 && cfg.ctx_total == 40960);
+    LlmServerConfig split = cfg;
+    split.reserve = 0;
+    CHECK(llm_server_pool_ctx(&split, 32768) == 65536);
+    /* file + fixed + per token x the pool */
+    long long at32 = llm_server_mem_need(&cfg, llm_server_pool_ctx(&cfg, 32768));
+    CHECK(at32 == 3000 * MiB + cfg.mem_fixed + (long long)cfg.mem_per_token * 40960);
+    /* The measured LFM3 numbers at the chat server's micro-batch of 128, --swa-full, one pool (KV + Metal compute + CPU
+     * compute at 40,960 cells: 880 + 366.5 + 45 MiB allocated, 90 by llama.cpp's projection; 2,992 + 1,230.5 + 282 at
+     * 139,264; 2026-11-16) are covered by the per-token cost alone, projection included. */
+    CHECK((long long)cfg.mem_per_token * 40960 >= (880 + 367 + 90) * MiB);
+    CHECK((long long)cfg.mem_per_token * 139264 >= (2992 + 1231 + 282) * MiB);
     CHECK(cfg.batch == 128);
     long long other = 2000 * MiB;
     /* Plenty: the author's context. */
@@ -352,7 +358,7 @@ static void test_memfit(void)
     m = memfit_context(at32 + other + MEMFIT_HEADROOM - 1, other, &cfg, 32768, 8192, 8192);
     CHECK(m.slot_ctx == 24576 && m.reduced && !m.short_even_min && m.need_wanted == at32);
     /* Only the smallest fits. */
-    long long at8 = llm_server_mem_need(&cfg, 16384);
+    long long at8 = llm_server_mem_need(&cfg, llm_server_pool_ctx(&cfg, 8192));
     m = memfit_context(at8 + other + MEMFIT_HEADROOM, other, &cfg, 32768, 8192, 8192);
     CHECK(m.slot_ctx == 8192 && m.reduced && !m.short_even_min);
     /* Not even that: the smallest, flagged. */
@@ -361,7 +367,7 @@ static void test_memfit(void)
     m = memfit_context(0, 0, &cfg, 16384, 8192, 8192);
     CHECK(m.slot_ctx == 8192 && m.short_even_min && m.reduced);
     /* A minimum off the step grid is still tried. */
-    m = memfit_context(llm_server_mem_need(&cfg, 2 * 5000) + MEMFIT_HEADROOM, 0, &cfg, 32768, 5000, 8192);
+    m = memfit_context(llm_server_mem_need(&cfg, llm_server_pool_ctx(&cfg, 5000)) + MEMFIT_HEADROOM, 0, &cfg, 32768, 5000, 8192);
     CHECK(m.slot_ctx == 5000 && !m.short_even_min);
     /* The embedding server: a fixed context, so a fixed cost. */
     LlmServerConfig e;

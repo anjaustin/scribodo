@@ -94,6 +94,9 @@ static char *complete(ObserverModel *model, const char *system, const char *user
     cJSON_AddBoolToObject(root, "stream", false);
     cJSON_AddNumberToObject(root, "max_tokens", max_tokens);
     cJSON_AddNumberToObject(root, "temperature", 0.0);
+    /* Slot 1, the observer's: without it llama.cpp may choose the chat's slot 0 and overwrite the conversation's cache,
+     * and the next turn would read its whole prompt again. */
+    cJSON_AddNumberToObject(root, "id_slot", 1);
     cJSON *rf = cJSON_AddObjectToObject(root, "response_format");
     cJSON_AddStringToObject(rf, "type", "json_schema");
     cJSON *js = cJSON_AddObjectToObject(rf, "json_schema");

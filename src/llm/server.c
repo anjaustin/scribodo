@@ -248,10 +248,17 @@ void llm_server_default_config(LlmServerConfig *c, const char *app_dir)
         snprintf(c->log_path, sizeof(c->log_path), "%s/Library/Logs/Scribodo/llama-server.log", home);
         snprintf(c->cache_path, sizeof(c->cache_path), "%s/Library/Application Support/Scribodo/model-verified.txt", home);
     }
-    /* 32K context per slot, 2 slots (chat + observer): see MODEL-001 "Memory" and "Chat and observer together".
-     * -b and -ub 128 since 2026-11-14 (256 before; the measurement is in the comment below). */
-    c->ctx_total = 65536;
+    /* 32K context per conversation, 2 slots (chat + observer): see MODEL-001 "Memory" and "Chat and observer
+     * together". -b and -ub 128 since 2026-11-14 (256 before; the measurement is in the comment below).
+     *
+     * One pool since 2026-11-16 (-kvu): the conversation's context plus 8K for the observer, instead of two equal
+     * slots, so a large context is paid for once (128K: 4.4 GB against about 7). The observer's requests are bounded
+     * (a passage of at most 3,000 bytes, a statement of at most 2,400, up to 1,400 tokens out), and the verified-answer
+     * pipeline's extractions use the same slot while the chat waits for them. If the pool ever fills, llama.cpp purges
+     * the idle slot's cache and goes on (measured): nothing fails, the chat reads its prompt again once. */
     c->slots = 2;
+    c->reserve = 8192;
+    c->ctx_total = 32768 + c->reserve;
     c->batch = 128;
     /* llama-server's memory at -c 65536 (two slots at 32K), measured 2026-11-14 by tools/model_batch_compare.py: KV
      * 779 MiB, 12.2 KiB per token (6 attention layers, BF16); the attention-score scratch with flash attention off
@@ -270,9 +277,13 @@ void llm_server_default_config(LlmServerConfig *c, const char *app_dir)
      * every turn, 16 s, and 0.2 s with the flag). Measured at -c 65536: KV 768 + 640 MiB, Metal compute 294.5, CPU 37
      * (74 by the projection), 27.8 KiB a token by the projection, so 28. It keeps the BF16 contract; masked positions in
      * a longer row change the summation order (50 captured requests replayed: no top-10 probability moved more than
-     * 1.2 points; one greedy flip, at a 24.6/24.4% tie), as the micro-batch did. MODEL-001 "Prompt reuse". */
+     * 1.2 points; one greedy flip, at a 24.6/24.4% tie), as the micro-batch did. MODEL-001 "Prompt reuse".
+     *
+     * With the pool (-kvu) the attention scratch is sized for one sequence as long as the whole pool: measured at
+     * -c 40960, KV 480 + 400 MiB, Metal compute 366.5, CPU 45 (90 by the projection), 33.4 KiB a token; at 139264,
+     * 33.1. So 34, counted over the pool (llm_server_pool_ctx). */
     c->mem_fixed = 384LL * 1024 * 1024;
-    c->mem_per_token = 28 * 1024;
+    c->mem_per_token = 34 * 1024;
 }
 
 LlmServer *llm_server_create(const LlmServerConfig *cfg)
@@ -500,6 +511,7 @@ static bool spawn_server(LlmServer *s)
         s->cfg.server_bin, "-m", s->cfg.model_path, "--host", s->sock, "--api-key-file", s->keyfile,
         "-ngl", "99", "-fa", "off", "-ctk", "bf16", "-ctv", "bf16", "--jinja",
         "--reasoning-format", "deepseek", "-np", np, "-c", ctx, "-b", batch, "-ub", batch, "--swa-full",
+        s->cfg.reserve > 0 ? "-kvu" : "-no-kvu",
         "--load-mode", s->cfg.keep_resident ? "mmap+mlock" : "auto",
         "--cache-ram", "0", "--no-webui", "--no-slots", NULL,
     };
@@ -699,11 +711,11 @@ const char *llm_server_socket(LlmServer *s) { return s->sock; }
 
 bool llm_server_reconfigure(LlmServer *s, int slot_ctx, bool keep_resident)
 {
-    int slots = s->cfg.slots > 0 ? s->cfg.slots : 1;
     if (slot_ctx < 2048 || (s->cfg.ctx_train > 0 && slot_ctx > s->cfg.ctx_train)) return false;
-    if (s->cfg.ctx_total == slot_ctx * slots && s->cfg.keep_resident == keep_resident) return true;
+    int pool = llm_server_pool_ctx(&s->cfg, slot_ctx);
+    if (s->cfg.ctx_total == pool && s->cfg.keep_resident == keep_resident) return true;
     llm_server_stop(s);
-    s->cfg.ctx_total = slot_ctx * slots;
+    s->cfg.ctx_total = pool;
     s->cfg.keep_resident = keep_resident;
     llm_server_start(s);
     return true;
@@ -723,7 +735,15 @@ const LlmServerConfig *llm_server_config(LlmServer *s) { return &s->cfg; }
 int llm_server_slot_ctx(LlmServer *s)
 {
     int slots = s->cfg.slots > 0 ? s->cfg.slots : 1;
-    return s->cfg.ctx_total > 0 ? s->cfg.ctx_total / slots : 32768;
+    if (s->cfg.ctx_total <= 0) return 32768;
+    if (s->cfg.reserve > 0) return s->cfg.ctx_total > s->cfg.reserve ? s->cfg.ctx_total - s->cfg.reserve : s->cfg.ctx_total;
+    return s->cfg.ctx_total / slots;
+}
+
+int llm_server_pool_ctx(const LlmServerConfig *cfg, int slot_ctx)
+{
+    int slots = cfg->slots > 0 ? cfg->slots : 1;
+    return cfg->reserve > 0 ? slot_ctx + cfg->reserve : slot_ctx * slots;
 }
 const char *llm_server_key(LlmServer *s) { return s->key; }
 

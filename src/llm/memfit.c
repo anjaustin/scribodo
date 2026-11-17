@@ -39,15 +39,14 @@ long long sysmem_available(void)
 MemFit memfit_context(long long avail, long long other, const LlmServerConfig *cfg, int wanted, int min, int step)
 {
     MemFit f = { 0 };
-    int slots = cfg->slots > 0 ? cfg->slots : 1;
     if (step <= 0) step = 1;
     if (min > wanted) min = wanted;
     f.avail = avail;
-    f.need_wanted = llm_server_mem_need(cfg, wanted * slots);
+    f.need_wanted = llm_server_mem_need(cfg, llm_server_pool_ctx(cfg, wanted));
     long long budget = avail - other - MEMFIT_HEADROOM;
     f.room = budget > 0 ? budget : 0;
     for (int c = wanted;; c = c - step > min ? c - step : min) {
-        long long need = llm_server_mem_need(cfg, c * slots);
+        long long need = llm_server_mem_need(cfg, llm_server_pool_ctx(cfg, c));
         if (need <= budget) {
             f.slot_ctx = c;
             f.need = need;
@@ -57,7 +56,7 @@ MemFit memfit_context(long long avail, long long other, const LlmServerConfig *c
         if (c <= min) break;
     }
     f.slot_ctx = min;
-    f.need = llm_server_mem_need(cfg, min * slots);
+    f.need = llm_server_mem_need(cfg, llm_server_pool_ctx(cfg, min));
     f.reduced = min < wanted;
     f.short_even_min = true;
     return f;

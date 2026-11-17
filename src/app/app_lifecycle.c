@@ -325,7 +325,7 @@ int app_start_models(App *app, const char *script_path)
         MemFit fit = memfit_context(sysmem_available(), others, &cfg, app->model.context, (int)ci->min, (int)ci->step);
         memfit_message(&fit, app->model.context, app->mem_msg, sizeof(app->mem_msg));
         if (app->mem_msg[0]) fprintf(stderr, "scribodo: %s\n", app->mem_msg);
-        cfg.ctx_total = fit.slot_ctx * (cfg.slots > 0 ? cfg.slots : 1);
+        cfg.ctx_total = llm_server_pool_ctx(&cfg, fit.slot_ctx);
         cfg.keep_resident = app->model.keep_in_memory != 0;
         app->llm = llm_server_create(&cfg);
         if (app->llm) llm_server_start(app->llm);
