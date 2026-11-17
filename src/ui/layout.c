@@ -6,6 +6,7 @@
 
 static Clay_String cstr(FrameViewModel *frame, const char *s);
 static void section_header(App *app, const char *s, int icon);
+static void pane_header(App *app, const char *s, int icon);
 static void list_item(App *app, Clay_ElementId id, const char *s, bool active);
 static void coming_soon(App *app, const char *s);
 static void splitter(Clay_ElementId id, bool active);
@@ -38,8 +39,9 @@ void label(App *app, const char *s, int font, Clay_Color color)
                                          .wrapMode = CLAY_TEXT_WRAP_NONE }));
 }
 
-/* A section's name with its symbol (ui/icons.h; -1: none), in the muted colour. */
-static void section_header(App *app, const char *s, int icon)
+/* A section's name with its symbol (ui/icons.h; -1: none), in the muted colour: the sidebar's (stronger on the glass)
+ * or, in the opaque side panes, the ordinary one. */
+static void header_in(App *app, const char *s, int icon, Clay_Color ink)
 {
     CLAY({ .layout = { .padding = { 0, 0, 10, 4 }, .childGap = 6, .childAlignment = { .y = CLAY_ALIGN_Y_CENTER } } }) {
         const Texture2D *t = icon >= 0 ? icon_texture((IconId)icon) : NULL;
@@ -51,15 +53,24 @@ static void section_header(App *app, const char *s, int icon)
             CLAY({ .layout = { .sizing = { CLAY_SIZING_FIXED(cell), CLAY_SIZING_FIT(0) },
                                .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER } } }) {
                 CLAY({ .layout = { .sizing = { CLAY_SIZING_FIXED(fminf(roundf(sz.x * k), cell)), CLAY_SIZING_FIXED(roundf(sz.y * k)) } },
-                       .image = { .imageData = (void *)t }, .backgroundColor = COL_SIDE_MUTED }) {}
+                       .image = { .imageData = (void *)t }, .backgroundColor = ink }) {}
             }
         }
-        label(app, s, FONT_UI, COL_SIDE_MUTED);
+        label(app, s, FONT_UI, ink);
     }
 }
 
+static void section_header(App *app, const char *s, int icon) { header_in(app, s, icon, COL_SIDE_MUTED); }
+static void pane_header(App *app, const char *s, int icon) { header_in(app, s, icon, COL_MUTED); }
+
 /* A clickable list row. */
-static void list_item(App *app, Clay_ElementId id, const char *s, bool active)
+static void row_in(App *app, Clay_ElementId id, const char *s, bool active, Clay_Color ink);
+static void list_item(App *app, Clay_ElementId id, const char *s, bool active) { row_in(app, id, s, active, COL_SIDE_MUTED); }
+
+/* A clickable row in an opaque side pane (the ordinary muted colour, whatever the sidebar's glass). */
+static void pane_item(App *app, Clay_ElementId id, const char *s) { row_in(app, id, s, false, COL_MUTED); }
+
+static void row_in(App *app, Clay_ElementId id, const char *s, bool active, Clay_Color ink)
 {
     bool hover = Clay_PointerOver(id);
     CLAY({ .id = id,
@@ -70,7 +81,7 @@ static void list_item(App *app, Clay_ElementId id, const char *s, bool active)
            .cornerRadius = CLAY_CORNER_RADIUS(4) }) {
         /* Clipped by the Explorer itself: a clip on every row made each a
          * Clay scroll container and overflowed Clay's limit (red-team 005). */
-        label(app, s, FONT_UI, active ? COL_TEXT : COL_SIDE_MUTED);
+        label(app, s, FONT_UI, active ? COL_TEXT : ink);
     }
 }
 
@@ -377,7 +388,7 @@ static void layout_side_panel(App *app)
                            .padding = CLAY_PADDING_ALL(12), .childGap = 8,
                            .layoutDirection = CLAY_TOP_TO_BOTTOM },
                .backgroundColor = COL_PANEL, .clip = { .horizontal = true, .vertical = true } }) {
-            section_header(app, "RECALL", ICON_RECALL);
+            pane_header(app, "RECALL", ICON_RECALL);
             label(app, "Your committed canon and verified original text", FONT_UI, COL_DIM);
             CLAY({ .id = CLAY_ID("RecallBody"),
                    .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } } }) {}
@@ -389,10 +400,10 @@ static void layout_side_panel(App *app)
                            .padding = CLAY_PADDING_ALL(12), .childGap = 8,
                            .layoutDirection = CLAY_TOP_TO_BOTTOM },
                .backgroundColor = COL_PANEL, .clip = { .horizontal = true, .vertical = true } }) {
-            section_header(app, "OBSERVER", ICON_OBSERVER);
+            pane_header(app, "OBSERVER", ICON_OBSERVER);
             label(app, app->observer_label, FONT_UI, COL_DIM);
             if (app->store_inspection.capabilities & PROJECT_STORE_CAP_SEMANTIC)
-                list_item(app, CLAY_ID("RebuildIndex"), "Rebuild the index", false);
+                pane_item(app, CLAY_ID("RebuildIndex"), "Rebuild the index");
             CLAY({ .id = CLAY_ID("Findings"),
                    .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } } }) {}
         }

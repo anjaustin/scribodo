@@ -76,8 +76,8 @@ class ThemeContrastTests(unittest.TestCase):
         failures = []
         for name, pal in palettes().items():
             # What the sidebar draws with the glass on (ui/theme.h THEME_SIDE_*, theme_glass_ink), each at its level.
-            drawn = {"interface text (and secondary, one step up)": (pal["text"], 4.5),
-                     "placeholders (secondary colour)": (pal["text_muted"], 3.0)}
+            drawn = {"interface text (and secondary, one step up)": (pal["text"], 5.9),
+                     "placeholders and disabled controls (secondary colour)": (pal["text_muted"], 3.0)}
             for role, need in (("err", 4.5), ("link", 4.5), ("ok", 3.0), ("warn", 3.0)):
                 drawn[f"{role} label"] = (ink(pal[role], pal["text"]), need)
             for desk in ("FFFFFF", "000000"):  # the composite is monotone in the desktop: these are the worst cases

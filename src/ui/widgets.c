@@ -132,7 +132,8 @@ static bool draw_button(Rectangle r, const char *label, const SFont *f, WidgetKi
     bool held = false;
     bool clicked = press_rule(r, label, enabled, &held);
 
-    Color fill = BLANK, text = enabled ? THEME_TEXT : THEME_TEXT_DIM;
+    /* Disabled: the placeholder colour, one step up on the sidebar's glass (ui/theme.h THEME_SIDE_DIM). */
+    Color fill = BLANK, text = enabled ? THEME_TEXT : THEME_SIDE_DIM;
     switch (kind) {
     case WIDGET_PRIMARY:
         fill = enabled ? THEME_ACCENT : THEME_CARD;

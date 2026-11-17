@@ -186,7 +186,7 @@ static BOOL never_moves_window(id self, SEL cmd)
     return NO;
 }
 
-bool mac_window_vibrancy(void *nswindow, bool on, bool dark)
+bool mac_window_vibrancy(void *nswindow, bool on, bool dark, float bg_r, float bg_g, float bg_b)
 {
     id win = (id)nswindow;
     if (!win || !answers(win, "setContentView:") || !cls("NSVisualEffectView")) return false;
@@ -198,16 +198,21 @@ bool mac_window_vibrancy(void *nswindow, bool on, bool dark)
     }
     /* Only a change does anything: the Appearance panel applies the look every frame while it is open. */
     static int last_on = -1, last_dark = -1;
-    if (last_on == (int)on && last_dark == (int)dark) return g_effect != nil || !on;
-    last_on = on, last_dark = dark;
+    static float last_bg[3] = { -1, -1, -1 };
+    if (last_on == (int)on && last_dark == (int)dark && last_bg[0] == bg_r && last_bg[1] == bg_g && last_bg[2] == bg_b)
+        return g_effect != nil || !on;
+    last_on = on, last_dark = dark, last_bg[0] = bg_r, last_bg[1] = bg_g, last_bg[2] = bg_b;
     /* Opaque unless the glass is on: an opaque window composites as before, with the window's own background behind
      * anything not yet drawn (a live resize, the full-screen animation) instead of GLFW's clear one, and keeps its
      * shadow, which GLFW drops for a transparent window (red team); with the glass on the shadow is recomputed. */
     ((void (*)(id, SEL, BOOL))objc_msgSend)(win, SEL_("setOpaque:"), on ? NO : YES);
     id color_class = cls("NSColor");
-    const char *bg = on ? "clearColor" : "windowBackgroundColor";
-    if (answers(color_class, bg) && answers(win, "setBackgroundColor:"))
-        ((void (*)(id, SEL, id))objc_msgSend)(win, SEL_("setBackgroundColor:"), send_id(color_class, bg));
+    id bg = nil;
+    if (on && answers(color_class, "clearColor")) bg = send_id(color_class, "clearColor");
+    else if (!on && answers(color_class, "colorWithSRGBRed:green:blue:alpha:")) /* the palette's page, not the system's grey */
+        bg = ((id(*)(id, SEL, double, double, double, double))objc_msgSend)(color_class, SEL_("colorWithSRGBRed:green:blue:alpha:"),
+                                                                          (double)bg_r, (double)bg_g, (double)bg_b, 1.0);
+    if (bg && answers(win, "setBackgroundColor:")) ((void (*)(id, SEL, id))objc_msgSend)(win, SEL_("setBackgroundColor:"), bg);
     ((void (*)(id, SEL, BOOL))objc_msgSend)(win, SEL_("setHasShadow:"), YES);
     if (answers(win, "invalidateShadow")) ((void (*)(id, SEL))objc_msgSend)(win, SEL_("invalidateShadow"));
     if (!g_effect) {
