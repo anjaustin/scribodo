@@ -1169,16 +1169,18 @@ static void frame_left_click(App *app, Vector2 mouse, bool modal, bool trace)
      * system setting says; a press starts the system's own window drag. */
     if (!modal && app->unified_titlebar && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && toolbar_empty()) {
         double now = GetTime();
-        if (app->toolbar_click_t > 0 && now - app->toolbar_click_t < mac_window_double_click_interval()) {
+        Vector2 at = GetWindowPosition();
+        /* A second press soon after, with the window where it was at the first: a double-click. The system's drag runs
+         * in the window server and returns at once, so a drag shows only as the window having moved by the second press
+         * (red team: a before-and-after check never saw it). */
+        bool same_place = at.x == app->toolbar_click_pos.x && at.y == app->toolbar_click_pos.y;
+        if (app->toolbar_click_t > 0 && now - app->toolbar_click_t < mac_window_double_click_interval() && same_place) {
             app->toolbar_click_t = 0;
             mac_window_title_double_click(GetWindowHandle());
         } else {
-            Vector2 before = GetWindowPosition();
-            bool dragged = mac_window_begin_drag(GetWindowHandle());
-            Vector2 after = GetWindowPosition();
-            /* A click that left the window where it was can be the first of a double-click; a drag cannot. */
-            bool moved = before.x != after.x || before.y != after.y;
-            app->toolbar_click_t = dragged && !moved ? now : 0;
+            app->toolbar_click_t = now;
+            app->toolbar_click_pos = at;
+            mac_window_begin_drag(GetWindowHandle());
         }
         return;
     }
@@ -1688,6 +1690,7 @@ static void frame_draw_overlays(App *app, MainLoop *loop, int empty_act, bool mo
     if (!modal && empty_act) empty_action(app, empty_act, loop->sample);
     {
         Rectangle screen = { 0, 0, (float)GetScreenWidth(), (float)GetScreenHeight() };
+        if (app->menu.active) backdrop_defer(); /* a dialog a pick opens must not frost this menu into its backdrop */
         int pick = menu_draw(&app->menu, &app->fonts[FONT_UI], screen);
         if (pick >= 0 && app->menu.tag == MT_ATTACH && pick < MENU_MAX_ITEMS && !app->menu_names[pick][0]) {
             snprintf(app->prompt_project, sizeof(app->prompt_project), "%s", app->project_dir);

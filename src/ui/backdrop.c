@@ -34,7 +34,8 @@ static int g_w, g_h; /* the window's render size the snapshot was taken at */
 /* Frames, so a snapshot is never taken in the frame that asked for it: that frame may still show the menu that opened
  * the dialog, or text laid out with the font being replaced (red team). */
 static unsigned long g_frame;
-static long g_wanted_at = -1; /* the frame a fresh snapshot was asked for; -1: none pending */
+static long g_wanted_at = -1; /* a fresh snapshot is wanted; -1: none pending */
+static unsigned long g_blocked_at; /* the last frame a snapshot must not be taken in (a menu drawn, an appearance change) */
 
 void backdrop_frame_begin(void) { g_frame++; }
 
@@ -56,7 +57,10 @@ void backdrop_release(void)
 void backdrop_invalidate(void)
 {
     if (g_wanted_at < 0) g_wanted_at = (long)g_frame;
+    g_blocked_at = g_frame;
 }
+
+void backdrop_defer(void) { g_blocked_at = g_frame; }
 
 static void blur_pass(RenderTexture2D src, RenderTexture2D dst, float dx, float dy)
 {
@@ -112,7 +116,7 @@ void backdrop_draw(Rectangle screen)
     }
     if (g_ready && (g_w != GetRenderWidth() || g_h != GetRenderHeight())) unload(); /* resized */
     if (!g_ready && g_wanted_at < 0) g_wanted_at = (long)g_frame;
-    if (g_shader_ok && g_wanted_at >= 0 && (long)g_frame > g_wanted_at) { /* a later frame than the one that asked */
+    if (g_shader_ok && g_wanted_at >= 0 && g_frame != g_blocked_at) { /* never in a frame that holds a menu or old text */
         unload();
         if (capture()) g_wanted_at = -1;
     }
@@ -123,6 +127,10 @@ void backdrop_draw(Rectangle screen)
         veil.a = (unsigned char)(veil.a * 0.55f); /* the blur does most of the separating; a lighter veil keeps colour */
         DrawRectangleRec(screen, veil);
     } else {
-        DrawRectangleRec(screen, THEME_SCRIM);
+        /* No snapshot this frame (it was deferred, or there is no shader): the veil alone, as light as the frosted one's
+         * when one is coming, so the frame before it does not flash darker. */
+        Color veil = THEME_SCRIM;
+        if (g_shader_ok) veil.a = (unsigned char)(veil.a * 0.55f);
+        DrawRectangleRec(screen, veil);
     }
 }

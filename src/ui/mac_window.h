@@ -14,8 +14,9 @@
 /* Unifies the title bar with a toolbar `toolbar_h` points tall. False (and nothing changed) when the handle is not a
  * window that answers the calls used. */
 bool mac_window_unify(void *nswindow, float toolbar_h);
-/* Keeps the traffic lights centred in the toolbar where the title bar has another height (a macOS without toolbar
- * styles): moved vertically only, and only when off by more than a point. A no-op otherwise. */
+/* Once a frame: hides the toolbar in full screen (AppKit would lift it into a window over the app's toolbar band) and
+ * shows it again outside; and keeps the traffic lights centred where the title bar has another height (a macOS without
+ * toolbar styles), moved vertically only and only when off by more than a point. */
 void mac_window_place_buttons(void *nswindow, float toolbar_h);
 /* Where the app's toolbar content may start, in points: right of the zoom button as AppKit placed it. 0 when not
  * unified or in full screen (the buttons are not in the window then). */

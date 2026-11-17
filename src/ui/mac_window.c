@@ -31,6 +31,9 @@ typedef struct { MwPoint origin; MwSize size; } MwRect;
 
 static bool g_unified;
 static float g_toolbar_h;
+/* The last left press in this app, from a local event monitor: the event the system's drag must start from. The event
+ * in hand at frame time is whatever came last in the poll (a drag, or on a Force Touch trackpad a pressure event). */
+static id g_last_down;
 
 static bool answers(id o, const char *sel) { return o && class_respondsToSelector(object_getClass(o), SEL_(sel)); }
 static id send_id(id o, const char *sel) { return ((id(*)(id, SEL))objc_msgSend)(o, SEL_(sel)); }
@@ -72,6 +75,17 @@ bool mac_window_unify(void *nswindow, float toolbar_h)
             ((void (*)(id, SEL))objc_msgSend)(tb, SEL_("release")); /* the window holds it */
         }
     }
+    id event_class = cls("NSEvent");
+    if (answers(event_class, "addLocalMonitorForEventsMatchingMask:handler:")) {
+        id (^keep)(id) = ^id(id ev) {
+            if (g_last_down) ((void (*)(id, SEL))objc_msgSend)(g_last_down, SEL_("release"));
+            g_last_down = ev ? ((id(*)(id, SEL))objc_msgSend)(ev, SEL_("retain")) : nil;
+            return ev;
+        };
+        const unsigned long long left_mouse_down_mask = 1ULL << NS_LEFT_MOUSE_DOWN;
+        (void)((id(*)(id, SEL, unsigned long long, id))objc_msgSend)(event_class, SEL_("addLocalMonitorForEventsMatchingMask:handler:"),
+                                                                     left_mouse_down_mask, (id)keep);
+    }
     g_unified = true;
     g_toolbar_h = toolbar_h;
     return true;
@@ -79,10 +93,19 @@ bool mac_window_unify(void *nswindow, float toolbar_h)
 
 void mac_window_place_buttons(void *nswindow, float toolbar_h)
 {
+    /* In full screen AppKit lifts the toolbar into a window of its own over the app's toolbar band, which would take
+     * its clicks (red team): the toolbar is hidden there and shown again on the way out. */
+    id win = (id)nswindow;
+    if (!g_unified || !win) return;
+    id tb = answers(win, "toolbar") ? send_id(win, "toolbar") : nil;
+    if (answers(tb, "isVisible")) {
+        bool want = !full_screen(win);
+        if ((bool)((BOOL(*)(id, SEL))objc_msgSend)(tb, SEL_("isVisible")) != want)
+            ((void (*)(id, SEL, BOOL))objc_msgSend)(tb, SEL_("setVisible:"), want ? YES : NO);
+    }
+    if (full_screen(win)) return;
     /* With the compact toolbar AppKit centres the buttons itself; only a title bar of another height (an older macOS
      * without toolbar styles) needs them moved, and then only vertically. */
-    id win = (id)nswindow;
-    if (!g_unified || !win || full_screen(win)) return;
     for (unsigned long i = 0; i < 3; i++) {
         id b = window_button(win, i);
         if (!answers(b, "setFrameOrigin:")) continue;
@@ -116,13 +139,18 @@ bool mac_window_begin_drag(void *nswindow)
     id win = (id)nswindow;
     if (!g_unified || !answers(win, "performWindowDragWithEvent:")) return false;
     id app = send_id(cls("NSApplication"), "sharedApplication");
-    id ev = answers(app, "currentEvent") ? send_id(app, "currentEvent") : nil;
-    if (!answers(ev, "type") || !answers(ev, "window")) return false;
-    /* The event in hand is the last one GLFW took this frame: the press, or a drag that came in the same batch (both
-     * start the system's drag). It must be ours and the button still down, or it is a stale event: nothing happens. */
+    /* The press itself, from the monitor (else the event in hand, when it is that press or a drag after it). It must be
+     * this window's, recent, and the button still down, or nothing happens. */
+    id ev = g_last_down;
+    if (!answers(ev, "timestamp")) ev = answers(app, "currentEvent") ? send_id(app, "currentEvent") : nil;
+    if (!answers(ev, "type") || !answers(ev, "window") || !answers(ev, "timestamp")) return false;
     unsigned long type = ((unsigned long (*)(id, SEL))objc_msgSend)(ev, SEL_("type"));
     unsigned long buttons = ((unsigned long (*)(id, SEL))objc_msgSend)(cls("NSEvent"), SEL_("pressedMouseButtons"));
-    if ((type != NS_LEFT_MOUSE_DOWN && type != NS_LEFT_MOUSE_DRAGGED) || send_id(ev, "window") != win || !(buttons & 1UL))
+    id info0 = send_id(cls("NSProcessInfo"), "processInfo");
+    double age = (answers(info0, "systemUptime") ? ((double (*)(id, SEL))objc_msgSend)(info0, SEL_("systemUptime")) : 0) -
+                 ((double (*)(id, SEL))objc_msgSend)(ev, SEL_("timestamp"));
+    if ((type != NS_LEFT_MOUSE_DOWN && type != NS_LEFT_MOUSE_DRAGGED) || send_id(ev, "window") != win || !(buttons & 1UL) ||
+        age > 1.0)
         return false;
     MwPoint at = ((MwPoint(*)(id, SEL))objc_msgSend)(ev, SEL_("locationInWindow"));
     ((void (*)(id, SEL, id))objc_msgSend)(win, SEL_("performWindowDragWithEvent:"), ev);
