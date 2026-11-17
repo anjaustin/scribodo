@@ -187,9 +187,17 @@ void llm_server_default_config(LlmServerConfig *c, const char *app_dir)
      * changes the accumulation order: 3 of 20 captured replies diverged late against 256 (two 256 runs: 20 of 20).
      * Prefill cost within the machine's drift; generation unchanged (journal/answer-cycle4_default_path.md, "The
      * micro-batch"; REDTEAM-023). Fixed: about 45 MiB (the convolution layers' short KV, compute intercepts) plus the
-     * process and Metal's own, rounded up. */
+     * process and Metal's own, rounded up.
+     *
+     * --swa-full since 2026-11-16: the sliding-window layers keep their whole history, so a conversation's next turn
+     * resumes from the slot's cache instead of reading the whole prompt again (llama.cpp needs a checkpoint 256 tokens,
+     * the window, before the shared prefix, and saves them only near a prompt's end: a 12K-token chat re-read all of it
+     * every turn, 16 s, and 0.2 s with the flag). Measured at -c 65536: KV 768 + 640 MiB, Metal compute 294.5, CPU 37
+     * (74 by the projection), 27.8 KiB a token by the projection, so 28. It keeps the BF16 contract; masked positions in
+     * a longer row change the summation order (50 captured requests replayed: no top-10 probability moved more than
+     * 1.2 points; one greedy flip, at a 24.6/24.4% tie), as the micro-batch did. MODEL-001 "Prompt reuse". */
     c->mem_fixed = 384LL * 1024 * 1024;
-    c->mem_per_token = 18 * 1024;
+    c->mem_per_token = 28 * 1024;
 }
 
 LlmServer *llm_server_create(const LlmServerConfig *cfg)
@@ -416,7 +424,7 @@ static bool spawn_server(LlmServer *s)
     char *chat_argv[] = {
         s->cfg.server_bin, "-m", s->cfg.model_path, "--host", s->sock, "--api-key-file", s->keyfile,
         "-ngl", "99", "-fa", "off", "-ctk", "bf16", "-ctv", "bf16", "--jinja",
-        "--reasoning-format", "deepseek", "-np", np, "-c", ctx, "-b", batch, "-ub", batch,
+        "--reasoning-format", "deepseek", "-np", np, "-c", ctx, "-b", batch, "-ub", batch, "--swa-full",
         "--cache-ram", "0", "--no-webui", "--no-slots", NULL,
     };
     /* Embeddings: Qwen3-Embedding pools the last token; a whole input must

@@ -267,10 +267,10 @@ static void test_memfit(void)
     /* file + fixed + per token x ctx_total (two slots of 32K) */
     long long at32 = llm_server_mem_need(&cfg, 65536);
     CHECK(at32 == 3000 * MiB + cfg.mem_fixed + (long long)cfg.mem_per_token * 65536);
-    /* The measured LFM3 numbers at the chat server's micro-batch of 128 (KV + Metal compute + CPU compute at 64K
-     * cells: 779 + 278 + 21 MiB allocated, 42 by llama.cpp's projection, 2026-11-14) are covered by the per-token
-     * cost alone, projection included, and the micro-batch is the one measured. */
-    CHECK((long long)cfg.mem_per_token * 65536 >= (779 + 278 + 42) * MiB);
+    /* The measured LFM3 numbers at the chat server's micro-batch of 128 with --swa-full (KV + Metal compute + CPU
+     * compute at 64K cells: 1408 + 294.5 + 37 MiB allocated, 74 by llama.cpp's projection, 2026-11-16) are covered by
+     * the per-token cost alone, projection included, and the micro-batch is the one measured. */
+    CHECK((long long)cfg.mem_per_token * 65536 >= (1408 + 295 + 74) * MiB);
     CHECK(cfg.batch == 128);
     long long other = 2000 * MiB;
     /* Plenty: the author's context. */

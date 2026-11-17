@@ -172,6 +172,26 @@ That works out to about 21.5 KiB per token of `-c`: 12 KiB of KV (6 attention la
 
 The server's own defaults are **4 slots and an 8 GB host prompt cache**, so `-np` and `--cache-ram` must always be set explicitly.
 
+## Prompt reuse (`--swa-full`, 2026-11-16)
+
+**Without it, every chat turn read the whole conversation again.** LFM3 is a hybrid: convolution layers carry a running
+state, and some attention layers see only a 256-token sliding window. To resume a slot after the shared prefix, llama.cpp
+needs a saved checkpoint at least the window (256 tokens) before that point, and it saves checkpoints only near the end of
+each prompt. So the next turn (the previous prompt, the reply, the new message) found none early enough, rolled back to
+token 16 and read everything: a 12K-token conversation took 16 s before each reply, a 30K one 53 s. `--swa-full` keeps
+the window layers' whole history, the checkpoint rule no longer bites, and the next turn reads only the new tokens: 0.2 s
+at 12K. An observer request on the other slot leaves the chat's cache in place.
+
+**Cost:** the window layers' cache at full size. At `-c 65536`, KV 768 + 640 MiB (1,408 against 779), Metal compute 294.5
+(278), CPU 37 (21); 27.8 KiB a token by llama.cpp's projection, so the fit uses 28 (`llm_server_mem_need`).
+
+**Output:** not byte-identical, as the micro-batch change was not: masked positions in a longer attention row change the
+GPU's summation order. Fifty captured requests (`build/window/capture-pp`, `capture-mars2`) replayed: with and without
+the cache identical (20/20), baseline deterministic (20/20); with the flag, 5 of 20 sampled replies diverged, from the
+first word to late. Greedy next-token probabilities over 457 identical-context steps: no top-10 probability moved more
+than 1.2 points; the only flip of the top token was at a 24.6% / 24.4% tie. Research tools under `tools/` keep the flags
+of their own experiments; a tool that reproduces the product from now on adds `--swa-full`.
+
 ## Deployment security
 
 - **No TCP port:** `--host <path>.sock` opens no TCP listener, and requests without the API key get 401 (independent review).
