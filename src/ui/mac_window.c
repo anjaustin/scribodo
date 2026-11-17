@@ -166,6 +166,13 @@ bool mac_window_begin_drag(void *nswindow)
     return true;
 }
 
+int mac_window_last_click_count(void *nswindow)
+{
+    id ev = g_last_down;
+    if (!answers(ev, "clickCount") || send_id(ev, "window") != (id)nswindow) return 0;
+    return (int)((long (*)(id, SEL))objc_msgSend)(ev, SEL_("clickCount"));
+}
+
 double mac_window_double_click_interval(void)
 {
     id e = cls("NSEvent");

@@ -1168,17 +1168,14 @@ static void frame_left_click(App *app, Vector2 mouse, bool modal, bool trace)
     /* An empty part of the toolbar: the window's title bar (ui/mac_window.h). A double-click does what the author's
      * system setting says; a press starts the system's own window drag. */
     if (!modal && app->unified_titlebar && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && toolbar_empty()) {
-        double now = GetTime();
+        /* AppKit's own click count decides a double-click (its interval and distance; a drag in between breaks it, a
+         * press elsewhere in the app too), and the window must not have moved since the first press (a drag runs in
+         * the window server and shows only as the window having moved). */
         Vector2 at = GetWindowPosition();
-        /* A second press soon after, with the window where it was at the first: a double-click. The system's drag runs
-         * in the window server and returns at once, so a drag shows only as the window having moved by the second press
-         * (red team: a before-and-after check never saw it). */
         bool same_place = at.x == app->toolbar_click_pos.x && at.y == app->toolbar_click_pos.y;
-        if (app->toolbar_click_t > 0 && now - app->toolbar_click_t < mac_window_double_click_interval() && same_place) {
-            app->toolbar_click_t = 0;
+        if (mac_window_last_click_count(GetWindowHandle()) == 2 && same_place) {
             mac_window_title_double_click(GetWindowHandle());
         } else {
-            app->toolbar_click_t = now;
             app->toolbar_click_pos = at;
             mac_window_begin_drag(GetWindowHandle());
         }

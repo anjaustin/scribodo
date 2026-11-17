@@ -23,6 +23,9 @@ void mac_window_place_buttons(void *nswindow, float toolbar_h);
 float mac_window_toolbar_inset(void *nswindow);
 /* The system's double-click interval, in seconds. */
 double mac_window_double_click_interval(void);
+/* AppKit's click count for the last left press in this window (2 for a double-click, by the system's own interval
+ * and distance); 0 when there is none, as in a UI script, whose presses are raylib's, not AppKit's. */
+int mac_window_last_click_count(void *nswindow);
 /* A press on an empty part of the toolbar: the system's own window drag (with its snapping and tiling). False when
  * the event in hand is neither that press nor a drag following it in the same frame, is another window's, or the
  * button is already up: the caller then does nothing. */
