@@ -14,6 +14,8 @@
 #define _DARWIN_C_SOURCE
 
 #include "app/app_internal.h"
+
+#include <CoreGraphics/CoreGraphics.h>
 #include "ui/widgets.h"
 #include "ui/icons.h"
 #include "ui/mac_window.h"
@@ -718,6 +720,32 @@ static void fit_context(App *app, bool announce)
     else if (announce) set_status(app, "Model settings saved (they apply to the next message)");
 }
 
+/* A model started smaller than the author's context grows back once memory allows (memfit.h, memfit_refit_due). */
+static void refit_context(App *app)
+{
+    if (!app->llm || app->scripted) return;
+    double now = GetTime();
+    MemRefit r = {
+        .running = llm_server_slot_ctx(app->llm), .wanted = app->model.context,
+        .ready = llm_server_state(app->llm, NULL, 0) == LLM_READY,
+        .busy = (app->chat && chat_busy(app->chat)) || name_detection_job_busy(&app->names_job) ||
+                (app->observer && !observer_idle(app->observer)),
+        .blocked = app->settings_open || app->ctx_pending,
+        .since_check_s = now - app->refit_checked_t,
+        /* The whole session's input, from the window server: nothing is consumed from raylib's queues. */
+        .input_idle_s = CGEventSourceSecondsSinceLastEventType(kCGEventSourceStateCombinedSessionState, kCGAnyInputEventType),
+    };
+    if (!memfit_refit_due(&r)) return;
+    app->refit_checked_t = now;
+    const ModelSettingInfo *in = model_setting_info(7);
+    MemFit f = memfit_context(memory_for_model(app), 0, llm_server_config(app->llm), app->model.context, (int)in->min, (int)in->step);
+    if (f.slot_ctx <= r.running) return;
+    fit_context(app, false);
+    char msg[160];
+    snprintf(msg, sizeof(msg), "More memory is free: the model restarted with a %dK context", llm_server_slot_ctx(app->llm) / 1024);
+    set_status(app, msg);
+}
+
 /* The model settings go into every chat request; a new context size
  * restarts the model (only when nothing is being written, and only as far
  * as memory allows). `context`: false at startup, where the context was
@@ -1081,6 +1109,7 @@ static void frame_poll_workers(App *app)
         app->ctx_pending = false;
         fit_context(app, false);
     }
+    refit_context(app);
     bool graph_succeeded = false;
     if (entity_backfill_job_poll(&app->graph_job, &graph_succeeded)) { /* the graph is built: show it */
         app->lists_dirty = true;

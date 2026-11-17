@@ -369,6 +369,18 @@ static void test_memfit(void)
     /* A minimum off the step grid is still tried. */
     m = memfit_context(llm_server_mem_need(&cfg, llm_server_pool_ctx(&cfg, 5000)) + MEMFIT_HEADROOM, 0, &cfg, 32768, 5000, 8192);
     CHECK(m.slot_ctx == 5000 && !m.short_even_min);
+    /* Growing back: only a smaller model than wanted, ready and unused, after a minute since the last look and half a
+     * minute without input; each condition alone blocks it. */
+    MemRefit r = { .running = 8192, .wanted = 32768, .ready = true, .since_check_s = 60, .input_idle_s = 30 };
+    CHECK(memfit_refit_due(&r));
+    MemRefit x = r; x.running = 32768; CHECK(!memfit_refit_due(&x));       /* already the author's size */
+    x = r; x.running = 40960; CHECK(!memfit_refit_due(&x));                /* larger (a lowered setting): never here */
+    x = r; x.ready = false; CHECK(!memfit_refit_due(&x));
+    x = r; x.busy = true; CHECK(!memfit_refit_due(&x));
+    x = r; x.blocked = true; CHECK(!memfit_refit_due(&x));
+    x = r; x.since_check_s = 59.9; CHECK(!memfit_refit_due(&x));
+    x = r; x.input_idle_s = 29.9; CHECK(!memfit_refit_due(&x));
+    CHECK(!memfit_refit_due(NULL));
     /* The embedding server: a fixed context, so a fixed cost. */
     LlmServerConfig e;
     llm_server_embed_config(&e, "");

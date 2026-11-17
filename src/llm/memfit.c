@@ -36,6 +36,12 @@ long long sysmem_available(void)
     return total > used ? total - used : 0;
 }
 
+bool memfit_refit_due(const MemRefit *r)
+{
+    return r && r->running < r->wanted && r->ready && !r->busy && !r->blocked && r->since_check_s >= MEMFIT_REFIT_EVERY_S &&
+           r->input_idle_s >= MEMFIT_REFIT_IDLE_S;
+}
+
 MemFit memfit_context(long long avail, long long other, const LlmServerConfig *cfg, int wanted, int min, int step)
 {
     MemFit f = { 0 };

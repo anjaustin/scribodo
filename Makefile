@@ -41,7 +41,7 @@ RAYLIB_FLAGS := -std=gnu99 $(OPT) $(ARCH_FLAGS) -DPLATFORM_DESKTOP_GLFW -DGRAPHI
 ifeq ($(UNAME_S),Darwin)
   GLFW_LANG := -x objective-c
   LDLIBS    := -framework OpenGL -framework Cocoa -framework IOKit -framework CoreAudio \
-               -framework CoreVideo -framework QuartzCore
+               -framework CoreVideo -framework QuartzCore -framework CoreGraphics
 else
   GLFW_LANG :=
   LDLIBS    := -lGL -lm -lpthread -ldl -lrt -lX11
