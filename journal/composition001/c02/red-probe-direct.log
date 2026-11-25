@@ -1,0 +1,16 @@
+FAIL line 34: ok && n == 1
+FAIL line 36: text && !strcmp(text, expected)
+FAIL line 34: ok && n == 1
+FAIL line 34: ok && n == 1
+FAIL line 36: text && !strcmp(text, expected)
+FAIL line 34: ok && n == 1
+FAIL line 102: !revisions_list_checked(store, project, names[i], &list, &n) && !list && !n
+FAIL line 107: text == NULL
+FAIL line 110: !revisions_record(store, project, names[i], "NEW SYNTHETIC", "save", NULL, &recorded) && !recorded
+FAIL line 102: !revisions_list_checked(store, project, names[i], &list, &n) && !list && !n
+FAIL line 107: text == NULL
+FAIL line 110: !revisions_record(store, project, names[i], "NEW SYNTHETIC", "save", NULL, &recorded) && !recorded
+shared-199-byte-prefix: desired disjoint history/source contract checked
+sanitized-colon: desired disjoint history/source contract checked
+ordinary-control: desired disjoint history/source contract checked
+52 checks, 12 failures; isolated fixture retained at /private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-c02-iv4dDx

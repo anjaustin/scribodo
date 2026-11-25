@@ -1,0 +1,3 @@
+reversible maximum key bytes=528; digest key bytes=74 (path arithmetic, not measured RAM/latency)
+101674 checks, 1 failures; synthetic fixture retained at /private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-c02-keys-778TH5
+FAIL line 317: !fixture_path(root, "too-long", truncated, sizeof(truncated)) && !truncated[0]

@@ -1,0 +1,5 @@
+SETUP ERROR line 52: make_project(root, label, project, sizeof(project))
+SETUP ERROR line 52: make_project(root, label, project, sizeof(project))
+SETUP ERROR line 52: make_project(root, label, project, sizeof(project))
+SETUP ERROR line 93: make_project(root, "legacy-short", project, sizeof(project))
+4 checks, 0 failures, 4 setup/control errors; isolated fixture retained at /private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-c02-kdo4VR

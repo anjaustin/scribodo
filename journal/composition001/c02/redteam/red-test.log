@@ -1,0 +1,7 @@
+FAIL line 251: !fixture_path(root, "too-long", truncated, sizeof(truncated)) && !truncated[0]
+FAIL line 256: !dirs(path)
+FAIL line 260: !dirs(path)
+FAIL line 264: !dirs(child)
+FAIL line 266: n > 0 && (size_t)n < sizeof(child) && access(child, F_OK) != 0
+reversible maximum key bytes=528; digest key bytes=74 (path arithmetic, not measured RAM/latency)
+71660 checks, 5 failures; synthetic fixture retained at /private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-c02-keys-lYUz3I

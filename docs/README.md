@@ -25,6 +25,8 @@ replaced it.
 | Document | What it is |
 |---|---|
 | [COMPOSITION-001](COMPOSITION-001-plan.md) | **Active P0:** lightweight component adoption plan, decision gates and cross-session work ledger |
+| [COMPOSITION-001 revision identity](COMPOSITION-001-revision-identity.md) | Active C02 boundary map, legacy-ownership constraints and red contract evidence |
+| [REDTEAM-026](REDTEAM-026-revision-identity-prototype.md) | C02 prototype confinement, test-oracle and red-evidence review |
 | [REDTEAM-025](REDTEAM-025-composition-save-state.md) | Adversarial C01 save-state review, remediations and verification boundaries |
 | [PRODUCT-GAPS](PRODUCT-GAPS.md) | The five product-readiness gaps (GAP-001 to 005) and the working order |
 | [TECHNICAL-DEBT](TECHNICAL-DEBT.md) | The debt register, including the [items deferred after AUDIT-004](TECHNICAL-DEBT.md#deferred-after-audit-004-weighted-2026-11-16), weighted |

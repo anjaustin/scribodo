@@ -1,0 +1,6 @@
+{"name": "control", "checks": 101674, "failures": 0, "exit": 0, "result": "passed"}
+{"name": "directory_symlink_followed", "checks": 101674, "failures": 6, "exit": 1, "result": "killed"}
+{"name": "truncated_path_exposed", "checks": 101674, "failures": 1, "exit": 1, "result": "killed"}
+{"name": "snapshot_bytes_unchecked", "checks": 101674, "failures": 1, "exit": 1, "result": "killed"}
+{"name": "owner_bytes_unchecked", "checks": 101674, "failures": 255, "exit": 1, "result": "killed"}
+{"name": "noncanonical_uppercase_accepted", "checks": 101674, "failures": 443, "exit": 1, "result": "killed"}

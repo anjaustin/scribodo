@@ -1,0 +1,8 @@
+reversible maximum key bytes=528; digest key bytes=74 (path arithmetic, not measured RAM/latency)
+101674 checks, 6 failures; synthetic fixture retained at /private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-c02-keys-4Ow9Ue
+FAIL line 327: !dirs(path)
+FAIL line 331: !dirs(child)
+FAIL line 333: n > 0 && (size_t)n < sizeof(child) && access(child, F_OK) != 0
+FAIL line 335: !snapshot(path)
+FAIL line 336: snapshot(target)
+FAIL line 337: !snapshot_exists(path) && snapshot_exists(target)
