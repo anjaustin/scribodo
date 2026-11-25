@@ -1,0 +1,254 @@
+cc -std=c11 -O1 -g -fsanitize=thread -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include tests/test_chat_history_job.c -o build/tsan/test_chat_history_job -lpthread
+cc -std=c11 -O1 -g -fsanitize=thread -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include src/app/store.c src/core/file_text.c tests/test_store_connections.c -o build/tsan/test_store_connections -lpthread
+cc -std=c11 -O1 -g -fsanitize=thread -Isrc src/app/frame_metrics.c tests/test_frame_metrics.c -o build/tsan/test_frame_metrics
+cc -std=c11 -O1 -g -fsanitize=thread -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include src/core/utf8.c src/core/text_buffer.c src/core/undo.c src/core/wrap.c src/core/doc_io.c src/core/diff.c src/core/file_text.c src/app/frame_view_model.c src/app/frame_metrics.c src/core/recall_terms.c src/core/text_cut.c src/core/experiments.c src/core/text_rules.c src/app/tools_dir.c src/core/child_process.c src/core/font_file.c src/ui/theme.c src/ui/motion.c src/app/draft_controller.c tests/test_draft_controller.c -o build/tsan/test_draft_controller -lpthread
+cc -std=c11 -O1 -g -fsanitize=thread -Isrc -Ithird_party/cJSON src/llm/context_planner.c src/llm/llm_text.c src/core/utf8.c src/core/text_rules.c src/core/recall_terms.c src/core/experiments.c src/core/json.c src/core/json_vendor.c tests/test_context_planner.c -o build/tsan/test_context_planner
+cc -std=c11 -O1 -g -fsanitize=thread -Isrc -Isrc/llm tests/test_memory_job.c -o build/tsan/test_memory_job -lpthread
+cc -std=c11 -O1 -g -fsanitize=thread -Isrc -Ithird_party/cJSON tests/test_memory_tokens.c src/llm/memory_tokens.c src/llm/llm_text.c src/core/utf8.c src/core/json.c src/core/json_vendor.c -o build/tsan/test_memory_tokens -lpthread
+cc -std=c11 -O1 -g -fsanitize=thread -Isrc -Itests tests/test_memory_document_cache.c -o build/tsan/test_memory_document_cache -lpthread
+cc -std=c11 -O1 -g -fsanitize=thread -Isrc -Itests tests/test_memory_budget.c src/llm/memory_budget.c -o build/tsan/test_memory_budget -lpthread
+cc -std=c11 -O1 -g -fsanitize=thread -Isrc -Itests tests/test_generative_gate.c src/llm/generative_gate.c -o build/tsan/test_generative_gate -lpthread
+cc -std=c11 -O1 -g -fsanitize=thread -Isrc -Itests tests/test_http_deadlines.c src/llm/http.c -o build/tsan/test_http_deadlines -lpthread
+cc -std=c11 -O1 -g -fsanitize=thread -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include tests/test_db_deadlines.c -o build/tsan/test_db_deadlines build/mariadb-cc/libmariadb/libmariadbclient.a /opt/homebrew/opt/openssl@3/lib/libssl.a /opt/homebrew/opt/openssl@3/lib/libcrypto.a -lz -liconv -lcurl  -lpthread
+cc -std=c11 -O1 -g -fsanitize=thread -Isrc -Ithird_party/cJSON tests/test_memory_brief_model.c src/llm/memory_brief.c src/llm/memory_tokens.c src/llm/generative_gate.c src/llm/llm_text.c src/core/utf8.c src/core/json.c src/core/json_vendor.c -o build/tsan/test_memory_brief_model -lpthread
+cc -std=c11 -O1 -g -fsanitize=thread -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include src/core/utf8.c src/core/text_buffer.c src/core/undo.c src/core/wrap.c src/core/doc_io.c src/core/diff.c src/core/file_text.c src/app/frame_view_model.c src/app/frame_metrics.c src/core/recall_terms.c src/core/text_cut.c src/core/experiments.c src/core/text_rules.c src/app/tools_dir.c src/core/child_process.c src/core/font_file.c src/ui/theme.c src/ui/motion.c src/core/json.c src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/llm/chat_history.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/app/recent.c src/app/renames.c src/llm/observer.c src/llm/observer_text.c src/llm/observer_formats.c src/llm/observer_arms.c src/llm/observer_fake.c src/llm/observer_model.c src/llm/observer_job.c src/llm/semantic.c src/llm/remote.c src/llm/names.c src/llm/memfit.c src/app/db.c src/app/store.c src/app/project_store.c src/app/observer_store.c src/app/store_revisions.c src/app/store_records.c src/app/store_chats.c src/app/store_chat_history.c src/app/store_import.c src/app/store_entities.c src/app/backup.c src/app/backup_job.c src/app/service_supervisor.c src/app/entity_backfill_job.c src/app/name_detection_job.c src/app/project_session.c src/app/explorer_snapshot.c src/app/profile.c src/app/model_settings.c src/app/appearance.c src/app/font_catalog.c src/app/chat_history_job.c src/app/memory_store.c src/app/memory_job.c src/app/memory_saved_file.c src/app/memory_documents.c src/app/memory_document_store.c src/app/memory_gc.c src/app/memory_brief_store.c src/app/recall.c src/app/recall_job.c src/app/import_job.c src/llm/context_planner.c src/llm/memory_tokens.c src/llm/memory_budget.c src/llm/generative_gate.c src/llm/memory_brief.c src/llm/canon_reference.c src/app/local_models.c src/llm/rerank.c src/llm/answer_pipeline.c src/llm/answer_receipt.c src/core/json_vendor.c \
+	  tests/test_state_fixture.c tests/test_llm.c -o build/tsan/test_llm build/mariadb-cc/libmariadb/libmariadbclient.a /opt/homebrew/opt/openssl@3/lib/libssl.a /opt/homebrew/opt/openssl@3/lib/libcrypto.a -lz -liconv -lcurl  -lpthread
+cc -std=c11 -O1 -g -fsanitize=thread -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include src/core/utf8.c src/core/text_buffer.c src/core/undo.c src/core/wrap.c src/core/doc_io.c src/core/diff.c src/core/file_text.c src/app/frame_view_model.c src/app/frame_metrics.c src/core/recall_terms.c src/core/text_cut.c src/core/experiments.c src/core/text_rules.c src/app/tools_dir.c src/core/child_process.c src/core/font_file.c src/ui/theme.c src/ui/motion.c src/core/json.c src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/llm/chat_history.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/app/recent.c src/app/renames.c src/llm/observer.c src/llm/observer_text.c src/llm/observer_formats.c src/llm/observer_arms.c src/llm/observer_fake.c src/llm/observer_model.c src/llm/observer_job.c src/llm/semantic.c src/llm/remote.c src/llm/names.c src/llm/memfit.c src/app/db.c src/app/store.c src/app/project_store.c src/app/observer_store.c src/app/store_revisions.c src/app/store_records.c src/app/store_chats.c src/app/store_chat_history.c src/app/store_import.c src/app/store_entities.c src/app/backup.c src/app/backup_job.c src/app/service_supervisor.c src/app/entity_backfill_job.c src/app/name_detection_job.c src/app/project_session.c src/app/explorer_snapshot.c src/app/profile.c src/app/model_settings.c src/app/appearance.c src/app/font_catalog.c src/app/chat_history_job.c src/app/memory_store.c src/app/memory_job.c src/app/memory_saved_file.c src/app/memory_documents.c src/app/memory_document_store.c src/app/memory_gc.c src/app/memory_brief_store.c src/app/recall.c src/app/recall_job.c src/app/import_job.c src/llm/context_planner.c src/llm/memory_tokens.c src/llm/memory_budget.c src/llm/generative_gate.c src/llm/memory_brief.c src/llm/canon_reference.c src/app/local_models.c src/llm/rerank.c src/llm/answer_pipeline.c src/llm/answer_receipt.c src/core/json_vendor.c \
+	  tests/test_state_fixture.c tests/test_components.c -o build/tsan/test_components build/mariadb-cc/libmariadb/libmariadbclient.a /opt/homebrew/opt/openssl@3/lib/libssl.a /opt/homebrew/opt/openssl@3/lib/libcrypto.a -lz -liconv -lcurl  -lpthread
+cc -std=c11 -O1 -g -fsanitize=thread -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include src/core/utf8.c src/core/text_buffer.c src/core/undo.c src/core/wrap.c src/core/doc_io.c src/core/diff.c src/core/file_text.c src/app/frame_view_model.c src/app/frame_metrics.c src/core/recall_terms.c src/core/text_cut.c src/core/experiments.c src/core/text_rules.c src/app/tools_dir.c src/core/child_process.c src/core/font_file.c src/ui/theme.c src/ui/motion.c src/core/json.c src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/llm/chat_history.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/app/recent.c src/app/renames.c src/llm/observer.c src/llm/observer_text.c src/llm/observer_formats.c src/llm/observer_arms.c src/llm/observer_fake.c src/llm/observer_model.c src/llm/observer_job.c src/llm/semantic.c src/llm/remote.c src/llm/names.c src/llm/memfit.c src/app/db.c src/app/store.c src/app/project_store.c src/app/observer_store.c src/app/store_revisions.c src/app/store_records.c src/app/store_chats.c src/app/store_chat_history.c src/app/store_import.c src/app/store_entities.c src/app/backup.c src/app/backup_job.c src/app/service_supervisor.c src/app/entity_backfill_job.c src/app/name_detection_job.c src/app/project_session.c src/app/explorer_snapshot.c src/app/profile.c src/app/model_settings.c src/app/appearance.c src/app/font_catalog.c src/app/chat_history_job.c src/app/memory_store.c src/app/memory_job.c src/app/memory_saved_file.c src/app/memory_documents.c src/app/memory_document_store.c src/app/memory_gc.c src/app/memory_brief_store.c src/app/recall.c src/app/recall_job.c src/app/import_job.c src/llm/context_planner.c src/llm/memory_tokens.c src/llm/memory_budget.c src/llm/generative_gate.c src/llm/memory_brief.c src/llm/canon_reference.c src/app/local_models.c src/llm/rerank.c src/llm/answer_pipeline.c src/llm/answer_receipt.c src/core/json_vendor.c \
+	  tests/test_state_fixture.c tests/test_remote.c -o build/tsan/test_remote build/mariadb-cc/libmariadb/libmariadbclient.a /opt/homebrew/opt/openssl@3/lib/libssl.a /opt/homebrew/opt/openssl@3/lib/libcrypto.a -lz -liconv -lcurl  -lpthread
+cc -std=c11 -O1 -g -fsanitize=thread -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include src/core/utf8.c src/core/text_buffer.c src/core/undo.c src/core/wrap.c src/core/doc_io.c src/core/diff.c src/core/file_text.c src/app/frame_view_model.c src/app/frame_metrics.c src/core/recall_terms.c src/core/text_cut.c src/core/experiments.c src/core/text_rules.c src/app/tools_dir.c src/core/child_process.c src/core/font_file.c src/ui/theme.c src/ui/motion.c src/core/json.c src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/llm/chat_history.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/app/recent.c src/app/renames.c src/llm/observer.c src/llm/observer_text.c src/llm/observer_formats.c src/llm/observer_arms.c src/llm/observer_fake.c src/llm/observer_model.c src/llm/observer_job.c src/llm/semantic.c src/llm/remote.c src/llm/names.c src/llm/memfit.c src/app/db.c src/app/store.c src/app/project_store.c src/app/observer_store.c src/app/store_revisions.c src/app/store_records.c src/app/store_chats.c src/app/store_chat_history.c src/app/store_import.c src/app/store_entities.c src/app/backup.c src/app/backup_job.c src/app/service_supervisor.c src/app/entity_backfill_job.c src/app/name_detection_job.c src/app/project_session.c src/app/explorer_snapshot.c src/app/profile.c src/app/model_settings.c src/app/appearance.c src/app/font_catalog.c src/app/chat_history_job.c src/app/memory_store.c src/app/memory_job.c src/app/memory_saved_file.c src/app/memory_documents.c src/app/memory_document_store.c src/app/memory_gc.c src/app/memory_brief_store.c src/app/recall.c src/app/recall_job.c src/app/import_job.c src/llm/context_planner.c src/llm/memory_tokens.c src/llm/memory_budget.c src/llm/generative_gate.c src/llm/memory_brief.c src/llm/canon_reference.c src/app/local_models.c src/llm/rerank.c src/llm/answer_pipeline.c src/llm/answer_receipt.c src/core/json_vendor.c \
+	  tests/test_state_fixture.c tests/test_answer_pipeline.c -o build/tsan/test_answer_pipeline build/mariadb-cc/libmariadb/libmariadbclient.a /opt/homebrew/opt/openssl@3/lib/libssl.a /opt/homebrew/opt/openssl@3/lib/libcrypto.a -lz -liconv -lcurl  -lpthread
+cc -std=c11 -O1 -g -fsanitize=thread -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include src/core/utf8.c src/core/text_buffer.c src/core/undo.c src/core/wrap.c src/core/doc_io.c src/core/diff.c src/core/file_text.c src/app/frame_view_model.c src/app/frame_metrics.c src/core/recall_terms.c src/core/text_cut.c src/core/experiments.c src/core/text_rules.c src/app/tools_dir.c src/core/child_process.c src/core/font_file.c src/ui/theme.c src/ui/motion.c src/core/json.c src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/llm/chat_history.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/app/recent.c src/app/renames.c src/llm/observer.c src/llm/observer_text.c src/llm/observer_formats.c src/llm/observer_arms.c src/llm/observer_fake.c src/llm/observer_model.c src/llm/observer_job.c src/llm/semantic.c src/llm/remote.c src/llm/names.c src/llm/memfit.c src/app/db.c src/app/store.c src/app/project_store.c src/app/observer_store.c src/app/store_revisions.c src/app/store_records.c src/app/store_chats.c src/app/store_chat_history.c src/app/store_import.c src/app/store_entities.c src/app/backup.c src/app/backup_job.c src/app/service_supervisor.c src/app/entity_backfill_job.c src/app/name_detection_job.c src/app/project_session.c src/app/explorer_snapshot.c src/app/profile.c src/app/model_settings.c src/app/appearance.c src/app/font_catalog.c src/app/chat_history_job.c src/app/memory_store.c src/app/memory_job.c src/app/memory_saved_file.c src/app/memory_documents.c src/app/memory_document_store.c src/app/memory_gc.c src/app/memory_brief_store.c src/app/recall.c src/app/recall_job.c src/app/import_job.c src/llm/context_planner.c src/llm/memory_tokens.c src/llm/memory_budget.c src/llm/generative_gate.c src/llm/memory_brief.c src/llm/canon_reference.c src/app/local_models.c src/llm/rerank.c src/llm/answer_pipeline.c src/llm/answer_receipt.c src/core/json_vendor.c \
+	  src/app/chat_controller.c src/ui/chat_view.c src/ui/editor.c src/ui/input.c tests/raylib_stubs.c tests/test_chat_view.c \
+	  -o build/tsan/test_chat_view build/mariadb-cc/libmariadb/libmariadbclient.a /opt/homebrew/opt/openssl@3/lib/libssl.a /opt/homebrew/opt/openssl@3/lib/libcrypto.a -lz -liconv -lcurl  -lpthread -lm
+cc -std=c11 -O1 -g -fsanitize=thread -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include -include tests/fault_alloc.h src/core/utf8.c src/core/text_buffer.c src/core/undo.c src/core/wrap.c src/core/doc_io.c src/core/diff.c src/core/file_text.c src/app/frame_view_model.c src/app/frame_metrics.c src/core/recall_terms.c src/core/text_cut.c src/core/experiments.c src/core/text_rules.c src/app/tools_dir.c src/core/child_process.c src/core/font_file.c src/ui/theme.c src/ui/motion.c src/core/json.c src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/llm/chat_history.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/app/recent.c src/app/renames.c src/llm/observer.c src/llm/observer_text.c src/llm/observer_formats.c src/llm/observer_arms.c src/llm/observer_fake.c src/llm/observer_model.c src/llm/observer_job.c src/llm/semantic.c src/llm/remote.c src/llm/names.c src/llm/memfit.c src/app/db.c src/app/store.c src/app/project_store.c src/app/observer_store.c src/app/store_revisions.c src/app/store_records.c src/app/store_chats.c src/app/store_chat_history.c src/app/store_import.c src/app/store_entities.c src/app/backup.c src/app/backup_job.c src/app/service_supervisor.c src/app/entity_backfill_job.c src/app/name_detection_job.c src/app/project_session.c src/app/explorer_snapshot.c src/app/profile.c src/app/model_settings.c src/app/appearance.c src/app/font_catalog.c src/app/chat_history_job.c src/app/memory_store.c src/app/memory_job.c src/app/memory_saved_file.c src/app/memory_documents.c src/app/memory_document_store.c src/app/memory_gc.c src/app/memory_brief_store.c src/app/recall.c src/app/recall_job.c src/app/import_job.c src/llm/context_planner.c src/llm/memory_tokens.c src/llm/memory_budget.c src/llm/generative_gate.c src/llm/memory_brief.c src/llm/canon_reference.c src/app/local_models.c src/llm/rerank.c src/llm/answer_pipeline.c src/llm/answer_receipt.c src/core/json_vendor.c tests/test_state_fixture.c tests/test_semantic_faults.c \
+	  build/tests/fault_alloc.o -o build/tsan/test_semantic_faults build/mariadb-cc/libmariadb/libmariadbclient.a /opt/homebrew/opt/openssl@3/lib/libssl.a /opt/homebrew/opt/openssl@3/lib/libcrypto.a -lz -liconv -lcurl  -lpthread
+chat_history_job: all tests passed
+
+store connection lifecycle: 14 legacy + 14 deadline gated cases passed
+store project identity: local snapshots and nonregular-marker guard passed
+store deadline connections: budget abort preserves online state and TLS ownership
+store deadline mutex: lifecycle contention respects budget/cancellation
+borrowed store routing: pinned ownership, scope, SQL failure and lifecycle guards passed
+
+frame_metrics: passed
+
+ok   hash
+ok   interval_and_change
+ok   clean_or_switch_discards
+ok   failures
+ok   discard_while_writing
+ok   switch_while_writing
+ok   quit_while_writing
+ok   load_while_writing
+ok   failure_reported_once
+ok   success_rearms_report
+ok   failure_runs_without_a_draft
+ok   load_discards_other_documents_draft
+
+93 checks, 0 failures
+
+context planner: bounded recall, privacy, epoch and complete-request budget checks passed
+
+scribodo: memory Partial coverage: unit  rejected by the index: Invalid, oversized, or noncanonical memory unit
+scribodo: memory Partial coverage: unit  rejected by the index: Invalid, oversized, or noncanonical memory unit
+scribodo: memory Partial coverage: unit  rejected by the index: Invalid, oversized, or noncanonical memory unit
+scribodo: memory Partial coverage: unit  rejected by the index: Invalid, oversized, or noncanonical memory unit
+scribodo: memory Partial coverage: unit  rejected by the index: Invalid, oversized, or noncanonical memory unit
+scribodo: memory Partial coverage: index failure 1/3; backing off: offline
+scribodo: memory Partial coverage: index failure 2/3; backing off: offline
+scribodo: memory Partial coverage: index failure 3/3; explicit rebuild to retry: offline
+scribodo: memory Partial coverage: index failure 1/3; backing off: offline
+scribodo: memory Partial coverage: index failure 2/3; backing off: offline
+memory_job: all tests passed
+
+memory_tokens: passed (headless request stubs; no real-model count claim)
+
+ok   bounded full-hash verification
+ok   cache isolation and zero-body foreground
+ok   cancellation, mutation and publication fencing
+ok   fixed capacity FIFO pending state
+ok   bounded failures and monotonic backoff
+ok   cancellation refunds and explicit invalidation fence
+ok   borrowed Db routing and optional deadline isolation
+
+34021 checks, 0 failures
+
+ok   total budget and cancellation
+ok   owned SQL socket abort
+
+20 checks, 0 failures
+
+ok   preemption_and_drain
+ok   fifo_and_cancelled_intent
+ok   stale_lease
+ok   close_and_lifetime
+ok   shutdown_joins_borrower
+ok   concurrent_claims
+
+174 checks, 0 failures
+
+ok   invalid/expired deadlines never connect
+ok   total deadline stops a slow drip
+ok   legacy receive timeout resets on data
+ok   partial upload deadline/cancellation/disconnect
+ok   truncated and malformed bodies rejected
+ok   cancellation interrupts receive wait
+ok   decoder work counts against deadline
+
+117 checks, 0 failures
+
+ok   invalid/expired/cancelled deadlines do not connect
+ok   connect/auth/session stages share a deadline
+ok   each suspended stage observes cancellation
+ok   complete local handshake and session setup
+
+146 checks, 0 failures
+
+ok   strict brief decoder
+ok   local-only gated generation
+
+154 checks, 0 failures
+
+scribodo: no reranker model at /var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T//scribodo-stateful-HqyO9l/missing-reranker.gguf; answers are not verified (see docs/MODEL-002-qwen3-reranker.md)
+ok   neutralize
+ok   split_thinking
+ok   http_decoder
+ok   sse_parsing
+ok   backup_pipes
+ok   service_supervisor
+ok   request_builder
+    history archive=101 copied=63 bytes=756 scanned=64
+    history archive=1001 copied=63 bytes=756 scanned=64
+    history archive=10001 copied=63 bytes=756 scanned=64
+    history archive=100001 copied=63 bytes=756 scanned=64
+ok   bounded_request_history
+ok   worker_bounded_history
+ok   episode_history_packing
+ok   worker_foreground_preemption
+ok   chat_windows
+ok   memory_remote_bypass
+ok   memory_preserves_cutoff_notice
+ok   window_storage_release
+ok   chat_store
+ok   chat_store_read_failures
+ok   chat_failed_file_guards
+ok   chat_store_resave_failed
+ok   chat_store_ordered_failures
+ok   chat_failed_trim
+ok   local_models_checks
+ok   concurrent_file_readers
+ok   fake_backend
+ok   clean_edit
+ok   curl_quotes
+ok   edit_request
+ok   fake_edit
+ok   build_base_request
+ok   edit_too_long
+ok   revisions
+ok   neutralize
+ok   split_thinking
+ok   http_decoder
+ok   sse_parsing
+ok   backup_pipes
+ok   service_supervisor
+ok   request_builder
+    history archive=101 copied=63 bytes=756 scanned=64
+    history archive=1001 copied=63 bytes=756 scanned=64
+    history archive=10001 copied=63 bytes=756 scanned=64
+    history archive=100001 copied=63 bytes=756 scanned=64
+ok   bounded_request_history
+ok   worker_bounded_history
+ok   episode_history_packing
+ok   worker_foreground_preemption
+ok   chat_windows
+ok   memory_remote_bypass
+ok   memory_preserves_cutoff_notice
+ok   window_storage_release
+ok   chat_store
+ok   chat_store_read_failures
+ok   chat_failed_file_guards
+ok   chat_store_resave_failed
+ok   chat_store_ordered_failures
+ok   chat_failed_trim
+ok   local_models_checks
+ok   concurrent_file_readers
+ok   fake_backend
+ok   clean_edit
+ok   curl_quotes
+ok   edit_request
+ok   fake_edit
+ok   build_base_request
+ok   edit_too_long
+ok   revisions
+ok   records
+ok   file_history_read_failures
+ok   snapshot_name_exhaustion
+ok   snapshot_reuse_integrity
+ok   observer_run
+ok   observer_id_exhaustion
+ok   record_id_timing
+ok   observer_judge_log
+ok   observer_sentence_pairs
+ok   observer_sentence_arms
+ok   observer_flag_combinations
+ok   observer_wait_mode
+ok   observer_redteam
+ok   recent_and_renames
+ok   multi_doc_request
+ok   side_slot_bounds
+ok   names_as_facts
+ok   speaker_labels
+ok   truncated_stream_is_an_error
+ok   ok_stream_and_context_error
+    stop + destroy took 0.12 s
+ok   stop_never_hangs
+ok   torn_line_recovery
+ok   instance_lock
+ok   chat_server_flags
+ok   orphan_after_owner_kill
+ok   reap_orphan
+
+5141 checks, 0 failures
+
+ok   markdown_display
+ok   observer_chat_filter
+ok   names_detect
+ok   name_detection_job
+ok   project_session_and_explorer_snapshot
+ok   observer_rules_refilter
+ok   model_settings
+ok   model_context_length
+ok   memfit
+ok   owned_store_dependencies
+ok   observer_job_errors
+
+138 checks, 0 failures
+
+ok   remote_file_reads
+ok   remote_json_boundaries
+ok   remote_service_secret_aliases
+ok   remote_key_line_boundaries
+ok   remote
+
+149 checks, 0 failures
+
+answer_pipeline: 399 checks, 0 failures (pure helpers and the request builder; no model, no reranker claim)
+
+ok   attachment_revisions
+    stress rows=66 owned_text=17367040 cache_bytes=28391088 combined=45758128
+ok   window_layouts
+ok   presented_actions
+ok   concurrent_presentation
+ok   sources_actions
+
+382 checks, 0 failures
+
+ok   complete_json_spans
+ok   embedding_allocations
+ok   embedding_responses
+ok   embedding_batches
+ok   embedding_json_boundaries
+
+8343 checks, 0 failures

@@ -754,6 +754,68 @@ static void test_chat_store_resave_failed(void)
     chat_destroy(s);
 }
 
+static void test_chat_store_ordered_failures(void)
+{
+    ChatSession *s = chat_create(NULL);
+    CHECK(s != NULL);
+    if (!s) return;
+    ChatMessage messages[] = {
+        { .role = CHAT_USER, .content = "Question first", .docs = "chapter.md\nnotes.md", .via = "Provider", .ts = 123 },
+        { .role = CHAT_ASSISTANT, .content = "Answer second", .memory_sources = "{\"sources\":[]}", .ts = 124,
+          .stopped = true, .truncated = true, .is_edit = true, .is_note = true }
+    };
+    CHECK(chat_load_messages(s, messages, 2));
+    CHECK(!chat_store_save_finished(g_store, s, g_dir, "../refused", "Order", 0));
+    CHECK(!chat_store_save_finished(g_store, s, g_dir, "cafe01", "Order", 1));
+    CHECK(chat_message(s, 0)->save_failed && chat_message(s, 1)->save_failed);
+    ChatMessage *loaded = NULL;
+    size_t n = 0;
+    CHECK(!chat_store_load(g_store, g_dir, "cafe01", &loaded, &n)); /* no out-of-order reply */
+    bool ok = false;
+    CHECK(chat_store_resave_failed(g_store, s, g_dir, "cafe01", "Order", &ok) == 2 && ok);
+    CHECK(chat_store_resave_failed(g_store, s, g_dir, "cafe01", "Order", &ok) == 0 && ok);
+    CHECK(chat_store_load(g_store, g_dir, "cafe01", &loaded, &n) && n == 2);
+    if (loaded && n == 2) {
+        CHECK(!strcmp(loaded[0].content, messages[0].content) && !strcmp(loaded[1].content, messages[1].content));
+        CHECK(loaded[0].docs && !strcmp(loaded[0].docs, messages[0].docs));
+        CHECK(loaded[0].via && !strcmp(loaded[0].via, messages[0].via));
+        CHECK(loaded[1].memory_sources && !strcmp(loaded[1].memory_sources, messages[1].memory_sources));
+        CHECK(loaded[1].stopped && loaded[1].truncated && loaded[1].is_edit && loaded[1].is_note);
+        CHECK(loaded[0].ts > 0 && loaded[1].ts > 0); /* backend timestamps acknowledge storage, not original turn time */
+    }
+    chat_store_free_messages(loaded, n);
+    CHECK(chat_load_messages(s, messages, 2));
+    CHECK(!chat_store_adopt(g_store, s, g_dir, "../refused", "Adoption"));
+    CHECK(chat_message(s, 0)->save_failed && chat_message(s, 1)->save_failed);
+    CHECK(persistence_info(s).unsaved);
+    CHECK(chat_store_resave_failed(g_store, s, g_dir, "cafe02", "Adoption", &ok) == 2 && ok);
+    CHECK(!persistence_info(s).unsaved && !persistence_info(s).active);
+    CHECK(chat_store_resave_failed(g_store, s, g_dir, "cafe02", "Adoption", &ok) == 0 && ok);
+    CHECK(!chat_store_save_finished(g_store, s, g_dir, "cafe02", "Adoption", 99));
+    CHECK(!persistence_info(s).unsaved);
+    chat_destroy(s);
+}
+
+static void test_chat_failed_trim(void)
+{
+    ChatMessage messages[66] = {0};
+    for (size_t i = 0; i < 66; i++)
+        messages[i] = (ChatMessage){ .role = CHAT_USER, .content = "saved", .sequence_known = true, .sequence = (int64_t)i };
+    ChatSession *s = chat_create(NULL);
+    CHECK(s != NULL);
+    if (!s) return;
+    CHECK(chat_load_messages(s, messages, 66));
+    chat_enable_window(s);
+    uint64_t before = chat_version(s);
+    chat_mark_save_failed(s, 0);
+    CHECK(chat_version(s) != before);
+    CHECK(!chat_trim_saved(s) && chat_count(s) == 66); /* known identity must not make a failed save evictable */
+    chat_mark_saved(s, 0, 0);
+    CHECK(chat_trim_saved(s) && chat_count(s) == 64); /* acknowledgement invalidates the trim cache */
+    CHECK(chat_message(s, 0)->sequence == 2);
+    chat_destroy(s);
+}
+
 /* Startup checks moved out of main() (AUDIT-004 F3): a missing reranker turns the pipeline off; nothing is reaped
  * where no window ever ran. */
 static void test_local_models_checks(void)
@@ -934,6 +996,51 @@ static void wait_idle(ChatSession *s, DoneCtx *d, int want)
         usleep(5000);
     }
     chat_poll(s);
+}
+
+typedef struct {
+    DoneCtx done;
+    const char *id;
+    bool refuse_user;
+    bool saved[2];
+} PersistDoneCtx;
+
+static void persist_done(ChatSession *s, size_t index, void *context)
+{
+    PersistDoneCtx *ctx = context;
+    bool saved = chat_store_save_finished(g_store, s, g_dir,
+                                         ctx->refuse_user && index == 0 ? "../refused" : ctx->id, "Worker save", index);
+    if (index < 2) ctx->saved[index] = saved;
+    ctx->done.done++;
+}
+
+static void test_worker_save_order(void)
+{
+    for (int refuse = 0; refuse < 2; refuse++) {
+        ChatSession *s = chat_create(NULL);
+        CHECK(s != NULL);
+        if (!s) return;
+        PersistDoneCtx ctx = { .id = refuse ? "cafe04" : "cafe03", .refuse_user = refuse };
+        chat_on_message_done(s, persist_done, &ctx);
+        char error[256] = "";
+        CHECK(chat_send(s, "Concurrent persistence sentinel", NULL, error, sizeof(error)));
+        wait_idle(s, &ctx.done, 2);
+        CHECK(!chat_busy(s) && ctx.done.done == 2);
+        CHECK(ctx.saved[0] == !refuse && ctx.saved[1] == !refuse);
+        CHECK(persistence_info(s).unsaved == (bool)refuse);
+        bool ok = false;
+        CHECK(chat_store_resave_failed(g_store, s, g_dir, ctx.id, "Worker save", &ok) == (size_t)(refuse * 2) && ok);
+        CHECK(chat_store_resave_failed(g_store, s, g_dir, ctx.id, "Worker save", &ok) == 0 && ok);
+        ChatMessage *loaded = NULL;
+        size_t n = 0;
+        CHECK(chat_store_load(g_store, g_dir, ctx.id, &loaded, &n) && n == 2);
+        if (loaded && n == 2) {
+            CHECK(loaded[0].role == CHAT_USER && loaded[1].role == CHAT_ASSISTANT);
+            CHECK(!strcmp(loaded[0].content, "Concurrent persistence sentinel"));
+        }
+        chat_store_free_messages(loaded, n);
+        chat_destroy(s);
+    }
 }
 
 static void test_worker_foreground_preemption(void)
@@ -3399,6 +3506,9 @@ int main(int argc, char **argv)
         { "chat_store_read_failures", test_chat_store_read_failures },
         { "chat_failed_file_guards", test_chat_failed_file_guards },
         { "chat_store_resave_failed", test_chat_store_resave_failed },
+        { "chat_store_ordered_failures", test_chat_store_ordered_failures },
+        { "chat_failed_trim", test_chat_failed_trim },
+        { "worker_save_order", test_worker_save_order },
         { "local_models_checks", test_local_models_checks },
         { "concurrent_file_readers", test_concurrent_file_readers },
         { "fake_backend", test_fake_backend },

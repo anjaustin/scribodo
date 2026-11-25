@@ -278,6 +278,8 @@ static void layout_explorer(App *app)
         }
         section_header(app, "CHATS", ICON_CHATS);
         list_item(app, CLAY_ID("NewChatItem"), "+ New chat", false);
+        if (app->chat_project[0] && !chat_busy(app->chat) && unsaved_chat(app))
+            list_item(app, CLAY_ID("RetryChatSaveItem"), "Retry saving chat", false);
         /* Groups first (by name, each a heading that opens and closes), then the chats in none, newest first;
          * archived ones under one heading at the end, closed until clicked. Row ids stay the chats' list indices, so
          * a click finds its chat whichever section draws it. */

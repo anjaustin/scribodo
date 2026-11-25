@@ -1,0 +1,92 @@
+[
+  {
+    "name": "control",
+    "result": "passed",
+    "checks": 3484,
+    "failures": 0
+  },
+  {
+    "name": "chat_eof_hides_allocation_failure",
+    "result": "killed",
+    "checks": 3484,
+    "failures": 44
+  },
+  {
+    "name": "chat_title_not_restored",
+    "result": "killed",
+    "checks": 3484,
+    "failures": 3
+  },
+  {
+    "name": "chat_observer_flag_not_restored",
+    "result": "killed",
+    "checks": 3484,
+    "failures": 1
+  },
+  {
+    "name": "chat_retry_preparation_failure_hidden",
+    "result": "killed",
+    "checks": 3484,
+    "failures": 242
+  },
+  {
+    "name": "chat_adoption_obligation_unmarked",
+    "result": "killed",
+    "checks": 2044,
+    "failures": 1
+  },
+  {
+    "name": "chat_file_retry_not_acknowledged",
+    "result": "killed",
+    "checks": 2884,
+    "failures": 240
+  },
+  {
+    "name": "rules_trailing_bytes_accepted",
+    "result": "killed",
+    "checks": 3484,
+    "failures": 2
+  },
+  {
+    "name": "rules_nonhex_accepted",
+    "result": "killed",
+    "checks": 3484,
+    "failures": 2
+  },
+  {
+    "name": "rules_read_error_accepted",
+    "result": "killed",
+    "checks": 3484,
+    "failures": 1
+  },
+  {
+    "name": "gate_control",
+    "result": "passed",
+    "tests": 8,
+    "failures": 0
+  },
+  {
+    "name": "gate_objective_c_omitted",
+    "result": "killed",
+    "tests": 8,
+    "failures": 1
+  },
+  {
+    "name": "gate_diagnostics_ignored",
+    "result": "killed",
+    "tests": 8,
+    "failures": 3
+  },
+  {
+    "name": "gate_exit_status_ignored",
+    "result": "killed",
+    "tests": 8,
+    "failures": 1
+  },
+  {
+    "name": "gate_stale_log_retained",
+    "result": "killed",
+    "tests": 8,
+    "failures": 1
+  }
+]

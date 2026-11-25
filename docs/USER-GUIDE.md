@@ -46,6 +46,11 @@ A project is a folder of `.md` and `.txt` files.
 
 - **Chat:** click the chat box (or press ⌘L), type, and press Enter. Shift+Enter adds a new line, and Esc returns to the document.
 - **Attached documents:** the chips under the chat show which project documents the assistant sees. A new chat starts with the open document attached; **+ Attach** adds others, and × removes one. Documents are read when you send (the open one including unsaved edits), never copied. Each message remembers what it was sent with, and reopening a chat restores its attachments.
+- **Failed chat saves:** messages stay in memory and block sending or replacing the conversation. After fixing
+  the storage problem, choose **Explorer → CHATS → Retry saving chat** while the reply is idle. This retries
+  unsaved messages only; it does not send the composer text or ask the model again. Keep a copy of important
+  text before retrying an uncertain write: a storage error after a write can still mean it reached disk.
+  To deliberately discard instead, click **New chat**, read the warning, then click it again within five seconds.
 - **Note turns:** the composer's **Note** toggle marks a message as your note rather than a question, so the answer checks do not treat it as one.
 - **Rename a chat:** right-click it in the Explorer.
 - **Group chats:** right-click a chat, choose **Move to group…**, then a group or **New group…** and its name (up to 40 bytes). Names need a visible character and can't be "Archived". Groups head the chat list by name, each with how many chats it holds; click a heading to close or open it. Right-click a heading to **Rename group…** (a name in use merges the two) or **Ungroup** (its chats return to the list). **Move to group… › Remove from group** takes one chat out. A group exists while a chat is in it; an archived chat keeps its group and returns to it when restored. Filing, archiving or the observer setting never move a chat in the list's newest-first order.

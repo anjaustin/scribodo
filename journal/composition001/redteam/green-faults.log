@@ -1,0 +1,147 @@
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:170: loaded[0].ts == 123 && loaded[1].ts == 124
+  FAIL tests/test_persistence_faults.c:76: chat_store_list_checked(store, project, &chats, &n) && n == 1
+  FAIL tests/test_persistence_faults.c:461: chat_store_list_checked(store, project, &chats, &n) && n == 1
+  FAIL tests/test_persistence_faults.c:461: chat_store_list_checked(store, project, &chats, &n) && n == 1
+  FAIL tests/test_persistence_faults.c:461: chat_store_list_checked(store, project, &chats, &n) && n == 1
+ok   record_allocations
+ok   revision_allocations
+ok   request_history_allocations
+ok   packed_history_allocations
+ok   chat_load_allocations
+ok   chat_retry_snapshot_allocations
+FAIL chat_adoption_allocations
+ok   chat_send_allocations
+    request builder edit=0 measured_allocations=48 partial_requests=0 missing_author_text=0 missing_document_context=0 (once + persistent)
+    request builder edit=1 measured_allocations=43 partial_requests=0 missing_author_text=0 missing_document_context=0 (once + persistent)
+ok   request_builder_allocations
+    assistant history: allocations=61 partial_requests=0 reasoning_leaks=0
+ok   assistant_history_builder_allocations
+    sampling edit=0 allocations=29 partial_requests=0
+    sampling edit=1 allocations=29 partial_requests=0
+ok   sampling_builder_allocations
+ok   window_shrink_allocations
+FAIL chat_allocations
+ok   writer_allocations
+FAIL chat_unterminated_list_allocations
+ok   observer_rules_boundaries
+
+16082 checks, 124 failures

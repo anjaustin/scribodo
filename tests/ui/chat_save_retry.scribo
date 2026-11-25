@@ -1,0 +1,34 @@
+# Synthetic fixture only. No services or real model. Reproduce file-save refusal and recovery.
+open "$DIR/chapter.md"
+click_element ChatInput
+type "Previously saved conversation"
+key ENTER
+wait_chat
+expect chat_count 2
+click_element NewChatItem
+expect chat_count 0
+chmod "$DIR/.scribodo/chats" 555
+click_element ChatInput
+type "Failed save sentinel"
+key ENTER
+wait_chat
+expect chat_count 2
+expect chat_unsaved yes
+# Old conversation and New both preserve the failed messages.
+click_element ChatItem0
+expect chat_count 2
+expect chat_unsaved yes
+click_element NewChatItem
+expect status "Unsaved chat"
+expect chat_count 2
+# Restore storage and explicitly retry; no new model turn or composer submission.
+chmod "$DIR/.scribodo/chats" 755
+click_element RetryChatSaveItem
+expect chat_unsaved no
+expect chat_count 2
+expect files "$DIR/.scribodo/chats" ".jsonl" 2
+click_element NewChatItem
+expect chat_count 0
+click_element ChatItem0
+expect chat_count 2
+expect chat_last "Failed save sentinel"

@@ -1,0 +1,4 @@
+/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-redteam025.7K029i/mutations/chat_adoption_obligation_unmarked.c:749:12: warning: unused variable 'n' [-Wunused-variable]
+  749 |     size_t n = chat_count(chat);
+      |            ^
+1 warning generated.

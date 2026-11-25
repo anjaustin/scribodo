@@ -1295,6 +1295,7 @@ static void frame_left_click(App *app, Vector2 mouse, bool modal, bool trace)
         } else if (Clay_PointerOver(CLAY_ID("Editor"))) app->focus = FOCUS_DOC;
         else if (Clay_PointerOver(CLAY_ID("ChatInput"))) app->focus = FOCUS_CHAT;
         else if (Clay_PointerOver(CLAY_ID("NewChatItem"))) new_chat(app);
+        else if (Clay_PointerOver(CLAY_ID("RetryChatSaveItem"))) resave_unsaved_chat(app);
         else if (app->observer_open && Clay_PointerOver(CLAY_ID("RebuildIndex"))) {
             observer_request_rebuild(app->observer);
             set_status(app, "Rebuilding the semantic index from the project store\xE2\x80\xA6");

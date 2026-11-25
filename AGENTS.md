@@ -8,7 +8,8 @@
 - Preserve original text/provenance, explicit author authority, consent/source admission and the validated
   local generative precision policy. Research recommendations are hypotheses until their gates pass.
 - Prototype only on isolated synthetic/public-domain fixtures. Never run migration, destructive restore or
-  tests against real author data. Run database suites serially.
+  tests against real author data. Run database suites serially. Also run full `make test` and `make sanitize`
+  serially: their observer yardstick writes shared output paths even with a different BUILD directory.
 - Record exact commands, exit statuses, evidence and unrun gates. Do not equate mechanical test success with
   real-model quality or real macOS input/accessibility acceptance.
 - Keep one bounded production slice active. No big-bang rewrite, permanent backend matrix or gratuitous

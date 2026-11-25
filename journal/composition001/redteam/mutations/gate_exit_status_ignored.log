@@ -1,0 +1,13 @@
+......F.
+======================================================================
+FAIL: test_nonzero_analyzer_without_diagnostics_fails (__main__.AnalyzeTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-redteam025.7K029i/mutations/analyzer-gates/tests/test_analyze.py", line 59, in test_nonzero_analyzer_without_diagnostics_fails
+    self.assertNotEqual(result.returncode, 0)
+AssertionError: 0 == 0
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.476s
+
+FAILED (failures=1)

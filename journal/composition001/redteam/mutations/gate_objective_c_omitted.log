@@ -1,0 +1,14 @@
+...F....
+======================================================================
+FAIL: test_default_inventory_covers_c_and_objective_c (__main__.AnalyzeTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-redteam025.7K029i/mutations/analyzer-gates/tests/test_analyze.py", line 35, in test_default_inventory_covers_c_and_objective_c
+    self.assertEqual(actual, expected)
+AssertionError: Items in the second set but not the first:
+'src/platform/dialogs_mac.m'
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.458s
+
+FAILED (failures=1)

@@ -1,0 +1,362 @@
+cc -std=c11 -O2 -mcpu=native -g -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include -MMD -MP -c src/main.c -o build/src/main.o
+cc -std=c11 -O2 -mcpu=native -g -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include -MMD -MP -c src/ui/recall_view.c -o build/src/ui/recall_view.o
+cc -std=c11 -O2 -mcpu=native -g -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include -MMD -MP -c src/ui/record_view.c -o build/src/ui/record_view.o
+cc -std=c11 -O2 -mcpu=native -g -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include -MMD -MP -c src/ui/findings_view.c -o build/src/ui/findings_view.o
+cc -std=c11 -O2 -mcpu=native -g -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include -MMD -MP -c src/ui/prompt_view.c -o build/src/ui/prompt_view.o
+cc -std=c11 -O2 -mcpu=native -g -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter build/src/core/utf8.o build/src/core/text_buffer.o build/src/core/undo.o build/src/core/wrap.o build/src/core/doc_io.o build/src/core/diff.o build/src/core/file_text.o build/src/app/frame_view_model.o build/src/app/frame_metrics.o build/src/core/recall_terms.o build/src/core/text_cut.o build/src/core/experiments.o build/src/core/text_rules.o build/src/app/tools_dir.o build/src/core/child_process.o build/src/core/font_file.o build/src/ui/theme.o build/src/ui/motion.o build/src/core/json.o build/src/llm/llm_text.o build/src/llm/http.o build/src/llm/server.o build/src/llm/chat.o build/src/llm/chat_history.o build/src/app/chat_store.o build/src/app/revisions.o build/src/app/records.o build/src/app/recent.o build/src/app/renames.o build/src/llm/observer.o build/src/llm/observer_text.o build/src/llm/observer_formats.o build/src/llm/observer_arms.o build/src/llm/observer_fake.o build/src/llm/observer_model.o build/src/llm/observer_job.o build/src/llm/semantic.o build/src/llm/remote.o build/src/llm/names.o build/src/llm/memfit.o build/src/app/db.o build/src/app/store.o build/src/app/project_store.o build/src/app/observer_store.o build/src/app/store_revisions.o build/src/app/store_records.o build/src/app/store_chats.o build/src/app/store_chat_history.o build/src/app/store_import.o build/src/app/store_entities.o build/src/app/backup.o build/src/app/backup_job.o build/src/app/service_supervisor.o build/src/app/entity_backfill_job.o build/src/app/name_detection_job.o build/src/app/project_session.o build/src/app/explorer_snapshot.o build/src/app/profile.o build/src/app/model_settings.o build/src/app/appearance.o build/src/app/font_catalog.o build/src/app/chat_history_job.o build/src/app/memory_store.o build/src/app/memory_job.o build/src/app/memory_saved_file.o build/src/app/memory_documents.o build/src/app/memory_document_store.o build/src/app/memory_gc.o build/src/app/memory_brief_store.o build/src/app/recall.o build/src/app/recall_job.o build/src/app/import_job.o build/src/llm/context_planner.o build/src/llm/memory_tokens.o build/src/llm/memory_budget.o build/src/llm/generative_gate.o build/src/llm/memory_brief.o build/src/llm/canon_reference.o build/src/app/local_models.o build/src/llm/rerank.o build/src/llm/answer_pipeline.o build/src/llm/answer_receipt.o build/third_party/cJSON/cJSON.o build/src/main.o build/src/app/app_lifecycle.o build/src/app/chat_workflow.o build/src/app/document_workflow.o build/src/app/record_workflow.o build/src/app/script_host_app.o build/src/ui/layout.o build/src/app/script.o build/src/app/script_host.o build/src/app/startup_env.o build/src/app/draft_controller.o build/src/app/chat_controller.o build/src/app/reviewed_edit_controller.o build/src/ui/font.o build/src/ui/clay_render.o build/src/ui/editor.o build/src/ui/input.o build/src/ui/recall_view.o build/src/ui/chat_view.o build/src/ui/review_view.o build/src/ui/record_view.o build/src/ui/findings_view.o build/src/ui/prompt_view.o build/src/ui/menu_view.o build/src/ui/vendor_impl.o build/src/ui/widgets.o build/src/app/fonts_panel.o build/src/ui/motion_system.o build/src/ui/mac_window.o build/src/ui/backdrop.o build/src/ui/icons.o build/src/platform/dialogs_mac.o build/raylib/libraylib.a -o build/scribodo -framework OpenGL -framework Cocoa -framework IOKit -framework CoreAudio -framework CoreVideo -framework QuartzCore -framework CoreGraphics build/mariadb-cc/libmariadb/libmariadbclient.a /opt/homebrew/opt/openssl@3/lib/libssl.a /opt/homebrew/opt/openssl@3/lib/libcrypto.a -lz -liconv -lcurl  -lm -lpthread
+script tests/ui/store/1_move_and_use.scribo
+  ok    14  wait_status "now kept in the project store" 1800
+  ok    15  expect files "$DIR/book/.scribodo" "store.json" 1
+  ok    16  expect files "$DIR/book/.scribodo" "notes.jsonl" 0
+  ok    17  expect files "$DIR/book/.scribodo" "legacy-" 1
+  ok    18  expect explorer_has "Old chat"
+  ok    19  expect element_w NoteItem0 10 2000
+  ok    25  expect element_w RevItem0 10 2000
+  ok    31  expect record "Note · v1"
+  ok    42  expect record "Canon · v1 · committed"
+  ok    48  expect chat_last "You said: remember the lighthouse"
+  ok    52  wait_observer
+  ok    53  expect findings_has "entity|new|Zoë is mentioned."
+  ok    61  expect status "Renamed to Chapter One.md"
+  ok    62  expect files "$DIR/book/.scribodo" "renames.jsonl" 0
+  ok    63  expect element_w RevItem0 10 2000
+  ok    66  wait_history
+  ok    67  expect status "Source passage selected"
+  ok    68  expect files "$DIR/book/.scribodo" "notes.jsonl" 0
+  ok    69  expect files "$DIR/book/.scribodo" "chats" 0
+  19 passed, 0 failed
+
+script tests/ui/store/2_resume.scribo
+  ok     6  expect explorer_has "Chapter One.md"
+  ok     7  expect explorer_has "remember the lighthouse"
+  ok     8  expect explorer_has "Old chat"
+  ok    10  wait_history
+  ok    11  expect chat_count 2
+  ok    12  expect chat_last "You said: remember the lighthouse"
+  ok    13  expect attached "Chapter One.md"
+  ok    18  expect chat_count 4
+  ok    20  expect text "Zoë Ångström climbed the stairs. Again."
+  ok    21  expect element_w RevItem0 10 2000
+  ok    22  expect element_w NoteItem1 10 2000
+  ok    24  expect record "Canon · v1 · committed"
+  ok    25  expect record "Ångström."
+  ok    30  expect findings_has "entity|new|Zoë is mentioned."
+  ok    31  expect findings_count 3
+  ok    33  wait_observer
+  ok    34  expect findings_count 3
+  ok    37  wait_observer
+  ok    38  expect observer_status "Index rebuilt:"
+  19 passed, 0 failed
+
+script tests/ui/store/7_chat_windows.scribo
+  ok     4  wait_status "now kept in the project store" 1800
+  ok     6  wait_history
+  ok     7  expect chat_count 64
+  ok     8  expect chat_first_seq 336
+  ok     9  expect chat_last_seq 399
+  ok    10  expect attached "one.md"
+  ok    11  expect chat_cache_max 67108864
+  ok    13  wait_history
+  ok    14  expect chat_first_seq 272
+  ok    15  expect chat_last_seq 335
+  ok    21  wait_history
+  ok    22  expect chat_last_seq 399
+  ok    25  expect chat_count 64
+  ok    26  expect chat_last_seq 401
+  ok    27  expect chat_first_seq 338
+  ok    28  expect chat_last "continue from the latest history"
+  ok    32  wait_history
+  ok    33  expect chat_last_seq 101
+  ok    34  expect chat_excerpt_start 9000
+  ok    35  expect element_w ApplyLast 0 0
+  ok    36  expect chat_cache_max 67108864
+  ok    39  wait_history
+  ok    40  expect chat_last_seq 401
+  ok    43  expect record "Note"
+  ok    45  wait_history
+  ok    46  expect chat_last_seq 401
+  ok    47  expect chat_cache_max 67108864
+  27 passed, 0 failed
+script tests/ui/store/8_unsaved_chat.scribo
+  ok     7  wait_history
+  ok    13  expect chat_unsaved yes
+  ok    14  expect chat_last "unsaved project-switch sentinel"
+  ok    16  expect chat_unsaved yes
+  ok    17  expect chat_last "unsaved project-switch sentinel"
+  ok    20  expect chat_unsaved yes
+  ok    21  expect chat_last "unsaved project-switch sentinel"
+  ok    24  expect chat_unsaved yes
+  ok    25  expect status "Unsaved chat"
+  ok    27  expect chat_count 0
+  10 passed, 0 failed
+script tests/ui/store/9_unsaved_close.scribo
+  ok     4  wait_history
+  ok    10  expect chat_unsaved yes
+  ok    11  expect chat_last "unsaved close sentinel"
+  ok    13  expect status "Unsaved changes"
+  ok    14  expect chat_unsaved yes
+  ok    15  expect chat_last "unsaved close sentinel"
+  ok    19  expect running no
+  7 passed, 0 failed
+script tests/ui/store/10_async_history.scribo
+  ok     4  wait_history
+  ok     5  expect chat_count 64
+  ok     6  expect chat_last_seq 403
+  ok    10  expect history_busy yes
+  ok    14  expect chat_busy no
+  ok    15  expect status "History is loading"
+  ok    18  expect clipboard "keep this composed request"
+  ok    21  expect history_busy no
+  ok    22  expect chat_count 0
+  ok    25  expect history_busy yes
+  ok    26  expect chat_count 0
+  ok    28  wait_history
+  ok    29  expect chat_count 64
+  ok    33  expect clipboard "keep this composed request"
+  ok    38  expect history_busy no
+  ok    39  expect chat_count 0
+  ok    42  wait_history
+  ok    44  wait_history
+  ok    45  expect chat_count 64
+  ok    51  expect history_busy no
+  ok    52  expect chat_count 64
+  ok    55  wait_history
+  ok    56  expect chat_count 64
+  ok    58  expect chat_last_not "keep this composed request"
+  ok    60  expect attached "one.md"
+  ok    65  expect attached ""
+  ok    67  wait_history
+  ok    68  expect chat_last_seq 403
+  ok    69  expect status "your current attachment choices were kept"
+  ok    70  expect attached ""
+  ok    76  expect attached "one.md"
+  ok    79  expect attached ""
+  ok    81  wait_history
+  ok    82  expect chat_last_seq 403
+  ok    83  expect status "your current attachment choices were kept"
+  ok    84  expect attached ""
+  ok    88  expect history_busy yes
+  ok    91  wait_history
+  ok    92  expect history_busy no
+  ok    93  expect chat_count 64
+  ok    94  expect chat_last_seq 403
+  ok    97  wait_history
+  ok    98  expect attached ""
+  ok   103  expect history_busy no
+  ok   104  expect chat_count 64
+  ok   107  wait_history
+  ok   108  expect attached ""
+  47 passed, 0 failed
+script tests/ui/store/11_frame_soak.scribo
+  ok     6  wait_history
+  ok     7  expect chat_count 64
+  ok     8  expect chat_cache_max 67108864
+  ok    17  expect history_busy yes
+  ok    25  expect clipboard "frame soak composition survives"
+  ok    27  expect history_busy no
+  ok    28  expect chat_count 64
+  ok    30  wait_history
+  ok    32  wait_history
+  ok    33  expect chat_count 64
+  ok    34  expect chat_cache_max 67108864
+  ok    38  expect history_busy yes
+  ok    45  expect history_busy no
+  ok    46  expect chat_busy no
+  ok    47  expect chat_count 64
+  ok    49  wait_history
+  ok    51  wait_history
+  ok    52  expect chat_cache_max 67108864
+  ok    56  expect clipboard "frame soak composition survives"
+  ok    58  expect chat_count 64
+  ok    59  expect chat_cache_max 67108864
+  ok    60  expect chat_last_not "frame soak composition survives"
+FRAME_METRICS interframe_ms count=1262 p50=17.250 p95=17.250 p99=17.250 max=30.312 sample_seconds=21.414 over_50ms=0 (includes waits/vsync; not input latency, isolated CPU time, or an SLA)
+  22 passed, 0 failed
+script tests/ui/store/12_memory_recall.scribo
+  ok     4  wait_status "now kept in the project store" 1800
+  ok     6  wait_history
+  ok     7  expect chat_first_seq 66
+  ok     8  expect chat_last_seq 129
+  ok    10  expect memory_enabled no
+  ok    14  wait_memory off 1800
+  ok    15  expect memory_enabled no
+  ok    18  wait_memory 129 7200
+  ok    19  expect memory_enabled yes
+  ok    24  expect chat_last "Which color key opens the Asterholt observatory?"
+  ok    25  expect memory_sources "amber"
+  ok    26  expect memory_sources "message=0"
+  ok    27  expect element_w SourcesLast 1 300
+  ok    29  expect memory_sources "amber"
+  ok    30  expect memory_sources "not instructions or canon"
+  ok    35  wait_memory off 1800
+  ok    36  expect memory_enabled no
+  ok    40  wait_memory off 1800
+  ok    41  expect memory_enabled no
+  ok    43  wait_history
+  ok    44  expect memory_sources "amber"
+  ok    46  expect memory_sources "message=0"
+  ok    52  expect memory_sources_none
+  23 passed, 0 failed
+(12 again with the verified pipeline: the fake backend has no chat server, so the pipeline cannot run and the chat is recalled; REDTEAM-023)
+script tests/ui/store/12_memory_recall.scribo
+  ok     4  wait_status "now kept in the project store" 1800
+  ok     6  wait_history
+  ok     7  expect chat_first_seq 66
+  ok     8  expect chat_last_seq 129
+  ok    10  expect memory_enabled no
+  ok    14  wait_memory off 1800
+  ok    15  expect memory_enabled no
+  ok    18  wait_memory 129 7200
+  ok    19  expect memory_enabled yes
+  ok    24  expect chat_last "Which color key opens the Asterholt observatory?"
+  ok    25  expect memory_sources "amber"
+  ok    26  expect memory_sources "message=0"
+  ok    27  expect element_w SourcesLast 1 300
+  ok    29  expect memory_sources "amber"
+  ok    30  expect memory_sources "not instructions or canon"
+  ok    35  wait_memory off 1800
+  ok    36  expect memory_enabled no
+  ok    40  wait_memory off 1800
+  ok    41  expect memory_enabled no
+  ok    43  wait_history
+  ok    44  expect memory_sources "amber"
+  ok    46  expect memory_sources "message=0"
+  ok    52  expect memory_sources_none
+  23 passed, 0 failed
+script tests/ui/store/13_memory_documents.scribo
+  ok     4  wait_status "now kept in the project store" 1800
+  ok     8  wait_history
+  ok     9  expect attached "one.md"
+  ok    12  wait_memory 129 7200
+  ok    13  wait_memory_documents 1 7200
+  ok    18  expect memory_sources "cobalt"
+  ok    19  expect memory_sources "one.md"
+  ok    20  expect memory_sources "revision="
+  ok    23  wait_memory_documents 0 1800
+  ok    28  expect memory_sources_not "cobalt"
+  ok    29  expect memory_sources_not "revision="
+  ok    36  expect dirty yes
+  ok    37  wait_memory_documents 0 1800
+  ok    42  expect memory_sources_not "cobalt"
+  ok    43  expect memory_sources_not "violet"
+  ok    47  expect dirty no
+  ok    48  wait_memory_documents 1 7200
+  ok    53  expect memory_sources "violet"
+  ok    54  expect memory_sources_not "cobalt"
+  ok    55  expect memory_sources "revision="
+  20 passed, 0 failed
+script tests/ui/store/14_memory_briefs.scribo
+  ok     4  wait_status "now kept in the project store" 1800
+  ok     6  wait_history
+  ok     9  wait_memory 129 7200
+  ok    10  wait_memory_briefs 1 7200
+  ok    15  expect memory_sources "amber"
+  ok    16  expect memory_sources "GENERATED T1 BRIEF"
+  ok    17  expect memory_sources "not canon"
+  ok    19  expect memory_sources "verify original sources"
+  ok    23  wait_memory off 1800
+  ok    28  expect memory_sources_none
+  10 passed, 0 failed
+script tests/ui/store/15_recall.scribo
+  ok     9  expect selection 18 29
+  ok    11  expect record "Canon draft"
+  ok    16  expect record "Canon · v1 · committed"
+  ok    18  expect element_w RecordPanel 0 0
+  ok    21  expect element_w RecallInput 50 2000
+  ok    25  wait_recall 1800
+  ok    26  expect recall "idle"
+  ok    27  expect recall "canon_committed=1"
+  ok    28  expect recall "canon|"
+  ok    29  expect recall "The observatory key is amber."
+  ok    30  expect recall "memory_on=0"
+  ok    31  expect recall "memory_off=1"
+  ok    32  expect recall_not "chat|"
+  ok    36  wait_history
+  ok    37  expect memory_enabled no
+  ok    40  wait_memory 129 7200
+  ok    41  expect memory_enabled yes
+  ok    47  wait_recall 1800
+  ok    48  expect recall "memory_on=1"
+  ok    49  expect recall "chat|Memory fixture|seq=0|author|start=0|"
+  ok    50  expect recall "The Asterholt observatory key is amber."
+  ok    51  expect recall "canon|"
+  ok    52  expect recall_not "weather"
+  ok    54  expect recall "seq=1|assistant|start=0|matched=1|The key color is an author-established detail"
+  ok    57  expect record "Canon · v1 · committed"
+  ok    58  expect record "The observatory key is amber."
+  ok    62  wait_history
+  ok    63  expect chat_first_seq 0
+  ok    69  wait_recall 1800
+  ok    70  expect recall "rows=0"
+  ok    71  expect recall "canon_committed=1"
+  ok    72  expect recall_not "canon|"
+  ok    75  expect element_w RecallInput 0 0
+  ok    79  expect status "Chat archived"
+  ok    85  wait_recall 1800
+  ok    86  expect recall "canon|"
+  ok    87  expect recall_not "chat|"
+  ok    91  expect status "Chat restored"
+  ok    96  wait_recall 1800
+  ok    97  expect recall "chat|Memory fixture|seq=0|author|start=0|"
+  ok   103  wait_status "Chat deleted" 3600
+  ok   104  expect status_not "removed later"
+  ok   105  expect explorer_not "Memory fixture"
+  ok   110  wait_recall 1800
+  ok   111  expect recall "canon|"
+  ok   112  expect recall_not "chat|"
+  46 passed, 0 failed
+script tests/ui/store/6_backup.scribo
+  ok     7  expect explorer_has "remember the lighthouse"
+  ok    10  wait_status "Backed up to" 1800
+  ok    11  expect files "$DIR/backups" "book-" 1
+  ok    15  wait_status "Restored as" 1800
+  ok    19  wait_status "now kept in the project store" 1800
+  ok    20  expect files "$DIR" "book (restored" 1
+  ok    21  expect explorer_has "Chapter One.md"
+  ok    22  expect explorer_has "remember the lighthouse"
+  ok    23  expect explorer_has "Old chat"
+  ok    25  expect text "Zoë Ångström climbed the stairs. Again."
+  ok    26  expect element_w RevItem0 10 2000
+  ok    27  expect element_w NoteItem1 10 2000
+  ok    29  expect record "Ångström."
+  ok    33  wait_history
+  ok    34  expect attached "Chapter One.md"
+  15 passed, 0 failed
+
+script tests/ui/store/5_entities.scribo
+  ok    10  wait_status "now kept in the project store" 1800
+  ok    14  wait_observer
+  ok    15  expect explorer_has "Mara · 2"
+  ok    16  expect explorer_has "Zoë · 2"
+  ok    19  expect explorer_has "Zoë sister of → this"
+  ok    20  expect explorer_has "· Mara is mentioned."
+  ok    23  expect explorer_has "sister of → Mara"
+  ok    26  expect status "Source passage selected"
+  ok    27  expect selection 0 21
+  ok    30  expect explorer_has "Zoë · 2"
+  10 passed, 0 failed
+
+script tests/ui/store/4_copy.scribo
+  ok     8  expect element_w StoreFixItem 10 2000
+  ok    12  expect status "Chat is paused: this folder is a copy"
+  ok    13  expect chat_count 0
+  ok    15  expect status "now its own project"
+  ok    16  expect explorer_has "Chapter One.md"
+  ok    17  expect explorer_has "remember the lighthouse"
+  ok    18  expect explorer_has "Old chat"
+  ok    20  expect record "Ångström."
+  ok    26  expect chat_count 2
+  ok    27  expect files "$DIR/book-copy/.scribodo" "store.json" 1
+  10 passed, 0 failed
+
+script tests/ui/store/3_paused.scribo
+  ok    10  expect file "$DIR/book/Chapter One.md" "Zoë Ångström climbed the stairs. Again. Offline edit."
+  ok    14  expect status "Chat is paused while the project store is offline"
+  ok    15  expect chat_count 0
+  ok    21  expect element_w PromptField 100 2000
+  ok    23  expect files "$DIR/book" "Chapter One.md" 1
+  ok    30  expect element_w PromptField 100 2000
+  ok    32  expect files "$DIR/book" "Offline new" 0
+  ok    33  expect files "$DIR/book/.scribodo" "notes.jsonl" 0
+  ok    34  expect files "$DIR/book/.scribodo" "chats" 0
+  9 passed, 0 failed

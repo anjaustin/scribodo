@@ -25,6 +25,7 @@ replaced it.
 | Document | What it is |
 |---|---|
 | [COMPOSITION-001](COMPOSITION-001-plan.md) | **Active P0:** lightweight component adoption plan, decision gates and cross-session work ledger |
+| [REDTEAM-025](REDTEAM-025-composition-save-state.md) | Adversarial C01 save-state review, remediations and verification boundaries |
 | [PRODUCT-GAPS](PRODUCT-GAPS.md) | The five product-readiness gaps (GAP-001 to 005) and the working order |
 | [TECHNICAL-DEBT](TECHNICAL-DEBT.md) | The debt register, including the [items deferred after AUDIT-004](TECHNICAL-DEBT.md#deferred-after-audit-004-weighted-2026-11-16), weighted |
 | [ACCEPTANCE](ACCEPTANCE.md) | The MVP acceptance run on the development Mac (SOW §8) |

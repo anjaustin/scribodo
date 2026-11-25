@@ -51,14 +51,23 @@ bool chat_store_append(StoreManager *manager, const char *project_dir, const cha
 bool chat_store_append_sequenced(StoreManager *manager, const char *project_dir, const char *id, const char *title,
                                 const ChatMessage *m, int64_t *sequence);
 
+/* UI thread only: snapshot a finished message with all metadata, append/acknowledge it, or mark it failed.
+ * Defer later messages behind earlier failures to preserve transcript order on retry. The worker may be
+ * streaming a later message; transcript replacement must not run concurrently. */
+bool chat_store_save_finished(StoreManager *manager, ChatSession *chat, const char *project_dir, const char *id,
+                              const char *title, size_t index);
+/* UI thread, idle chat: first bind the new project/id, then persist the unbound transcript.
+ * Protect the whole obligation before saving. Call once per adoption, not as a retry. */
+bool chat_store_adopt(StoreManager *manager, ChatSession *chat, const char *project_dir, const char *id, const char *title);
+
 /* Messages whose append the store refused are saved when it answers again (red-team 2026-11-14: the status told
  * the author to keep them and nothing re-appended them, so sending stayed refused). Exactly the messages marked
  * save_failed are appended, in order; a reply whose done callback has not run yet carries no mark, and neither does
  * a chat loaded from files before its project moved into the store (second pass: inferring "unsaved" from a missing
  * sequence re-appended both). Every acknowledged append clears its mark, including file mode's -1 sequence, without
  * inventing a DB window (chat_mark_saved). Nothing is done
- * while `chat` is busy. Returns how many marked messages there were (0 when none, busy, or out of memory); `*ok` is
- * false when an append failed, and the rest are then left marked. */
+ * while `chat` is busy. UI thread only. Returns how many marked messages there were (0 when none or busy);
+ * `*ok` is false when preparation or an append failed, and the rest are then left marked. */
 size_t chat_store_resave_failed(StoreManager *manager, ChatSession *chat, const char *project_dir, const char *id,
                                 const char *title, bool *ok);
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mutation controls for AUDIT-001. Generated sources/logs stay under build/.
+"""Mutation controls for persistence audits, including COMPOSITION-001. Generated sources/logs stay under build/.
 
 Compile failures, crashes and timeouts are errors, not killed mutants. Requires
 the normal persistence-fault test prerequisites; no services or models are used.
@@ -36,7 +36,14 @@ def main():
         ("chat_title_not_restored", "src/app/chat_store.c",
          ("title_clean(c->title, sizeof(c->title), t->valuestring);", "(void)t;", 1)),
         ("chat_observer_flag_not_restored", "src/app/chat_store.c",
-         ("c->observer_ignore = !cJSON_IsTrue(rd);", "c->observer_ignore = false;", 1)),
+          ("c->observer_ignore = !cJSON_IsTrue(rd);", "c->observer_ignore = false;", 1)),
+        ("chat_retry_preparation_failure_hidden", "src/app/chat_store.c",
+         ("if (ok) *ok = saved;", "if (ok) *ok = true;", 1)),
+        ("chat_adoption_obligation_unmarked", "src/app/chat_store.c",
+         ("for (size_t i = 0; i < n; i++) chat_mark_save_failed(chat, i);", "/* obligation not protected */", 1)),
+        ("chat_file_retry_not_acknowledged", "src/app/chat_store.c",
+         ("if (saved) chat_mark_saved(chat, index, sequence);",
+          "if (saved && sequence >= 0) chat_mark_saved(chat, index, sequence);", 1)),
         ("rules_trailing_bytes_accepted", "src/app/observer_store.c",
          ("if (ok && n == 16) ok = fgetc(f) == EOF && !ferror(f);", "/* extra byte ignored */", 1)),
         ("rules_nonhex_accepted", "src/app/observer_store.c",

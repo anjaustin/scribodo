@@ -703,6 +703,59 @@ bool chat_store_append_sequenced(StoreManager *manager, const char *project_dir,
     return project_store_chat_append_sequenced(manager, project_dir, id, title, message, sequence);
 }
 
+/* Transcript replacement, persistence and acknowledgement are UI-thread operations. The worker may still
+ * stream a later reply while the UI saves the finished user message, so own every copied string. */
+static bool save_message(StoreManager *manager, ChatSession *chat, const char *project_dir, const char *id,
+                         const char *title, size_t index, bool check_order)
+{
+    if (!chat) return false;
+    ChatMessage copy = {0};
+    chat_lock(chat);
+    const ChatMessage *m = chat_message(chat, index);
+    bool found = m != NULL, ready = found && !m->streaming;
+    for (size_t i = 0; ready && check_order && i < index; i++)
+        if (chat_message(chat, i)->save_failed) ready = false;
+    if (ready) {
+        copy = *m;
+        copy.content = strdup(m->content ? m->content : "");
+        copy.docs = m->docs ? strdup(m->docs) : NULL;
+        copy.via = m->via ? strdup(m->via) : NULL;
+        copy.memory_sources = m->memory_sources ? strdup(m->memory_sources) : NULL;
+        ready = copy.content && (!m->docs || copy.docs) && (!m->via || copy.via) &&
+                (!m->memory_sources || copy.memory_sources);
+    }
+    chat_unlock(chat);
+    int64_t sequence = -1;
+    bool saved = ready && chat_store_append_sequenced(manager, project_dir, id, title, &copy, &sequence);
+    if (saved) chat_mark_saved(chat, index, sequence);
+    else if (found) chat_mark_save_failed(chat, index);
+    free(copy.content);
+    free(copy.docs);
+    free(copy.via);
+    free(copy.memory_sources);
+    return saved;
+}
+
+bool chat_store_save_finished(StoreManager *manager, ChatSession *chat, const char *project_dir, const char *id,
+                              const char *title, size_t index)
+{
+    return save_message(manager, chat, project_dir, id, title, index, true);
+}
+
+bool chat_store_adopt(StoreManager *manager, ChatSession *chat, const char *project_dir, const char *id, const char *title)
+{
+    if (!chat || chat_busy(chat)) return false;
+    chat_lock(chat);
+    size_t n = chat_count(chat);
+    chat_unlock(chat);
+    /* Protect the whole obligation before any allocation/write can fail. A saved prefix is acknowledged
+     * individually; the suffix stays protected and retryable if adoption stops part-way. */
+    for (size_t i = 0; i < n; i++) chat_mark_save_failed(chat, i);
+    bool ok = false;
+    chat_store_resave_failed(manager, chat, project_dir, id, title, &ok);
+    return ok;
+}
+
 size_t chat_store_resave_failed(StoreManager *manager, ChatSession *chat, const char *project_dir, const char *id,
                                 const char *title, bool *ok)
 {
@@ -710,25 +763,16 @@ size_t chat_store_resave_failed(StoreManager *manager, ChatSession *chat, const 
     if (!chat || chat_busy(chat)) return 0;
     chat_lock(chat);
     size_t n = chat_count(chat), k = 0;
-    ChatMessage *copy = calloc(n ? n : 1, sizeof(ChatMessage));
-    size_t *at = calloc(n ? n : 1, sizeof(size_t));
-    for (size_t i = 0; copy && at && i < n; i++) {
-        const ChatMessage *m = chat_message(chat, i);
-        if (!m->save_failed) continue;
-        copy[k] = *m;
-        copy[k].content = strdup(m->content ? m->content : "");
-        at[k++] = i;
-    }
+    for (size_t i = 0; i < n; i++) if (chat_message(chat, i)->save_failed) k++;
     chat_unlock(chat);
     bool saved = true;
-    for (size_t j = 0; saved && j < k; j++) {
-        int64_t sequence = -1;
-        saved = copy[j].content && chat_store_append_sequenced(manager, project_dir, id, title, &copy[j], &sequence);
-        if (saved) chat_mark_saved(chat, at[j], sequence);
+    for (size_t i = 0; saved && k && i < n; i++) {
+        chat_lock(chat);
+        bool failed = chat_message(chat, i)->save_failed;
+        chat_unlock(chat);
+        /* Already walking in order; avoid rescanning a large file transcript for every message. */
+        if (failed) saved = save_message(manager, chat, project_dir, id, title, i, false);
     }
-    for (size_t j = 0; copy && j < k; j++) free(copy[j].content);
-    free(copy);
-    free(at);
     if (ok) *ok = saved;
     return k;
 }

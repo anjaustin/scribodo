@@ -1,0 +1,25 @@
+F.......
+======================================================================
+FAIL: test_clean_rerun_discards_stale_findings (__main__.AnalyzeTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-redteam025.7K029i/mutations/analyzer-gates/tests/test_analyze.py", line 74, in test_clean_rerun_discards_stale_findings
+    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+AssertionError: 2 != 0 : /private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-redteam025.7K029i/mutations/analyzer-gates/build/analyze-test-9mq0ary6/probe.c:1:39: warning: Dereference of null pointer (loaded from variable 'p') [core.NullDereference]
+    1 | int broken(void) { int *p = 0; return *p; }
+      |                                       ^~
+/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-redteam025.7K029i/mutations/analyzer-gates/build/analyze-test-9mq0ary6/probe.c:1:20: note: 'p' initialized to a null pointer value
+    1 | int broken(void) { int *p = 0; return *p; }
+      |                    ^~~~~~
+/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-redteam025.7K029i/mutations/analyzer-gates/build/analyze-test-9mq0ary6/probe.c:1:39: note: Dereference of null pointer (loaded from variable 'p')
+    1 | int broken(void) { int *p = 0; return *p; }
+      |                                       ^~
+1 warning generated.
+analyze: static analysis reported findings
+make: *** [analyze] Error 1
+
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.465s
+
+FAILED (failures=1)

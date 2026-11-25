@@ -8,7 +8,8 @@
 **Implementation follow-up (2026-11-25):** COMPOSITION-001 C01 implements F1/F3 corrections with red/green
 regressions and passing full headless tests, analyzer, ASan/UBSan, TSan and app build.
 See [commands, retained logs and exclusions](../journal/composition001-progress.md).
-Real UI failure and database acceptance remain unrun; F2 and D1/D2 remain open.
+REDTEAM-025 additionally passed a real scripted file-save refusal/retry UI case and isolated DB/crash/DB-UI
+gates; this is not a real-model or IME/accessibility claim. F2 and D1/D2 remain open.
 The findings and line numbers below describe the original audit baseline, not the corrected working tree.
 
 ## Scope and limits
@@ -27,7 +28,7 @@ Line numbers refer to the baseline above.
 
 | Command | Exit | Observation |
 |---|---:|---|
-| `SCRIBODO_EVIDENCE_SKIP=1 SCRIBODO_YARDSTICK_SKIP=1 make test` | 0 | Existing headless suites passed; archive and novel-yardstick checks explicitly skipped; one branch-specific experiment test also skipped |
+| `SCRIBODO_EVIDENCE_SKIP=1 SCRIBODO_YARDSTICK_SKIP=1 make test` | 0 | Existing headless suites passed; archive check ran and the public-domain novel yardsticks matched byte-for-byte; the variables permit missing inputs but did not skip present inputs. One branch-specific experiment test skipped. Description corrected during REDTEAM-025 from the retained log. |
 | `make analyze` | 0 | Zero warnings across 113 C/Objective-C source files |
 | Isolated audit probe | 0 | Reproduced F1, F2 and F3; exit 0 means the diagnostic ran, not that these behaviors are correct |
 | `make dependency-report` | nonzero (`make`: 2) | Two OSV advisories for the pinned llama.cpp commit; MariaDB image tag moved |

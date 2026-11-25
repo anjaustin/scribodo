@@ -1,0 +1,50 @@
+/Library/Developer/CommandLineTools/usr/bin/make --no-print-directory BUILD=build/asan OPT="-O1 -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined" test
+cc -std=c11 -O1 -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined -mcpu=native -g -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include -MMD -MP -c tests/test_llm.c -o build/asan/tests/test_llm.o
+cc -std=c11 -O1 -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined -mcpu=native -g -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter build/asan/src/core/utf8.o build/asan/src/core/text_buffer.o build/asan/src/core/undo.o build/asan/src/core/wrap.o build/asan/src/core/doc_io.o build/asan/src/core/diff.o build/asan/src/core/file_text.o build/asan/src/app/frame_view_model.o build/asan/src/app/frame_metrics.o build/asan/src/core/recall_terms.o build/asan/src/core/text_cut.o build/asan/src/core/experiments.o build/asan/src/core/text_rules.o build/asan/src/app/tools_dir.o build/asan/src/core/child_process.o build/asan/src/core/font_file.o build/asan/src/ui/theme.o build/asan/src/ui/motion.o build/asan/src/core/json.o build/asan/src/llm/llm_text.o build/asan/src/llm/http.o build/asan/src/llm/server.o build/asan/src/llm/chat.o build/asan/src/llm/chat_history.o build/asan/src/app/chat_store.o build/asan/src/app/revisions.o build/asan/src/app/records.o build/asan/src/app/recent.o build/asan/src/app/renames.o build/asan/src/llm/observer.o build/asan/src/llm/observer_text.o build/asan/src/llm/observer_formats.o build/asan/src/llm/observer_arms.o build/asan/src/llm/observer_fake.o build/asan/src/llm/observer_model.o build/asan/src/llm/observer_job.o build/asan/src/llm/semantic.o build/asan/src/llm/remote.o build/asan/src/llm/names.o build/asan/src/llm/memfit.o build/asan/src/app/db.o build/asan/src/app/store.o build/asan/src/app/project_store.o build/asan/src/app/observer_store.o build/asan/src/app/store_revisions.o build/asan/src/app/store_records.o build/asan/src/app/store_chats.o build/asan/src/app/store_chat_history.o build/asan/src/app/store_import.o build/asan/src/app/store_entities.o build/asan/src/app/backup.o build/asan/src/app/backup_job.o build/asan/src/app/service_supervisor.o build/asan/src/app/entity_backfill_job.o build/asan/src/app/name_detection_job.o build/asan/src/app/project_session.o build/asan/src/app/explorer_snapshot.o build/asan/src/app/profile.o build/asan/src/app/model_settings.o build/asan/src/app/appearance.o build/asan/src/app/font_catalog.o build/asan/src/app/chat_history_job.o build/asan/src/app/memory_store.o build/asan/src/app/memory_job.o build/asan/src/app/memory_saved_file.o build/asan/src/app/memory_documents.o build/asan/src/app/memory_document_store.o build/asan/src/app/memory_gc.o build/asan/src/app/memory_brief_store.o build/asan/src/app/recall.o build/asan/src/app/recall_job.o build/asan/src/app/import_job.o build/asan/src/llm/context_planner.o build/asan/src/llm/memory_tokens.o build/asan/src/llm/memory_budget.o build/asan/src/llm/generative_gate.o build/asan/src/llm/memory_brief.o build/asan/src/llm/canon_reference.o build/asan/src/app/local_models.o build/asan/src/llm/rerank.o build/asan/src/llm/answer_pipeline.o build/asan/src/llm/answer_receipt.o build/asan/third_party/cJSON/cJSON.o build/asan/tests/test_state_fixture.o build/asan/tests/test_llm.o -o build/asan/test_llm build/mariadb-cc/libmariadb/libmariadbclient.a /opt/homebrew/opt/openssl@3/lib/libssl.a /opt/homebrew/opt/openssl@3/lib/libcrypto.a -lz -liconv -lcurl  -lpthread
+tools/watchdog.sh 300 test_evidence_check python3 tests/test_evidence_check.py
+test_a_file_stem_is_archived_through_its_files (__main__.CheckTests) ... ok
+test_a_glob_citation_needs_every_match_archived (__main__.CheckTests) ... ok
+test_a_glob_entry_still_walks_its_matches (__main__.CheckTests) ... ok
+test_a_recreated_lost_path_fails_archived_or_not (__main__.CheckTests) ... ok
+test_a_star_stays_in_one_component (__main__.CheckTests) ... ok
+test_absent_archive_folder_is_an_error_unless_told_to_skip (__main__.CheckTests) ... ok
+test_entries_do_not_excuse_what_is_under_them (__main__.CheckTests) ... ok
+test_every_violation_is_listed_with_its_location (__main__.CheckTests) ... ok
+test_gate_owned_paths_need_an_archive_not_an_excuse (__main__.CheckTests) ... ok
+test_glob_and_placeholder_covered_by_any_member (__main__.CheckTests) ... ok
+test_lost_entries_are_accepted_until_the_path_reappears (__main__.CheckTests) ... ok
+test_lost_entries_are_exact_too (__main__.CheckTests) ... ok
+test_lost_needs_the_citing_document (__main__.CheckTests) ... ok
+test_manifest_forms_cover_their_descendants (__main__.CheckTests) ... ok
+test_not_evidence_entries_cover_paths_dirs_and_globs (__main__.CheckTests) ... ok
+test_not_evidence_needs_a_reason (__main__.CheckTests) ... ok
+test_one_archived_file_does_not_cover_its_directory (__main__.CheckTests) ... ok
+test_placeholder_entries_never_excuse_concrete_paths (__main__.CheckTests) ... ok
+test_readme_is_scanned (__main__.CheckTests) ... ok
+test_relative_names_resolve_under_a_cited_directory (__main__.CheckTests) ... ok
+test_stale_entries_warn_without_failing (__main__.CheckTests) ... ok
+test_tarball_listing_is_exact (__main__.CheckTests) ... ok
+test_the_bare_build_folder_is_reported_not_dropped (__main__.CheckTests) ... ok
+test_the_build_folder_looked_at_is_reported (__main__.CheckTests) ... ok
+test_top_level_tarball_names_get_build_prefix (__main__.CheckTests) ... ok
+test_unarchived_lists_the_next_archive_pass (__main__.CheckTests) ... ok
+test_walk_entries_excuse_new_dumps_but_not_a_dump_cited_by_name (__main__.CheckTests) ... ok
+test_deletions_are_owned (__main__.GateOwnedDirsTests) ... ok
+test_a_spaced_path_is_cited_only_in_backticks (__main__.NormalizeTests) ... ok
+test_bare_build_is_not_a_citation (__main__.NormalizeTests) ... ok
+test_braces_expand (__main__.NormalizeTests) ... ok
+test_citation_boundaries (__main__.NormalizeTests) ... ok
+test_markdown_links_and_angle_brackets (__main__.NormalizeTests) ... ok
+test_numeric_range_expands (__main__.NormalizeTests) ... ok
+test_patterns (__main__.NormalizeTests) ... ok
+test_trailing_punctuation_and_slashes (__main__.NormalizeTests) ... ok
+
+----------------------------------------------------------------------
+Ran 36 tests in 0.736s
+
+OK
+tools/watchdog.sh 300 evidence_check python3 tools/evidence_check.py
+journal/composition001-progress.md:153: build/run is in no archive, not declared not-evidence (tests/fixtures/evidence_not_archived.txt), not recorded as lost (tests/fixtures/evidence_lost.txt)
+evidence_check: 1 violation(s) over 1142 citations (953 archived, 34 build-folder, 50 lost, 104 not-evidence, 1 unarchived); files looked for under /Users/ztflynn/Projects/scribodo/build
+make[1]: *** [evidencecheck] Error 1
+make: *** [sanitize] Error 2

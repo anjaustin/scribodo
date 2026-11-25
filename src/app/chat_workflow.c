@@ -334,6 +334,10 @@ void on_message_done(ChatSession *s, size_t index, void *ctx)
     bool pending_finished = reviewed_edit_controller_take_finished(&app->reviewed_edit, index, &pending_original,
                                                                     &pending_instruction);
     if (!found || !copy.content) {
+        if (found && app->chat_project[0]) {
+            chat_mark_save_failed(s, index);
+            set_status(app, "Could not prepare the chat save; the message was kept in memory");
+        }
         if (pending_finished) {
             editor_anchor_clear(app->editor);
             set_status(app, "The edit reply finished, but there wasn't enough memory to review it");
@@ -366,12 +370,9 @@ void on_message_done(ChatSession *s, size_t index, void *ctx)
     }
     if (copy.role == CHAT_ASSISTANT && !copy.error && !copy.is_edit && index >= 1) names_check(app, index);
     if (!app->chat_project[0]) { free(copy.content); return; }
-    int64_t sequence = -1;
-    if (!chat_store_append_sequenced(app->store, app->chat_project, app->chat_id, app->chat_title, &copy, &sequence)) {
-        chat_mark_save_failed(s, index);
-        set_status(app, store_says(app, "Could not save the chat to .scribodo/chats"));
+    if (!chat_store_save_finished(app->store, s, app->chat_project, app->chat_id, app->chat_title, index)) {
+        set_status(app, store_says(app, "Chat kept in memory; use Explorer → CHATS → Retry saving chat"));
     } else {
-        chat_mark_saved(s, index, sequence);
         if (app->observer && copy.role == CHAT_ASSISTANT) observer_poke(app->observer);
     }
     free(copy.content);
@@ -386,22 +387,7 @@ void adopt_chat(App *app)
     if (!app->chat_id[0]) chat_store_new_id(app->chat_id, sizeof(app->chat_id));
     if (!app->chat_title[0]) snprintf(app->chat_title, sizeof(app->chat_title), "Chat");
     project_session_bind_chat(&app->session, app->project_dir, app->chat_id, app->chat_title);
-    chat_lock(app->chat);
-    size_t n = chat_count(app->chat);
-    ChatMessage *copy = calloc(n ? n : 1, sizeof(ChatMessage));
-    for (size_t i = 0; copy && i < n; i++) {
-        copy[i] = *chat_message(app->chat, i);
-        copy[i].content = strdup(copy[i].content ? copy[i].content : "");
-    }
-    chat_unlock(app->chat);
-    bool ok = copy != NULL;
-    for (size_t i = 0; ok && i < n; i++) {
-        int64_t sequence = -1;
-        ok = copy[i].content && chat_store_append_sequenced(app->store, app->chat_project, app->chat_id, app->chat_title, &copy[i], &sequence);
-        if (ok) chat_mark_saved(app->chat, i, sequence);
-    }
-    for (size_t i = 0; copy && i < n; i++) free(copy[i].content);
-    free(copy);
+    bool ok = chat_store_adopt(app->store, app->chat, app->chat_project, app->chat_id, app->chat_title);
     if (chat_trim_saved(app->chat)) chat_view_history_changed(app->chat_view);
     set_status(app, ok ? "Chat saved to this project" : store_says(app, "Could not save the chat to .scribodo/chats"));
     app->lists_dirty = true;
@@ -563,7 +549,7 @@ void new_chat(App *app)
     if (unsaved_chat(app) && !(app->chat_discard_armed && GetTime() - app->chat_discard_at < 5.0)) {
         app->chat_discard_armed = true;
         app->chat_discard_at = GetTime();
-        set_status(app, "Unsaved chat — copy what you need, then click New chat again to discard");
+        set_status(app, "Unsaved chat — retry saving in Explorer, or copy it and click New chat again to discard");
         return;
     }
     app->chat_discard_armed = false;

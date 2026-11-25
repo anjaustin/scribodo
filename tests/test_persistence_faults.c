@@ -105,6 +105,78 @@ static void request_history_faults(void)
     }
 }
 
+static void chat_retry_snapshot_faults(void)
+{
+    ChatMessage messages[] = {
+        { .role = CHAT_USER, .content = "Question", .docs = "chapter.md", .via = "Provider" },
+        { .role = CHAT_ASSISTANT, .content = "Answer", .memory_sources = "{\"sources\":[]}" }
+    };
+    ChatSession *s = chat_create(NULL);
+    CHECK(s != NULL);
+    if (!s) return;
+    /* A refused snapshot must not say success, clear marks, or write a partial batch. */
+    for (long i = 0; i < 2; i++) {
+        CHECK(chat_load_messages(s, messages, 2));
+        chat_mark_save_failed(s, 0);
+        chat_mark_save_failed(s, 1);
+        fault_alloc_once_after(i);
+        bool ok = true;
+        CHECK(chat_store_resave_failed(store, s, project, "bcde", "Retry", &ok) == 2 && !ok);
+        fault_alloc_after(-1);
+        CHECK(chat_message(s, 0)->save_failed && chat_message(s, 1)->save_failed);
+    }
+    chat_destroy(s);
+}
+
+static void chat_adoption_faults(void)
+{
+    char trial[800];
+    snprintf(trial, sizeof(trial), "%s/adoption-faults", project);
+    CHECK(mkdir(trial, 0755) == 0);
+    ChatMessage messages[] = {
+        { .role = CHAT_USER, .content = "Question", .docs = "chapter.md", .via = "Provider", .ts = 123 },
+        { .role = CHAT_ASSISTANT, .content = "Answer", .memory_sources = "{\"sources\":[]}", .ts = 124 }
+    };
+    ChatSession *s = chat_create(NULL);
+    CHECK(s != NULL);
+    if (!s) return;
+    CHECK(chat_load_messages(s, messages, 2));
+    fault_alloc_after(-1);
+    CHECK(chat_store_adopt(store, s, trial, "cafe", "Adopt"));
+    long count = fault_alloc_count();
+    CHECK(count > 10);
+    for (long i = 0; i < count * 2; i++) {
+        CHECK(chat_load_messages(s, messages, 2));
+        char id[32];
+        snprintf(id, sizeof(id), "cafe%08lx", i);
+        allocation_case(i, count);
+        bool ok = chat_store_adopt(store, s, trial, id, "Adopt");
+        fault_alloc_after(-1);
+        bool first = chat_message(s, 0)->save_failed, second = chat_message(s, 1)->save_failed;
+        CHECK(!first || second); /* no acknowledged suffix behind a failed prefix */
+        CHECK(ok == (!first && !second));
+        chat_lock(s);
+        CHECK(chat_window_info(s).unsaved == !ok);
+        chat_unlock(s);
+        bool retried = false;
+        CHECK(chat_store_resave_failed(store, s, trial, id, "Adopt", &retried) ==
+              (size_t)(first + second) && retried);
+        CHECK(chat_store_resave_failed(store, s, trial, id, "Adopt", &retried) == 0 && retried);
+        ChatMessage *loaded = NULL;
+        size_t n = 0;
+        CHECK(chat_store_load(store, trial, id, &loaded, &n) && n == 2);
+        if (loaded && n == 2) {
+            CHECK(!strcmp(loaded[0].content, messages[0].content) && !strcmp(loaded[1].content, messages[1].content));
+            CHECK(loaded[0].docs && !strcmp(loaded[0].docs, messages[0].docs));
+            CHECK(loaded[0].via && !strcmp(loaded[0].via, messages[0].via));
+            CHECK(loaded[1].memory_sources && !strcmp(loaded[1].memory_sources, messages[1].memory_sources));
+            CHECK(loaded[0].ts > 0 && loaded[1].ts > 0); /* existing append-time clock contract */
+        }
+        chat_store_free_messages(loaded, n);
+    }
+    chat_destroy(s);
+}
+
 static void packed_history_faults(void)
 {
     const char request[] = "{\"messages\":[{\"role\":\"system\",\"content\":\"persona\"},"
@@ -462,7 +534,9 @@ int main(void)
     TestCase tests[] = { { "record_allocations", record_faults }, { "revision_allocations", revision_faults },
                         { "request_history_allocations", request_history_faults },
                         { "packed_history_allocations", packed_history_faults },
-                        { "chat_load_allocations", chat_load_faults },
+                         { "chat_load_allocations", chat_load_faults },
+                         { "chat_retry_snapshot_allocations", chat_retry_snapshot_faults },
+                         { "chat_adoption_allocations", chat_adoption_faults },
                         { "chat_send_allocations", chat_send_faults },
                         { "request_builder_allocations", request_builder_faults },
                         { "assistant_history_builder_allocations", assistant_history_builder_faults },

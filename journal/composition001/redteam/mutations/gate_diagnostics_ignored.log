@@ -1,0 +1,40 @@
+F....F.F
+======================================================================
+FAIL: test_clean_rerun_discards_stale_findings (__main__.AnalyzeTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-redteam025.7K029i/mutations/analyzer-gates/tests/test_analyze.py", line 72, in test_clean_rerun_discards_stale_findings
+    self.assertNotEqual(result.returncode, 0)
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_nonwarning_diagnostic_fails (__main__.AnalyzeTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-redteam025.7K029i/mutations/analyzer-gates/tests/test_analyze.py", line 67, in test_nonwarning_diagnostic_fails
+    self.assertNotEqual(result.returncode, 0)
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_warning_fails_even_when_clang_exits_zero (__main__.AnalyzeTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-redteam025.7K029i/mutations/analyzer-gates/tests/test_analyze.py", line 45, in test_warning_fails_even_when_clang_exits_zero
+    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+AssertionError: 0 == 0 : /private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-redteam025.7K029i/mutations/analyzer-gates/build/analyze-test-n1tepx7b/probe.c:1:39: warning: Dereference of null pointer (loaded from variable 'p') [core.NullDereference]
+    1 | int broken(void) { int *p = 0; return *p; }
+      |                                       ^~
+/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-redteam025.7K029i/mutations/analyzer-gates/build/analyze-test-n1tepx7b/probe.c:1:20: note: 'p' initialized to a null pointer value
+    1 | int broken(void) { int *p = 0; return *p; }
+      |                    ^~~~~~
+/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-redteam025.7K029i/mutations/analyzer-gates/build/analyze-test-n1tepx7b/probe.c:1:39: note: Dereference of null pointer (loaded from variable 'p')
+    1 | int broken(void) { int *p = 0; return *p; }
+      |                                       ^~
+1 warning generated.
+analyze: 0 warnings across 1 source files
+
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.433s
+
+FAILED (failures=3)

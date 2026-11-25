@@ -98,6 +98,56 @@ static void test_store_ids(void)
     store_set_offline(g_store, false);
 }
 
+static void test_chat_save_acknowledgements(void)
+{
+    char why[256], project[PATH_MAX], pid[40];
+    snprintf(project, sizeof(project), "%s/scribodo-chat-ack-%d",
+             getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp", (int)getpid());
+    CHECK(mkdir(project, 0755) == 0);
+    CHECK(store_start(g_store, g_name, why, sizeof(why)));
+    CHECK(store_project_id(g_store, project, true, pid, sizeof(pid)) && store_mark_imported(project, pid));
+    CHECK(store_mode(g_store, project, NULL, 0, NULL) == STORE_DB);
+    ChatSession *s = chat_create(NULL);
+    CHECK(s != NULL);
+    if (!s) return;
+    ChatMessage messages[] = { { .role = CHAT_USER, .content = "Question" },
+                               { .role = CHAT_ASSISTANT, .content = "Answer", .via = "Provider" } };
+    CHECK(chat_load_messages(s, messages, 2));
+    const char *id = "20261125-000000-acca";
+    store_set_offline(g_store, true);
+    CHECK(!chat_store_save_finished(g_store, s, project, id, "Acknowledgements", 0));
+    store_set_offline(g_store, false);
+    CHECK(!chat_store_save_finished(g_store, s, project, id, "Acknowledgements", 1));
+    bool ok = false;
+    CHECK(chat_store_resave_failed(g_store, s, project, id, "Acknowledgements", &ok) == 2 && ok);
+    CHECK(chat_store_resave_failed(g_store, s, project, id, "Acknowledgements", &ok) == 0 && ok);
+    chat_lock(s);
+    ChatWindowInfo info = chat_window_info(s);
+    CHECK(info.active && !info.unsaved && info.first == 0 && info.last == 1);
+    chat_unlock(s);
+    ChatMessage *loaded = NULL;
+    size_t n = 0;
+    CHECK(chat_store_load(g_store, project, id, &loaded, &n) && n == 2);
+    if (loaded && n == 2) {
+        CHECK(!strcmp(loaded[0].content, "Question") && !strcmp(loaded[1].content, "Answer"));
+        CHECK(loaded[1].via && !strcmp(loaded[1].via, "Provider"));
+    }
+    chat_store_free_messages(loaded, n);
+    CHECK(chat_load_messages(s, messages, 2));
+    CHECK(chat_store_adopt(g_store, s, project, "20261125-000000-accb", "Adoption"));
+    chat_lock(s);
+    info = chat_window_info(s);
+    CHECK(info.active && !info.unsaved && info.first == 0 && info.last == 1);
+    chat_unlock(s);
+    chat_destroy(s);
+    char marker[PATH_MAX + 32], metadata[PATH_MAX + 16];
+    snprintf(marker, sizeof(marker), "%s/.scribodo/store.json", project);
+    CHECK(unlink(marker) == 0);
+    snprintf(metadata, sizeof(metadata), "%s/.scribodo", project);
+    CHECK(rmdir(metadata) == 0 && rmdir(project) == 0);
+    store_stop(g_store);
+}
+
 static void test_chat_source_pages(void)
 {
     char why[256], pid[40];
@@ -2832,7 +2882,8 @@ int main(void)
         return 1;
     }
     TestCase tests[] = { { "store_ids", test_store_ids }, { "store_managers", test_store_managers }, { "backends", test_backends },
-                         { "chat_source_pages", test_chat_source_pages },
+                          { "chat_source_pages", test_chat_source_pages },
+                          { "chat_save_acknowledgements", test_chat_save_acknowledgements },
                          { "chat_windows", test_chat_windows },
                          { "import", test_import }, { "import_safety", test_import_safety },
                          { "warmed_verification_replacement", test_warmed_verification_replacement },
