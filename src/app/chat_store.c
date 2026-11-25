@@ -724,7 +724,7 @@ size_t chat_store_resave_failed(StoreManager *manager, ChatSession *chat, const 
     for (size_t j = 0; saved && j < k; j++) {
         int64_t sequence = -1;
         saved = copy[j].content && chat_store_append_sequenced(manager, project_dir, id, title, &copy[j], &sequence);
-        if (saved && sequence >= 0) chat_mark_saved(chat, at[j], sequence);
+        if (saved) chat_mark_saved(chat, at[j], sequence);
     }
     for (size_t j = 0; copy && j < k; j++) free(copy[j].content);
     free(copy);

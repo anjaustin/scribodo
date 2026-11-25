@@ -11,6 +11,7 @@ replaced it.
 | Document | What it is |
 |---|---|
 | [`../README.md`](../README.md) | The product, quick start, architecture and status |
+| [ARCHITECTURE](ARCHITECTURE.md) | Source-traced end-to-end workflows, authority boundaries, memory paths and failure/recovery behavior |
 | [USER-GUIDE](USER-GUIDE.md) | Every feature, and how saving protects your text |
 | [SERVICES](SERVICES.md) | The project store: native or Docker, versions, migration, durability |
 | [CONFIGURATION](CONFIGURATION.md) | Every setting the app reads, grouped |
@@ -23,6 +24,7 @@ replaced it.
 
 | Document | What it is |
 |---|---|
+| [COMPOSITION-001](COMPOSITION-001-plan.md) | **Active P0:** lightweight component adoption plan, decision gates and cross-session work ledger |
 | [PRODUCT-GAPS](PRODUCT-GAPS.md) | The five product-readiness gaps (GAP-001 to 005) and the working order |
 | [TECHNICAL-DEBT](TECHNICAL-DEBT.md) | The debt register, including the [items deferred after AUDIT-004](TECHNICAL-DEBT.md#deferred-after-audit-004-weighted-2026-11-16), weighted |
 | [ACCEPTANCE](ACCEPTANCE.md) | The MVP acceptance run on the development Mac (SOW §8) |
@@ -80,6 +82,7 @@ lists its findings and how they were remediated.
 - [AUDIT-002](AUDIT-002-repository-audit.md): after the memory and diagnostics work
 - [AUDIT-003](AUDIT-003-repository-audit.md): after the verified-pipeline cycle
 - [AUDIT-004](AUDIT-004-repository-audit.md): after the native-services and observer cycles
+- [AUDIT-005](AUDIT-005-repository-audit.md): targeted persistence review, reproducible chat/history defects, and dependency follow-up (open)
 
 **Red-team reviews** attack one feature or change adversarially.
 No REDTEAM-002 exists.

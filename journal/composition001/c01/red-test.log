@@ -1,0 +1,76 @@
+  FAIL tests/test_llm.c:681: !info.active && info.unsaved
+  FAIL tests/test_llm.c:685: chat_message(s, 0)->save_failed && persistence_info(s).unsaved
+  FAIL tests/test_llm.c:688: !chat_message(s, 0)->save_failed && !chat_message(s, 0)->sequence_known
+  FAIL tests/test_llm.c:698: persistence_info(s).unsaved
+  FAIL tests/test_llm.c:707: !chat_load_window(s, &db, 1, false, false)
+  FAIL tests/test_llm.c:708: chat_count(s) == 1 && !strcmp(chat_message(s, 0)->content, file.content)
+  FAIL tests/test_llm.c:711: !sent && strstr(err, "unsaved")
+  FAIL tests/test_llm.c:737: persistence_info(s).unsaved
+  FAIL tests/test_llm.c:743: !chat_message(s, 1)->save_failed && !chat_message(s, 3)->save_failed
+  FAIL tests/test_llm.c:746: chat_store_resave_failed(g_store, s, g_dir, "20261115-000000-beef", "Resave", &ok) == 0 && ok
+  FAIL tests/test_llm.c:749: chat_store_load(g_store, g_dir, "20261115-000000-beef", &loaded, &n) && n == 2
+  FAIL tests/test_llm.c:750: n == 2 && !strcmp(loaded[0].content, "refused reply") && !strcmp(loaded[1].content, "refused second")
+  FAIL tests/test_llm.c:751: n == 2 && loaded[0].role == CHAT_ASSISTANT && loaded[1].role == CHAT_ASSISTANT
+scribodo: no reranker model at /var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T//scribodo-stateful-2pfpqf/missing-reranker.gguf; answers are not verified (see docs/MODEL-002-qwen3-reranker.md)
+ok   neutralize
+ok   split_thinking
+ok   http_decoder
+ok   sse_parsing
+ok   backup_pipes
+ok   service_supervisor
+ok   request_builder
+    history archive=101 copied=63 bytes=756 scanned=64
+    history archive=1001 copied=63 bytes=756 scanned=64
+    history archive=10001 copied=63 bytes=756 scanned=64
+    history archive=100001 copied=63 bytes=756 scanned=64
+ok   bounded_request_history
+ok   worker_bounded_history
+ok   episode_history_packing
+ok   worker_foreground_preemption
+ok   chat_windows
+ok   memory_remote_bypass
+ok   memory_preserves_cutoff_notice
+ok   window_storage_release
+ok   chat_store
+ok   chat_store_read_failures
+FAIL chat_failed_file_guards
+FAIL chat_store_resave_failed
+ok   local_models_checks
+ok   concurrent_file_readers
+ok   fake_backend
+ok   clean_edit
+ok   curl_quotes
+ok   edit_request
+ok   fake_edit
+ok   build_base_request
+ok   edit_too_long
+ok   revisions
+ok   records
+ok   file_history_read_failures
+ok   snapshot_name_exhaustion
+ok   snapshot_reuse_integrity
+ok   observer_run
+ok   observer_id_exhaustion
+ok   record_id_timing
+ok   observer_judge_log
+ok   observer_sentence_pairs
+ok   observer_sentence_arms
+ok   observer_flag_combinations
+ok   observer_wait_mode
+ok   observer_redteam
+ok   recent_and_renames
+ok   multi_doc_request
+ok   side_slot_bounds
+ok   names_as_facts
+ok   speaker_labels
+ok   truncated_stream_is_an_error
+ok   ok_stream_and_context_error
+    stop + destroy took 0.01 s
+ok   stop_never_hangs
+ok   torn_line_recovery
+ok   instance_lock
+ok   chat_server_flags
+ok   orphan_after_owner_kill
+ok   reap_orphan
+
+5111 checks, 13 failures

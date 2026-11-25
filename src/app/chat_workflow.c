@@ -371,7 +371,7 @@ void on_message_done(ChatSession *s, size_t index, void *ctx)
         chat_mark_save_failed(s, index);
         set_status(app, store_says(app, "Could not save the chat to .scribodo/chats"));
     } else {
-        if (sequence >= 0) chat_mark_saved(s, index, sequence);
+        chat_mark_saved(s, index, sequence);
         if (app->observer && copy.role == CHAT_ASSISTANT) observer_poke(app->observer);
     }
     free(copy.content);
@@ -398,7 +398,7 @@ void adopt_chat(App *app)
     for (size_t i = 0; ok && i < n; i++) {
         int64_t sequence = -1;
         ok = copy[i].content && chat_store_append_sequenced(app->store, app->chat_project, app->chat_id, app->chat_title, &copy[i], &sequence);
-        if (ok && sequence >= 0) chat_mark_saved(app->chat, i, sequence);
+        if (ok) chat_mark_saved(app->chat, i, sequence);
     }
     for (size_t i = 0; copy && i < n; i++) free(copy[i].content);
     free(copy);

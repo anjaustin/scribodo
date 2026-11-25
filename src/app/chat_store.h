@@ -55,7 +55,8 @@ bool chat_store_append_sequenced(StoreManager *manager, const char *project_dir,
  * the author to keep them and nothing re-appended them, so sending stayed refused). Exactly the messages marked
  * save_failed are appended, in order; a reply whose done callback has not run yet carries no mark, and neither does
  * a chat loaded from files before its project moved into the store (second pass: inferring "unsaved" from a missing
- * sequence re-appended both). Each append that returns a sequence clears its mark (chat_mark_saved). Nothing is done
+ * sequence re-appended both). Every acknowledged append clears its mark, including file mode's -1 sequence, without
+ * inventing a DB window (chat_mark_saved). Nothing is done
  * while `chat` is busy. Returns how many marked messages there were (0 when none, busy, or out of memory); `*ok` is
  * false when an append failed, and the rest are then left marked. */
 size_t chat_store_resave_failed(StoreManager *manager, ChatSession *chat, const char *project_dir, const char *id,

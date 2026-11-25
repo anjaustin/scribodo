@@ -23,6 +23,12 @@ The user selected **#3 as P0** on 2026-11-06 and made the remaining four P0 on
 
 ## Working order from 2026-11-11
 
+**Current working-order override (2026-11-25, author direction):**
+[COMPOSITION-001](COMPOSITION-001-plan.md), lightweight composition, is the active P0.
+The original gaps and historical sequence below stay on record; they are not closed or renumbered.
+The component plan addresses their safety, efficiency, native-input and quality foundations with measured
+adoption gates. Resume from its ledger and `journal/composition001-progress.md`.
+
 Every gap is P0; this is the order the records argue for, each item with the
 measurement that closes it. Items run one at a time unless marked otherwise.
 

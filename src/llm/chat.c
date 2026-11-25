@@ -260,10 +260,10 @@ bool chat_load_messages(ChatSession *s, const ChatMessage *msgs, size_t n)
 ChatWindowInfo chat_window_info(ChatSession *s)
 {
     ChatWindowInfo info = { .active = s->windowed, .older = s->older, .newer = s->newer, .first = -1, .last = -1 };
-    if (!info.active) return info;
     for (size_t i = 0; i < s->count; i++) {
-        if (!s->msgs[i].sequence_known) info.unsaved = true;
-        else {
+        /* File history normally has no sequences; a refused append is still unsaved in either backend. */
+        if (s->msgs[i].save_failed || (info.active && !s->msgs[i].sequence_known)) info.unsaved = true;
+        if (info.active && s->msgs[i].sequence_known) {
             if (info.first < 0) info.first = s->msgs[i].sequence;
             info.last = s->msgs[i].sequence;
         }
@@ -288,11 +288,13 @@ void chat_enable_window(ChatSession *s)
 void chat_mark_saved(ChatSession *s, size_t index, int64_t sequence)
 {
     pthread_mutex_lock(&s->mu);
-    if (index < s->count && sequence >= 0 && sequence <= INT_MAX) {
-        s->msgs[index].sequence_known = true;
-        s->msgs[index].sequence = sequence;
+    if (index < s->count && sequence >= -1 && sequence <= INT_MAX) {
         s->msgs[index].save_failed = false;
-        s->windowed = true;
+        if (sequence >= 0) {
+            s->msgs[index].sequence_known = true;
+            s->msgs[index].sequence = sequence;
+            s->windowed = true;
+        }
         s->version++;
     }
     pthread_mutex_unlock(&s->mu);
@@ -301,7 +303,10 @@ void chat_mark_saved(ChatSession *s, size_t index, int64_t sequence)
 void chat_mark_save_failed(ChatSession *s, size_t index)
 {
     pthread_mutex_lock(&s->mu);
-    if (index < s->count) s->msgs[index].save_failed = true;
+    if (index < s->count && !s->msgs[index].save_failed) {
+        s->msgs[index].save_failed = true;
+        s->version++;
+    }
     pthread_mutex_unlock(&s->mu);
 }
 
@@ -357,7 +362,7 @@ bool chat_trim_saved(ChatSession *s)
     for (size_t i = 0; i < s->count; i++) bytes += strlen(s->msgs[i].content ? s->msgs[i].content : "");
     while (s->count - first > 2 && (s->count - first > 64 || bytes > 1024 * 1024)) {
         ChatMessage *m = &s->msgs[first];
-        if (!m->sequence_known) break; /* never evict a failed save */
+        if (!m->sequence_known || m->save_failed) break; /* never evict a failed save */
         bytes -= strlen(m->content ? m->content : "");
         free(m->content); free(m->docs); free(m->via); free(m->memory_sources);
         first++;
@@ -1788,7 +1793,7 @@ static bool send_common(ChatSession *s, const char *text, const ChatContext *ctx
     pthread_mutex_lock(&s->mu);
     ChatWindowInfo window = chat_window_info(s);
     pthread_mutex_unlock(&s->mu);
-    if (window.active && (window.newer || window.unsaved)) {
+    if (window.unsaved || (window.active && window.newer)) {
         snprintf(err, errlen, "%s", window.unsaved ? "Chat has unsaved messages; keep them before changing history or sending again"
                                                    : "Return to the latest history before sending");
         return false;

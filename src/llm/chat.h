@@ -133,11 +133,14 @@ bool chat_load_messages(ChatSession *s, const ChatMessage *msgs, size_t n);
  * Idle, saved history only; not concurrent with another UI command/send. */
 bool chat_load_window(ChatSession *s, const ChatMessage *msgs, size_t n, bool older, bool newer);
 typedef struct {
+    /* unsaved also reports failed file-backed appends when active is false; unknown sequences alone do not. */
     bool active, older, newer, unsaved;
     int64_t first, last;
 } ChatWindowInfo;
 ChatWindowInfo chat_window_info(ChatSession *s); /* lock held */
 long chat_find_sequence(ChatSession *s, int64_t sequence); /* lock held, -1 absent */
+/* Acknowledged append: -1 clears a file-backed failure without assigning a sequence or activating a DB window;
+ * a nonnegative sequence also records DB identity. Other values leave the message unchanged. */
 void chat_mark_saved(ChatSession *s, size_t index, int64_t sequence);
 /* The store refused the append of message `index`: marked so the resave after a reconnect takes exactly these
  * (never a reply whose done callback is still pending, never a file-loaded chat; REDTEAM-022 second pass). */

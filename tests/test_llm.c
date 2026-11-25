@@ -4,6 +4,7 @@
 #define _DARWIN_C_SOURCE
 #include <dirent.h>
 #include <errno.h>
+#include <limits.h>
 #include <math.h>
 #include <sched.h>
 #include <signal.h>
@@ -656,8 +657,64 @@ static void test_chat_store(void)
     CHECK(!chat_store_rename_group(g_store, g_dir, "", "x")); /* no group named "" */
 }
 
+static ChatWindowInfo persistence_info(ChatSession *s)
+{
+    chat_lock(s);
+    ChatWindowInfo info = chat_window_info(s);
+    chat_unlock(s);
+    return info;
+}
+
+/* AUDIT-005 F1: file-backed failure state is independent of DB history windows.
+ * These are the state/replace guards used by New/open/quit, not a GUI disk-full simulation. */
+static void test_chat_failed_file_guards(void)
+{
+    ChatSession *s = chat_create(NULL);
+    CHECK(s != NULL);
+    if (!s) return;
+    ChatMessage file = { .role = CHAT_USER, .content = "must survive a refused append" };
+    CHECK(chat_load_messages(s, &file, 1));
+    ChatWindowInfo info = persistence_info(s);
+    CHECK(!info.active && !info.unsaved); /* unknown sequence alone is normal in file mode */
+    chat_mark_save_failed(s, 0);
+    info = persistence_info(s);
+    CHECK(!info.active && info.unsaved);
+
+    chat_mark_saved(s, 0, -2); /* invalid acknowledgements must not hide the failure */
+    chat_mark_saved(s, 0, (int64_t)INT_MAX + 1);
+    CHECK(chat_message(s, 0)->save_failed && persistence_info(s).unsaved);
+    chat_mark_saved(s, 0, -1); /* acknowledged file append, no database sequence */
+    info = persistence_info(s);
+    CHECK(!chat_message(s, 0)->save_failed && !chat_message(s, 0)->sequence_known);
+    CHECK(!info.active && !info.unsaved && info.first == -1 && info.last == -1);
+
+    chat_enable_window(s);
+    chat_mark_saved(s, 0, -1);
+    CHECK(persistence_info(s).unsaved); /* a file acknowledgement cannot satisfy a DB window */
+    chat_mark_saved(s, 0, 12);
+    info = persistence_info(s);
+    CHECK(info.active && !info.unsaved && info.first == 12 && info.last == 12);
+    chat_mark_save_failed(s, 0);
+    CHECK(persistence_info(s).unsaved); /* a known sequence does not override a failed append */
+    chat_mark_saved(s, 0, -1);
+    info = persistence_info(s);
+    CHECK(info.active && !info.unsaved && info.first == 12);
+
+    CHECK(chat_load_messages(s, &file, 1)); /* back to the file-backed conversation */
+    chat_mark_save_failed(s, 0);
+    ChatMessage db = { .role = CHAT_USER, .content = "another stored conversation",
+                       .sequence_known = true, .sequence = 7 };
+    CHECK(!chat_load_window(s, &db, 1, false, false));
+    CHECK(chat_count(s) == 1 && !strcmp(chat_message(s, 0)->content, file.content));
+    char err[256] = "";
+    bool sent = chat_send(s, "do not continue past a failed save", NULL, err, sizeof(err));
+    CHECK(!sent && strstr(err, "unsaved"));
+    if (sent) chat_cancel(s);
+    chat_destroy(s);
+}
+
 /* The resave after a reconnect appends exactly the messages marked save_failed, in order (red-team 2026-11-14);
- * moved out of main.c (AUDIT-004 F3). The file store returns no sequence, so the marks stay. */
+ * AUDIT-005 F3: successful file appends clear their marks without inventing DB sequences. */
 static void test_chat_store_resave_failed(void)
 {
     ChatSession *s = chat_create(NULL);
@@ -677,16 +734,22 @@ static void test_chat_store_resave_failed(void)
     CHECK(access(path, F_OK) != 0);
     chat_mark_save_failed(s, 1);
     chat_mark_save_failed(s, 3);
+    CHECK(persistence_info(s).unsaved);
+    ok = true;
+    CHECK(chat_store_resave_failed(g_store, s, g_dir, "../escape", "x", &ok) == 2 && !ok);
+    CHECK(chat_message(s, 1)->save_failed && chat_message(s, 3)->save_failed);
     ok = false;
     CHECK(chat_store_resave_failed(g_store, s, g_dir, "20261115-000000-beef", "Resave", &ok) == 2 && ok);
+    CHECK(!chat_message(s, 1)->save_failed && !chat_message(s, 3)->save_failed);
+    CHECK(!chat_message(s, 1)->sequence_known && !chat_message(s, 3)->sequence_known);
+    CHECK(!persistence_info(s).active && !persistence_info(s).unsaved);
+    CHECK(chat_store_resave_failed(g_store, s, g_dir, "20261115-000000-beef", "Resave", &ok) == 0 && ok);
     ChatMessage *loaded = NULL;
     size_t n = 0;
     CHECK(chat_store_load(g_store, g_dir, "20261115-000000-beef", &loaded, &n) && n == 2);
     CHECK(n == 2 && !strcmp(loaded[0].content, "refused reply") && !strcmp(loaded[1].content, "refused second"));
     CHECK(n == 2 && loaded[0].role == CHAT_ASSISTANT && loaded[1].role == CHAT_ASSISTANT);
     chat_store_free_messages(loaded, n);
-    ok = true;
-    CHECK(chat_store_resave_failed(g_store, s, g_dir, "../escape", "x", &ok) == 2 && !ok); /* refused: reported */
     CHECK(chat_store_resave_failed(g_store, NULL, g_dir, "20261115-000000-beef", "x", &ok) == 0 && ok);
     chat_destroy(s);
 }
@@ -3334,6 +3397,7 @@ int main(int argc, char **argv)
         { "window_storage_release", test_window_storage_release },
         { "chat_store", test_chat_store },
         { "chat_store_read_failures", test_chat_store_read_failures },
+        { "chat_failed_file_guards", test_chat_failed_file_guards },
         { "chat_store_resave_failed", test_chat_store_resave_failed },
         { "local_models_checks", test_local_models_checks },
         { "concurrent_file_readers", test_concurrent_file_readers },

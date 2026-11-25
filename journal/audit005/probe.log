@@ -1,0 +1,6 @@
+failed file message: save_failed=1 window.unsaved=0
+first retry: n=1 ok=1 save_failed=1
+second retry: n=1 ok=1 persisted_messages=2
+distinct names (203 bytes): writes=1,1 history_A=2
+newest A revision contains: document B private text
+isolated fixture retained at /var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T//scribodo-audit-BnoAhS
