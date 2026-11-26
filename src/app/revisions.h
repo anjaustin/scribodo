@@ -47,5 +47,8 @@ bool revisions_list_checked(StoreManager *manager, const char *project_dir, cons
 
 /* Load a revision's text (malloc'd), or NULL. */
 char *revisions_load(StoreManager *manager, const char *project_dir, const char *doc_path, const Revision *r);
+/* Exact creation time from new snapshot tokens; legacy tokens retain their old
+ * timestamp/millisecond interpretation (index_ts, when present, avoids timezone ambiguity). */
+double revisions_file_time(const char *file, time_t index_ts);
 
 #endif

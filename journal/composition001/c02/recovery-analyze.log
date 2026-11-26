@@ -1,0 +1,176 @@
+src/app/revisions.c:140:34: warning: The 1st argument to 'openat' is -1 but should be a valid file descriptor or AT_FDCWD [unix.StdCLibraryFunctions]
+  140 |             int fd = temporary ? openat(dirfd(dir), ent->d_name, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC) : -1;
+      |                                  ^
+src/app/revisions.c:888:9: note: Assuming 'file_out' is non-null
+  888 |     if (!file_out || !file_len) return false;
+      |         ^~~~~~~~~
+src/app/revisions.c:888:9: note: Left side of '||' is false
+src/app/revisions.c:888:22: note: Assuming 'file_len' is not equal to 0
+  888 |     if (!file_out || !file_len) return false;
+      |                      ^~~~~~~~~
+src/app/revisions.c:888:5: note: Taking false branch
+  888 |     if (!file_out || !file_len) return false;
+      |     ^
+src/app/revisions.c:891:16: note: Calling 'revision_lock'
+  891 |     int lock = revision_lock(project_dir, doc_path, true, LOCK_EX, dir, sizeof(dir));
+      |                ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+src/app/revisions.c:311:5: note: Taking false branch
+  311 |     if (fd == -1) return -1;
+      |     ^
+src/app/revisions.c:312:10: note: Calling 'doc_dir'
+  312 |     if (!doc_dir(project_dir, doc_path, create, dir, dirlen)) {
+      |          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+src/app/revisions.c:205:9: note: 'outlen' is 1500
+  205 |     if (outlen) out[0] = '\0';
+      |         ^~~~~~
+src/app/revisions.c:205:5: note: Taking true branch
+  205 |     if (outlen) out[0] = '\0';
+      |     ^
+src/app/revisions.c:207:10: note: 'base' is non-null
+  207 |     if (!base) return false;
+      |          ^~~~
+src/app/revisions.c:207:5: note: Taking false branch
+  207 |     if (!base) return false;
+      |     ^
+src/app/revisions.c:209:9: note: Left side of '||' is false
+  209 |     if (!join_path(project_dir, ".scribodo", meta, sizeof(meta)) ||
+      |         ^
+src/app/revisions.c:209:5: note: Taking false branch
+  209 |     if (!join_path(project_dir, ".scribodo", meta, sizeof(meta)) ||
+      |     ^
+src/app/revisions.c:212:5: note: Taking false branch
+  212 |     if (!join_path(root, key, legacy, sizeof(legacy))) return false;
+      |     ^
+src/app/revisions.c:215:9: note: Assuming 'exceptional' is false
+  215 |     if (exceptional) {
+      |         ^~~~~~~~~~~
+src/app/revisions.c:215:5: note: Taking false branch
+  215 |     if (exceptional) {
+      |     ^
+src/app/revisions.c:221:5: note: Taking false branch
+  221 |     if (!join_path(parent, base, canonical, sizeof(canonical))) return false;
+      |     ^
+src/app/revisions.c:223:9: note: 'exceptional' is false
+  223 |     if (exceptional && lstat(legacy, &st) == 0) {
+      |         ^~~~~~~~~~~
+src/app/revisions.c:223:21: note: Left side of '&&' is false
+  223 |     if (exceptional && lstat(legacy, &st) == 0) {
+      |                     ^
+src/app/revisions.c:225:16: note: 'exceptional' is false
+  225 |     } else if (exceptional && errno != ENOENT) return false;
+      |                ^~~~~~~~~~~
+src/app/revisions.c:225:28: note: Left side of '&&' is false
+  225 |     } else if (exceptional && errno != ENOENT) return false;
+      |                            ^
+src/app/revisions.c:226:19: note: Assuming the condition is true
+  226 |     bool exists = lstat(canonical, &st) == 0;
+      |                   ^~~~~~~~~~~~~~~~~~~~~~~~~~
+src/app/revisions.c:227:10: note: 'exists' is true
+  227 |     if (!exists && errno != ENOENT) return false;
+      |          ^~~~~~
+src/app/revisions.c:227:17: note: Left side of '&&' is false
+  227 |     if (!exists && errno != ENOENT) return false;
+      |                 ^
+src/app/revisions.c:228:9: note: 'exists' is true
+  228 |     if (exists && !S_ISDIR(st.st_mode)) return false;
+      |         ^~~~~~
+src/app/revisions.c:228:9: note: Left side of '&&' is true
+src/app/revisions.c:228:20: note: Assuming the condition is true
+  228 |     if (exists && !S_ISDIR(st.st_mode)) return false;
+      |                    ^~~~~~~~~~~~~~~~~~~
+/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/sys/stat.h:251:26: note: expanded from macro 'S_ISDIR'
+  251 | #define S_ISDIR(m)      (((m) & S_IFMT) == S_IFDIR)     /* directory */
+      |                          ^~~~~~~~~~~~~~~~~~~~~~~~~
+src/app/revisions.c:228:5: note: Taking false branch
+  228 |     if (exists && !S_ISDIR(st.st_mode)) return false;
+      |     ^
+src/app/revisions.c:229:15: note: 'exists' is true
+  229 |     int tag = exists ? format_tag(canonical) : 0;
+      |               ^~~~~~
+src/app/revisions.c:229:15: note: '?' condition is true
+src/app/revisions.c:230:9: note: Assuming 'tag' is >= 0
+  230 |     if (tag < 0) return false;
+      |         ^~~~~~~
+src/app/revisions.c:230:5: note: Taking false branch
+  230 |     if (tag < 0) return false;
+      |     ^
+src/app/revisions.c:231:18: note: 'exists' is true
+  231 |     bool empty = exists && create && !tag && empty_history(canonical);
+      |                  ^~~~~~
+src/app/revisions.c:231:18: note: Left side of '&&' is true
+src/app/revisions.c:231:28: note: 'create' is true
+  231 |     bool empty = exists && create && !tag && empty_history(canonical);
+      |                            ^~~~~~
+src/app/revisions.c:231:18: note: Left side of '&&' is true
+  231 |     bool empty = exists && create && !tag && empty_history(canonical);
+      |                  ^
+src/app/revisions.c:231:38: note: Assuming 'tag' is 0
+  231 |     bool empty = exists && create && !tag && empty_history(canonical);
+      |                                      ^~~~
+src/app/revisions.c:231:18: note: Left side of '&&' is true
+  231 |     bool empty = exists && create && !tag && empty_history(canonical);
+      |                  ^
+src/app/revisions.c:231:46: note: Calling 'empty_history'
+  231 |     bool empty = exists && create && !tag && empty_history(canonical);
+      |                                              ^~~~~~~~~~~~~~~~~~~~~~~~
+src/app/revisions.c:123:16: note: Assuming that 'opendir' is successful
+  123 |     DIR *dir = opendir(path);
+      |                ^~~~~~~~~~~~~
+src/app/revisions.c:124:10: note: 'dir' is non-null
+  124 |     if (!dir) return false;
+      |          ^~~
+src/app/revisions.c:124:5: note: Taking false branch
+  124 |     if (!dir) return false;
+      |     ^
+src/app/revisions.c:126:5: note: Loop condition is true.  Entering loop body
+  126 |     for (;;) {
+      |     ^
+src/app/revisions.c:129:13: note: Assuming 'ent' is non-null
+  129 |         if (!ent) { if (errno) empty = false; break; }
+      |             ^~~~
+src/app/revisions.c:129:9: note: Taking false branch
+  129 |         if (!ent) { if (errno) empty = false; break; }
+      |         ^
+src/app/revisions.c:130:13: note: Assuming the condition is true
+  130 |         if (strcmp(ent->d_name, ".") && strcmp(ent->d_name, "..") && strcmp(ent->d_name, ".lock")) {
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~
+src/app/revisions.c:130:13: note: Left side of '&&' is true
+src/app/revisions.c:130:41: note: Assuming the condition is true
+  130 |         if (strcmp(ent->d_name, ".") && strcmp(ent->d_name, "..") && strcmp(ent->d_name, ".lock")) {
+      |                                         ^~~~~~~~~~~~~~~~~~~~~~~~~
+src/app/revisions.c:130:13: note: Left side of '&&' is true
+  130 |         if (strcmp(ent->d_name, ".") && strcmp(ent->d_name, "..") && strcmp(ent->d_name, ".lock")) {
+      |             ^
+src/app/revisions.c:130:70: note: Assuming the condition is true
+  130 |         if (strcmp(ent->d_name, ".") && strcmp(ent->d_name, "..") && strcmp(ent->d_name, ".lock")) {
+      |                                                                      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
+src/app/revisions.c:130:9: note: Taking true branch
+  130 |         if (strcmp(ent->d_name, ".") && strcmp(ent->d_name, "..") && strcmp(ent->d_name, ".lock")) {
+      |         ^
+src/app/revisions.c:134:30: note: Assuming the condition is true
+  134 |             bool temporary = strlen(ent->d_name) == sizeof(prefix) - 1 + 6 &&
+      |                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+src/app/revisions.c:134:30: note: Left side of '&&' is true
+src/app/revisions.c:135:30: note: Assuming the condition is true
+  135 |                              !strncmp(ent->d_name, prefix, sizeof(prefix) - 1);
+      |                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+src/app/revisions.c:136:49: note: 'temporary' is true
+  136 |             for (size_t i = sizeof(prefix) - 1; temporary && ent->d_name[i]; i++) {
+      |                                                 ^~~~~~~~~
+src/app/revisions.c:136:49: note: Left side of '&&' is true
+src/app/revisions.c:136:13: note: Loop condition is false. Execution continues on line 140
+  136 |             for (size_t i = sizeof(prefix) - 1; temporary && ent->d_name[i]; i++) {
+      |             ^
+src/app/revisions.c:140:22: note: 'temporary' is true
+  140 |             int fd = temporary ? openat(dirfd(dir), ent->d_name, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC) : -1;
+      |                      ^~~~~~~~~
+src/app/revisions.c:140:22: note: '?' condition is true
+src/app/revisions.c:140:41: note: Assuming that 'dirfd' fails
+  140 |             int fd = temporary ? openat(dirfd(dir), ent->d_name, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC) : -1;
+      |                                         ^~~~~~~~~~
+src/app/revisions.c:140:34: note: The 1st argument to 'openat' is -1 but should be a valid file descriptor or AT_FDCWD
+  140 |             int fd = temporary ? openat(dirfd(dir), ent->d_name, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC) : -1;
+      |                                  ^      ~~~~~~~~~~
+1 warning generated.
+analyze: static analysis reported findings
+make: *** [analyze] Error 1

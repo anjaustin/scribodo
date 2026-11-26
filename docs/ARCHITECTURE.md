@@ -149,6 +149,17 @@ After a successful file save, the app separately records a `save` revision and p
 These are not one atomic transaction across the filesystem and MariaDB. In particular, a file can have
 saved successfully while recording its History fails; the app reports the latter.
 
+File-backed History uses the complete manuscript basename, with exceptional old-format names under
+`.scribodo/revisions/.exact-v1/`. A shared resolver rejects ambiguous legacy lossy buckets; a path-format
+tag never proves old ownership. Rename/archive publication is serialized by the revisions-root lock:
+a durable `.pending-move.json` receipt retains full names, manuscript/history inode+device identities,
+an operation ID and event time. Replay checks identities, moves without replacing an unrelated object,
+syncs parent directories, publishes the dated rename idempotently, then removes/syncs the receipt.
+Project/document opens, source-name resolution and History reads check recovery first. Conflicting
+receipts remain intact and make the operation unavailable; manuscript hardlinks are refused.
+See [COMPOSITION-001 revision identity](COMPOSITION-001-revision-identity.md) for compatibility and
+verification limits. This is not a power-loss or hostile concurrent ancestor-replacement guarantee.
+
 Dirty buffers also get periodic sibling recovery drafts through `DraftController`, normally on its worker.
 On a later load, stray save/draft temps are retained under recovered-document names. This is not the same
 as saving the manuscript, and periodic drafts cannot promise to retain every keystroke before a crash.

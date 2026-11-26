@@ -21,6 +21,7 @@ build/memory-pipeline-soak/memory_pipeline_soak	a tool binary (make tools)
 build/test_memory_vectors_faults	a test binary (make test)
 build/test_llm	a test binary (make build/test_llm); run evidence is retained separately in journal/composition001/c01
 build/test_persistence_faults	a test binary; run evidence is retained separately in journal/composition001/redteam
+build/test_revision_recovery	a test binary; run evidence is retained separately in journal/composition001/c02
 build/llama/bin/llama-server	the pinned server binary (make llama)
 build/venv-coref	a locked experiment environment (make envs recreates it)
 build/venv-causal	a locked experiment environment (make envs recreates it)

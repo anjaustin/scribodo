@@ -1,6 +1,7 @@
 /* Documents: names, new, rename, import, reveal, and the name prompt's answers (finish_prompt). Moved from src/main.c (AUDIT-004 F3). */
 #define _DARWIN_C_SOURCE
 #include "app/app_internal.h"
+#include "app/revisions_internal.h"
 
 static bool doc_name(const char *typed, char *out, size_t outlen, char *err, size_t errlen);
 static bool same_file(const char *a, const char *b);
@@ -85,13 +86,7 @@ static bool set_aside_history(App *app, const char *name, bool linked_documents)
         snprintf(aside, sizeof(aside), "%s (earlier %ld)", name, (long)time(NULL));
         return project_store_document_set_aside(app->store, app->project_dir, name, aside);
     }
-    char rev[PATH_MAX + 300];
-    snprintf(rev, sizeof(rev), "%s/.scribodo/revisions/%s", app->project_dir, name);
-    struct stat st;
-    if (stat(rev, &st) != 0) return true;
-    char aside[PATH_MAX + 340];
-    snprintf(aside, sizeof(aside), "%s.earlier-%ld", rev, (long)time(NULL));
-    return rename(rev, aside) == 0;
+    return revisions_history_set_aside_files(app->project_dir, name);
 }
 
 bool finish_prompt(App *app, const char *typed)
@@ -236,7 +231,18 @@ bool finish_prompt(App *app, const char *typed)
         prompt_set_error(app->prompt, "Renaming waits for the project store (it's offline)");
         return false;
     }
-    if (renamex_np(old_full, full, self ? 0 : RENAME_EXCL) != 0) {
+    if (!(guard.capabilities & PROJECT_STORE_CAP_LINKED_DOCUMENTS)) {
+        bool file_moved = false;
+        if (!revisions_document_rename_files(app->project_dir, app->rename_from, name, &file_moved)) {
+            if (is_open && file_moved) editor_set_path(app->editor, full);
+            app->lists_dirty = true;
+            project_store_guard_end(&guard);
+            prompt_set_error(app->prompt, file_moved ?
+                             "The file moved; History publication is pending. Existing snapshots were kept." :
+                             "The rename could not be verified or completed; existing files and snapshots were kept.");
+            return false;
+        }
+    } else if (renamex_np(old_full, full, self ? 0 : RENAME_EXCL) != 0) {
         project_store_guard_end(&guard);
         prompt_set_error(app->prompt, strerror(errno));
         return false;
@@ -264,30 +270,14 @@ bool finish_prompt(App *app, const char *typed)
         app->lists_dirty = true;
         return true;
     }
-    /* Then its History, the record of the rename (so sources made under the
-     * old name still resolve), and observer state. Failures are reported. */
-    char problems[300] = "";
-    char rev_old[PATH_MAX + 300], rev_new[PATH_MAX + 300];
-    snprintf(rev_old, sizeof(rev_old), "%s/.scribodo/revisions/%s", app->project_dir, app->rename_from);
-    snprintf(rev_new, sizeof(rev_new), "%s/.scribodo/revisions/%s", app->project_dir, name);
-    struct stat st;
-    if (stat(rev_old, &st) == 0) {
-        bool same_dir = same_file(rev_old, rev_new); /* a case-only rename of the folder */
-        if (!same_dir && !set_aside_history(app, name, false)) snprintf(problems, sizeof(problems), "History couldn't be moved");
-        else if (renamex_np(rev_old, rev_new, same_dir ? 0 : RENAME_EXCL) != 0)
-            snprintf(problems, sizeof(problems), "History couldn't be moved");
-    }
-    if (!renames_record(app->project_dir, app->rename_from, name))
-        snprintf(problems + strlen(problems), sizeof(problems) - strlen(problems), "%sthe rename couldn't be recorded",
-                 problems[0] ? "; " : "");
+    /* File, History and the dated rename were durably published together above. */
     observer_rename_doc(app->observer, app->project_dir, app->rename_from, name);
     (void)chat_controller_rename_attachment(&app->chat_controller, app->rename_from, name);
     recent_store_rename_doc(app->recent_store, app->project_dir, app->rename_from, name);
     if (is_open) editor_set_path(app->editor, full);
     project_store_guard_end(&guard);
     char msg[700];
-    if (problems[0]) snprintf(msg, sizeof(msg), "Renamed to %s, but %s", name, problems);
-    else snprintf(msg, sizeof(msg), "Renamed to %s", name);
+    snprintf(msg, sizeof(msg), "Renamed to %s", name);
     set_status(app, msg);
     app->lists_dirty = true;
     return true;

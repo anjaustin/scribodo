@@ -3,7 +3,7 @@
 **Authorized:** 2026-11-25, by the author: “This is now P0… plan … track through sessions and get started.”
 **Baseline:** `69b98abf1ecf86c560b435a209327175c182eab1`.
 **Status:** in progress. C01 and its REDTEAM-025 follow-up are verified.
-**Active slice:** C02, revision identity/legacy compatibility design and red contract probe; no real-data migration.
+**Current checkpoint:** C02 verified; commit/push authorized 2026-11-26. C03 is next; no real-data migration.
 **C02 boundary map and design gates:** [revision identity](COMPOSITION-001-revision-identity.md).
 **Session handoff and evidence:** [composition001-progress](../journal/composition001-progress.md).
 **Research:** [Lightweight components for Scribodo](../reports/Lightweight%20components%20for%20Scribodo.md).
@@ -40,7 +40,7 @@ with its tests and evidence; no commits or dependency pin changes without record
 |---|---|---|---|
 | C00 | Canonical plan, P0 register pointers and next-session handoff | Discoverable from repo entry points; outstanding decisions explicit | Complete |
 | C01 | Fix AUDIT-005 F1/F3: file chat failure guards and successful retry acknowledgement | Regression red/green; repeated successful retry writes nothing; no fabricated DB sequence/window; failed saves remain protected | **Verified:** REDTEAM-025, unit/analyzer/sanitizers/TSan, file UI, isolated DB/crash/DB UI; no real-model or IME/accessibility claim |
-| C02 | Fix F2 revision identity collisions, with legacy compatibility | Disjoint long/sanitized names; old histories/source refs/rename/export/import preserved; ambiguous old collisions disclosed, not guessed | **Active:** consumer map/design; synthetic contract red (52 checks, 12 failures); production remediation pending |
+| C02 | Fix F2 revision identity collisions, with legacy compatibility | Disjoint long/sanitized names; old histories/source refs/rename/export/import preserved; ambiguous old collisions disclosed, not guessed | **Verified / checkpoint authorized:** final contract 52, recovery 1,145 checks and 392 rename allocation cases green; full tests/sanitizers/analyzer/TSan/isolated DB/crash, five negative controls and final file/DB/case-sensitive UI pass. Commit/push authorized 2026-11-26; confirm final refs in git |
 | C03 | Runtime security/dependency triage (D1/D2) | Reviewed fixes/pin ancestry, licence inventory, strict precision/template/tokenizer and real-model gates; explain moved image tag | Queued |
 | C04 | Frozen cost/behavior baseline and dev-only fuzz entry points | Reproducible workload manifest, counts, raw logs and failing negative controls; no production fuzz runtime | Queued |
 | C05 | Embedded storage feasibility: upstream SQLite + FTS5 | Disposable parity prototype and concurrency/recovery results; explicit adopt/reject decision | Queued |
@@ -71,7 +71,7 @@ Use the existing callback/retry paths. Keep actual UI failures distinct from hea
 
 ### C02/C03 — protect the baseline before measuring alternatives
 
-F2 requires an explicit identity/migration design: hashes/IDs rather than another truncation rule.
+F2 requires an explicit identity/migration design: injective complete identities rather than another truncation rule.
 Test legacy source lookups and DB exports through the file backend; do not simply rename every existing
 history directory. Retain recoverable ambiguity when the old format has already merged histories.
 

@@ -221,6 +221,7 @@ typedef struct {
     Rectangle review_rect;
     Revision *revs;
     size_t nrevs;
+    bool history_unavailable; /* failed/ambiguous history is not an empty successful history */
     char rev_labels[REV_SHOW][64];
 
     /* Notes and canon (SOW §4.4) */

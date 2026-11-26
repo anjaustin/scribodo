@@ -1,0 +1,84 @@
+CRASH_POINT history_move.prepared#1
+CRASH_POINT history_move.prepared#2
+CRASH_POINT history_move.file#1
+CRASH_POINT history_move.file#2
+CRASH_POINT history_move.history#1
+CRASH_POINT history_move.history#2
+CRASH_POINT history_move.log#1
+CRASH_POINT history_move.log#2
+CRASH_POINT history_move.done#1
+CRASH_POINT history_move.done#2
+CRASH_POINT atomic.temp_written#1
+CRASH_POINT atomic.temp_written#2
+CRASH_POINT atomic.renamed#1
+CRASH_POINT atomic.renamed#2
+CRASH_POINT history_move.prepared#1
+CRASH_POINT history_move.prepared#2
+CRASH_POINT history_move.file#1
+CRASH_POINT history_move.file#2
+CRASH_POINT history_move.history#1
+CRASH_POINT history_move.history#2
+CRASH_POINT history_move.log#1
+CRASH_POINT history_move.log#2
+CRASH_POINT history_move.done#1
+CRASH_POINT history_move.done#2
+CRASH_POINT atomic.temp_written#1
+CRASH_POINT atomic.temp_written#2
+CRASH_POINT atomic.renamed#1
+CRASH_POINT atomic.renamed#2
+namespace matrix mode=0 point=history_move.prepared hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.prepared hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.prepared hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=0 point=history_move.file hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.file hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.file hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=0 point=history_move.history hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.history hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.history hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=0 point=history_move.log hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.log hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.log hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=0 point=history_move.done hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.done hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.done hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=0 point=atomic.temp_written hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=atomic.temp_written hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=atomic.temp_written hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=0 point=atomic.renamed hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=atomic.renamed hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=atomic.renamed hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=0 point=history_move.tag_written hit=1 killed=0: originals/sources/once verified
+namespace matrix mode=0 point=history_move.tag_published hit=1 killed=0: originals/sources/once verified
+namespace matrix mode=1 point=history_move.prepared hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.prepared hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.prepared hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=1 point=history_move.file hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.file hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.file hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=1 point=history_move.history hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.history hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.history hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=1 point=history_move.log hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.log hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.log hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=1 point=history_move.done hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.done hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.done hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=1 point=atomic.temp_written hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=atomic.temp_written hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=atomic.temp_written hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=1 point=atomic.renamed hit=1 killed=1: originals/sources/once verified
+namespace maCRASH_POINT history_move.tag_written#1
+CRASH_POINT history_move.tag_published#1
+CRASH_POINT history_move.prepared#2
+CRASH_POINT history_move.file#2
+CRASH_POINT history_move.history#1
+  FAIL tests/test_revision_recovery.c:261: !revisions_document_rename_files(project, "source.md", "destination.md", &moved) && moved
+CRASH_POINT history_move.prepared#1
+trix mode=1 point=atomic.renamed hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=atomic.renamed hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=1 point=history_move.tag_written hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.tag_written hit=2 killed=0: originals/sources/once verified
+namespace matrix mode=1 point=history_move.tag_published hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.tag_published hit=2 killed=0: originals/sources/once verified
+1145 checks, 1 failures

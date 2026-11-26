@@ -1,0 +1,181 @@
+cc -std=c11 -O2 -mcpu=native -g -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include -DSCRIBODO_CRASH_POINTS src/core/utf8.c src/core/text_buffer.c src/core/undo.c src/core/wrap.c src/core/doc_io.c src/core/diff.c src/core/file_text.c src/app/frame_view_model.c src/app/frame_metrics.c src/core/recall_terms.c src/core/text_cut.c src/core/experiments.c src/core/text_rules.c src/app/tools_dir.c src/core/child_process.c src/core/font_file.c src/ui/theme.c src/ui/motion.c src/core/json.c src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/llm/chat_history.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/app/recent.c src/app/renames.c src/llm/observer.c src/llm/observer_text.c src/llm/observer_formats.c src/llm/observer_arms.c src/llm/observer_fake.c src/llm/observer_model.c src/llm/observer_job.c src/llm/semantic.c src/llm/remote.c src/llm/names.c src/llm/memfit.c src/app/db.c src/app/store.c src/app/project_store.c src/app/observer_store.c src/app/store_revisions.c src/app/store_records.c src/app/store_chats.c src/app/store_chat_history.c src/app/store_import.c src/app/store_entities.c src/app/backup.c src/app/backup_job.c src/app/service_supervisor.c src/app/entity_backfill_job.c src/app/name_detection_job.c src/app/project_session.c src/app/explorer_snapshot.c src/app/profile.c src/app/model_settings.c src/app/appearance.c src/app/font_catalog.c src/app/chat_history_job.c src/app/memory_store.c src/app/memory_job.c src/app/memory_saved_file.c src/app/memory_documents.c src/app/memory_document_store.c src/app/memory_gc.c src/app/memory_brief_store.c src/app/recall.c src/app/recall_job.c src/app/import_job.c src/llm/context_planner.c src/llm/memory_tokens.c src/llm/memory_budget.c src/llm/generative_gate.c src/llm/memory_brief.c src/llm/canon_reference.c src/app/local_models.c src/llm/rerank.c src/llm/answer_pipeline.c src/llm/answer_receipt.c src/core/json_vendor.c tests/crash_point.c tests/db_admin.c tests/test_crash_points.c -o build/test_crash_points build/mariadb-cc/libmariadb/libmariadbclient.a /opt/homebrew/opt/openssl@3/lib/libssl.a /opt/homebrew/opt/openssl@3/lib/libcrypto.a -lz -liconv -lcurl  -lpthread -lm
+tools/watchdog.sh 900 crash-points ./build/test_crash_points
+CRASH_POINT migration.statement#1
+CRASH_POINT migration.statement#2
+CRASH_POINT migration.statement#3
+CRASH_POINT migration.statement#4
+CRASH_POINT migration.statement#5
+CRASH_POINT migration.statement#6
+CRASH_POINT migration.statement#7
+CRASH_POINT migration.statement#8
+CRASH_POINT migration.statement#9
+CRASH_POINT migration.statement#10
+CRASH_POINT migration.statement#11
+CRASH_POINT migration.statement#12
+CRASH_POINT migration.statement#13
+CRASH_POINT migration.statement#14
+CRASH_POINT migration.statement#15
+CRASH_POINT migration.statement#16
+CRASH_POINT migration.statement#17
+CRASH_POINT migration.statement#18
+CRASH_POINT migration.statement#19
+CRASH_POINT migration.statement#20
+CRASH_POINT migration.statement#21
+CRASH_POINT migration.statement#22
+CRASH_POINT migration.statement#23
+CRASH_POINT migration.statement#24
+CRASH_POINT migration.statement#25
+CRASH_POINT migration.statement#26
+CRASH_POINT migration.statement#27
+CRASH_POINT migration.statement#28
+CRASH_POINT migration.statement#29
+CRASH_POINT migration.statement#30
+CRASH_POINT migration.statement#31
+CRASH_POINT migration.statement#32
+CRASH_POINT migration.statement#33
+CRASH_POINT migration.statement#34
+CRASH_POINT migration.statement#35
+CRASH_POINT migration.statement#36
+CRASH_POINT migration.statement#37
+CRASH_POINT migration.statement#38
+CRASH_POINT migration.statement#39
+CRASH_POINT migration.statement#40
+CRASH_POINT migration.statement#41
+CRASH_POINT migration.statement#42
+CRASH_POINT migration.statement#43
+CRASH_POINT migration.statement#44
+CRASH_POINT migration.statement#45
+CRASH_POINT migration.statement#46
+CRASH_POINT migration.statement#47
+CRASH_POINT migration.statement#48
+CRASH_POINT migration.statement#49
+CRASH_POINT migration.statement#50
+CRASH_POINT migration.statement#51
+CRASH_POINT migration.statement#52
+CRASH_POINT migration.statement#53
+CRASH_POINT migration.statement#54
+CRASH_POINT migration.statement#55
+CRASH_POINT migration.statement#56
+CRASH_POINT migration.statement#57
+CRASH_POINT migration.statement#58
+CRASH_POINT migration.statement#59
+CRASH_POINT migration.statement#60
+CRASH_POINT migration.statement#61
+CRASH_POINT migration.statement#62
+CRASH_POINT migration.statement#63
+CRASH_POINT migration.statement#64
+CRASH_POINT migration.statement#65
+CRASH_POINT migration.statement#66
+CRASH_POINT migration.statement#67
+CRASH_POINT migration.statement#68
+CRASH_POINT migration.statement#69
+CRASH_POINT migration.statement#70
+CRASH_POINT migration.statement#71
+CRASH_POINT migration.statement#72
+CRASH_POINT migration.statement#73
+CRASH_POINT migration.statement#74
+CRASH_POINT migration.statement#75
+CRASH_POINT migration.statement#76
+CRASH_POINT migration.statement#77
+CRASH_POINT migration.statement#78
+CRASH_POINT migration.statement#79
+CRASH_POINT migration.statement#80
+CRASH_POINT migration.statement#81
+CRASH_POINT migration.statement#82
+CRASH_POINT migration.statement#83
+CRASH_POINT migration.statement#84
+CRASH_POINT migration.statement#85
+CRASH_POINT migration.statement#86
+CRASH_POINT migration.statement#87
+CRASH_POINT migration.statement#88
+CRASH_POINT migration.statement#89
+CRASH_POINT migration.receipt#1
+CRASH_POINT migration.receipt#2
+CRASH_POINT migration.receipt#3
+CRASH_POINT migration.receipt#4
+CRASH_POINT migration.receipt#5
+CRASH_POINT migration.receipt#6
+CRASH_POINT migration.receipt#7
+CRASH_POINT migration.receipt#8
+CRASH_POINT migration.receipt#9
+CRASH_POINT migration.receipt#10
+CRASH_POINT migration.receipt#11
+CRASH_POINT migration.receipt#12
+CRASH_POINT migration.receipt#13
+CRASH_POINT migration.receipt#14
+CRASH_POINT migration.receipt#15
+CRASH_POINT migration.receipt#16
+CRASH_POINT migration.receipt#17
+CRASH_POINT migration.receipt#18
+CRASH_POINT migration.receipt#19
+CRASH_POINT migration.receipt#20
+CRASH_POINT migration.receipt#21
+CRASH_POINT migration.receipt#22
+CRASH_POINT migration.receipt#23
+CRASH_POINT save.temp_written#1
+CRASH_POINT save.renamed#1
+CRASH_POINT store.before_commit#1
+CRASH_POINT store.before_commit#2
+CRASH_POINT store.after_commit#1
+CRASH_POINT store.after_commit#2
+CRASH_POINT import.registered#1
+CRASH_POINT import.committed#1
+CRASH_POINT import.marked#1
+CRASH_POINT import.aside_item#1
+CRASH_POINT import.aside_item#2
+CRASH_POINT import.aside_item#3
+CRASH_POINT import.aside_item#4
+CRASH_POINT import.aside_item#5
+CRASH_POINT import.aside_item#6
+CRASH_POINT import.aside_item#7
+CRASH_POINT import.aside_item#8
+CRASH_POINT import.set_aside#1
+CRASH_POINT fork.journal_opened#1
+CRASH_POINT fork.exported#1
+CRASH_POINT import.registered#1
+CRASH_POINT import.committed#1
+CRASH_POINT import.marked#1
+CRASH_POINT import.set_aside#1
+CRASH_POINT fork.imported#1
+CRASH_POINT atomic.temp_written#1
+CRASH_POINT atomic.renamed#1
+CRASH_POINT titles.statement#1
+CRASH_POINT titles.statement#2
+CRASH_POINT titles.statement#3
+CRASH_POINT titles.statement#4
+CRASH_POINT titles.statement#5
+CRASH_POINT titles.statement#6
+CRASH_POINT titles.statement#7
+CRASH_POINT titles.statement#8
+migration.statement: 89 points, every one recovered to schema 23
+migration.receipt: 23 points, every one recovered to schema 23
+ok   migration_points
+save.temp_written: 1 points
+save.renamed: 1 points
+ok   save_points
+store.before_commit: 2 points
+store.after_commit: 2 points
+ok   store_points
+import.registered: 1 points
+import.committed: 1 points
+import.marked: 1 points
+import.aside_item: 8 points
+import.set_aside: 1 points
+ok   import_points
+fork.journal_opened: 1 points
+fork.exported: 1 points
+import.registered: 1 points
+import.committed: 1 points
+import.marked: 1 points
+import.set_aside: 1 points
+fork.imported: 1 points
+ok   fork_points
+ok   disk_row
+atomic.temp_written: 1 points
+atomic.renamed: 1 points
+ok   atomic_points
+titles.statement: 8 points
+ok   titles_points
+
+1711 checks, 0 failures
+151 matrix rows in build/crash/matrix.tsv, 614 s

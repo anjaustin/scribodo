@@ -314,7 +314,8 @@ static void layout_explorer(App *app)
         }
         if (!app->project_dir[0]) coming_soon(app, "Open a project to save chats");
         section_header(app, "HISTORY", ICON_HISTORY);
-        if (app->nrevs == 0) coming_soon(app, editor_path(app->editor) ? "No revisions yet" : "Open a document");
+        if (app->history_unavailable) coming_soon(app, "History unavailable; snapshots kept");
+        else if (app->nrevs == 0) coming_soon(app, editor_path(app->editor) ? "No revisions yet" : "Open a document");
         for (size_t i = 0; i < app->nrevs && i < REV_SHOW; i++)
             list_item(app, CLAY_IDI("RevItem", (uint32_t)i), app->rev_labels[i], false);
         if (app->nrevs > REV_SHOW) coming_soon(app, "Older revisions are in .scribodo/revisions");

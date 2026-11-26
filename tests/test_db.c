@@ -32,6 +32,7 @@
 #include "test_util.h"
 #include "test_db_internal.h"
 #include "core/deadline_clock.h"
+#include "test_revision_fixture.h"
 
 char g_name[64];
 char g_name2[64];
@@ -1960,6 +1961,7 @@ static void test_import_revision_identity(void)
         snprintf(doc, sizeof(doc), "%s/%s", root, names[i]);
         write_file(doc, texts[i]);
         CHECK(revisions_snapshot(g_store, root, doc, texts[i], snapshots[i], sizeof(snapshots[i])));
+        CHECK(test_revision_legacy_source(root, names[i], snapshots[i], sizeof(snapshots[i])));
         snprintf(sources[i].doc, sizeof(sources[i].doc), "%s", names[i]);
         snprintf(sources[i].revision, sizeof(sources[i].revision), "%s", snapshots[i]);
     }
@@ -1996,6 +1998,96 @@ static void test_import_revision_identity(void)
     char cmd[PATH_MAX + 20];
     snprintf(cmd, sizeof(cmd), "rm -rf '%s'", root);
     system(cmd);
+}
+
+static void check_full_name_sources(const char *pid)
+{
+    DbRows rows = {0};
+    CHECK(db_query(store_db(g_store),
+                   "SELECT COUNT(*), COALESCE(SUM(v.id IS NULL OR d.id IS NULL"
+                   " OR v.document_id <> s.document_id OR BINARY v.content <> BINARY s.quote),0),"
+                   " COUNT(DISTINCT s.document_id)"
+                   " FROM source_refs s JOIN records r ON r.id=s.record_id"
+                   " JOIN record_versions rv ON rv.record_id=s.record_id AND rv.ver=s.ver"
+                   " LEFT JOIN revisions v ON v.id=s.revision_id"
+                   " LEFT JOIN documents d ON d.id=s.document_id"
+                   " WHERE r.project_id=? AND rv.content='F2 full-name sources'",
+                   (DbArg[1]){DB_S(pid)}, 1, &rows));
+    CHECK(rows.nrows == 1 && rows.ncols == 3 &&
+          !strcmp(db_cell(&rows, 0, 0), "7") && !strcmp(db_cell(&rows, 0, 1), "0") &&
+          !strcmp(db_cell(&rows, 0, 2), "7"));
+    db_rows_free(&rows);
+}
+
+static void test_full_name_history_roundtrip(void)
+{
+    char root[PATH_MAX], path[PATH_MAX + 400], a[256], b[256], why[512] = "", tokens[7][160];
+    snprintf(root, sizeof(root), "%s/scribodo-f2-roundtrip-XXXXXX", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp");
+    CHECK(mkdtemp(root) != NULL);
+    CHECK(store_start(g_store, g_name, why, sizeof(why)));
+    memset(a, 'x', 199); strcpy(a + 199, "A.md");
+    memset(b, 'x', 199); strcpy(b + 199, "B.md");
+    const char *names[] = {a, b, "part:one.md", "part_one.md", "\xc3\xa9.md", "renamed.md", a};
+    const char *texts[] = {"FULL A", "FULL B", "COLON", "UNDERSCORE", "UNICODE", "OLDER TARGET", "NEW A"};
+    SourceRef sources[7] = {{0}};
+    for (size_t i = 0; i < 6; i++) {
+        snprintf(path, sizeof(path), "%s/%s", root, names[i]);
+        if (i < 5) write_file(path, texts[i]); /* old destination History exists without a current manuscript */
+        CHECK(revisions_snapshot(g_store, root, names[i], texts[i], tokens[i], sizeof(tokens[i])));
+    }
+    bool moved = false;
+    CHECK(revisions_document_rename_files(root, a, "renamed.md", &moved) && moved);
+    snprintf(path, sizeof(path), "%s/%s", root, a);
+    write_file(path, texts[6]); /* explicitly reuse the old name as a new generation */
+    CHECK(revisions_snapshot(g_store, root, a, texts[6], tokens[6], sizeof(tokens[6])));
+    for (size_t i = 0; i < 7; i++) {
+        sources[i].kind = SRC_DOC;
+        sources[i].quote = (char *)texts[i];
+        sources[i].len = strlen(texts[i]);
+        snprintf(sources[i].doc, sizeof(sources[i].doc), "%s", names[i]);
+        snprintf(sources[i].revision, sizeof(sources[i].revision), "%s", tokens[i]);
+    }
+    CHECK(records_append(g_store, root, REC_NOTE, "n-f2-fullnames", "active", "F2 full-name sources", sources, 7, NULL));
+    CHECK(store_import(g_store, root, why, sizeof(why)));
+    char pid[40];
+    CHECK(store_mode(g_store, root, pid, sizeof(pid), NULL) == STORE_DB);
+    check_full_name_sources(pid);
+    char exported[PATH_MAX + 32];
+    snprintf(exported, sizeof(exported), "%s/exported", root);
+    CHECK(store_export_project(g_store, pid, exported, why, sizeof(why)));
+    CHECK(store_import(g_store, exported, why, sizeof(why)));
+    char copied[40];
+    CHECK(store_mode(g_store, exported, copied, sizeof(copied), NULL) == STORE_DB && strcmp(pid, copied));
+    check_full_name_sources(copied);
+
+    /* A genuinely old lossy bucket is not reassigned during a failed import. */
+    char ambiguous[PATH_MAX + 32], metadata[PATH_MAX + 64], history_root[PATH_MAX + 100], bucket[PATH_MAX + 320];
+    snprintf(ambiguous, sizeof(ambiguous), "%s/ambiguous", root);
+    CHECK(mkdir(ambiguous, 0755) == 0);
+    snprintf(path, sizeof(path), "%s/%s", ambiguous, a); write_file(path, "A");
+    snprintf(path, sizeof(path), "%s/%s", ambiguous, b); write_file(path, "B");
+    snprintf(metadata, sizeof(metadata), "%s/.scribodo", ambiguous);
+    snprintf(history_root, sizeof(history_root), "%s/revisions", metadata);
+    char prefix[200];
+    memset(prefix, 'x', 199); prefix[199] = '\0';
+    snprintf(bucket, sizeof(bucket), "%s/%s", history_root, prefix);
+    CHECK(mkdir(metadata, 0755) == 0 && mkdir(history_root, 0755) == 0 && mkdir(bucket, 0755) == 0);
+    const char legacy_index[] = "{\"file\":\"20261125-120000-000-source.md\",\"origin\":\"source\",\"ts\":1,\"bytes\":9}\n";
+    snprintf(path, sizeof(path), "%s/index.jsonl", bucket); write_file(path, legacy_index);
+    snprintf(path, sizeof(path), "%s/20261125-120000-000-source.md", bucket); write_file(path, "OLD MIXED");
+    CHECK(!store_import(g_store, ambiguous, why, sizeof(why)) && why[0]);
+    CHECK(store_mode(g_store, ambiguous, NULL, 0, NULL) != STORE_DB);
+    snprintf(path, sizeof(path), "%s/store.json", metadata);
+    CHECK(access(path, F_OK) != 0);
+    char *unchanged = NULL;
+    snprintf(path, sizeof(path), "%s/index.jsonl", bucket);
+    CHECK(file_text_read_no_follow(path, &unchanged) == FILE_TEXT_OK && unchanged && !strcmp(unchanged, legacy_index));
+    free(unchanged);
+    snprintf(path, sizeof(path), "%s/20261125-120000-000-source.md", bucket);
+    unchanged = NULL;
+    CHECK(file_text_read_no_follow(path, &unchanged) == FILE_TEXT_OK && unchanged && !strcmp(unchanged, "OLD MIXED"));
+    free(unchanged);
+    printf("    full-name/source roundtrip and ambiguous import fixtures retained at %s\n", root);
 }
 
 /* AUDIT-004 F11: every title a chat carried survives file -> store -> file and store -> file -> store, in order, with
@@ -2890,7 +2982,8 @@ int main(void)
                           { "transition_read_failures", test_transition_read_failures }, { "entities", test_entities },
                           { "legacy_import_read_failures", test_legacy_import_read_failures },
                           { "fork_retry_snapshot", test_fork_retry_snapshot },
-                          { "import_revision_identity", test_import_revision_identity },
+                           { "import_revision_identity", test_import_revision_identity },
+                           { "full_name_history_roundtrip", test_full_name_history_roundtrip },
                           { "chat_title_archive", test_chat_title_archive },
                           { "chat_title_bad_time", test_chat_title_bad_time },
                           { "chat_title_reimport", test_chat_title_reimport },

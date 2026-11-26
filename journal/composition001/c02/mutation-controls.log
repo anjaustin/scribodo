@@ -1,0 +1,6 @@
+PASS control: exit 0
+KILLED first_reader_replay_disabled: exit 1
+KILLED inode_guard_removed: exit 1
+KILLED duplicate_log_publication: exit 1
+KILLED trailing_receipt_accepted: exit 1
+KILLED hardlinks_admitted: exit 1

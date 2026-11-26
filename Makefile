@@ -100,6 +100,13 @@ TESTS += $(BUILD)/test_answer_pipeline $(BUILD)/test_memory_index_text
 TESTS += $(BUILD)/test_memory_document_cache $(BUILD)/test_memory_budget $(BUILD)/test_generative_gate
 TESTS += $(BUILD)/test_http_deadlines $(BUILD)/test_db_deadlines $(BUILD)/test_memory_brief_model
 TESTS += $(BUILD)/test_http_poll_errno
+TESTS += $(BUILD)/test_revision_recovery
+
+# File-only namespace replay with real process-death points; never uses a database.
+REVISION_RECOVERY_SRCS := $(CORE_SRCS) $(LLM_SRCS) src/core/json_vendor.c tests/test_state_fixture.c tests/test_revision_recovery.c tests/crash_point.c
+$(BUILD)/test_revision_recovery: $(REVISION_RECOVERY_SRCS) $(wildcard src/core/*.h src/app/*.h src/llm/*.h) tests/test_state_fixture.h tests/test_revision_fixture.h third_party/cJSON/cJSON.c third_party/cJSON/cJSON.h
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(INCLUDES) -DSCRIBODO_CRASH_POINTS $(REVISION_RECOVERY_SRCS) -o $@ $(MARIADB_LIBS) -lpthread
 TESTS += $(BUILD)/test_draft_controller $(BUILD)/test_script_host $(BUILD)/test_startup_env
 TESTS += $(BUILD)/test_services
 TESTS += $(BUILD)/test_font_file $(BUILD)/test_appearance $(BUILD)/test_font_catalog $(BUILD)/test_widgets $(BUILD)/test_motion
@@ -442,7 +449,7 @@ MARIADB_LIB := build/mariadb-cc/libmariadb/libmariadbclient.a
 MARIADB_LIBS := $(MARIADB_LIB) $(OPENSSL_DIR)/lib/libssl.a $(OPENSSL_DIR)/lib/libcrypto.a -lz -liconv -lcurl # the system libcurl, for the optional remote model
 # Everything that may include <mysql.h> needs the client built first.
 $(LLM_OBJS) $(APP_OBJS) $(BUILD)/tests/test_llm.o $(BUILD)/tests/test_db.o $(BUILD)/tests/db_admin.o: | $(MARIADB_LIB)
-$(BUILD)/test_persistence_faults $(BUILD)/test_semantic_faults: | $(MARIADB_LIB)
+$(BUILD)/test_persistence_faults $(BUILD)/test_semantic_faults $(BUILD)/test_revision_recovery: | $(MARIADB_LIB)
 $(MARIADB_LIB):
 	@mkdir -p $(dir $@)
 	$(CMAKE) -S third_party/mariadb-connector-c -B build/mariadb-cc -DCMAKE_BUILD_TYPE=Release \

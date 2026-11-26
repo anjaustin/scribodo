@@ -1,0 +1,9 @@
+test	2
+sanitize	2
+analyze	0
+tsan	0
+dbtest	0
+crashtest	0
+uitest	2
+uitest-db	0
+services-down	0

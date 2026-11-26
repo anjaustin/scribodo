@@ -1,0 +1,1106 @@
+cc -std=c11 -O2 -mcpu=native -g -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include -DSCRIBODO_CRASH_POINTS src/core/utf8.c src/core/text_buffer.c src/core/undo.c src/core/wrap.c src/core/doc_io.c src/core/diff.c src/core/file_text.c src/app/frame_view_model.c src/app/frame_metrics.c src/core/recall_terms.c src/core/text_cut.c src/core/experiments.c src/core/text_rules.c src/app/tools_dir.c src/core/child_process.c src/core/font_file.c src/ui/theme.c src/ui/motion.c src/core/json.c src/llm/llm_text.c src/llm/http.c src/llm/server.c src/llm/chat.c src/llm/chat_history.c src/app/chat_store.c src/app/revisions.c src/app/records.c src/app/recent.c src/app/renames.c src/llm/observer.c src/llm/observer_text.c src/llm/observer_formats.c src/llm/observer_arms.c src/llm/observer_fake.c src/llm/observer_model.c src/llm/observer_job.c src/llm/semantic.c src/llm/remote.c src/llm/names.c src/llm/memfit.c src/app/db.c src/app/store.c src/app/project_store.c src/app/observer_store.c src/app/store_revisions.c src/app/store_records.c src/app/store_chats.c src/app/store_chat_history.c src/app/store_import.c src/app/store_entities.c src/app/backup.c src/app/backup_job.c src/app/service_supervisor.c src/app/entity_backfill_job.c src/app/name_detection_job.c src/app/project_session.c src/app/explorer_snapshot.c src/app/profile.c src/app/model_settings.c src/app/appearance.c src/app/font_catalog.c src/app/chat_history_job.c src/app/memory_store.c src/app/memory_job.c src/app/memory_saved_file.c src/app/memory_documents.c src/app/memory_document_store.c src/app/memory_gc.c src/app/memory_brief_store.c src/app/recall.c src/app/recall_job.c src/app/import_job.c src/llm/context_planner.c src/llm/memory_tokens.c src/llm/memory_budget.c src/llm/generative_gate.c src/llm/memory_brief.c src/llm/canon_reference.c src/app/local_models.c src/llm/rerank.c src/llm/answer_pipeline.c src/llm/answer_receipt.c src/core/json_vendor.c tests/test_state_fixture.c tests/test_revision_recovery.c tests/crash_point.c -o build/test_revision_recovery build/mariadb-cc/libmariadb/libmariadbclient.a /opt/homebrew/opt/openssl@3/lib/libssl.a /opt/homebrew/opt/openssl@3/lib/libcrypto.a -lz -liconv -lcurl  -lpthread
+cc -std=c11 -O2 -mcpu=native -g -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include -MMD -MP -c src/main.c -o build/src/main.o
+cc -std=c11 -O2 -mcpu=native -g -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include -MMD -MP -c src/ui/recall_view.c -o build/src/ui/recall_view.o
+cc -std=c11 -O2 -mcpu=native -g -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include -MMD -MP -c src/ui/record_view.c -o build/src/ui/record_view.o
+cc -std=c11 -O2 -mcpu=native -g -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include -MMD -MP -c src/ui/findings_view.c -o build/src/ui/findings_view.o
+cc -std=c11 -O2 -mcpu=native -g -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include -MMD -MP -c src/ui/prompt_view.c -o build/src/ui/prompt_view.o
+cc -std=c11 -O2 -mcpu=native -g -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter build/src/core/utf8.o build/src/core/text_buffer.o build/src/core/undo.o build/src/core/wrap.o build/src/core/doc_io.o build/src/core/diff.o build/src/core/file_text.o build/src/app/frame_view_model.o build/src/app/frame_metrics.o build/src/core/recall_terms.o build/src/core/text_cut.o build/src/core/experiments.o build/src/core/text_rules.o build/src/app/tools_dir.o build/src/core/child_process.o build/src/core/font_file.o build/src/ui/theme.o build/src/ui/motion.o build/src/core/json.o build/src/llm/llm_text.o build/src/llm/http.o build/src/llm/server.o build/src/llm/chat.o build/src/llm/chat_history.o build/src/app/chat_store.o build/src/app/revisions.o build/src/app/records.o build/src/app/recent.o build/src/app/renames.o build/src/llm/observer.o build/src/llm/observer_text.o build/src/llm/observer_formats.o build/src/llm/observer_arms.o build/src/llm/observer_fake.o build/src/llm/observer_model.o build/src/llm/observer_job.o build/src/llm/semantic.o build/src/llm/remote.o build/src/llm/names.o build/src/llm/memfit.o build/src/app/db.o build/src/app/store.o build/src/app/project_store.o build/src/app/observer_store.o build/src/app/store_revisions.o build/src/app/store_records.o build/src/app/store_chats.o build/src/app/store_chat_history.o build/src/app/store_import.o build/src/app/store_entities.o build/src/app/backup.o build/src/app/backup_job.o build/src/app/service_supervisor.o build/src/app/entity_backfill_job.o build/src/app/name_detection_job.o build/src/app/project_session.o build/src/app/explorer_snapshot.o build/src/app/profile.o build/src/app/model_settings.o build/src/app/appearance.o build/src/app/font_catalog.o build/src/app/chat_history_job.o build/src/app/memory_store.o build/src/app/memory_job.o build/src/app/memory_saved_file.o build/src/app/memory_documents.o build/src/app/memory_document_store.o build/src/app/memory_gc.o build/src/app/memory_brief_store.o build/src/app/recall.o build/src/app/recall_job.o build/src/app/import_job.o build/src/llm/context_planner.o build/src/llm/memory_tokens.o build/src/llm/memory_budget.o build/src/llm/generative_gate.o build/src/llm/memory_brief.o build/src/llm/canon_reference.o build/src/app/local_models.o build/src/llm/rerank.o build/src/llm/answer_pipeline.o build/src/llm/answer_receipt.o build/third_party/cJSON/cJSON.o build/src/main.o build/src/app/app_lifecycle.o build/src/app/chat_workflow.o build/src/app/document_workflow.o build/src/app/record_workflow.o build/src/app/script_host_app.o build/src/ui/layout.o build/src/app/script.o build/src/app/script_host.o build/src/app/startup_env.o build/src/app/draft_controller.o build/src/app/chat_controller.o build/src/app/reviewed_edit_controller.o build/src/ui/font.o build/src/ui/clay_render.o build/src/ui/editor.o build/src/ui/input.o build/src/ui/recall_view.o build/src/ui/chat_view.o build/src/ui/review_view.o build/src/ui/record_view.o build/src/ui/findings_view.o build/src/ui/prompt_view.o build/src/ui/menu_view.o build/src/ui/vendor_impl.o build/src/ui/widgets.o build/src/app/fonts_panel.o build/src/ui/motion_system.o build/src/ui/mac_window.o build/src/ui/backdrop.o build/src/ui/icons.o build/src/platform/dialogs_mac.o build/raylib/libraylib.a -o build/scribodo -framework OpenGL -framework Cocoa -framework IOKit -framework CoreAudio -framework CoreVideo -framework QuartzCore -framework CoreGraphics build/mariadb-cc/libmariadb/libmariadbclient.a /opt/homebrew/opt/openssl@3/lib/libssl.a /opt/homebrew/opt/openssl@3/lib/libcrypto.a -lz -liconv -lcurl  -lm -lpthread
+tools/watchdog.sh 300 test_evidence_check python3 tests/test_evidence_check.py
+test_a_file_stem_is_archived_through_its_files (__main__.CheckTests) ... ok
+test_a_glob_citation_needs_every_match_archived (__main__.CheckTests) ... ok
+test_a_glob_entry_still_walks_its_matches (__main__.CheckTests) ... ok
+test_a_recreated_lost_path_fails_archived_or_not (__main__.CheckTests) ... ok
+test_a_star_stays_in_one_component (__main__.CheckTests) ... ok
+test_absent_archive_folder_is_an_error_unless_told_to_skip (__main__.CheckTests) ... ok
+test_entries_do_not_excuse_what_is_under_them (__main__.CheckTests) ... ok
+test_every_violation_is_listed_with_its_location (__main__.CheckTests) ... ok
+test_gate_owned_paths_need_an_archive_not_an_excuse (__main__.CheckTests) ... ok
+test_glob_and_placeholder_covered_by_any_member (__main__.CheckTests) ... ok
+test_lost_entries_are_accepted_until_the_path_reappears (__main__.CheckTests) ... ok
+test_lost_entries_are_exact_too (__main__.CheckTests) ... ok
+test_lost_needs_the_citing_document (__main__.CheckTests) ... ok
+test_manifest_forms_cover_their_descendants (__main__.CheckTests) ... ok
+test_not_evidence_entries_cover_paths_dirs_and_globs (__main__.CheckTests) ... ok
+test_not_evidence_needs_a_reason (__main__.CheckTests) ... ok
+test_one_archived_file_does_not_cover_its_directory (__main__.CheckTests) ... ok
+test_placeholder_entries_never_excuse_concrete_paths (__main__.CheckTests) ... ok
+test_readme_is_scanned (__main__.CheckTests) ... ok
+test_relative_names_resolve_under_a_cited_directory (__main__.CheckTests) ... ok
+test_stale_entries_warn_without_failing (__main__.CheckTests) ... ok
+test_tarball_listing_is_exact (__main__.CheckTests) ... ok
+test_the_bare_build_folder_is_reported_not_dropped (__main__.CheckTests) ... ok
+test_the_build_folder_looked_at_is_reported (__main__.CheckTests) ... ok
+test_top_level_tarball_names_get_build_prefix (__main__.CheckTests) ... ok
+test_unarchived_lists_the_next_archive_pass (__main__.CheckTests) ... ok
+test_walk_entries_excuse_new_dumps_but_not_a_dump_cited_by_name (__main__.CheckTests) ... ok
+test_deletions_are_owned (__main__.GateOwnedDirsTests) ... ok
+test_a_spaced_path_is_cited_only_in_backticks (__main__.NormalizeTests) ... ok
+test_bare_build_is_not_a_citation (__main__.NormalizeTests) ... ok
+test_braces_expand (__main__.NormalizeTests) ... ok
+test_citation_boundaries (__main__.NormalizeTests) ... ok
+test_markdown_links_and_angle_brackets (__main__.NormalizeTests) ... ok
+test_numeric_range_expands (__main__.NormalizeTests) ... ok
+test_patterns (__main__.NormalizeTests) ... ok
+test_trailing_punctuation_and_slashes (__main__.NormalizeTests) ... ok
+
+----------------------------------------------------------------------
+Ran 36 tests in 1.498s
+
+OK
+tools/watchdog.sh 300 evidence_check python3 tools/evidence_check.py
+evidence_check: 1153 citations: 953 archived, 34 build-folder, 50 lost, 116 not-evidence; files looked for under /Users/ztflynn/Projects/scribodo/build
+cc -std=c11 -O2 -mcpu=native -g -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter build/src/core/utf8.o build/src/core/text_buffer.o build/src/core/undo.o build/src/core/wrap.o build/src/core/doc_io.o build/src/core/diff.o build/src/core/file_text.o build/src/app/frame_view_model.o build/src/app/frame_metrics.o build/src/core/recall_terms.o build/src/core/text_cut.o build/src/core/experiments.o build/src/core/text_rules.o build/src/app/tools_dir.o build/src/core/child_process.o build/src/core/font_file.o build/src/ui/theme.o build/src/ui/motion.o build/src/core/json.o build/src/llm/llm_text.o build/src/llm/http.o build/src/llm/server.o build/src/llm/chat.o build/src/llm/chat_history.o build/src/app/chat_store.o build/src/app/revisions.o build/src/app/records.o build/src/app/recent.o build/src/app/renames.o build/src/llm/observer.o build/src/llm/observer_text.o build/src/llm/observer_formats.o build/src/llm/observer_arms.o build/src/llm/observer_fake.o build/src/llm/observer_model.o build/src/llm/observer_job.o build/src/llm/semantic.o build/src/llm/remote.o build/src/llm/names.o build/src/llm/memfit.o build/src/app/db.o build/src/app/store.o build/src/app/project_store.o build/src/app/observer_store.o build/src/app/store_revisions.o build/src/app/store_records.o build/src/app/store_chats.o build/src/app/store_chat_history.o build/src/app/store_import.o build/src/app/store_entities.o build/src/app/backup.o build/src/app/backup_job.o build/src/app/service_supervisor.o build/src/app/entity_backfill_job.o build/src/app/name_detection_job.o build/src/app/project_session.o build/src/app/explorer_snapshot.o build/src/app/profile.o build/src/app/model_settings.o build/src/app/appearance.o build/src/app/font_catalog.o build/src/app/chat_history_job.o build/src/app/memory_store.o build/src/app/memory_job.o build/src/app/memory_saved_file.o build/src/app/memory_documents.o build/src/app/memory_document_store.o build/src/app/memory_gc.o build/src/app/memory_brief_store.o build/src/app/recall.o build/src/app/recall_job.o build/src/app/import_job.o build/src/llm/context_planner.o build/src/llm/memory_tokens.o build/src/llm/memory_budget.o build/src/llm/generative_gate.o build/src/llm/memory_brief.o build/src/llm/canon_reference.o build/src/app/local_models.o build/src/llm/rerank.o build/src/llm/answer_pipeline.o build/src/llm/answer_receipt.o build/third_party/cJSON/cJSON.o build/tools/observer_replay.o -o build/observer_replay build/mariadb-cc/libmariadb/libmariadbclient.a /opt/homebrew/opt/openssl@3/lib/libssl.a /opt/homebrew/opt/openssl@3/lib/libcrypto.a -lz -liconv -lcurl  -lpthread
+tools/watchdog.sh 300 test_observer_yardstick python3 tests/test_observer_yardstick.py
+test_a_missing_novel_fails (__main__.YardstickTests) ... ok
+test_changed_inputs_are_reported_as_inputs_not_a_regression (__main__.YardstickTests) ... ok
+test_changed_output_fails_even_with_the_same_count (__main__.YardstickTests) ... ok
+test_identical_run_passes (__main__.YardstickTests) ... ok
+test_skip_needs_a_hosted_runner_or_the_explicit_variable (__main__.YardstickTests) ... ok
+test_the_tracked_record_holds_the_journaled_counts (__main__.YardstickTests) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.001s
+
+OK
+tools/watchdog.sh 300 observer_yardstick python3 tools/observer_yardstick.py --binary build/observer_replay
+observer_yardstick: pp 717, mars 348, heights 948 lines, byte-identical
+tools/watchdog.sh 300 test_experiment_arms python3 tests/test_experiment_arms.py
+test_a_getenv_before_a_level_helper_is_not_a_level (__main__.ArmsTests) ... ok
+test_an_unclassifiable_literal_stops_the_run (__main__.ArmsTests) ... ok
+test_defaults_are_stated_as_values (__main__.ArmsTests) ... ok
+test_hooks_are_recorded_only_when_set_and_never_pinned (__main__.ArmsTests) ... ok
+test_pin_keeps_a_callers_value_and_fills_the_rest (__main__.ArmsTests) ... ok
+test_record_and_line (__main__.ArmsTests) ... ok
+test_shell_export_round_trip (__main__.ArmsTests) ... ok
+test_listed_measurements_use_the_pin (__main__.MeasurementsPinTests) ... ok
+test_no_script_sets_an_arm_without_the_pin (__main__.MeasurementsPinTests) ... ok
+test_the_observer_branch_table_classifies (__main__.ObserverBranchTests) ... skipped 'no remed/observer branch here'
+test_every_flag_of_the_product_table_is_found (__main__.ProductTableTests) ... ok
+
+----------------------------------------------------------------------
+Ran 11 tests in 0.358s
+
+OK (skipped=1)
+tools/watchdog.sh 300 test_answer_common python3 tests/test_answer_common.py
+test_bedrock_probe_reexports_the_same_objects (__main__.AnswerCommonTests) ... ok
+test_private_socket_is_short_and_removed (__main__.AnswerCommonTests) ... ok
+test_root_is_the_repository (__main__.AnswerCommonTests) ... ok
+test_sha_matches_hashlib_across_chunks (__main__.AnswerCommonTests) ... ok
+test_the_model_pin_matches_the_makefile (__main__.AnswerCommonTests) ... ok
+test_tools_that_hash_themselves_hash_answer_common_too (__main__.AnswerCommonTests)
+A run that records its tool's or runner's hash records the shared helpers' too (red-team 5d). ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.014s
+
+OK
+== build/test_core
+experiments: SCRIBODO_OBSERVER_SENTENCES="on" is not one of off, 0, attributes, 1 (= attributes), subject; it is off
+experiments: SCRIBODO_OBSERVER_SENTENCES="Attributes" is not one of off, 0, attributes, 1 (= attributes), subject; it is off
+experiments: SCRIBODO_OBSERVER_SENTENCES="true" is not one of off, 0, attributes, 1 (= attributes), subject; it is off
+experiments: SCRIBODO_OBSERVER_SENTENCES="attributes " is not one of off, 0, attributes, 1 (= attributes), subject; it is off
+experiments: SCRIBODO_OBSERVER_SENTENCES="SUBJECT" is not one of off, 0, attributes, 1 (= attributes), subject; it is off
+experiments: SCRIBODO_OBSERVER_CONFLICT_GATE="on" is not one of off, 0, 1; it is off
+experiments: SCRIBODO_OBSERVER_CONFLICT_GATE="true" is not one of off, 0, 1; it is off
+experiments: SCRIBODO_OBSERVER_CONFLICT_GATE="1 " is not one of off, 0, 1; it is off
+ok   text_rules
+ok   recall_terms
+ok   text_cut
+ok   utf8_clip
+ok   experiments_read_once_and_reload
+ok   observer_sentence_levels
+ok   utf8_basic
+ok   utf8_invalid
+ok   utf8_simd_matches_scalar
+ok   gap_buffer_random
+ok   undo_typing_merges
+ok   undo_merge_breaks
+ok   undo_backspace_and_delete_merge
+ok   undo_replace_selection_and_redo_discard
+ok   undo_state_ids
+ok   wrap
+ok   diff
+ok   frame_view_model
+
+9525 checks, 0 failures
+
+== build/test_doc_io
+ok   roundtrip_preserves_bytes
+ok   load_flags
+ok   rejects_non_regular_and_large
+ok   save_through_symlink
+ok   save_preserves_mode
+ok   refuses_external_change
+ok   failed_save_leaves_original
+ok   recover_strays
+ok   write_draft
+ok   file_text_write_atomic
+ok   fifo_does_not_block
+ok   write_protected
+ok   large_roundtrip
+
+92 checks, 0 failures
+
+== build/test_editor
+ok   pre-mutation admission fence
+ok   typing_undo_is_per_word
+ok   word_motion_and_delete
+ok   selection_replace_and_paste
+ok   replace_range_single_undo
+ok   dirty_tracking
+ok   read_only_blocks_edits
+ok   save_detects_external_change
+ok   overwrite_arm_is_narrow
+ok   write_protected_opens_read_only
+ok   no_document_is_read_only
+ok   visual_line_motion
+ok   size_limit_keeps_selection
+ok   ranges
+ok   anchor
+ok   review_warnings
+ok   reviewed_edit_controller
+    fuzz: 200000 ops, 119696 distinct content states, max length 1180
+ok   fuzz_editor
+
+267 checks, 0 failures
+
+== build/test_editor_faults
+ok   replacement_allocations
+ok   typing_growth_allocation
+
+138 checks, 0 failures
+
+== build/test_db_rows
+ok   shape_and_text
+ok   integers
+ok   floating_point
+
+30 checks, 0 failures
+
+== build/test_observer_text
+ok   locate
+ok   paragraphs_and_overlap
+ok   first_sentence
+ok   values_in_texts
+ok   statement_clips_by_characters
+ok   sentence_end
+ok   attributes_differ
+ok   same_subject
+ok   shared_rule_fixture
+ok   observer_arm_table
+ok   word_sets_bounded_time
+
+290 checks, 0 failures
+
+== build/test_observer_formats
+ok   judge_log
+ok   finding_lines
+
+22 checks, 0 failures
+
+== build/test_observer_fake
+ok   extract_and_judge
+
+3 checks, 0 failures
+
+== build/test_chat_history
+ok   history_properties
+ok   mandatory_request
+
+18103 checks, 0 failures
+
+== build/test_chat_view
+ok   attachment_revisions
+    stress rows=66 owned_text=17367040 cache_bytes=28391088 combined=45758128
+ok   window_layouts
+ok   presented_actions
+ok   concurrent_presentation
+ok   sources_actions
+
+382 checks, 0 failures
+
+== build/test_chat_view_faults
+ok   attachment_revisions
+    stress rows=66 owned_text=17367040 cache_bytes=28391088 combined=45758128
+ok   window_layouts
+ok   presented_actions
+ok   concurrent_presentation
+ok   sources_actions
+ok   layout_allocations
+
+428 checks, 0 failures
+
+== build/test_components
+ok   markdown_display
+ok   observer_chat_filter
+ok   names_detect
+ok   name_detection_job
+ok   project_session_and_explorer_snapshot
+ok   observer_rules_refilter
+ok   model_settings
+ok   model_context_length
+ok   memfit
+ok   owned_store_dependencies
+ok   observer_job_errors
+
+138 checks, 0 failures
+
+== build/test_remote
+ok   remote_file_reads
+ok   remote_json_boundaries
+ok   remote_service_secret_aliases
+ok   remote_key_line_boundaries
+ok   remote
+
+149 checks, 0 failures
+
+== build/test_llm
+scribodo: no reranker model at /var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T//scribodo-stateful-23Am8y/missing-reranker.gguf; answers are not verified (see docs/MODEL-002-qwen3-reranker.md)
+ok   neutralize
+ok   split_thinking
+ok   http_decoder
+ok   sse_parsing
+ok   backup_pipes
+ok   service_supervisor
+ok   request_builder
+    history archive=101 copied=63 bytes=756 scanned=64
+    history archive=1001 copied=63 bytes=756 scanned=64
+    history archive=10001 copied=63 bytes=756 scanned=64
+    history archive=100001 copied=63 bytes=756 scanned=64
+ok   bounded_request_history
+ok   worker_bounded_history
+ok   episode_history_packing
+ok   worker_foreground_preemption
+ok   chat_windows
+ok   memory_remote_bypass
+ok   memory_preserves_cutoff_notice
+ok   window_storage_release
+ok   chat_store
+ok   chat_store_read_failures
+ok   chat_failed_file_guards
+ok   chat_store_resave_failed
+ok   chat_store_ordered_failures
+ok   chat_failed_trim
+ok   worker_save_order
+ok   local_models_checks
+ok   concurrent_file_readers
+ok   fake_backend
+ok   clean_edit
+ok   curl_quotes
+ok   edit_request
+ok   fake_edit
+ok   build_base_request
+ok   edit_too_long
+ok   revisions
+ok   revision_identity
+ok   revision_file_time
+    actual volume case alias=1 (not a simulated case-sensitive-volume claim)
+    actual volume normalization alias=1 (not a simulated case-sensitive-volume claim)
+ok   revision_filesystem_identity
+ok   records
+ok   file_history_read_failures
+ok   snapshot_legacy_name_collisions
+ok   snapshot_reuse_integrity
+ok   observer_run
+ok   observer_id_exhaustion
+ok   record_id_timing
+ok   observer_judge_log
+ok   observer_sentence_pairs
+ok   observer_sentence_arms
+ok   observer_flag_combinations
+ok   observer_wait_mode
+ok   observer_redteam
+ok   recent_and_renames
+ok   multi_doc_request
+ok   side_slot_bounds
+ok   names_as_facts
+ok   speaker_labels
+ok   truncated_stream_is_an_error
+ok   ok_stream_and_context_error
+    stop + destroy took 0.01 s
+ok   stop_never_hangs
+ok   torn_line_recovery
+ok   instance_lock
+ok   chat_server_flags
+ok   orphan_after_owner_kill
+ok   reap_orphan
+
+9204 checks, 0 failures
+
+== build/test_persistence_faults
+ok   record_allocations
+ok   revision_allocations
+ok   request_history_allocations
+ok   packed_history_allocations
+ok   chat_load_allocations
+ok   chat_retry_snapshot_allocations
+ok   chat_adoption_allocations
+    rename allocation sites=196, one-shot/permanent cases=392
+ok   revision_rename_allocations
+ok   chat_send_allocations
+    request builder edit=0 measured_allocations=48 partial_requests=0 missing_author_text=0 missing_document_context=0 (once + persistent)
+    request builder edit=1 measured_allocations=43 partial_requests=0 missing_author_text=0 missing_document_context=0 (once + persistent)
+ok   request_builder_allocations
+    assistant history: allocations=61 partial_requests=0 reasoning_leaks=0
+ok   assistant_history_builder_allocations
+    sampling edit=0 allocations=29 partial_requests=0
+    sampling edit=1 allocations=29 partial_requests=0
+ok   sampling_builder_allocations
+ok   window_shrink_allocations
+ok   chat_allocations
+ok   writer_allocations
+ok   chat_unterminated_list_allocations
+ok   observer_rules_boundaries
+
+8059 checks, 0 failures
+
+== build/test_semantic_faults
+ok   complete_json_spans
+ok   embedding_allocations
+ok   embedding_responses
+ok   embedding_batches
+ok   embedding_json_boundaries
+
+8343 checks, 0 failures
+
+== build/test_chat_history_job
+chat_history_job: all tests passed
+
+== build/test_store_connections
+store connection lifecycle: 14 legacy + 14 deadline gated cases passed
+store project identity: local snapshots and nonregular-marker guard passed
+store deadline connections: budget abort preserves online state and TLS ownership
+store deadline mutex: lifecycle contention respects budget/cancellation
+borrowed store routing: pinned ownership, scope, SQL failure and lifecycle guards passed
+
+== build/test_frame_metrics
+frame_metrics: passed
+
+== build/test_context_planner
+context planner: bounded recall, privacy, epoch and complete-request budget checks passed
+
+== build/test_memory_job
+scribodo: memory Partial coverage: unit  rejected by the index: Invalid, oversized, or noncanonical memory unit
+scribodo: memory Partial coverage: unit  rejected by the index: Invalid, oversized, or noncanonical memory unit
+scribodo: memory Partial coverage: unit  rejected by the index: Invalid, oversized, or noncanonical memory unit
+scribodo: memory Partial coverage: unit  rejected by the index: Invalid, oversized, or noncanonical memory unit
+scribodo: memory Partial coverage: unit  rejected by the index: Invalid, oversized, or noncanonical memory unit
+scribodo: memory Partial coverage: index failure 1/3; backing off: offline
+scribodo: memory Partial coverage: index failure 2/3; backing off: offline
+scribodo: memory Partial coverage: index failure 3/3; explicit rebuild to retry: offline
+scribodo: memory Partial coverage: index failure 1/3; backing off: offline
+scribodo: memory Partial coverage: index failure 2/3; backing off: offline
+memory_job: all tests passed
+
+== build/test_memory_tokens
+memory_tokens: passed (headless request stubs; no real-model count claim)
+
+== build/test_memory_vectors_faults
+    vector allocation operation=0 allocations=20 (once + persistent)
+    vector allocation operation=1 allocations=41 (once + persistent)
+    vector allocation operation=2 allocations=1107 (once + persistent)
+    vector allocation operation=3 allocations=1111 (once + persistent)
+    vector allocation operation=4 allocations=1237 (once + persistent)
+    vector allocation operation=5 allocations=1606 (once + persistent)
+    vector allocation operation=6 allocations=136 (once + persistent)
+ok   private memory vector projection
+ok   decoder allocations independent of delivery
+
+16678 checks, 0 failures
+
+== build/test_context_planner_faults
+context planner: bounded recall, privacy, epoch and complete-request budget checks passed
+
+== build/test_memory_provenance
+ok   file provenance
+ok   request privacy
+
+35 checks, 0 failures
+
+== build/test_memory_saved_file
+ok   saved file authority
+
+53 checks, 0 failures
+
+== build/test_memory_document_capture
+ok   current saved attachment capture
+
+126 checks, 0 failures
+
+== build/test_answer_pipeline
+answer_pipeline: 399 checks, 0 failures (pure helpers and the request builder; no model, no reranker claim)
+
+== build/test_memory_index_text
+ok   off_by_default
+ok   loads_and_resolves_by_hash
+ok   rejects_malformed_files_and_keeps_the_loaded_table
+ok   valid_text_bounds
+
+32 checks, 0 failures
+
+== build/test_memory_document_cache
+ok   bounded full-hash verification
+ok   cache isolation and zero-body foreground
+ok   cancellation, mutation and publication fencing
+ok   fixed capacity FIFO pending state
+ok   bounded failures and monotonic backoff
+ok   cancellation refunds and explicit invalidation fence
+ok   borrowed Db routing and optional deadline isolation
+
+34021 checks, 0 failures
+
+== build/test_memory_budget
+ok   total budget and cancellation
+ok   owned SQL socket abort
+
+20 checks, 0 failures
+
+== build/test_generative_gate
+ok   preemption_and_drain
+ok   fifo_and_cancelled_intent
+ok   stale_lease
+ok   close_and_lifetime
+ok   shutdown_joins_borrower
+ok   concurrent_claims
+
+174 checks, 0 failures
+
+== build/test_http_deadlines
+ok   invalid/expired deadlines never connect
+ok   total deadline stops a slow drip
+ok   legacy receive timeout resets on data
+ok   partial upload deadline/cancellation/disconnect
+ok   truncated and malformed bodies rejected
+ok   cancellation interrupts receive wait
+ok   decoder work counts against deadline
+
+117 checks, 0 failures
+
+== build/test_db_deadlines
+ok   invalid/expired/cancelled deadlines do not connect
+ok   connect/auth/session stages share a deadline
+ok   each suspended stage observes cancellation
+ok   complete local handshake and session setup
+
+146 checks, 0 failures
+
+== build/test_memory_brief_model
+ok   strict brief decoder
+ok   local-only gated generation
+
+154 checks, 0 failures
+
+== build/test_http_poll_errno
+ok   poll errno survives deadline checks
+
+4 checks, 0 failures
+
+== build/test_revision_recovery
+CRASH_POINT history_move.prepared#1
+CRASH_POINT history_move.prepared#2
+CRASH_POINT history_move.file#1
+CRASH_POINT history_move.file#2
+CRASH_POINT history_move.history#1
+CRASH_POINT history_move.history#2
+CRASH_POINT history_move.log#1
+CRASH_POINT history_move.log#2
+CRASH_POINT history_move.done#1
+CRASH_POINT history_move.done#2
+CRASH_POINT atomic.temp_written#1
+CRASH_POINT atomic.temp_written#2
+CRASH_POINT atomic.renamed#1
+CRASH_POINT atomic.renamed#2
+CRASH_POINT history_move.prepared#1
+CRASH_POINT history_move.prepared#2
+CRASH_POINT history_move.file#1
+CRASH_POINT history_move.file#2
+CRASH_POINT history_move.history#1
+CRASH_POINT history_move.history#2
+CRASH_POINT history_move.log#1
+CRASH_POINT history_move.log#2
+CRASH_POINT history_move.done#1
+CRASH_POINT history_move.done#2
+CRASH_POINT atomic.temp_written#1
+CRASH_POINT atomic.temp_written#2
+CRASH_POINT atomic.renamed#1
+CRASH_POINT atomic.renamed#2
+namespace matrix mode=0 point=history_move.prepared hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.prepared hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.prepared hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=0 point=history_move.file hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.file hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.file hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=0 point=history_move.history hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.history hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.history hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=0 point=history_move.log hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.log hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.log hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=0 point=history_move.done hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.done hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.done hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=0 point=atomic.temp_written hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=atomic.temp_written hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=atomic.temp_written hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=0 point=atomic.renamed hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=atomic.renamed hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=atomic.renamed hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=0 point=history_move.tag_written hit=1 killed=0: originals/sources/once verified
+namespace matrix mode=0 point=history_move.tag_published hit=1 killed=0: originals/sources/once verified
+namespace matrix mode=1 point=history_move.prepared hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.prepared hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.prepared hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=1 point=history_move.file hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.file hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.file hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=1 point=history_move.history hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.history hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.history hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=1 point=history_move.log hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.log hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.log hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=1 point=history_move.done hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.done hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.done hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=1 point=atomic.temp_written hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=atomic.temp_written hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=atomic.temp_written hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=1 point=atomic.renamed hit=1 killed=1: originals/sources/once verified
+namespace maCRASH_POINT history_move.tag_written#1
+CRASH_POINT history_move.tag_published#1
+CRASH_POINT history_move.prepared#2
+CRASH_POINT history_move.file#2
+CRASH_POINT history_move.history#1
+CRASH_POINT history_move.prepared#1
+trix mode=1 point=atomic.renamed hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=atomic.renamed hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=1 point=history_move.tag_written hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.tag_written hit=2 killed=0: originals/sources/once verified
+namespace matrix mode=1 point=history_move.tag_published hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.tag_published hit=2 killed=0: originals/sources/once verified
+1144 checks, 0 failures
+
+== build/test_draft_controller
+ok   hash
+ok   interval_and_change
+ok   clean_or_switch_discards
+ok   failures
+ok   discard_while_writing
+ok   switch_while_writing
+ok   quit_while_writing
+ok   load_while_writing
+ok   failure_reported_once
+ok   success_rearms_report
+ok   failure_runs_without_a_draft
+ok   load_discards_other_documents_draft
+
+93 checks, 0 failures
+
+== build/test_script_host
+ok   complete_host
+ok   each_member_detected
+
+566 checks, 0 failures
+
+== build/test_startup_env
+ok   prepare_scripted
+ok   sealed_writes_fail_loudly
+
+15 checks, 0 failures
+
+== build/test_services
+ok   exit_codes
+ok   reason_bounds
+ok   reason_utf8
+ok   real_script_refusals
+ok   contract_written_once
+ok   tools_dir
+ok   child_descriptors
+
+351 checks, 0 failures
+
+== build/test_font_file
+ok   bundled_names
+ok   bundled_coverage
+ok   collection
+ok   truncated
+ok   corrupted
+ok   apple_family
+
+93 checks, 0 failures
+
+== build/test_appearance
+ok   defaults
+ok   missing_file_is_the_defaults
+ok   round_trip
+ok   clamping
+ok   theme_and_writing_aids
+ok   malformed
+ok   sources
+ok   assets_dir
+
+64 checks, 0 failures
+
+== build/test_font_catalog
+ok   bundled
+ok   decoys_and_duplicates
+ok   filter
+     system scan: 424 faces in 35 ms
+ok   system_scan
+
+880 checks, 0 failures
+
+== build/test_widgets
+ok   an_ordinary_click
+ok   stop_does_not_become_send
+ok   a_stale_press_clicks_nothing_later
+ok   a_release_elsewhere_and_disabled_and_locked
+ok   a_check_box_flips_once
+
+13 checks, 0 failures
+
+== build/test_motion
+ok   reaches_95_percent_in_its_time
+ok   lands_exactly_and_stops
+ok   never_overshoots
+ok   bad_inputs
+ok   motion_off_is_instant
+
+217 checks, 0 failures
+
+tools/watchdog.sh 300 test_env_symbols python3 tests/test_env_symbols.py build/src/core/utf8.o build/src/core/text_buffer.o build/src/core/undo.o build/src/core/wrap.o build/src/core/doc_io.o build/src/core/diff.o build/src/core/file_text.o build/src/app/frame_view_model.o build/src/app/frame_metrics.o build/src/core/recall_terms.o build/src/core/text_cut.o build/src/core/experiments.o build/src/core/text_rules.o build/src/app/tools_dir.o build/src/core/child_process.o build/src/core/font_file.o build/src/ui/theme.o build/src/ui/motion.o build/src/core/json.o build/src/llm/llm_text.o build/src/llm/http.o build/src/llm/server.o build/src/llm/chat.o build/src/llm/chat_history.o build/src/app/chat_store.o build/src/app/revisions.o build/src/app/records.o build/src/app/recent.o build/src/app/renames.o build/src/llm/observer.o build/src/llm/observer_text.o build/src/llm/observer_formats.o build/src/llm/observer_arms.o build/src/llm/observer_fake.o build/src/llm/observer_model.o build/src/llm/observer_job.o build/src/llm/semantic.o build/src/llm/remote.o build/src/llm/names.o build/src/llm/memfit.o build/src/app/db.o build/src/app/store.o build/src/app/project_store.o build/src/app/observer_store.o build/src/app/store_revisions.o build/src/app/store_records.o build/src/app/store_chats.o build/src/app/store_chat_history.o build/src/app/store_import.o build/src/app/store_entities.o build/src/app/backup.o build/src/app/backup_job.o build/src/app/service_supervisor.o build/src/app/entity_backfill_job.o build/src/app/name_detection_job.o build/src/app/project_session.o build/src/app/explorer_snapshot.o build/src/app/profile.o build/src/app/model_settings.o build/src/app/appearance.o build/src/app/font_catalog.o build/src/app/chat_history_job.o build/src/app/memory_store.o build/src/app/memory_job.o build/src/app/memory_saved_file.o build/src/app/memory_documents.o build/src/app/memory_document_store.o build/src/app/memory_gc.o build/src/app/memory_brief_store.o build/src/app/recall.o build/src/app/recall_job.o build/src/app/import_job.o build/src/llm/context_planner.o build/src/llm/memory_tokens.o build/src/llm/memory_budget.o build/src/llm/generative_gate.o build/src/llm/memory_brief.o build/src/llm/canon_reference.o build/src/app/local_models.o build/src/llm/rerank.o build/src/llm/answer_pipeline.o build/src/llm/answer_receipt.o build/third_party/cJSON/cJSON.o build/src/main.o build/src/app/app_lifecycle.o build/src/app/chat_workflow.o build/src/app/document_workflow.o build/src/app/record_workflow.o build/src/app/script_host_app.o build/src/ui/layout.o build/src/app/script.o build/src/app/script_host.o build/src/app/startup_env.o build/src/app/draft_controller.o build/src/app/chat_controller.o build/src/app/reviewed_edit_controller.o build/src/ui/font.o build/src/ui/clay_render.o build/src/ui/editor.o build/src/ui/input.o build/src/ui/recall_view.o build/src/ui/chat_view.o build/src/ui/review_view.o build/src/ui/record_view.o build/src/ui/findings_view.o build/src/ui/prompt_view.o build/src/ui/menu_view.o build/src/ui/vendor_impl.o build/src/ui/widgets.o build/src/app/fonts_panel.o build/src/ui/motion_system.o build/src/ui/mac_window.o build/src/ui/backdrop.o build/src/ui/icons.o build/src/platform/dialogs_mac.o
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.625s
+
+OK
+tools/watchdog.sh 300 test_backup python3 tests/test_backup.py
+...........
+----------------------------------------------------------------------
+Ran 11 tests in 1.210s
+
+OK
+tools/watchdog.sh 300 test_service_defaults python3 tests/test_service_defaults.py
+........
+----------------------------------------------------------------------
+Ran 8 tests in 0.249s
+
+OK
+tools/watchdog.sh 300 test_spawn_hygiene python3 tests/test_spawn_hygiene.py
+...
+----------------------------------------------------------------------
+Ran 3 tests in 0.126s
+
+OK
+tools/watchdog.sh 300 test_services_docker /bin/bash tests/test_services_docker.sh
+ok   without the shim, the library's docker is the guard (97), never a real Docker
+ok   docker: rootsql passes its arguments and stdin, as root, the password by environment
+ok   docker: rootsql is one compose exec in the mariadb service
+ok   docker: dump_db is one consistent mariadb-dump as root
+ok   docker: load_dump loads as a one-time sandboxed user that can reach only that database, then drops it
+ok   docker: a failed load returns the client's status and still drops the user
+ok   native: rootsql passes its arguments and stdin, as root, the password by environment
+ok   native: rootsql never calls docker
+ok   native: dump_db is one consistent mariadb-dump as root
+ok   native: load_dump loads as a one-time sandboxed user that can reach only that database, then drops it
+ok   native: a failed load returns the client's status and still drops the user
+ok   qdrant_delete_collections lists, then deletes only that database's collections, with the Bearer key
+ok   the scripts send Qdrant's key one way, in one place
+ok   up: docker info, compose up --wait, compose ps
+ok   up: Compose runs with the server flags it requires exported
+ok   up: the containers' secrets readable inside the 0700 folder; a forced mode is not remembered
+ok   up without Docker running: exit 6, said, nothing else called
+ok   down, status, logs: compose down, ps, logs
+ok   purge refuses the author's compose project without SCRIBODO_PURGE_CONFIRM
+ok   purge of a throwaway project removes its volumes
+ok   testdb create: the database and its grant, as root in the container
+ok   the pinned MariaDB release passes, silently
+ok   a newer patch of the series passes, with a warning naming both versions
+ok   an older patch, another series, an unreadable version, a 21- or 10-digit patch, or a leading zero (11.4.013) is refused (3)
+ok   a pin with a leading zero is refused as not a release
+ok   SCRIBODO_MARIADB_VERSION overrides the pin
+ok   a command failing with its own 4 leaves as 1
+ok   a command failing with its own 7 leaves as 1
+ok   a command failing with its own 75 leaves as 1
+ok   a store locked by another run: lockf's own 75 (EX_TEMPFAIL), from the outer process
+ok   tools_dir.h lists the bundle's scripts, Compose file and Qdrant
+ok   in a bundle the library resolves from Resources and finds the bundled Qdrant
+ok   the bundle's services.sh runs on the bundle's own Compose file
+ok   the bundle's native mode finds its Qdrant and MariaDB, then stops at the credentials guard (2), starting nothing
+ok   a closed stdout is reopened on /dev/null: the command still succeeds
+ok   a closed stderr likewise
+ok   'testdb create' is a usage error, 2, and runs nothing
+ok   'testdb drop' is a usage error, 2, and runs nothing
+ok   'testdb' is a usage error, 2, and runs nothing
+ok   'testdb bogus scribodo_test_x' is a usage error, 2, and runs nothing
+ok   'dump' is a usage error, 2, and runs nothing
+ok   'no-such-command' is a usage error, 2, and runs nothing
+ok   (the plant is in status and in docker up)
+ok   an unset variable in status leaves as 1, the error on stderr, Compose never started
+ok   an unset variable in up leaves as 1, the error on stderr, Compose never started
+ok   no script calls docker compose except through services_lib.sh's compose
+ok   migrate-from-docker refuses a forced mode, touching nothing
+ok   migrate-from-docker without Docker: exit 6, nothing written
+tools/watchdog.sh 300 test_frame_soak python3 tests/test_frame_soak.py
+.
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
+
+OK
+tools/watchdog.sh 300 test_manuscript_series python3 tests/test_manuscript_series.py
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.001s
+
+OK
+tools/watchdog.sh 300 test_power_source python3 tests/test_power_source.py
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.045s
+
+OK
+tools/watchdog.sh 300 test_env_writes python3 tests/test_env_writes.py
+.....
+----------------------------------------------------------------------
+Ran 5 tests in 0.099s
+
+OK
+tools/watchdog.sh 300 test_draft_call_sites python3 tests/test_draft_call_sites.py
+..
+----------------------------------------------------------------------
+Ran 2 tests in 0.076s
+
+OK
+tools/watchdog.sh 300 test_config_documented python3 tests/test_config_documented.py
+test_every_product_variable_has_a_row (__main__.ConfigDocumentedTests) ... ok
+test_the_row_pattern_reads_a_combined_row (__main__.ConfigDocumentedTests) ... ok
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.009s
+
+OK
+tools/watchdog.sh 300 test_bundled_fonts python3 tests/test_bundled_fonts.py
+test_each_font_is_the_pinned_file (__main__.BundledFontTests) ... ok
+test_every_font_ships_with_its_licence (__main__.BundledFontTests) ... ok
+test_nothing_unlisted_is_bundled (__main__.BundledFontTests) ... ok
+test_the_readme_states_the_same_hashes (__main__.BundledFontTests) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.001s
+
+OK
+tools/watchdog.sh 300 test_theme_literals python3 tests/test_theme_literals.py
+test_no_colour_literals_outside_the_theme (__main__.ThemeLiteralTests) ... ok
+test_the_patterns_catch_each_form (__main__.ThemeLiteralTests) ... ok
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.033s
+
+OK
+tools/watchdog.sh 300 test_theme_contrast python3 tests/test_theme_contrast.py
+test_text_is_legible_on_every_surface (__main__.ThemeContrastTests) ... ok
+test_the_check_would_catch_a_bad_pair (__main__.ThemeContrastTests) ... ok
+test_three_palettes_with_every_role (__main__.ThemeContrastTests) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.001s
+
+OK
+tools/watchdog.sh 300 test_font_probe python3 tests/test_font_probe.py
+test_a_wrong_loca_format_fails_the_probe (__main__.FontProbeTests) ... ok
+test_not_a_font_and_bad_arguments_fail (__main__.FontProbeTests) ... ok
+test_scrambled_glyph_data_fails_or_passes_but_never_hangs (__main__.FontProbeTests) ... ok
+test_the_bundled_faces_pass (__main__.FontProbeTests) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.096s
+
+OK
+tools/watchdog.sh 300 test_sysmem_sample python3 tests/test_sysmem_sample.py
+..
+----------------------------------------------------------------------
+Ran 2 tests in 0.064s
+
+OK
+tools/watchdog.sh 300 test_observer_faults python3 tests/test_observer_faults.py
+/Users/ztflynn/Projects/scribodo/tools/observer_lines.py:69: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/tmpmede_fwa/f.txt' mode='r' encoding='utf-8'>
+  for line in open(path, encoding="utf-8"):
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/ztflynn/Projects/scribodo/tools/observer_lines.py:69: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/tmp2cmx3wgh/f.txt' mode='r' encoding='utf-8'>
+  for line in open(path, encoding="utf-8"):
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/ztflynn/Projects/scribodo/tools/observer_lines.py:69: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/tmpaxgrbmlx/f.txt' mode='r' encoding='utf-8'>
+  for line in open(path, encoding="utf-8"):
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/ztflynn/Projects/scribodo/tools/observer_lines.py:69: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/tmpz1669327/f.txt' mode='r' encoding='utf-8'>
+  for line in open(path, encoding="utf-8"):
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/ztflynn/Projects/scribodo/tools/observer_lines.py:69: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/tmp6mnbbrxd/f.txt' mode='r' encoding='utf-8'>
+  for line in open(path, encoding="utf-8"):
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+.......
+----------------------------------------------------------------------
+Ran 7 tests in 0.332s
+
+OK
+tools/watchdog.sh 300 test_observer_judge_score python3 tests/test_observer_judge_score.py
+.....
+----------------------------------------------------------------------
+Ran 5 tests in 0.037s
+
+OK
+tools/watchdog.sh 300 test_observer_sentence_pairs python3 tests/test_observer_sentence_pairs.py
+..
+----------------------------------------------------------------------
+Ran 2 tests in 0.000s
+
+OK
+tools/watchdog.sh 300 test_observer_rules python3 tests/test_observer_rules.py
+.......
+----------------------------------------------------------------------
+Ran 7 tests in 0.160s
+
+OK
+tools/watchdog.sh 300 test_observer_formats_py python3 tests/test_observer_formats.py
+/Users/ztflynn/Projects/scribodo/tools/observer_lines.py:69: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/tmprxqxwrqk/run.txt' mode='r' encoding='utf-8'>
+  for line in open(path, encoding="utf-8"):
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/ztflynn/Projects/scribodo/tools/observer_lines.py:55: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/tmprxqxwrqk/run.err' mode='r' encoding='utf-8'>
+  m = FORMAT_MARKER.search(open(err, encoding="utf-8", errors="replace").read())
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/ztflynn/Projects/scribodo/tools/observer_lines.py:55: ResourceWarning: unclosed file <_io.TextIOWrapper name='/Users/ztflynn/Projects/scribodo/tests/fixtures/observer_formats/findings.err' mode='r' encoding='utf-8'>
+  m = FORMAT_MARKER.search(open(err, encoding="utf-8", errors="replace").read())
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/ztflynn/Projects/scribodo/tools/observer_lines.py:69: ResourceWarning: unclosed file <_io.TextIOWrapper name='/Users/ztflynn/Projects/scribodo/tests/fixtures/observer_formats/findings.txt' mode='r' encoding='utf-8'>
+  for line in open(path, encoding="utf-8"):
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/ztflynn/Projects/scribodo/tools/observer_judge_score.py:182: ResourceWarning: unclosed file <_io.TextIOWrapper name='/Users/ztflynn/Projects/scribodo/tests/fixtures/observer_formats/judge-log.jsonl' mode='r' encoding='utf-8'>
+  for n, line in enumerate(open(path, encoding="utf-8"), 1):
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/ztflynn/Projects/scribodo/tools/observer_judge_score.py:182: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/tmpvvjwnzgb/old.jsonl' mode='r' encoding='utf-8'>
+  for n, line in enumerate(open(path, encoding="utf-8"), 1):
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/ztflynn/Projects/scribodo/tools/observer_judge_score.py:188: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/tmpvvjwnzgb/new.jsonl' mode='r' encoding='utf-8'>
+  raise ValueError(f"{path}:{n}: judge log version {version}; this reader knows {JUDGE_LOG_VERSIONS}")
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+.....
+----------------------------------------------------------------------
+Ran 8 tests in 0.006s
+
+OK
+tools/watchdog.sh 300 test_answer_probes python3 tests/test_answer_probes.py
+.......
+----------------------------------------------------------------------
+Ran 7 tests in 0.127s
+
+OK
+tools/watchdog.sh 300 test_answer_live_capture python3 tests/test_answer_live_capture.py
+.....
+----------------------------------------------------------------------
+Ran 5 tests in 0.001s
+
+OK
+tools/watchdog.sh 300 test_answer_live_audit python3 tests/test_answer_live_audit.py
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.024s
+
+OK
+tools/watchdog.sh 300 test_answer_live_ablation python3 tests/test_answer_live_ablation.py
+.......
+----------------------------------------------------------------------
+Ran 7 tests in 0.001s
+
+OK
+tools/watchdog.sh 300 test_answer_live_parity python3 tests/test_answer_live_parity.py
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.003s
+
+OK
+tools/watchdog.sh 300 test_answer_manifold_probe python3 tests/test_answer_manifold_probe.py
+........
+----------------------------------------------------------------------
+Ran 8 tests in 0.027s
+
+OK
+tools/watchdog.sh 300 test_answer_plumbing_arithmetic python3 tests/test_answer_plumbing_arithmetic.py
+.....
+----------------------------------------------------------------------
+Ran 5 tests in 0.006s
+
+OK
+tools/watchdog.sh 300 test_answer_plumbing_contract python3 tests/test_answer_plumbing_contract.py
+........
+----------------------------------------------------------------------
+Ran 8 tests in 0.001s
+
+OK
+tools/watchdog.sh 300 test_answer_clean_review python3 tests/test_answer_clean_review.py
+.....
+----------------------------------------------------------------------
+Ran 5 tests in 0.004s
+
+OK
+tools/watchdog.sh 300 test_answer_unit_extraction python3 tests/test_answer_unit_extraction.py
+............
+----------------------------------------------------------------------
+Ran 12 tests in 0.005s
+
+OK
+tools/watchdog.sh 300 test_answer_ranker_instruction python3 tests/test_answer_ranker_instruction.py
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.001s
+
+OK
+tools/watchdog.sh 300 test_answer_live_delivery_compare python3 tests/test_answer_live_delivery_compare.py
+..
+----------------------------------------------------------------------
+Ran 2 tests in 0.004s
+
+OK
+tools/watchdog.sh 300 test_answer_rerank_arm python3 tests/test_answer_rerank_arm.py
+.....
+----------------------------------------------------------------------
+Ran 5 tests in 0.000s
+
+OK
+tools/watchdog.sh 300 test_answer_pipeline_review python3 tests/test_answer_pipeline_review.py
+...
+----------------------------------------------------------------------
+Ran 3 tests in 0.000s
+
+OK
+tools/watchdog.sh 300 test_answer_question_parts python3 tests/test_answer_question_parts.py
+...........
+----------------------------------------------------------------------
+Ran 11 tests in 0.000s
+
+OK
+tools/watchdog.sh 300 test_answer_window_rerank python3 tests/test_answer_window_rerank.py
+...
+----------------------------------------------------------------------
+Ran 3 tests in 0.000s
+
+OK
+tools/watchdog.sh 300 test_answer_part_claims python3 tests/test_answer_part_claims.py
+......
+----------------------------------------------------------------------
+Ran 6 tests in 0.002s
+
+OK
+tools/watchdog.sh 300 test_answer_admission_arm python3 tests/test_answer_admission_arm.py
+......
+----------------------------------------------------------------------
+Ran 6 tests in 0.000s
+
+OK
+tools/watchdog.sh 300 test_answer_margin_arm python3 tests/test_answer_margin_arm.py
+.........
+----------------------------------------------------------------------
+Ran 9 tests in 0.000s
+
+OK
+tools/watchdog.sh 300 test_answer_relation_arm python3 tests/test_answer_relation_arm.py
+............
+----------------------------------------------------------------------
+Ran 12 tests in 0.058s
+
+OK
+tools/watchdog.sh 300 test_answer_coref_arm python3 tests/test_answer_coref_arm.py
+..........
+----------------------------------------------------------------------
+Ran 10 tests in 0.001s
+
+OK
+tools/watchdog.sh 300 test_answer_gate_replay python3 tests/test_answer_gate_replay.py
+..
+----------------------------------------------------------------------
+Ran 2 tests in 0.000s
+
+OK
+tools/watchdog.sh 300 test_answer_span_tolerance python3 tests/test_answer_span_tolerance.py
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.002s
+
+OK
+tools/watchdog.sh 300 test_answer_income_isolation python3 tests/test_answer_income_isolation.py
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.000s
+
+OK
+tools/watchdog.sh 300 test_answer_citation_binding python3 tests/test_answer_citation_binding.py
+/Users/ztflynn/Projects/scribodo/tools/answer_citation_binding.py:117: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/tmpdirqs_i0/arm-request.json' mode='r' encoding='UTF-8'>
+  user = json.load(open(req))['messages'][-1]['content']
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/ztflynn/Projects/scribodo/tools/answer_citation_binding.py:120: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/tmpdirqs_i0/arm-response.json' mode='r' encoding='UTF-8'>
+  text = json.load(open(resp))['choices'][0]['message'].get('content') or ''
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/ztflynn/Projects/scribodo/tools/answer_citation_binding.py:117: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/tmpsrqpdx2z/arm-request.json' mode='r' encoding='UTF-8'>
+  user = json.load(open(req))['messages'][-1]['content']
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/ztflynn/Projects/scribodo/tools/answer_citation_binding.py:120: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/tmpsrqpdx2z/arm-response.json' mode='r' encoding='UTF-8'>
+  text = json.load(open(resp))['choices'][0]['message'].get('content') or ''
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/ztflynn/Projects/scribodo/tools/answer_citation_binding.py:117: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/tmp8mz874zq/arm-request.json' mode='r' encoding='UTF-8'>
+  user = json.load(open(req))['messages'][-1]['content']
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/ztflynn/Projects/scribodo/tools/answer_citation_binding.py:120: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/tmp8mz874zq/arm-response.json' mode='r' encoding='UTF-8'>
+  text = json.load(open(resp))['choices'][0]['message'].get('content') or ''
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/ztflynn/Projects/scribodo/tools/answer_citation_binding.py:117: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/tmpdfilr06c/arm-request.json' mode='r' encoding='UTF-8'>
+  user = json.load(open(req))['messages'][-1]['content']
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/ztflynn/Projects/scribodo/tools/answer_citation_binding.py:120: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/tmpdfilr06c/arm-response.json' mode='r' encoding='UTF-8'>
+  text = json.load(open(resp))['choices'][0]['message'].get('content') or ''
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/ztflynn/Projects/scribodo/tools/answer_citation_binding.py:117: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/tmp3l6vyrzb/arm-request.json' mode='r' encoding='UTF-8'>
+  user = json.load(open(req))['messages'][-1]['content']
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/ztflynn/Projects/scribodo/tools/answer_citation_binding.py:120: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/tmp3l6vyrzb/arm-response.json' mode='r' encoding='UTF-8'>
+  text = json.load(open(resp))['choices'][0]['message'].get('content') or ''
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+../Users/ztflynn/Projects/scribodo/tools/answer_citation_binding.py:117: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/tmpb0zcsuo7/arm-request.json' mode='r' encoding='UTF-8'>
+  user = json.load(open(req))['messages'][-1]['content']
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/ztflynn/Projects/scribodo/tools/answer_citation_binding.py:120: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/tmpb0zcsuo7/arm-response.json' mode='r' encoding='UTF-8'>
+  text = json.load(open(resp))['choices'][0]['message'].get('content') or ''
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/ztflynn/Projects/scribodo/tools/answer_citation_binding.py:117: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/tmpbii3cy1o/arm-request.json' mode='r' encoding='UTF-8'>
+  user = json.load(open(req))['messages'][-1]['content']
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/ztflynn/Projects/scribodo/tools/answer_citation_binding.py:120: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/tmpbii3cy1o/arm-response.json' mode='r' encoding='UTF-8'>
+  text = json.load(open(resp))['choices'][0]['message'].get('content') or ''
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/ztflynn/Projects/scribodo/tools/answer_citation_binding.py:117: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/tmp3i4q9w7b/arm-request.json' mode='r' encoding='UTF-8'>
+  user = json.load(open(req))['messages'][-1]['content']
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/ztflynn/Projects/scribodo/tools/answer_citation_binding.py:120: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/tmp3i4q9w7b/arm-response.json' mode='r' encoding='UTF-8'>
+  text = json.load(open(resp))['choices'][0]['message'].get('content') or ''
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+.
+----------------------------------------------------------------------
+Ran 8 tests in 0.008s
+
+OK
+tools/watchdog.sh 300 test_answer_boundary_fixture python3 tests/test_answer_boundary_fixture.py
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.002s
+
+OK
+tools/watchdog.sh 300 test_answer_window_replay python3 tests/test_answer_window_replay.py
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.000s
+
+OK
+tools/watchdog.sh 300 test_answer_receipt_contract python3 tests/test_answer_receipt_contract.py
+......
+----------------------------------------------------------------------
+Ran 6 tests in 0.002s
+
+OK

@@ -1,0 +1,51 @@
+cc -std=c11 -O2 -mcpu=native -g -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include -MMD -MP -c src/main.c -o build/src/main.o
+cc -std=c11 -O2 -mcpu=native -g -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include -MMD -MP -c src/ui/recall_view.c -o build/src/ui/recall_view.o
+cc -std=c11 -O2 -mcpu=native -g -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include -MMD -MP -c src/ui/record_view.c -o build/src/ui/record_view.o
+cc -std=c11 -O2 -mcpu=native -g -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include -MMD -MP -c src/ui/findings_view.c -o build/src/ui/findings_view.o
+cc -std=c11 -O2 -mcpu=native -g -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include -MMD -MP -c src/ui/prompt_view.c -o build/src/ui/prompt_view.o
+cc -std=c11 -O2 -mcpu=native -g -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter build/src/core/utf8.o build/src/core/text_buffer.o build/src/core/undo.o build/src/core/wrap.o build/src/core/doc_io.o build/src/core/diff.o build/src/core/file_text.o build/src/app/frame_view_model.o build/src/app/frame_metrics.o build/src/core/recall_terms.o build/src/core/text_cut.o build/src/core/experiments.o build/src/core/text_rules.o build/src/app/tools_dir.o build/src/core/child_process.o build/src/core/font_file.o build/src/ui/theme.o build/src/ui/motion.o build/src/core/json.o build/src/llm/llm_text.o build/src/llm/http.o build/src/llm/server.o build/src/llm/chat.o build/src/llm/chat_history.o build/src/app/chat_store.o build/src/app/revisions.o build/src/app/records.o build/src/app/recent.o build/src/app/renames.o build/src/llm/observer.o build/src/llm/observer_text.o build/src/llm/observer_formats.o build/src/llm/observer_arms.o build/src/llm/observer_fake.o build/src/llm/observer_model.o build/src/llm/observer_job.o build/src/llm/semantic.o build/src/llm/remote.o build/src/llm/names.o build/src/llm/memfit.o build/src/app/db.o build/src/app/store.o build/src/app/project_store.o build/src/app/observer_store.o build/src/app/store_revisions.o build/src/app/store_records.o build/src/app/store_chats.o build/src/app/store_chat_history.o build/src/app/store_import.o build/src/app/store_entities.o build/src/app/backup.o build/src/app/backup_job.o build/src/app/service_supervisor.o build/src/app/entity_backfill_job.o build/src/app/name_detection_job.o build/src/app/project_session.o build/src/app/explorer_snapshot.o build/src/app/profile.o build/src/app/model_settings.o build/src/app/appearance.o build/src/app/font_catalog.o build/src/app/chat_history_job.o build/src/app/memory_store.o build/src/app/memory_job.o build/src/app/memory_saved_file.o build/src/app/memory_documents.o build/src/app/memory_document_store.o build/src/app/memory_gc.o build/src/app/memory_brief_store.o build/src/app/recall.o build/src/app/recall_job.o build/src/app/import_job.o build/src/llm/context_planner.o build/src/llm/memory_tokens.o build/src/llm/memory_budget.o build/src/llm/generative_gate.o build/src/llm/memory_brief.o build/src/llm/canon_reference.o build/src/app/local_models.o build/src/llm/rerank.o build/src/llm/answer_pipeline.o build/src/llm/answer_receipt.o build/third_party/cJSON/cJSON.o build/src/main.o build/src/app/app_lifecycle.o build/src/app/chat_workflow.o build/src/app/document_workflow.o build/src/app/record_workflow.o build/src/app/script_host_app.o build/src/ui/layout.o build/src/app/script.o build/src/app/script_host.o build/src/app/startup_env.o build/src/app/draft_controller.o build/src/app/chat_controller.o build/src/app/reviewed_edit_controller.o build/src/ui/font.o build/src/ui/clay_render.o build/src/ui/editor.o build/src/ui/input.o build/src/ui/recall_view.o build/src/ui/chat_view.o build/src/ui/review_view.o build/src/ui/record_view.o build/src/ui/findings_view.o build/src/ui/prompt_view.o build/src/ui/menu_view.o build/src/ui/vendor_impl.o build/src/ui/widgets.o build/src/app/fonts_panel.o build/src/ui/motion_system.o build/src/ui/mac_window.o build/src/ui/backdrop.o build/src/ui/icons.o build/src/platform/dialogs_mac.o build/raylib/libraylib.a -o build/scribodo -framework OpenGL -framework Cocoa -framework IOKit -framework CoreAudio -framework CoreVideo -framework QuartzCore -framework CoreGraphics build/mariadb-cc/libmariadb/libmariadbclient.a /opt/homebrew/opt/openssl@3/lib/libssl.a /opt/homebrew/opt/openssl@3/lib/libcrypto.a -lz -liconv -lcurl  -lm -lpthread
+script tests/ui/projects_rt.scribo
+  ok    18  expect element_w PromptField 100 2000
+  ok    21  expect element_w ReviewPanel 0 0
+  ok    22  expect element_w RecordPanel 0 0
+  ok    23  expect cursor 17
+  ok    25  expect cursor 17
+  ok    27  expect element_w PromptField 100 2000
+  ok    28  expect element_w DocItem0 10 2000
+  ok    30  expect element_w PromptField 0 0
+  ok    35  expect files "$DIR/book/.scribodo/revisions/one.md" "-save.md" 1
+  ok    41  expect status "Renamed to One.md"
+  ok    42  expect files "$DIR/book/.scribodo/revisions/One.md" "-save.md" 1
+  ok    43  expect files "$DIR/book/.scribodo/revisions" "earlier" 0
+  ok    44  expect element_w RevItem0 10 2000
+  ok    51  expect status "Renamed to two.md"
+  ok    56  expect status "Created one.md"
+  ok    68  expect text "Alpha beta gamma.X"
+  ok    71  expect text "Fresh words here."
+  ok    72  expect status "Source passage selected"
+  ok    81  expect status "Renamed to z.md"
+  ok    82  expect file "$DIR/book/a-first.md" "Sorts first."
+  ok    83  expect file "$DIR/book/z.md" "Alpha beta gamma.X"
+  ok    88  expect status "Imported 1 of 1"
+  ok    89  expect element_w DocItem3 10 2000
+  ok    90  expect files "$DIR/book" "elsewhere.markdown" 1
+  ok   100  expect element_w PromptField 100 2000
+  ok   101  expect status_not "Renamed to last.md"
+  ok   102  expect files "$DIR/book" "last.md" 0
+  ok   103  expect files "$DIR/book" "one.md" 1
+  ok   104  expect files "$DIR/book/.scribodo/revisions/one.md" "-save.md" 2
+  29 passed, 0 failed
+
+script tests/ui/revision_identity.scribo
+  ok    10  expect dirty no
+  ok    11  expect element_w RevItem0 10 2000
+  ok    16  expect dirty no
+  ok    17  expect element_w RevItem0 10 2000
+  ok    19  expect text "FIRST A"
+  ok    21  expect text "FIRST A"
+  ok    32  expect text "COLON"
+  ok    33  expect status "History identity or storage could not be verified"
+  ok    34  expect element_w RevItem0 0 0
+  ok    35  expect file "$DIR/ambiguous/.scribodo/revisions/part_one.md/20261125-120000-000-save.md" "MIXED"
+  10 passed, 0 failed
+

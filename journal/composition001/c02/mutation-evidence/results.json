@@ -1,0 +1,116 @@
+[
+  {
+    "name": "control",
+    "build_exit": 0,
+    "run_exit": 0,
+    "command": [
+      "make",
+      "--no-print-directory",
+      "-f",
+      "Makefile",
+      "-f",
+      "/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-f2-mutations-rb996qy2/control/overlay.mk",
+      "c02-recovery-mutation"
+    ],
+    "scratch": "/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-f2-mutations-rb996qy2/control",
+    "source_sha256": {
+      "revisions": "d5a88b761ee00d6955c3b815b11dfe0ec596122f175ed5d4a25d52b35ead9473",
+      "renames": "f3ea1d3ed6543b10d224859754167f9e6c9680d4f331d65362c602e52604aac6"
+    }
+  },
+  {
+    "name": "first_reader_replay_disabled",
+    "build_exit": 0,
+    "run_exit": 1,
+    "command": [
+      "make",
+      "--no-print-directory",
+      "-f",
+      "Makefile",
+      "-f",
+      "/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-f2-mutations-rb996qy2/first_reader_replay_disabled/overlay.mk",
+      "c02-recovery-mutation"
+    ],
+    "scratch": "/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-f2-mutations-rb996qy2/first_reader_replay_disabled",
+    "source_sha256": {
+      "revisions": "34d004547385ee4b5c497d8e4724a7af4ff44d42ed4d8f61489a8f75a34da1e4",
+      "renames": "f3ea1d3ed6543b10d224859754167f9e6c9680d4f331d65362c602e52604aac6"
+    }
+  },
+  {
+    "name": "inode_guard_removed",
+    "build_exit": 0,
+    "run_exit": 1,
+    "command": [
+      "make",
+      "--no-print-directory",
+      "-f",
+      "Makefile",
+      "-f",
+      "/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-f2-mutations-rb996qy2/inode_guard_removed/overlay.mk",
+      "c02-recovery-mutation"
+    ],
+    "scratch": "/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-f2-mutations-rb996qy2/inode_guard_removed",
+    "source_sha256": {
+      "revisions": "8eb7b79c26dccfe291f026a6340a72795fe89035cba1f63af4523aed8b85a211",
+      "renames": "f3ea1d3ed6543b10d224859754167f9e6c9680d4f331d65362c602e52604aac6"
+    }
+  },
+  {
+    "name": "duplicate_log_publication",
+    "build_exit": 0,
+    "run_exit": 1,
+    "command": [
+      "make",
+      "--no-print-directory",
+      "-f",
+      "Makefile",
+      "-f",
+      "/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-f2-mutations-rb996qy2/duplicate_log_publication/overlay.mk",
+      "c02-recovery-mutation"
+    ],
+    "scratch": "/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-f2-mutations-rb996qy2/duplicate_log_publication",
+    "source_sha256": {
+      "revisions": "d5a88b761ee00d6955c3b815b11dfe0ec596122f175ed5d4a25d52b35ead9473",
+      "renames": "24ef5b55d6054bd94f8c3580842228ab89b6f4f295458892f6bd45798069c793"
+    }
+  },
+  {
+    "name": "trailing_receipt_accepted",
+    "build_exit": 0,
+    "run_exit": 1,
+    "command": [
+      "make",
+      "--no-print-directory",
+      "-f",
+      "Makefile",
+      "-f",
+      "/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-f2-mutations-rb996qy2/trailing_receipt_accepted/overlay.mk",
+      "c02-recovery-mutation"
+    ],
+    "scratch": "/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-f2-mutations-rb996qy2/trailing_receipt_accepted",
+    "source_sha256": {
+      "revisions": "411840f60594534a915eda7a41828540f1e6588d97f64fafb764161616fd29c9",
+      "renames": "f3ea1d3ed6543b10d224859754167f9e6c9680d4f331d65362c602e52604aac6"
+    }
+  },
+  {
+    "name": "hardlinks_admitted",
+    "build_exit": 0,
+    "run_exit": 1,
+    "command": [
+      "make",
+      "--no-print-directory",
+      "-f",
+      "Makefile",
+      "-f",
+      "/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-f2-mutations-rb996qy2/hardlinks_admitted/overlay.mk",
+      "c02-recovery-mutation"
+    ],
+    "scratch": "/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-f2-mutations-rb996qy2/hardlinks_admitted",
+    "source_sha256": {
+      "revisions": "1271a4cb753e949255f607f42dccfa8eb0d82a32d58353137403524ce670c139",
+      "renames": "f3ea1d3ed6543b10d224859754167f9e6c9680d4f331d65362c602e52604aac6"
+    }
+  }
+]

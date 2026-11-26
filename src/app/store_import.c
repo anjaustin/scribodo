@@ -134,14 +134,7 @@ static double snapshot_time(const char *file);
  * the name's local time parsed (ambiguous across a DST change). */
 static double revision_time(const char *file, time_t ts)
 {
-    const char *p = file;
-    for (int dashes = 0; *p && dashes < 2; p++)
-        if (*p == '-') dashes++;
-    double ms = (p[0] >= '0' && p[0] <= '9' && p[1] >= '0' && p[1] <= '9' && p[2] >= '0' && p[2] <= '9' && p[3] == '-')
-                    ? atoi(p) / 1000.0
-                    : 0;
-    if (ts > 0) return (double)ts + ms;
-    return snapshot_time(file);
+    return revisions_file_time(file, ts);
 }
 
 static const RevMap *source_revision(const char *project, const RevMap *m, size_t n, const SourceRef *source,
@@ -150,7 +143,12 @@ static const RevMap *source_revision(const char *project, const RevMap *m, size_
     for (size_t i = 0; i < n; i++) {
         if (strcmp(m[i].file, source->revision)) continue;
         renames_resolve_since(project, source->doc, m[i].t, current, currentlen);
-        if (!strcmp(current, m[i].doc)) return &m[i];
+        if (!strcmp(current, m[i].doc) || revisions_history_same_files(project, current, m[i].doc)) {
+            /* Readdir may expose the filesystem's spelling of a normalization/case alias.
+             * The actual history inode, not a lossy string fold, establishes equivalence. */
+            snprintf(current, currentlen, "%s", m[i].doc);
+            return &m[i];
+        }
     }
     renames_resolve_since(project, source->doc, snapshot_time(source->revision), current, currentlen);
     return NULL;
@@ -158,33 +156,23 @@ static const RevMap *source_revision(const char *project, const RevMap *m, size_
 
 static double snapshot_time(const char *file)
 {
-    struct tm tmv = { 0 };
-    const char *rest = strptime(file, "%Y%m%d-%H%M%S", &tmv);
-    if (!rest) return 0;
-    tmv.tm_isdst = -1;
-    double t = (double)mktime(&tmv);
-    if (rest[0] == '-' && rest[1] >= '0' && rest[1] <= '9') t += atoi(rest + 1) / 1000.0;
-    return t;
+    return revisions_file_time(file, 0);
 }
 
 static bool import_revisions(Db *db, const char *project_dir, const char *pid, RevMap **map, size_t *nmap)
 {
-    char dir[PATH_MAX + 64];
-    snprintf(dir, sizeof(dir), "%s/.scribodo/revisions", project_dir);
-    DIR *d = opendir(dir);
-    if (!d) return errno == ENOENT; /* missing history is not unreadable history */
+    RevisionHistoryName *histories = NULL;
+    size_t nhistories = 0;
+    if (!revisions_history_names_files(project_dir, &histories, &nhistories)) return false;
     bool ok = true;
-    struct dirent *ent;
     size_t cap = 0;
-    while (ok) {
-        errno = 0;
-        ent = readdir(d);
-        if (!ent) { ok = errno == 0; break; }
-        if (ent->d_name[0] == '.') continue;
+    for (size_t h = 0; ok && h < nhistories; h++) {
+        const char *name = histories[h].name;
         char doc_path[PATH_MAX + 300];
-        snprintf(doc_path, sizeof(doc_path), "%s/%s", project_dir, ent->d_name);
+        int path_length = snprintf(doc_path, sizeof(doc_path), "%s/%s", project_dir, name);
+        if (path_length < 0 || (size_t)path_length >= sizeof(doc_path)) { ok = false; break; }
         char did[40];
-        if (!store_document_id_db(db, pid, ent->d_name, true, did, sizeof(did))) { ok = false; break; }
+        if (!store_document_id_db(db, pid, name, true, did, sizeof(did))) { ok = false; break; }
         Revision *list = NULL;
         size_t n = 0;
         ok = revisions_list_files_checked(project_dir, doc_path, &list, &n);
@@ -193,7 +181,7 @@ static bool import_revisions(Db *db, const char *project_dir, const char *pid, R
             char *text = revisions_load_files(project_dir, doc_path, &list[i]);
             if (!text) { ok = false; break; } /* no incomplete or damaged migration */
             char id[40];
-            derived_id(pid, ent->d_name, list[i].file, id, sizeof(id));
+            derived_id(pid, name, list[i].file, id, sizeof(id));
             DbArg a[7] = { DB_S(id), DB_S(did), DB_S(list[i].hash), DB_S(text), DB_S(list[i].origin), DB_S(list[i].note),
                            DB_D(revision_time(list[i].file, list[i].ts) + (double)(order++) * 1e-6) };
             ok = db_run(db,
@@ -208,7 +196,7 @@ static bool import_revisions(Db *db, const char *project_dir, const char *pid, R
                 else *map = m;
             }
             if (ok) {
-                snprintf((*map)[*nmap].doc, sizeof((*map)[0].doc), "%s", ent->d_name);
+                snprintf((*map)[*nmap].doc, sizeof((*map)[0].doc), "%s", name);
                 snprintf((*map)[*nmap].file, sizeof((*map)[0].file), "%s", list[i].file);
                 snprintf((*map)[*nmap].id, sizeof((*map)[0].id), "%s", id);
                 (*map)[*nmap].t = revision_time(list[i].file, list[i].ts);
@@ -220,7 +208,7 @@ static bool import_revisions(Db *db, const char *project_dir, const char *pid, R
         }
         free(list);
     }
-    if (closedir(d) != 0) ok = false;
+    free(histories);
     return ok;
 }
 
@@ -417,7 +405,7 @@ static bool import_chats(Db *db, const char *project_dir, const char *pid, IdMap
                  nm = strtok_r(NULL, "\n", &save)) {
                 char cur[256], did[40];
                 renames_resolve_since(project_dir, nm, msgs[k].ts, cur, sizeof(cur));
-                if (!store_document_id_db(db, pid, cur, true, did, sizeof(did))) { ok = false; break; }
+                if (!cur[0] || !store_document_id_db(db, pid, cur, true, did, sizeof(did))) { ok = false; break; }
                 DbArg m[3] = { DB_S(did), DB_S(cid), DB_I(k) };
                 ok = db_run(db,
                             "INSERT IGNORE INTO message_documents (message_id, document_id)"
@@ -479,6 +467,7 @@ static bool import_records(Db *db, const char *project_dir, const char *pid, Rec
                 const char *rev = NULL, *conv = NULL;
                 if (src->kind == SRC_DOC) {
                     const RevMap *source_rev = source_revision(project_dir, map, nmap, src, cur, sizeof(cur));
+                    if (!cur[0]) { ok = false; break; }
                     if (cur[0] && !store_document_id_db(db, pid, cur, true, did, sizeof(did))) { ok = false; break; }
                     rev = source_rev ? source_rev->id : NULL;
                     if (src->revision[0] && !rev) { ok = false; break; }

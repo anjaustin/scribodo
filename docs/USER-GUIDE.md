@@ -40,6 +40,9 @@ A project is a folder of `.md` and `.txt` files.
 - **⌘O** or **Open…** opens another folder. Dropping a folder onto the window works too.
 - **+ New document** (⌘N) and **Import…** (copies files in, never overwriting) are in the Explorer.
 - Right-click a document to **Rename** it or **Reveal it in Finder**. A rename keeps its History, and notes, canon and findings that quote it still open their source.
+  In file-backed projects, an interrupted rename is resumed before the project/document or its sources
+  are opened. If identity or storage cannot be verified, the operation is refused and the existing files
+  and snapshots are kept. Hardlinked manuscripts cannot be renamed this way.
 - You can also drop a `.md` or `.txt` file onto the window to open it. Press ⌘S to save.
 
 ## Chat
@@ -83,6 +86,9 @@ The assistant never changes your document by itself.
 - **Stale proposals:** the passage is tracked through your edits (and undo/redo). Text you add or remove around it moves it. If you change the passage itself, or type at an insertion point, Accept refuses rather than overwrite your newer text.
 - **Apply to document**, under a reply, proposes that reply for the current selection (or inserts it at the cursor), through the same review. A rewrite from ⌘K needs the passage selected.
 - **History** in the Explorer lists the document's 100 newest revisions (each save, AI edit and restore) from the project store; the Explorer scrolls. Clicking one restores it, undoably, after first recording the current text. The file backend keeps equivalent revisions under `.scribodo/revisions/`.
+  Complete filenames keep separate histories, including externally created long names. Older file-backed
+  histories that may have been merged by the old shortened/sanitized naming scheme are shown as
+  **History unavailable; snapshots kept**, not assigned to a document by guessing from its current text.
 
 ## Notes and canon
 

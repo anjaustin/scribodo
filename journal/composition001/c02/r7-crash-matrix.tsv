@@ -1,0 +1,173 @@
+point	hit	death	state_at_death	recovery	detail	invariant
+migration.statement	1	SIGKILL	0	23	23 receipts	schema identical
+migration.statement	2	SIGKILL	0	23	23 receipts	schema identical
+migration.statement	3	SIGKILL	0	23	23 receipts	schema identical
+migration.statement	4	SIGKILL	0	23	23 receipts	schema identical
+migration.statement	5	SIGKILL	0	23	23 receipts	schema identical
+migration.statement	6	SIGKILL	0	23	23 receipts	schema identical
+migration.statement	7	SIGKILL	0	23	23 receipts	schema identical
+migration.statement	8	SIGKILL	0	23	23 receipts	schema identical
+migration.statement	9	SIGKILL	0	23	23 receipts	schema identical
+migration.statement	10	SIGKILL	0	23	23 receipts	schema identical
+migration.statement	11	SIGKILL	0	23	23 receipts	schema identical
+migration.statement	12	SIGKILL	0	23	23 receipts	schema identical
+migration.statement	13	SIGKILL	0	23	23 receipts	schema identical
+migration.statement	14	SIGKILL	0	23	23 receipts	schema identical
+migration.statement	15	SIGKILL	1	23	23 receipts	schema identical
+migration.statement	16	SIGKILL	2	23	23 receipts	schema identical
+migration.statement	17	SIGKILL	2	23	23 receipts	schema identical
+migration.statement	18	SIGKILL	2	23	23 receipts	schema identical
+migration.statement	19	SIGKILL	2	23	23 receipts	schema identical
+migration.statement	20	SIGKILL	2	23	23 receipts	schema identical
+migration.statement	21	SIGKILL	2	23	23 receipts	schema identical
+migration.statement	22	SIGKILL	2	23	23 receipts	schema identical
+migration.statement	23	SIGKILL	2	23	23 receipts	schema identical
+migration.statement	24	SIGKILL	2	23	23 receipts	schema identical
+migration.statement	25	SIGKILL	2	23	23 receipts	schema identical
+migration.statement	26	SIGKILL	2	23	23 receipts	schema identical
+migration.statement	27	SIGKILL	2	23	23 receipts	schema identical
+migration.statement	28	SIGKILL	2	23	23 receipts	schema identical
+migration.statement	29	SIGKILL	2	23	23 receipts	schema identical
+migration.statement	30	SIGKILL	2	23	23 receipts	schema identical
+migration.statement	31	SIGKILL	2	23	23 receipts	schema identical
+migration.statement	32	SIGKILL	2	23	23 receipts	schema identical
+migration.statement	33	SIGKILL	2	23	23 receipts	schema identical
+migration.statement	34	SIGKILL	2	23	23 receipts	schema identical
+migration.statement	35	SIGKILL	2	23	23 receipts	schema identical
+migration.statement	36	SIGKILL	2	23	23 receipts	schema identical
+migration.statement	37	SIGKILL	2	23	23 receipts	schema identical
+migration.statement	38	SIGKILL	2	23	23 receipts	schema identical
+migration.statement	39	SIGKILL	2	23	23 receipts	schema identical
+migration.statement	40	SIGKILL	2	23	23 receipts	schema identical
+migration.statement	41	SIGKILL	2	23	23 receipts	schema identical
+migration.statement	42	SIGKILL	3	23	23 receipts	schema identical
+migration.statement	43	SIGKILL	4	23	23 receipts	schema identical
+migration.statement	44	SIGKILL	5	23	23 receipts	schema identical
+migration.statement	45	SIGKILL	5	23	23 receipts	schema identical
+migration.statement	46	SIGKILL	5	23	23 receipts	schema identical
+migration.statement	47	SIGKILL	5	23	23 receipts	schema identical
+migration.statement	48	SIGKILL	5	23	23 receipts	schema identical
+migration.statement	49	SIGKILL	5	23	23 receipts	schema identical
+migration.statement	50	SIGKILL	5	23	23 receipts	schema identical
+migration.statement	51	SIGKILL	6	23	23 receipts	schema identical
+migration.statement	52	SIGKILL	7	23	23 receipts	schema identical
+migration.statement	53	SIGKILL	8	23	23 receipts	schema identical
+migration.statement	54	SIGKILL	8	23	23 receipts	schema identical
+migration.statement	55	SIGKILL	8	23	23 receipts	schema identical
+migration.statement	56	SIGKILL	8	23	23 receipts	schema identical
+migration.statement	57	SIGKILL	8	23	23 receipts	schema identical
+migration.statement	58	SIGKILL	8	23	23 receipts	schema identical
+migration.statement	59	SIGKILL	8	23	23 receipts	schema identical
+migration.statement	60	SIGKILL	8	23	23 receipts	schema identical
+migration.statement	61	SIGKILL	8	23	23 receipts	schema identical
+migration.statement	62	SIGKILL	9	23	23 receipts	schema identical
+migration.statement	63	SIGKILL	9	23	23 receipts	schema identical
+migration.statement	64	SIGKILL	9	23	23 receipts	schema identical
+migration.statement	65	SIGKILL	9	23	23 receipts	schema identical
+migration.statement	66	SIGKILL	9	23	23 receipts	schema identical
+migration.statement	67	SIGKILL	10	23	23 receipts	schema identical
+migration.statement	68	SIGKILL	10	23	23 receipts	schema identical
+migration.statement	69	SIGKILL	10	23	23 receipts	schema identical
+migration.statement	70	SIGKILL	11	23	23 receipts	schema identical
+migration.statement	71	SIGKILL	11	23	23 receipts	schema identical
+migration.statement	72	SIGKILL	11	23	23 receipts	schema identical
+migration.statement	73	SIGKILL	11	23	23 receipts	schema identical
+migration.statement	74	SIGKILL	12	23	23 receipts	schema identical
+migration.statement	75	SIGKILL	12	23	23 receipts	schema identical
+migration.statement	76	SIGKILL	12	23	23 receipts	schema identical
+migration.statement	77	SIGKILL	12	23	23 receipts	schema identical
+migration.statement	78	SIGKILL	12	23	23 receipts	schema identical
+migration.statement	79	SIGKILL	13	23	23 receipts	schema identical
+migration.statement	80	SIGKILL	14	23	23 receipts	schema identical
+migration.statement	81	SIGKILL	15	23	23 receipts	schema identical
+migration.statement	82	SIGKILL	15	23	23 receipts	schema identical
+migration.statement	83	SIGKILL	16	23	23 receipts	schema identical
+migration.statement	84	SIGKILL	17	23	23 receipts	schema identical
+migration.statement	85	SIGKILL	18	23	23 receipts	schema identical
+migration.statement	86	SIGKILL	19	23	23 receipts	schema identical
+migration.statement	87	SIGKILL	20	23	23 receipts	schema identical
+migration.statement	88	SIGKILL	21	23	23 receipts	schema identical
+migration.statement	89	SIGKILL	22	23	23 receipts	schema identical
+migration.statement	90	none	-	23	-	89 hits in all
+migration.receipt	1	SIGKILL	1	23	23 receipts	schema identical
+migration.receipt	2	SIGKILL	2	23	23 receipts	schema identical
+migration.receipt	3	SIGKILL	3	23	23 receipts	schema identical
+migration.receipt	4	SIGKILL	4	23	23 receipts	schema identical
+migration.receipt	5	SIGKILL	5	23	23 receipts	schema identical
+migration.receipt	6	SIGKILL	6	23	23 receipts	schema identical
+migration.receipt	7	SIGKILL	7	23	23 receipts	schema identical
+migration.receipt	8	SIGKILL	8	23	23 receipts	schema identical
+migration.receipt	9	SIGKILL	9	23	23 receipts	schema identical
+migration.receipt	10	SIGKILL	10	23	23 receipts	schema identical
+migration.receipt	11	SIGKILL	11	23	23 receipts	schema identical
+migration.receipt	12	SIGKILL	12	23	23 receipts	schema identical
+migration.receipt	13	SIGKILL	13	23	23 receipts	schema identical
+migration.receipt	14	SIGKILL	14	23	23 receipts	schema identical
+migration.receipt	15	SIGKILL	15	23	23 receipts	schema identical
+migration.receipt	16	SIGKILL	16	23	23 receipts	schema identical
+migration.receipt	17	SIGKILL	17	23	23 receipts	schema identical
+migration.receipt	18	SIGKILL	18	23	23 receipts	schema identical
+migration.receipt	19	SIGKILL	19	23	23 receipts	schema identical
+migration.receipt	20	SIGKILL	20	23	23 receipts	schema identical
+migration.receipt	21	SIGKILL	21	23	23 receipts	schema identical
+migration.receipt	22	SIGKILL	22	23	23 receipts	schema identical
+migration.receipt	23	SIGKILL	23	23	23 receipts	schema identical
+migration.receipt	24	none	-	23	-	23 hits in all
+save.temp_written	1	SIGKILL	original at death	next write ok	1 temp at death, 1 recovered as a document, 0 after	target whole
+save.temp_written	2	none	-	-	-	1 hits in all
+save.renamed	1	SIGKILL	new at death	next write ok	0 temp at death, 0 recovered as a document, 0 after	target whole
+save.renamed	2	none	-	-	-	1 hits in all
+store.before_commit	1	SIGKILL	0 messages, seq contiguous	next append ok, 1	conversation rows 0	no partial, no duplicate
+store.before_commit	2	SIGKILL	1 messages, seq contiguous	next append ok, 2	conversation rows 1	no partial, no duplicate
+store.before_commit	3	none	-	-	-	2 hits in all
+store.after_commit	1	SIGKILL	1 messages, seq contiguous	next append ok, 2	conversation rows 1	no partial, no duplicate
+store.after_commit	2	SIGKILL	2 messages, seq contiguous	next append ok, 3	conversation rows 1	no partial, no duplicate
+store.after_commit	3	none	-	-	-	2 hits in all
+import.registered	1	SIGKILL	mode files, marker 0, witness 1, legacy dirs 0	reimport ok, mode db, legacy dirs 1	2 messages, 1 note (2 versions), 1 canon	authority held, data once, move finished
+import.registered	2	none	-	-	-	1 hits in all
+import.committed	1	SIGKILL	mode files, marker 0, witness 1, legacy dirs 0	reimport ok, mode db, legacy dirs 1	2 messages, 1 note (2 versions), 1 canon	authority held, data once, move finished
+import.committed	2	none	-	-	-	1 hits in all
+import.marked	1	SIGKILL	mode db, marker 1, witness 1, legacy dirs 0	reimport ok, mode db, legacy dirs 1	2 messages, 1 note (2 versions), 1 canon	authority held, data once, move finished
+import.marked	2	none	-	-	-	1 hits in all
+import.aside_item	1	SIGKILL	mode db, marker 1, witness 1, legacy dirs 1	reimport ok, mode db, legacy dirs 2	2 messages, 1 note (2 versions), 1 canon	authority held, data once, move finished
+import.aside_item	2	SIGKILL	mode db, marker 1, witness 1, legacy dirs 1	reimport ok, mode db, legacy dirs 2	2 messages, 1 note (2 versions), 1 canon	authority held, data once, move finished
+import.aside_item	3	SIGKILL	mode db, marker 1, witness 1, legacy dirs 1	reimport ok, mode db, legacy dirs 2	2 messages, 1 note (2 versions), 1 canon	authority held, data once, move finished
+import.aside_item	4	SIGKILL	mode db, marker 1, witness 1, legacy dirs 1	reimport ok, mode db, legacy dirs 1	2 messages, 1 note (2 versions), 1 canon	authority held, data once, move finished
+import.aside_item	5	SIGKILL	mode db, marker 1, witness 1, legacy dirs 1	reimport ok, mode db, legacy dirs 1	2 messages, 1 note (2 versions), 1 canon	authority held, data once, move finished
+import.aside_item	6	SIGKILL	mode db, marker 1, witness 1, legacy dirs 1	reimport ok, mode db, legacy dirs 1	2 messages, 1 note (2 versions), 1 canon	authority held, data once, move finished
+import.aside_item	7	SIGKILL	mode db, marker 1, witness 1, legacy dirs 1	reimport ok, mode db, legacy dirs 1	2 messages, 1 note (2 versions), 1 canon	authority held, data once, move finished
+import.aside_item	8	SIGKILL	mode db, marker 1, witness 1, legacy dirs 1	reimport ok, mode db, legacy dirs 1	2 messages, 1 note (2 versions), 1 canon	authority held, data once, move finished
+import.aside_item	9	none	-	-	-	8 hits in all
+import.set_aside	1	SIGKILL	mode db, marker 1, witness 1, legacy dirs 1	reimport ok, mode db, legacy dirs 1	2 messages, 1 note (2 versions), 1 canon	authority held, data once, move finished
+import.set_aside	2	none	-	-	-	1 hits in all
+fork.journal_opened	1	SIGKILL	copy (paused), stage 0, witness 0, fork.json 1	fork again ok, mode db, new project	copy 2 messages, original 2 messages	data once, original intact, journal closed
+fork.journal_opened	2	none	-	-	-	1 hits in all
+fork.exported	1	SIGKILL	copy (paused), stage 1, witness 0, fork.json 1	fork again ok, mode db, new project	copy 2 messages, original 2 messages	data once, original intact, journal closed
+fork.exported	2	none	-	-	-	1 hits in all
+import.registered	1	SIGKILL	copy (paused), stage 1, witness 1, fork.json 1	fork again ok, mode db, new project	copy 2 messages, original 2 messages	data once, original intact, journal closed
+import.registered	2	none	-	-	-	1 hits in all
+import.committed	1	SIGKILL	copy (paused), stage 1, witness 1, fork.json 1	fork again ok, mode db, new project	copy 2 messages, original 2 messages	data once, original intact, journal closed
+import.committed	2	none	-	-	-	1 hits in all
+import.marked	1	SIGKILL	db, stage 1, witness 1, fork.json 1	open finished, mode db, new project	copy 2 messages, original 2 messages	data once, original intact, journal closed
+import.marked	2	none	-	-	-	1 hits in all
+import.set_aside	1	SIGKILL	db, stage 1, witness 1, fork.json 1	open finished, mode db, new project	copy 2 messages, original 2 messages	data once, original intact, journal closed
+import.set_aside	2	none	-	-	-	1 hits in all
+fork.imported	1	SIGKILL	db, stage 1, witness 1, fork.json 1	open finished, mode db, new project	copy 2 messages, original 2 messages	data once, original intact, journal closed
+fork.imported	2	none	-	-	-	1 hits in all
+disk.full	save	ENOSPC	original whole	refused: Save failed: No space left on device	no temp left	original intact
+disk.full	import	ENOSPC	mode files, 2 messages in files	refused: Couldn't create the project's import lock: No space left on device	-	files stay authoritative
+disk.full	import again	space freed	-	ok, mode db	2 messages, witness gone	data once
+disk.read_only	save	EACCES	original whole	refused: /Volumes/scribodo-crash-disk/project/ch1.md is write-protected	no temp left	original intact
+atomic.temp_written	1	SIGKILL	original at death	next write ok	1 temp at death, 1 after	target whole
+atomic.temp_written	2	none	-	-	-	1 hits in all
+atomic.renamed	1	SIGKILL	new at death	next write ok	0 temp at death, 0 after	target whole
+atomic.renamed	2	none	-	-	-	1 hits in all
+titles.statement	1	SIGKILL	archive [Renamed twice / ], receipts 0	recovered at the next open	archive [Two messages|Renamed once|Renamed twice / Second chat|S once], receipts 1	each conversation whole, then once in order
+titles.statement	2	SIGKILL	archive [Renamed twice / ], receipts 0	recovered at the next open	archive [Two messages|Renamed once|Renamed twice / Second chat|S once], receipts 1	each conversation whole, then once in order
+titles.statement	3	SIGKILL	archive [Renamed twice / ], receipts 0	recovered at the next open	archive [Two messages|Renamed once|Renamed twice / Second chat|S once], receipts 1	each conversation whole, then once in order
+titles.statement	4	SIGKILL	archive [Renamed twice / ], receipts 0	recovered at the next open	archive [Two messages|Renamed once|Renamed twice / Second chat|S once], receipts 1	each conversation whole, then once in order
+titles.statement	5	SIGKILL	archive [Two messages|Renamed once|Renamed twice / ], receipts 0	recovered at the next open	archive [Two messages|Renamed once|Renamed twice / Second chat|S once], receipts 1	each conversation whole, then once in order
+titles.statement	6	SIGKILL	archive [Two messages|Renamed once|Renamed twice / ], receipts 0	recovered at the next open	archive [Two messages|Renamed once|Renamed twice / Second chat|S once], receipts 1	each conversation whole, then once in order
+titles.statement	7	SIGKILL	archive [Two messages|Renamed once|Renamed twice / ], receipts 0	recovered at the next open	archive [Two messages|Renamed once|Renamed twice / Second chat|S once], receipts 1	each conversation whole, then once in order
+titles.statement	8	SIGKILL	archive [Two messages|Renamed once|Renamed twice / Second chat|S once], receipts 0	recovered at the next open	archive [Two messages|Renamed once|Renamed twice / Second chat|S once], receipts 1	each conversation whole, then once in order
+titles.statement	9	none	-	-	-	8 hits in all

@@ -14,6 +14,7 @@
 #define _DARWIN_C_SOURCE
 
 #include "app/app_internal.h"
+#include "app/revisions_internal.h"
 
 #include <CoreGraphics/CoreGraphics.h>
 #include "ui/widgets.h"
@@ -84,9 +85,13 @@ static bool refresh_lists(App *app)
     free(app->revs);
     app->revs = NULL;
     app->nrevs = 0;
-    if (editor_path(app->editor) &&
-        !revisions_list_checked(app->store, app->project_dir, editor_path(app->editor), &app->revs, &app->nrevs))
-        return false;
+    bool history_ok = !editor_path(app->editor) ||
+        revisions_list_checked(app->store, app->project_dir, editor_path(app->editor), &app->revs, &app->nrevs);
+    if (!history_ok && !app->history_unavailable)
+        set_status(app, "History identity or storage could not be verified; existing snapshots were kept");
+    app->history_unavailable = !history_ok;
+    /* Do not turn a persistent history refusal into a full Explorer query every frame.
+     * The explicit unavailable state is retried by the normal refresh cadence. */
     static const struct { const char *origin, *label; } names[] = {
         { "save", "Saved" }, { "ai-edit", "AI edit" }, { "before-ai-edit", "Before AI edit" },
         { "restore", "Restored" }, { "before-restore", "Before restore" },
@@ -578,6 +583,12 @@ void project_of(const char *doc_path, char *out, size_t outlen)
 void open_path(App *app, const char *path)
 {
     char msg[512];
+    char project[PATH_MAX];
+    project_of(path, project, sizeof(project));
+    if (store_mode(app->store, project, NULL, 0, NULL) == STORE_FILES && !revisions_recover_files(project)) {
+        set_status(app, "A pending rename could not be recovered; existing files and History were kept");
+        return;
+    }
     /* An open note or canon entry belongs to its project: settle it before
      * switching to another one. */
     if (record_view_active(app->record)) {
@@ -642,6 +653,10 @@ void open_project(App *app, const char *dir)
         return;
     }
     if (!can_switch(app)) return;
+    if (store_mode(app->store, real, NULL, 0, NULL) == STORE_FILES && !revisions_recover_files(real)) {
+        set_status(app, "A pending rename could not be recovered; existing files and History were kept");
+        return;
+    }
     clear_proposal(app);
     clear_pending(app);
     leave_edit_mode(app);

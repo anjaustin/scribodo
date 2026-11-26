@@ -54,6 +54,24 @@ Run native/recovery acceptance serially, for example
 another Scribodo process during `backuptest`: restore deliberately refuses to
 modify a database while any Scribodo process is running.
 
+### File-backed revision identity and recovery (COMPOSITION-001 C02)
+
+`test_revision_recovery` is part of `make test` and `make sanitize`. Its fork/exec children use
+synthetic throwaway projects and real process-death points for receipt publication, manuscript/history
+moves, rename-log publication, receipt removal and legacy format-tag publication. First-reader assertions
+run **before** an explicit retry can hide missing recovery. It checks original bytes/inodes, source
+resolution for both the moving and older destination generations, foreign-object refusal, hardlink
+refusal, unavailable logs and complete receipt parsing. No database/model is started by this suite.
+
+`test_persistence_faults` additionally fails every allocation in rename/archive preparation and replay.
+`test_db:full_name_history_roundtrip` checks seven source identities through long/sanitized/Unicode names,
+rename/name reuse, SQL import/export/reimport, and refusal of an ambiguous old history bucket.
+`tests/ui/revision_identity.scribo` checks separate long-name histories and visible unavailable legacy
+ambiguity; `projects_rt.scribo` checks refusal/preservation when History publication is unwritable.
+The development-only negative controls are retained under `journal/composition001/c02/`, with the
+review and exact evidence in [REDTEAM-027](REDTEAM-027-revision-identity-integration.md).
+SIGKILL and scripted UI coverage do not establish power-loss, real IME/accessibility or model-quality acceptance.
+
 ### Recall regressions (MEMORY-015 S1)
 
 - Product-memory regressions: `test_memory_chat` in `make dbtest` verifies that

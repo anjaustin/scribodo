@@ -8,6 +8,8 @@ typedef enum { FILE_TEXT_OK, FILE_TEXT_MISSING, FILE_TEXT_ERROR } FileTextStatus
 /* Complete regular-file read, caller-owned C string. Missing is distinct from
  * unreadable, special, changing or NUL-containing input; errors return NULL. */
 FileTextStatus file_text_read(const char *path, char **out);
+/* Same complete-file contract, but a symlink at the final component is an error. */
+FileTextStatus file_text_read_no_follow(const char *path, char **out);
 
 /* Replace the file at `path` with `data` atomically: a temp beside it (mkstemp, <path>.tmp-XXXXXX), mode `mode`,
  * every byte written (EINTR retried), fsync, close, rename over the target, fsync of the directory. The target

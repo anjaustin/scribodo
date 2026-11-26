@@ -35,6 +35,7 @@
 #include "llm/generative_gate.h"
 #include "../src/app/recent.h"
 #include "../src/app/renames.h"
+#include "app/revisions_internal.h"
 #include "../src/app/records.h"
 #include "../src/app/revisions.h"
 #include "../src/llm/chat.h"
@@ -1759,7 +1760,7 @@ static void test_snapshot_reuse_integrity(void)
     CHECK(!revisions_snapshot(g_store, project, doc, "Keep this", file, sizeof(file)) && !file[0]);
 }
 
-static void test_snapshot_name_exhaustion(void)
+static void test_snapshot_legacy_name_collisions(void)
 {
     char project[700], doc[800], path[1000];
     snprintf(project, sizeof(project), "%s/snapshot-collisions", g_dir);
@@ -1779,14 +1780,28 @@ static void test_snapshot_name_exhaustion(void)
         if (f) { CHECK(fputs("Preserve", f) >= 0); CHECK(fclose(f) == 0); }
     }
     bool recorded = true;
-    CHECK(!revisions_record(g_store, project, doc, "Must not overwrite", "save", NULL, &recorded) && !recorded);
-    FILE *f = fopen(path, "rb");
-    char text[40] = "";
-    CHECK(f != NULL);
-    if (f) { CHECK(fread(text, 1, sizeof(text) - 1, f) == 8); fclose(f); }
-    CHECK(!strcmp(text, "Preserve"));
+    /* New tokens have independent identities, so occupying the old 1,000 timestamp
+     * slots must neither exhaust them nor overwrite any of the retained legacy files. */
+    CHECK(revisions_record(g_store, project, doc, "Must not overwrite", "save", NULL, &recorded) && recorded);
+    for (int i = 1; i < 1000; i++) {
+        time_t t = 1700000000 + (125 + i) / 1000;
+        struct tm tmv;
+        localtime_r(&t, &tmv);
+        char stamp[40], text[40] = "";
+        strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tmv);
+        snprintf(path, sizeof(path), "%s/.scribodo/revisions/chapter.md/%s-%03d-save.md",
+                 project, stamp, (125 + i) % 1000);
+        FILE *f = fopen(path, "rb");
+        CHECK(f != NULL);
+        if (f) { CHECK(fread(text, 1, sizeof(text) - 1, f) == 8); CHECK(fclose(f) == 0); }
+        CHECK(!strcmp(text, "Preserve"));
+    }
     Revision *revs = NULL;
-    CHECK(revisions_list(g_store, project, doc, &revs) == 1);
+    size_t count = revisions_list(g_store, project, doc, &revs);
+    CHECK(count == 2);
+    char *original = revs && count == 2 ? revisions_load(g_store, project, doc, &revs[1]) : NULL;
+    CHECK(original && !strcmp(original, "Original"));
+    free(original);
     free(revs);
     store_set_write_time(g_store, 0);
 }
@@ -2813,6 +2828,93 @@ static void test_speaker_labels(void)
     free(o);
 }
 
+static void test_revision_identity(void)
+{
+    char project[800], a[256], b[256], path[1600];
+    snprintf(project, sizeof(project), "%s/revision-identity", g_dir);
+    CHECK(mkdir(project, 0755) == 0);
+    memset(a, 'x', 199); strcpy(a + 199, "A.md");
+    memset(b, 'x', 199); strcpy(b + 199, "B.md");
+    const char *names[] = {a, b, "part:one.md", "part_one.md"};
+    const char *texts[] = {"A", "B", "COLON", "UNDERSCORE"};
+    char tokens[4][160];
+    for (size_t i = 0; i < 4; i++) {
+        CHECK(revisions_snapshot(g_store, project, names[i], texts[i], tokens[i], sizeof(tokens[i])));
+        CHECK(revisions_file_time(tokens[i], 0) > 0);
+        Revision *list = NULL;
+        size_t n = 0;
+        CHECK(revisions_list_checked(g_store, project, names[i], &list, &n) && n == 1);
+        char *text = n ? revisions_load(g_store, project, names[i], &list[0]) : NULL;
+        CHECK(text && !strcmp(text, texts[i]));
+        free(text); free(list);
+    }
+    RevisionHistoryName *histories = NULL;
+    size_t count = 0;
+    CHECK(revisions_history_names_files(project, &histories, &count) && count == 4);
+    free(histories);
+    /* Explicit rename from a long key to an ordinary one keeps the original snapshot token. */
+    CHECK(revisions_history_move_files(project, a, "renamed.md"));
+    Revision source = {0};
+    snprintf(source.file, sizeof(source.file), "%s", tokens[0]);
+    char current[256];
+    renames_resolve_since(project, a, revisions_file_time(tokens[0], 0), current, sizeof(current));
+    CHECK(!strcmp(current, "renamed.md"));
+    char *text = revisions_load(g_store, project, current, &source);
+    CHECK(text && !strcmp(text, "A")); free(text);
+    /* Reusing the label archives the old generation; its sources still resolve through the log. */
+    CHECK(revisions_history_set_aside_files(project, "renamed.md"));
+    renames_resolve_since(project, a, revisions_file_time(tokens[0], 0), current, sizeof(current));
+    CHECK(strcmp(current, "renamed.md") && strstr(current, ".earlier"));
+    text = revisions_load(g_store, project, current, &source);
+    CHECK(text && !strcmp(text, "A")); free(text);
+    CHECK(revisions_snapshot(g_store, project, "renamed.md", "NEW GENERATION", tokens[0], sizeof(tokens[0])));
+    renames_resolve_since(project, "renamed.md", revisions_file_time(tokens[0], 0), current, sizeof(current));
+    CHECK(!strcmp(current, "renamed.md"));
+    CHECK(revisions_history_names_files(project, &histories, &count) && count == 5);
+    free(histories);
+    /* No filename or output buffer may silently truncate a source identity. */
+    char tiny[2] = "?";
+    CHECK(!revisions_snapshot(g_store, project, b, "B", tiny, sizeof(tiny)) && !tiny[0]);
+    CHECK(!revisions_history_path_files(project, a, tiny, sizeof(tiny)) && !tiny[0]);
+    snprintf(path, sizeof(path), "%s/.scribodo/revisions/.exact-v1/%s/.format", project, b);
+    FILE *f = fopen(path, "wb");
+    CHECK(f != NULL);
+    if (f) { CHECK(fputs("bad marker", f) >= 0); CHECK(fclose(f) == 0); }
+    Revision *list = NULL;
+    size_t n = 99;
+    CHECK(!revisions_list_checked(g_store, project, b, &list, &n) && !list && !n);
+    CHECK(!revisions_history_names_files(project, &histories, &count) && !histories && !count);
+}
+
+static void test_revision_file_time(void)
+{
+    CHECK(revisions_file_time("20261125-120000-123-save.md", 100) == 100.123);
+    /* New tokens preserve sub-millisecond ordering across a name reuse. */
+    CHECK(revisions_file_time("20261125-120000-123-t00000000000f4241-g0123456789abcdef0123456789abcdef-save.md", 0) == 1.000001);
+    CHECK(revisions_file_time("20261125-120000-123-t00000000000f4242-g0123456789abcdef0123456789abcdef-save.md", 0) == 1.000002);
+    CHECK(revisions_file_time("20261125-120000-123-txxxxxxxxxxxxxxxx-save.md", 0) == 0);
+    CHECK(revisions_file_time(NULL, 0) == 0);
+}
+
+static void test_revision_filesystem_identity(void)
+{
+    char project[800], x[1500], y[1500];
+    snprintf(project, sizeof(project), "%s/revision-filesystem", g_dir);
+    CHECK(mkdir(project, 0755) == 0);
+    const char *pairs[][2] = { {"Case.md", "case.md"}, {"\xc3\xa9.md", "e\xcc\x81.md"} };
+    for (size_t i = 0; i < 2; i++) {
+        CHECK(revisions_record(g_store, project, pairs[i][0], "Original bytes", "save", NULL, NULL));
+        CHECK(revisions_history_path_files(project, pairs[i][0], x, sizeof(x)));
+        CHECK(revisions_history_path_files(project, pairs[i][1], y, sizeof(y)));
+        struct stat a, b;
+        bool alias = lstat(x, &a) == 0 && lstat(y, &b) == 0 && a.st_dev == b.st_dev && a.st_ino == b.st_ino;
+        CHECK(revisions_history_same_files(project, pairs[i][0], pairs[i][1]) == alias);
+        printf("    actual volume %s alias=%d (not a simulated case-sensitive-volume claim)\n",
+               i ? "normalization" : "case", alias);
+    }
+    CHECK(!revisions_history_same_files(project, "Case.md", "\xc3\xa9.md"));
+}
+
 static void test_revisions(void)
 {
     char doc[700];
@@ -3519,9 +3621,12 @@ int main(int argc, char **argv)
         { "build_base_request", test_build_base_request },
         { "edit_too_long", test_edit_too_long },
         { "revisions", test_revisions },
+        { "revision_identity", test_revision_identity },
+        { "revision_file_time", test_revision_file_time },
+        { "revision_filesystem_identity", test_revision_filesystem_identity },
         { "records", test_records },
         { "file_history_read_failures", test_file_history_read_failures },
-        { "snapshot_name_exhaustion", test_snapshot_name_exhaustion },
+        { "snapshot_legacy_name_collisions", test_snapshot_legacy_name_collisions },
         { "snapshot_reuse_integrity", test_snapshot_reuse_integrity },
         { "observer_run", test_observer_run },
         { "observer_id_exhaustion", test_observer_id_exhaustion },

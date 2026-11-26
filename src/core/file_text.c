@@ -11,10 +11,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-FileTextStatus file_text_read(const char *path, char **out)
+static FileTextStatus read_impl(const char *path, char **out, int flags)
 {
     *out = NULL;
-    int fd = open(path, O_RDONLY | O_NONBLOCK);
+    int fd = open(path, O_RDONLY | O_NONBLOCK | flags);
     if (fd < 0) {
         if (errno != ENOENT) return FILE_TEXT_ERROR;
         struct stat link;
@@ -51,6 +51,9 @@ FileTextStatus file_text_read(const char *path, char **out)
     *out = text;
     return FILE_TEXT_OK;
 }
+
+FileTextStatus file_text_read(const char *path, char **out) { return read_impl(path, out, 0); }
+FileTextStatus file_text_read_no_follow(const char *path, char **out) { return read_impl(path, out, O_NOFOLLOW); }
 
 bool file_text_write_atomic(const char *path, const void *data, size_t n, mode_t mode)
 {

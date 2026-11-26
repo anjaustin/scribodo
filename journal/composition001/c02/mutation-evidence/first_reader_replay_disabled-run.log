@@ -1,0 +1,139 @@
+CRASH_POINT history_move.prepared#1
+  FAIL tests/test_revision_recovery.c:113: access(receipt, F_OK) != 0
+CRASH_POINT history_move.prepared#2
+  FAIL tests/test_revision_recovery.c:113: access(receipt, F_OK) != 0
+  FAIL tests/test_revision_recovery.c:116: lstat(original, &first_read) != 0
+  FAIL tests/test_revision_recovery.c:118: lstat(target, &first_read) == 0 && first_read.st_dev == before.st_dev && first_read.st_ino == before.st_ino
+CRASH_POINT history_move.file#1
+  FAIL tests/test_revision_recovery.c:113: access(receipt, F_OK) != 0
+CRASH_POINT history_move.file#2
+  FAIL tests/test_revision_recovery.c:113: access(receipt, F_OK) != 0
+  FAIL tests/test_revision_recovery.c:135: operation_lines(project) == 2
+  FAIL tests/test_revision_recovery.c:136: access(receipt, F_OK) != 0
+CRASH_POINT history_move.history#1
+  FAIL tests/test_revision_recovery.c:113: access(receipt, F_OK) != 0
+CRASH_POINT history_move.history#2
+  FAIL tests/test_revision_recovery.c:113: access(receipt, F_OK) != 0
+  FAIL tests/test_revision_recovery.c:46: text && !strcmp(text, expected)
+  FAIL tests/test_revision_recovery.c:135: operation_lines(project) == 2
+  FAIL tests/test_revision_recovery.c:136: access(receipt, F_OK) != 0
+CRASH_POINT history_move.log#1
+  FAIL tests/test_revision_recovery.c:113: access(receipt, F_OK) != 0
+CRASH_POINT history_move.log#2
+  FAIL tests/test_revision_recovery.c:113: access(receipt, F_OK) != 0
+  FAIL tests/test_revision_recovery.c:136: access(receipt, F_OK) != 0
+CRASH_POINT history_move.done#1
+CRASH_POINT history_move.done#2
+CRASH_POINT atomic.temp_written#1
+CRASH_POINT atomic.temp_written#2
+CRASH_POINT atomic.renamed#1
+  FAIL tests/test_revision_recovery.c:113: access(receipt, F_OK) != 0
+CRASH_POINT atomic.renamed#2
+  FAIL tests/test_revision_recovery.c:113: access(receipt, F_OK) != 0
+  FAIL tests/test_revision_recovery.c:116: lstat(original, &first_read) != 0
+  FAIL tests/test_revision_recovery.c:118: lstat(target, &first_read) == 0 && first_read.st_dev == before.st_dev && first_read.st_ino == before.st_ino
+CRASH_POINT history_move.prepared#1
+  FAIL tests/test_revision_recovery.c:113: access(receipt, F_OK) != 0
+CRASH_POINT history_move.prepared#2
+  FAIL tests/test_revision_recovery.c:113: access(receipt, F_OK) != 0
+  FAIL tests/test_revision_recovery.c:116: lstat(original, &first_read) != 0
+  FAIL tests/test_revision_recovery.c:118: lstat(target, &first_read) == 0 && first_read.st_dev == before.st_dev && first_read.st_ino == before.st_ino
+CRASH_POINT history_move.file#1
+  FAIL tests/test_revision_recovery.c:113: access(receipt, F_OK) != 0
+CRASH_POINT history_move.file#2
+  FAIL tests/test_revision_recovery.c:113: access(receipt, F_OK) != 0
+  FAIL tests/test_revision_recovery.c:135: operation_lines(project) == 2
+  FAIL tests/test_revision_recovery.c:136: access(receipt, F_OK) != 0
+CRASH_POINT history_move.history#1
+  FAIL tests/test_revision_recovery.c:113: access(receipt, F_OK) != 0
+CRASH_POINT history_move.history#2
+  FAIL tests/test_revision_recovery.c:113: access(receipt, F_OK) != 0
+  FAIL tests/test_revision_recovery.c:46: text && !strcmp(text, expected)
+  FAIL tests/test_revision_recovery.c:135: operation_lines(project) == 2
+  FAIL tests/test_revision_recovery.c:136: access(receipt, F_OK) != 0
+CRASH_POINT history_move.log#1
+  FAIL tests/test_revision_recovery.c:113: access(receipt, F_OK) != 0
+CRASH_POINT history_move.log#2
+  FAIL tests/test_revision_recovery.c:113: access(receipt, F_OK) != 0
+  FAIL tests/test_revision_recovery.c:136: access(receipt, F_OK) != 0
+CRASH_POINT history_move.done#1
+CRASH_POINT history_move.done#2
+CRASH_POINT atomic.temp_written#1
+CRASH_POINT atomic.temp_written#2
+CRASH_POINT atomic.renamed#1
+  FAIL tests/test_revision_recovery.c:113: access(receipt, F_OK) != 0
+CRASH_POINT atomic.renamed#2
+  FAIL tests/test_revision_recovery.c:113: access(receipt, F_OK) != 0
+  FAIL tests/test_revision_recovery.c:116: lstat(original, &first_read) != 0
+  FAIL tests/test_revision_recovery.c:118: lstat(target, &first_read) == 0 && first_read.st_dev == before.st_dev && first_read.st_ino == before.st_ino
+namespace matrix mode=0 point=history_move.prepared hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.prepared hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.prepared hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=0 point=history_move.file hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.file hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.file hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=0 point=history_move.history hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.history hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.history hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=0 point=history_move.log hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.log hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.log hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=0 point=history_move.done hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.done hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=history_move.done hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=0 point=atomic.temp_written hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=atomic.temp_written hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=atomic.temp_written hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=0 point=atomic.renamed hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=atomic.renamed hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=0 point=atomic.renamed hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=0 point=history_move.tag_written hit=1 killed=0: originals/sources/once verified
+namespace matrix mode=0 point=history_move.tag_published hit=1 killed=0: originals/sources/once verified
+namespace matrix mode=1 point=history_move.prepared hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.prepared hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.prepared hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=1 point=history_move.file hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.file hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.file hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=1 point=history_move.history hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.history hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.history hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=1 point=history_move.log hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.log hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.log hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=1 point=history_move.done hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.done hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.done hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=1 point=atomic.temp_written hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=atomic.temp_written hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=atomic.temp_written hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=1 point=atomic.renamed hit=1 killed=1: originals/sources/once verified
+namespace maCRASH_POINT history_move.tag_written#1
+  FAIL tests/test_revision_recovery.c:113: access(receipt, F_OK) != 0
+  FAIL tests/test_revision_recovery.c:135: operation_lines(project) == 2
+  FAIL tests/test_revision_recovery.c:136: access(receipt, F_OK) != 0
+CRASH_POINT history_move.tag_published#1
+  FAIL tests/test_revision_recovery.c:113: access(receipt, F_OK) != 0
+  FAIL tests/test_revision_recovery.c:135: operation_lines(project) == 2
+  FAIL tests/test_revision_recovery.c:136: access(receipt, F_OK) != 0
+CRASH_POINT history_move.prepared#2
+  FAIL tests/test_revision_recovery.c:179: !revisions_history_names_files(project, &names, &count) && !names && !count
+  FAIL tests/test_revision_recovery.c:23: file_text_read_no_follow(path, &text) == FILE_TEXT_OK && text && !strcmp(text, expected)
+  FAIL tests/test_revision_recovery.c:193: operation_lines(project) == 2
+CRASH_POINT history_move.file#2
+  FAIL tests/test_revision_recovery.c:179: !revisions_history_names_files(project, &names, &count) && !names && !count
+  FAIL tests/test_revision_recovery.c:193: operation_lines(project) == 2
+  FAIL tests/test_revision_recovery.c:219: !revisions_recover_files(project)
+CRASH_POINT history_move.prepared#1
+  FAIL tests/test_revision_recovery.c:261: !revisions_recover_files(project)
+  FAIL tests/test_revision_recovery.c:46: text && !strcmp(text, expected)
+  FAIL tests/test_revision_recovery.c:271: operation_lines(project) == 1
+CRASH_POINT history_move.prepared#1
+  FAIL tests/test_revision_recovery.c:303: !revisions_recover_files(project)
+trix mode=1 point=atomic.renamed hit=2 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=atomic.renamed hit=3 killed=0: originals/sources/once verified
+namespace matrix mode=1 point=history_move.tag_written hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.tag_written hit=2 killed=0: originals/sources/once verified
+namespace matrix mode=1 point=history_move.tag_published hit=1 killed=1: originals/sources/once verified
+namespace matrix mode=1 point=history_move.tag_published hit=2 killed=0: originals/sources/once verified
+1149 checks, 56 failures

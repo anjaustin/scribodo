@@ -81,7 +81,7 @@ key ENTER
 expect status "Renamed to z.md"
 expect file "$DIR/book/a-first.md" "Sorts first."
 expect file "$DIR/book/z.md" "Alpha beta gamma.X"
-# .markdown files are listed; a failed History move is reported.
+# .markdown files are listed; a refused History publication leaves the file in place.
 write "$DIR/elsewhere.markdown" "Imported markdown."
 dialog "$DIR/elsewhere.markdown"
 click_element ImportItem
@@ -97,5 +97,10 @@ click_element MenuItem0
 key A cmd
 type "last"
 key ENTER
-expect status "but History couldn't be moved"
+expect element_w PromptField 100 2000
+expect status_not "Renamed to last.md"
+expect files "$DIR/book" "last.md" 0
+expect files "$DIR/book" "one.md" 1
+expect files "$DIR/book/.scribodo/revisions/one.md" "-save.md" 2
+shot history-rename-refused
 chmod "$DIR/book/.scribodo/revisions" 755

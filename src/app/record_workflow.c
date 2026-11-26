@@ -347,15 +347,12 @@ void open_source(App *app, const SourceRef *s)
     /* The document may have been renamed since the source was made; the
      * source's snapshot name ("YYYYMMDD-HHMMSS-…") says when that was. */
     char doc[256];
-    double made = 0;
-    struct tm tmv = { 0 };
-    const char *rest = strptime(s->revision, "%Y%m%d-%H%M%S", &tmv);
-    if (rest) {
-        tmv.tm_isdst = -1;
-        made = (double)mktime(&tmv);
-        if (rest[0] == '-' && rest[1] >= '0' && rest[1] <= '9') made += (double)atoi(rest + 1) / 1000.0; /* "-846" ms */
-    }
+    double made = revisions_file_time(s->revision, 0);
     renames_resolve_since(app->project_dir, s->doc, made, doc, sizeof(doc));
+    if (!doc[0]) {
+        set_status(app, "The source name could not be verified; existing files and History were kept");
+        return;
+    }
     char full[PATH_MAX + 300];
     snprintf(full, sizeof(full), "%s/%s", app->project_dir, doc);
     if (!editor_path(app->editor) || strcmp(base_name(editor_path(app->editor)), doc) != 0) {

@@ -7,6 +7,9 @@
 #include "llm/chat_history.h"
 #include "app/records.h"
 #include "app/revisions.h"
+#include "app/revisions_internal.h"
+#include "app/renames.h"
+#include "core/file_text.h"
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -175,6 +178,71 @@ static void chat_adoption_faults(void)
         chat_store_free_messages(loaded, n);
     }
     chat_destroy(s);
+}
+
+static bool rename_fixture(const char *path, char token[160])
+{
+    char file[1000];
+    if (mkdir(path, 0755)) return false;
+    snprintf(file, sizeof(file), "%s/source.md", path);
+    return file_text_write_atomic(file, "MANUSCRIPT", 10, 0644) &&
+           revisions_snapshot(store, path, "source.md", "SOURCE HISTORY", token, 160) &&
+           revisions_record(store, path, "destination.md", "OLDER DESTINATION", "save", NULL, NULL);
+}
+
+static void revision_rename_faults(void)
+{
+    char trial[800], source[1000], target[1000], token[160];
+    snprintf(trial, sizeof(trial), "%s/rename-control", project);
+    CHECK(rename_fixture(trial, token));
+    bool moved = false;
+    fault_alloc_after(-1);
+    CHECK(revisions_document_rename_files(trial, "source.md", "destination.md", &moved) && moved);
+    long count = fault_alloc_count();
+    CHECK(count > 20);
+    for (long i = 0; i < count * 2; i++) {
+        snprintf(trial, sizeof(trial), "%s/rename-fault-%ld", project, i);
+        CHECK(rename_fixture(trial, token));
+        snprintf(source, sizeof(source), "%s/source.md", trial);
+        snprintf(target, sizeof(target), "%s/destination.md", trial);
+        struct stat before;
+        CHECK(lstat(source, &before) == 0);
+        allocation_case(i, count);
+        moved = false;
+        bool ok = revisions_document_rename_files(trial, "source.md", "destination.md", &moved);
+        fault_alloc_after(-1);
+        CHECK(!ok || moved);
+        RevisionHistoryName *names = NULL;
+        size_t n = 0;
+        CHECK(revisions_history_names_files(trial, &names, &n)); /* resumes any prepared transition */
+        free(names);
+        struct stat after;
+        if (lstat(source, &after) == 0) {
+            moved = false;
+            CHECK(revisions_document_rename_files(trial, "source.md", "destination.md", &moved) && moved);
+        }
+        CHECK(lstat(target, &after) == 0 && after.st_dev == before.st_dev && after.st_ino == before.st_ino);
+        char *text = NULL;
+        CHECK(file_text_read_no_follow(target, &text) == FILE_TEXT_OK && text && !strcmp(text, "MANUSCRIPT"));
+        free(text);
+        char current[256];
+        renames_resolve_since(trial, "source.md", revisions_file_time(token, 0), current, sizeof(current));
+        CHECK(!strcmp(current, "destination.md"));
+        Revision ref = {0};
+        snprintf(ref.file, sizeof(ref.file), "%s", token);
+        text = revisions_load(store, trial, current, &ref);
+        CHECK(text && !strcmp(text, "SOURCE HISTORY")); free(text);
+        CHECK(revisions_history_names_files(trial, &names, &n) && n == 2);
+        free(names);
+        snprintf(target, sizeof(target), "%s/.scribodo/renames.jsonl", trial);
+        text = NULL;
+        CHECK(file_text_read_no_follow(target, &text) == FILE_TEXT_OK);
+        size_t operations = 0;
+        if (text) for (char *p = text; (p = strstr(p, "\"operation\"")) != NULL; p++) operations++;
+        CHECK(operations == 2); /* acknowledged archive + rename, no recovery duplicates */
+        free(text);
+    }
+    printf("    rename allocation sites=%ld, one-shot/permanent cases=%ld\n", count, count * 2);
 }
 
 static void packed_history_faults(void)
@@ -537,6 +605,7 @@ int main(void)
                          { "chat_load_allocations", chat_load_faults },
                          { "chat_retry_snapshot_allocations", chat_retry_snapshot_faults },
                          { "chat_adoption_allocations", chat_adoption_faults },
+                         { "revision_rename_allocations", revision_rename_faults },
                         { "chat_send_allocations", chat_send_faults },
                         { "request_builder_allocations", request_builder_faults },
                         { "assistant_history_builder_allocations", assistant_history_builder_faults },

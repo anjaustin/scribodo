@@ -1,0 +1,620 @@
+cc -std=c11 -O2 -mcpu=native -g -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include -MMD -MP -c src/main.c -o build/src/main.o
+cc -std=c11 -O2 -mcpu=native -g -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include -MMD -MP -c src/ui/recall_view.c -o build/src/ui/recall_view.o
+cc -std=c11 -O2 -mcpu=native -g -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include -MMD -MP -c src/ui/record_view.c -o build/src/ui/record_view.o
+cc -std=c11 -O2 -mcpu=native -g -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include -MMD -MP -c src/ui/findings_view.c -o build/src/ui/findings_view.o
+cc -std=c11 -O2 -mcpu=native -g -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter -Isrc -Ithird_party/raylib/src -Ithird_party/clay -Ithird_party/stb -Ithird_party/cJSON -Ithird_party/mariadb-connector-c/include -Ibuild/mariadb-cc/include -MMD -MP -c src/ui/prompt_view.c -o build/src/ui/prompt_view.o
+cc -std=c11 -O2 -mcpu=native -g -Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter build/src/core/utf8.o build/src/core/text_buffer.o build/src/core/undo.o build/src/core/wrap.o build/src/core/doc_io.o build/src/core/diff.o build/src/core/file_text.o build/src/app/frame_view_model.o build/src/app/frame_metrics.o build/src/core/recall_terms.o build/src/core/text_cut.o build/src/core/experiments.o build/src/core/text_rules.o build/src/app/tools_dir.o build/src/core/child_process.o build/src/core/font_file.o build/src/ui/theme.o build/src/ui/motion.o build/src/core/json.o build/src/llm/llm_text.o build/src/llm/http.o build/src/llm/server.o build/src/llm/chat.o build/src/llm/chat_history.o build/src/app/chat_store.o build/src/app/revisions.o build/src/app/records.o build/src/app/recent.o build/src/app/renames.o build/src/llm/observer.o build/src/llm/observer_text.o build/src/llm/observer_formats.o build/src/llm/observer_arms.o build/src/llm/observer_fake.o build/src/llm/observer_model.o build/src/llm/observer_job.o build/src/llm/semantic.o build/src/llm/remote.o build/src/llm/names.o build/src/llm/memfit.o build/src/app/db.o build/src/app/store.o build/src/app/project_store.o build/src/app/observer_store.o build/src/app/store_revisions.o build/src/app/store_records.o build/src/app/store_chats.o build/src/app/store_chat_history.o build/src/app/store_import.o build/src/app/store_entities.o build/src/app/backup.o build/src/app/backup_job.o build/src/app/service_supervisor.o build/src/app/entity_backfill_job.o build/src/app/name_detection_job.o build/src/app/project_session.o build/src/app/explorer_snapshot.o build/src/app/profile.o build/src/app/model_settings.o build/src/app/appearance.o build/src/app/font_catalog.o build/src/app/chat_history_job.o build/src/app/memory_store.o build/src/app/memory_job.o build/src/app/memory_saved_file.o build/src/app/memory_documents.o build/src/app/memory_document_store.o build/src/app/memory_gc.o build/src/app/memory_brief_store.o build/src/app/recall.o build/src/app/recall_job.o build/src/app/import_job.o build/src/llm/context_planner.o build/src/llm/memory_tokens.o build/src/llm/memory_budget.o build/src/llm/generative_gate.o build/src/llm/memory_brief.o build/src/llm/canon_reference.o build/src/app/local_models.o build/src/llm/rerank.o build/src/llm/answer_pipeline.o build/src/llm/answer_receipt.o build/third_party/cJSON/cJSON.o build/src/main.o build/src/app/app_lifecycle.o build/src/app/chat_workflow.o build/src/app/document_workflow.o build/src/app/record_workflow.o build/src/app/script_host_app.o build/src/ui/layout.o build/src/app/script.o build/src/app/script_host.o build/src/app/startup_env.o build/src/app/draft_controller.o build/src/app/chat_controller.o build/src/app/reviewed_edit_controller.o build/src/ui/font.o build/src/ui/clay_render.o build/src/ui/editor.o build/src/ui/input.o build/src/ui/recall_view.o build/src/ui/chat_view.o build/src/ui/review_view.o build/src/ui/record_view.o build/src/ui/findings_view.o build/src/ui/prompt_view.o build/src/ui/menu_view.o build/src/ui/vendor_impl.o build/src/ui/widgets.o build/src/app/fonts_panel.o build/src/ui/motion_system.o build/src/ui/mac_window.o build/src/ui/backdrop.o build/src/ui/icons.o build/src/platform/dialogs_mac.o build/raylib/libraylib.a -o build/scribodo -framework OpenGL -framework Cocoa -framework IOKit -framework CoreAudio -framework CoreVideo -framework QuartzCore -framework CoreGraphics build/mariadb-cc/libmariadb/libmariadbclient.a /opt/homebrew/opt/openssl@3/lib/libssl.a /opt/homebrew/opt/openssl@3/lib/libcrypto.a -lz -liconv -lcurl  -lm -lpthread
+script tests/ui/attach_many.scribo
+  ok    26  expect element_w AttachChip0 40 2000
+  ok    27  expect element_w AttachRemove0 10 40
+  ok    30  expect element_w MenuItem15 10 2000
+  ok    31  expect element_w MenuItem16 0 0
+  ok    35  expect attached "a-very-long-document-name-that-would-not-fit-in-the-row.md,d18.md"
+  ok    40  expect element_w PromptField 100 2000
+  ok    55  expect chat_last "You said: five attached"
+  ok    72  expect attached "a.md"
+  ok    79  expect attached "a.md"
+  9 passed, 0 failed
+
+script tests/ui/attachments.scribo
+  ok    12  expect attached "a.md"
+  ok    14  expect element_w MenuItem2 50 800
+  ok    16  expect attached "a.md,b.md"
+  ok    21  expect chat_last "(fake model, with 2 documents) You said: compare them"
+  ok    24  expect attached "a.md"
+  ok    29  expect chat_last "(fake model, with document) You said: just one"
+  ok    35  expect chat_last "(fake model) You said: none"
+  ok    39  expect attached "c.md"
+  ok    42  expect attached ""
+  ok    48  expect attached "b.md,c.md"
+  ok    54  expect attached "a.md"
+  ok    55  expect chat_count 0
+  ok    57  expect chat_count 8
+  ok    58  expect attached "b.md,c.md"
+  ok    65  expect status "Renamed to beta.md"
+  ok    66  expect attached "beta.md,c.md"
+  ok    71  expect chat_last "(fake model, with 2 documents) You said: still there?"
+  ok    78  expect status "Chat renamed"
+  ok    79  expect explorer_has "Lighthouse plans"
+  ok   103  expect attached ""
+  ok   115  expect attached "b.md,c.md"
+  ok   118  expect attached "b.md,c.md"
+  ok   122  expect explorer_has "Tampered"
+  ok   124  expect chat_count 2
+  ok   125  expect attached "b.md"
+  ok   130  expect attached "a.md,b.md"
+  ok   138  expect attached "a.md"
+  ok   148  expect chat_last "You said: send me"
+  28 passed, 0 failed
+
+script tests/ui/chat_archive.scribo
+  ok     9  expect explorer_has "Ingrid rows across the fjord."
+  ok    12  expect status "Chat archived"
+  ok    13  expect explorer_has "Archived (1)"
+  ok    14  expect explorer_not "Ingrid rows across the fjord."
+  ok    17  wait_observer
+  ok    18  expect findings_not "Ingrid"
+  ok    21  expect explorer_has "Ingrid rows across the fjord."
+  ok    24  expect status "Chat restored"
+  ok    25  expect explorer_not "Archived (1)"
+  ok    26  expect explorer_has "Ingrid rows across the fjord."
+  ok    27  wait_observer
+  ok    28  expect findings_has "Ingrid is mentioned."
+  12 passed, 0 failed
+
+script tests/ui/chat_delete.scribo
+  ok    16  expect status "It can't be undone"
+  ok    18  expect explorer_has "Ingrid rows across the fjord."
+  ok    22  expect status "Chat deleted"
+  ok    23  expect explorer_not "Ingrid rows across the fjord."
+  ok    24  expect explorer_has "The lighthouse keeper waits."
+  ok    25  expect chat_count 2
+  ok    30  expect status "Chat deleted"
+  ok    31  expect chat_count 0
+  ok    32  expect explorer_not "The lighthouse keeper waits."
+  9 passed, 0 failed
+
+script tests/ui/chat_groups.scribo
+  ok    14  expect explorer_has "Ingrid rows across the fjord."
+  ok    15  expect explorer_has "The lighthouse keeper waits."
+  ok    23  expect status "Chat moved to"
+  ok    24  expect explorer_has "Book Two (1)"
+  ok    25  expect explorer_has "Ingrid rows across the fjord."
+  ok    28  expect explorer_has "Book Two (1)"
+  ok    29  expect explorer_not "Ingrid rows across the fjord."
+  ok    31  expect explorer_has "Ingrid rows across the fjord."
+  ok    36  expect status "Chat moved to"
+  ok    37  expect explorer_has "Book Two (2)"
+  ok    44  expect status "Group renamed to"
+  ok    45  expect explorer_has "Book 2 (2)"
+  ok    46  expect explorer_not "Book Two (2)"
+  ok    51  expect status "Chat taken out of its group"
+  ok    52  expect explorer_has "Book 2 (1)"
+  ok    56  expect status "Group removed"
+  ok    57  expect explorer_not "Book 2 (1)"
+  ok    58  expect explorer_has "Ingrid rows across the fjord."
+  ok    59  expect explorer_has "The lighthouse keeper waits."
+  19 passed, 0 failed
+
+script tests/ui/chat_observer.scribo
+  ok     8  expect element_w ObserverReads 100 400
+  ok    10  expect status "The observer won't read this chat"
+  ok    11  expect explorer_has "Ingrid rows across the fjord. · not observed"
+  ok    14  wait_observer
+  ok    15  expect findings_not "Ingrid"
+  ok    19  expect status "The observer reads this chat again"
+  ok    20  expect explorer_has "Ingrid rows across the fjord."
+  ok    21  wait_observer
+  ok    22  expect findings_has "Ingrid is mentioned."
+  9 passed, 0 failed
+
+script tests/ui/chat_projects.scribo
+  ok     3  expect chat_count 0
+  ok     8  expect chat_count 2
+  ok    11  expect chat_count 2
+  ok    12  expect files "$DIR/.scribodo/chats" ".jsonl" 1
+  ok    13  expect status "Chat saved"
+  ok    22  expect chat_busy yes
+  ok    26  expect files "$DIR/book-b/.scribodo/chats" ".jsonl" 0
+  ok    27  expect chat_count 0
+  ok    32  expect chat_count 4
+  ok    33  expect chat_last "keeps streaming"
+  10 passed, 0 failed
+
+script tests/ui/chat_save_retry.scribo
+  ok     7  expect chat_count 2
+  ok     9  expect chat_count 0
+  ok    15  expect chat_count 2
+  ok    16  expect chat_unsaved yes
+  ok    19  expect chat_count 2
+  ok    20  expect chat_unsaved yes
+  ok    22  expect status "Unsaved chat"
+  ok    23  expect chat_count 2
+  ok    27  expect chat_unsaved no
+  ok    28  expect chat_count 2
+  ok    29  expect files "$DIR/.scribodo/chats" ".jsonl" 2
+  ok    31  expect chat_count 0
+  ok    33  expect chat_count 2
+  ok    34  expect chat_last "Failed save sentinel"
+  14 passed, 0 failed
+
+script tests/ui/chat.scribo
+  ok     3  expect chat_count 0
+  ok     8  expect chat_count 2
+  ok     9  expect chat_last "with document"
+  ok    10  expect chat_last "Who is Zoë?"
+  ok    11  expect files "$DIR/.scribodo/chats" ".jsonl" 1
+  ok    16  expect chat_count 2
+  ok    19  expect chat_count 4
+  ok    20  expect chat_last "line one\nline two"
+  ok    26  expect chat_count 6
+  ok    27  expect chat_last_not "with document"
+  ok    32  expect chat_busy yes
+  ok    35  expect chat_busy no
+  ok    36  expect chat_count 8
+  ok    41  expect chat_count 8
+  ok    47  expect chat_count 0
+  ok    50  expect chat_count 0
+  ok    52  expect chat_count 8
+  ok    53  expect chat_last_not "keeps streaming for a while longer"
+  ok    57  expect dirty yes
+  ok    58  expect chat_count 8
+  ok    63  expect chat_count 10
+  ok    64  expect chat_last "via shortcut"
+  ok    67  expect chat_notes 0
+  ok    72  expect chat_count 12
+  ok    73  expect chat_notes 1
+  ok    77  expect chat_count 14
+  ok    78  expect chat_notes 2
+  ok    83  expect chat_count 16
+  ok    84  expect chat_notes 2
+  29 passed, 0 failed
+
+script tests/ui/clipboard.scribo
+  ok     5  expect clipboard "fog"
+  ok     9  expect text "fogThe fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+  ok    11  expect text "The fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+  ok    15  expect clipboard "fog"
+  ok    16  expect text "The  came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+  ok    18  expect text "The fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+  ok    23  expect text "The fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\none\ntwo"
+  ok    26  expect clipboard "The fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\none\ntwo"
+  8 passed, 0 failed
+
+script tests/ui/close_clean.scribo
+  ok     4  expect running no
+  1 passed, 0 failed
+
+script tests/ui/close.scribo
+  ok     5  expect status "Unsaved changes"
+  ok     6  expect dirty yes
+  ok     7  expect text "xThe fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+  ok    10  expect running no
+  4 passed, 0 failed
+
+script tests/ui/edits.scribo
+  ok     5  expect selection 4 7
+  ok    10  expect chat_last "FOG"
+  ok    12  expect element_w ReviewPanel 100 3000
+  ok    13  expect text "The fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+  ok    14  expect dirty no
+  ok    17  expect element_w ReviewPanel 0 0
+  ok    18  expect text "The FOG came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+  ok    19  expect status "Edit applied"
+  ok    20  expect dirty yes
+  ok    21  expect files "$DIR/.scribodo/revisions/chapter.md" "ai-edit.md" 2
+  ok    25  expect text "The fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+  ok    26  expect status "Revision restored"
+  ok    28  expect text "The FOG came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+  ok    32  expect selection 8 12
+  ok    37  expect element_w ReviewPanel 100 3000
+  ok    39  expect element_w ReviewPanel 0 0
+  ok    40  expect text "The FOG came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+  ok    41  expect status "rejected"
+  ok    53  expect status "changed since"
+  ok    54  expect text "The FOG cZame in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+  ok    55  expect element_w ReviewPanel 0 0
+  ok    59  expect selection 25 30
+  ok    67  expect text "~The FOG cZame in off the FJORD the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+  ok    77  expect chat_last "You said: just chatting"
+  ok    78  expect element_w ReviewPanel 0 0
+  ok    83  expect files "$DIR/.scribodo/revisions/chapter.md" "-save.md" 1
+  ok    88  expect status "editable document"
+  ok    98  expect element_w ReviewPanel 100 3000
+  ok   103  expect element_w ReviewPanel 100 3000
+  ok   111  expect selection 4 7
+  ok   116  expect element_w ReviewPanel 100 3000
+  ok   119  expect text "The FOG came in.\n"
+  ok   126  expect selection 13 16
+  ok   131  expect element_w ReviewPanel 100 3000
+  ok   135  expect status "applied"
+  ok   136  expect text "Then. Hello. The cat sat. THE dog ran.\n"
+  ok   139  expect selection 30 33
+  ok   144  expect element_w ReviewPanel 100 3000
+  ok   148  expect status "passage changed"
+  ok   149  expect text "Then. Hello. The cat sat. THE doxg ran.\n"
+  ok   150  expect element_w ReviewPanel 0 0
+  ok   155  expect status "Select the passage"
+  ok   156  expect element_w ReviewPanel 0 0
+  ok   167  expect element_w ReviewPanel 100 3000
+  ok   171  expect status "applied"
+  ok   172  expect text "Hi. One two three. (fake model, with document) You said: helloFour five six.\n"
+  ok   175  expect element_w ReviewPanel 100 3000
+  ok   178  expect status "passage changed"
+  ok   189  expect element_w ReviewPanel 0 0
+  ok   190  expect status "Edit stopped"
+  ok   203  expect status "not applied"
+  ok   204  expect text "The fog came in.\n"
+  ok   205  expect files "$DIR/.scribodo/revisions/rt5.md" ".md" 0
+  53 passed, 0 failed
+
+script tests/ui/files.scribo
+  ok     7  expect status "changed on disk"
+  ok     8  expect files "$DIR" "Scribodo conflict" 1
+  ok     9  expect file "$DIR/chapter.md" "external edit\n"
+  ok    10  expect dirty yes
+  ok    13  expect file "$DIR/chapter.md" "The fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n Added."
+  ok    14  expect dirty no
+  ok    18  expect status "Save the current document"
+  ok    19  expect text "The fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n Added.x"
+  ok    21  expect dirty no
+  ok    24  expect readonly yes
+  ok    25  expect status "invalid UTF-8"
+  ok    28  expect text "bad \u{FFFD} byte\n"
+  ok    30  expect status "Read-only"
+  ok    36  expect readonly yes
+  ok    37  expect status "write-protected"
+  ok    42  expect status "An interrupted save left a copy of nav.md"
+  ok    43  expect status "its text differs from the document"
+  ok    44  expect files "$DIR" "nav (Scribodo recovered " 1
+  ok    45  expect files "$DIR" "nav.md.scribodo-" 0
+  19 passed, 0 failed
+
+script tests/ui/fonts.scribo
+  ok     5  expect font 0 "Share Tech Regular"
+  ok     6  expect font 1 "Share Regular"
+  ok     7  expect font 2 "Share Regular"
+  ok     8  expect font 3 "Share Tech Mono Regular"
+  ok    12  expect element_w FontsDone 50 200
+  ok    17  expect status "Appearance saved"
+  ok    18  expect element_w FontsDone 0 0
+  ok    19  expect file "$DIR/appearance.json" "{\"theme\":\"dark\",\"typewriter\":false,\"dim_paragraphs\":false,\"interface\":{\"size\":14},\"document\":{\"size\":20},\"chat\":{\"size\":15},\"monospace\":{\"size\":13}}"
+  ok    25  expect file "$DIR/appearance.json" "{\"theme\":\"dark\",\"typewriter\":false,\"dim_paragraphs\":false,\"interface\":{\"size\":14},\"document\":{\"size\":20},\"chat\":{\"size\":15},\"monospace\":{\"size\":13}}"
+  ok    29  expect element_w FontsBack 50 200
+  ok    32  expect element_w FontsItem1 100 1000
+  ok    34  expect font 1 "Georgia"
+  ok    35  expect font 2 "Share Regular"
+  ok    37  expect lines "$DIR/appearance.json" "Georgia.ttf" 1
+  ok    44  expect font 2 "Georgia"
+  ok    45  expect element_w FontsDone 50 200
+  ok    47  expect font 2 "Share Regular"
+  ok    48  expect lines "$DIR/appearance.json" "\"chat\":{\"size\":15}" 1
+  ok    54  expect font 3 "Menlo Regular"
+  ok    59  expect font 0 "San Francisco"
+  ok    62  expect font 1 "Share Regular"
+  ok    63  expect font 3 "Share Tech Mono Regular"
+  ok    65  expect file "$DIR/appearance.json" "{\"theme\":\"dark\",\"typewriter\":false,\"dim_paragraphs\":false,\"interface\":{\"size\":14},\"document\":{\"size\":18},\"chat\":{\"size\":15},\"monospace\":{\"size\":13}}"
+  ok    71  expect dirty no
+  24 passed, 0 failed
+
+script tests/ui/model_settings.scribo
+  ok     7  expect element_w SetApply 50 200
+  ok    12  expect status "Model settings saved"
+  ok    13  expect element_w SetApply 0 0
+  ok    14  expect file "$DIR/model-settings.json" "{\"max_reply\":2560,\"temperature\":0.75,\"top_p\":0.95,\"top_k\":40,\"min_p\":0.05,\"repeat_penalty\":1.05,\"edit_temperature\":0.4,\"context\":32768,\"keep_in_memory\":1}"
+  ok    20  expect file "$DIR/model-settings.json" "{\"max_reply\":2560,\"temperature\":0.75,\"top_p\":0.95,\"top_k\":40,\"min_p\":0.05,\"repeat_penalty\":1.05,\"edit_temperature\":0.4,\"context\":32768,\"keep_in_memory\":1}"
+  ok    36  expect file "$DIR/model-settings.json" "{\"max_reply\":4096,\"temperature\":0.75,\"top_p\":0.95,\"top_k\":40,\"min_p\":0.05,\"repeat_penalty\":1.05,\"edit_temperature\":0.4,\"context\":8192,\"keep_in_memory\":1}"
+  ok    43  expect file "$DIR/model-settings.json" "{\"max_reply\":4096,\"temperature\":0.75,\"top_p\":0.95,\"top_k\":40,\"min_p\":0.05,\"repeat_penalty\":1.05,\"edit_temperature\":0.4,\"context\":8192,\"keep_in_memory\":0}"
+  ok    48  expect file "$DIR/model-settings.json" "{\"max_reply\":4096,\"temperature\":0.75,\"top_p\":0.95,\"top_k\":40,\"min_p\":0.05,\"repeat_penalty\":1.05,\"edit_temperature\":0.4,\"context\":8192,\"keep_in_memory\":1}"
+  ok    53  expect element_y SetApply 300 450
+  ok    54  expect element_y SetPlus8 60 450
+  ok    56  expect element_w SetApply 0 0
+  ok    63  expect chat_last "You said: hello"
+  12 passed, 0 failed
+
+script tests/ui/mouse.scribo
+  ok     4  expect selection 4 4
+  ok     7  expect selection 4 7
+  ok    10  expect selection 0 235
+  ok    13  expect selection 147 157
+  ok    15  expect text "The fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the beacon stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+  ok    20  expect selection 110 113
+  ok    22  expect text "The fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Ada Ångström stood at the top of the beacon stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+  ok    27  expect cursor 260
+  ok    32  expect text "The fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Ada Ångström stood at the top of the beacon stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+  ok    37  expect text "~The fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Ada Ångström stood at the top of the beacon stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+  10 passed, 0 failed
+
+script tests/ui/names.scribo
+  ok    14  expect status "Names saved: you are Tripp; the assistant is Maz"
+  ok    21  expect element_w NameSave 30 200
+  ok    23  expect status "Names saved"
+  ok    24  expect element_w NameSave 0 0
+  ok    25  expect file "$DIR/profile.json" "{\"author\":\"Tripp\",\"assistant\":\"Nova\",\"asked\":true}"
+  ok    33  wait_observer
+  ok    34  expect findings_has "Ingrid is mentioned."
+  ok    35  expect findings_not "Tripp is mentioned."
+  8 passed, 0 failed
+
+script tests/ui/navigation.scribo
+  ok     4  expect cursor 28
+  ok     7  expect cursor_range 5 8
+  ok    10  expect anchor 28
+  ok    11  expect cursor_range 5 8
+  ok    13  expect cursor 28
+  ok    18  expect cursor_range 40 119
+  ok    20  expect cursor_range 121 233
+  ok    23  expect length 114 224
+  ok    25  expect length 264 264
+  ok    27  expect cursor 264
+  ok    29  expect cursor 0
+  ok    31  expect cursor 264
+  ok    33  expect cursor 0
+  ok    35  expect cursor_range 40 233
+  ok    37  expect cursor 0
+  ok    41  expect selection 0 3
+  ok    43  expect cursor 0
+  17 passed, 0 failed
+
+script tests/ui/notes.scribo
+  ok     7  expect selection 110 113
+  ok     9  expect record "Note · v1"
+  ok    10  expect record "Zoë"
+  ok    11  expect lines "$DIR/.scribodo/notes.jsonl" "\"ver\":1" 1
+  ok    12  expect lines "$DIR/.scribodo/notes.jsonl" "\"start\":110,\"len\":3" 1
+  ok    13  expect files "$DIR/.scribodo/revisions/chapter.md" "-source.md" 1
+  ok    17  expect record "Note · v2"
+  ok    18  expect lines "$DIR/.scribodo/notes.jsonl" "\"ver\":2" 1
+  ok    19  expect dirty no
+  ok    23  expect element_w RecordPanel 0 0
+  ok    24  expect lines "$DIR/.scribodo/notes.jsonl" "surname!" 1
+  ok    27  expect record "surname!"
+  ok    29  expect selection 110 113
+  ok    30  expect status "Source passage selected"
+  ok    35  expect selection 116 119
+  ok    36  expect status "moved"
+  ok    40  expect record "Canon draft"
+  ok    41  expect files "$DIR/.scribodo" "canon.jsonl" 0
+  ok    44  expect status "isn't committed"
+  ok    45  expect element_w RecordPanel 100 3000
+  ok    50  expect record "Canon · v1 · committed"
+  ok    51  expect lines "$DIR/.scribodo/canon.jsonl" "\"status\":\"committed\"" 1
+  ok    52  expect lines "$DIR/.scribodo/canon.jsonl" "chapter.md" 1
+  ok    57  expect record "Canon · v2 · committed"
+  ok    58  expect lines "$DIR/.scribodo/canon.jsonl" "\"ver\":2" 1
+  ok    59  expect element_w RecordHistory0 100 3000
+  ok    62  expect record "Ångström."
+  ok    64  expect record "Ångström-Berg."
+  ok    67  expect record "Canon · v3 · retracted"
+  ok    69  expect element_w RecordPanel 0 0
+  ok    71  expect record "Canon · v3 · retracted"
+  ok    73  expect record "Canon · v4 · committed"
+  ok    74  expect lines "$DIR/.scribodo/canon.jsonl" "Ångström-Berg" 3
+  ok    82  expect record "You said: hello"
+  ok    83  expect lines "$DIR/.scribodo/notes.jsonl" "\"kind\":\"chat\"" 1
+  ok    85  expect record "Canon draft"
+  ok    88  expect element_w RecordPanel 0 0
+  ok    89  expect lines "$DIR/.scribodo/canon.jsonl" "You said" 0
+  ok    92  expect record "You said: hello"
+  ok    94  expect element_w RecordPanel 0 0
+  ok    95  expect lines "$DIR/.scribodo/notes.jsonl" "\"status\":\"deleted\"" 1
+  ok    96  expect element_w NoteItem0 0 0
+  ok    99  expect record "New note"
+  ok   101  expect lines "$DIR/.scribodo/notes.jsonl" "\"ver\":1" 2
+  ok   105  expect status "Select the passage"
+  ok   116  expect record "Canon draft"
+  ok   117  expect status "Commit or discard"
+  ok   119  expect record "Canon draft"
+  ok   120  expect element_w RecordRetract 0 0
+  ok   121  expect lines "$DIR/.scribodo/notes.jsonl" "\"kind\":\"chat\"" 2
+  ok   122  expect lines "$DIR/.scribodo/canon.jsonl" "\"id\":\"n-" 0
+  ok   126  expect status "Commit or Revise"
+  ok   129  expect element_w RecordPanel 0 0
+  53 passed, 0 failed
+
+script tests/ui/observer_actions.scribo
+  ok     9  wait_observer
+  ok    18  expect chat_last "You said: My long unsent paragraph about the ending"
+  ok    19  expect chat_last_not "observer finding"
+  ok    20  wait_observer
+  ok    27  expect files "$DIR/obs/.scribodo" "notes.jsonl" 0
+  ok    28  expect findings_not "|saved|"
+  ok    37  expect status "Commit or discard"
+  ok    39  expect record "Canon · v1 · committed"
+  ok    40  expect findings_not "|committed|"
+  ok    49  wait_observer
+  ok    50  expect findings_count 24
+  ok    58  expect element_w RecordPanel 0 0
+  12 passed, 0 failed
+
+script tests/ui/observer.scribo
+  ok    10  wait_observer
+  ok    11  expect findings_has "entity|new|Dvořák is mentioned."
+  ok    12  expect findings_has "entity|new|Ångström is mentioned."
+  ok    13  expect files "$DIR/obs/.scribodo/observer" "state.json" 1
+  ok    19  expect chat_last_not "mentioned"
+  ok    20  wait_observer
+  ok    23  expect element_w FindingDiscuss 40 3000
+  ok    25  expect status "message box"
+  ok    26  expect chat_count 2
+  ok    29  expect chat_last "About this observer finding: Dvořák is mentioned."
+  ok    30  wait_observer
+  ok    34  expect record "Dvořák is mentioned."
+  ok    35  expect lines "$DIR/obs/.scribodo/notes.jsonl" "\"quote\":\"Dvořák\"" 1
+  ok    36  expect findings_has "entity|saved|Dvořák is mentioned."
+  ok    41  expect record "Canon draft"
+  ok    42  expect findings_has "entity|new|Ångström is mentioned."
+  ok    44  expect record "Canon · v1 · committed"
+  ok    45  expect findings_has "entity|committed|Ångström is mentioned."
+  ok    50  expect findings_not "Zoë is mentioned."
+  ok    51  expect lines "$DIR/obs/.scribodo/findings.jsonl" "\"status\":\"dismissed\"" 1
+  ok    62  expect cursor 108
+  ok    67  wait_observer
+  ok    68  expect findings_has "conflict|new|Canon says Zoë's eyes: green; the new text says brown."
+  ok    69  expect lines "$DIR/obs/.scribodo/findings.jsonl" "\"related_text\":\"Zoë's eyes are green.\"" 1
+  ok    76  wait_observer
+  ok    77  expect findings_has "entity|new|Ingrid is mentioned."
+  ok    80  expect selection 110 131
+  ok    81  expect status "Source passage selected"
+  ok    86  expect findings_has "conflict|new,outdated|"
+  ok    89  wait_observer
+  ok    90  expect findings_count 6
+  31 passed, 0 failed
+
+script tests/ui/panes.scribo
+  ok     3  expect explorer_w 209 211
+  ok     4  expect editor_w 795 805
+  ok     5  expect element_w Chat 419 421
+  ok     6  expect element_w Observer 0 0
+  ok     9  expect explorer_w 325 330
+  ok    12  expect element_w Chat 535 540
+  ok    15  expect element_w Observer 259 261
+  ok    19  expect explorer_w 359 361
+  ok    23  expect editor_w 320 900
+  ok    24  expect element_w Observer 0 0
+  ok    28  expect dirty yes
+  11 passed, 0 failed
+
+script tests/ui/projects_rt.scribo
+  ok    18  expect element_w PromptField 100 2000
+  ok    21  expect element_w ReviewPanel 0 0
+  ok    22  expect element_w RecordPanel 0 0
+  ok    23  expect cursor 17
+  ok    25  expect cursor 17
+  ok    27  expect element_w PromptField 100 2000
+  ok    28  expect element_w DocItem0 10 2000
+  ok    30  expect element_w PromptField 0 0
+  ok    35  expect files "$DIR/book/.scribodo/revisions/one.md" "-save.md" 1
+  ok    41  expect status "Renamed to One.md"
+  ok    42  expect files "$DIR/book/.scribodo/revisions/One.md" "-save.md" 1
+  ok    43  expect files "$DIR/book/.scribodo/revisions" "earlier" 0
+  ok    44  expect element_w RevItem0 10 2000
+  ok    51  expect status "Renamed to two.md"
+  ok    56  expect status "Created one.md"
+  ok    68  expect text "Alpha beta gamma.X"
+  ok    71  expect text "Fresh words here."
+  ok    72  expect status "Source passage selected"
+  ok    81  expect status "Renamed to z.md"
+  ok    82  expect file "$DIR/book/a-first.md" "Sorts first."
+  ok    83  expect file "$DIR/book/z.md" "Alpha beta gamma.X"
+  ok    88  expect status "Imported 1 of 1"
+  ok    89  expect element_w DocItem3 10 2000
+  ok    90  expect files "$DIR/book" "elsewhere.markdown" 1
+  ok   100  expect element_w PromptField 100 2000
+  ok   101  expect status_not "Renamed to last.md"
+  ok   102  expect files "$DIR/book" "last.md" 0
+  ok   103  expect files "$DIR/book" "one.md" 1
+  ok   104  expect files "$DIR/book/.scribodo/revisions/one.md" "-save.md" 2
+  29 passed, 0 failed
+
+script tests/ui/projects.scribo
+  ok     5  expect element_w WelcomeOpen 100 400
+  ok    11  expect status "Opened book"
+  ok    12  expect element_w EmptyNewDoc 100 400
+  ok    13  expect element_w DocItem0 50 2000
+  ok    17  expect element_w EmptyNewDoc 100 400
+  ok    20  expect element_w PromptField 100 2000
+  ok    24  expect element_w PromptOK 50 400
+  ok    26  expect element_w PromptField 0 0
+  ok    31  expect element_w PromptField 0 0
+  ok    32  expect status "Created Chapter Two.md"
+  ok    33  expect file "$DIR/book/Chapter Two.md" ""
+  ok    36  expect file "$DIR/book/Chapter Two.md" "Dvořák waited."
+  ok    41  expect element_w PromptField 100 2000
+  ok    43  expect element_w PromptField 0 0
+  ok    47  expect files "$DIR/book/.scribodo/revisions/Chapter Two.md" "-save.md" 2
+  ok    49  expect element_w MenuItem0 50 600
+  ok    54  expect status "Renamed to Chapter 2.md"
+  ok    55  expect file "$DIR/book/Chapter 2.md" "Dvořák waited. Again."
+  ok    56  expect files "$DIR/book" "Chapter Two.md" 0
+  ok    57  expect files "$DIR/book/.scribodo/revisions/Chapter 2.md" "-save.md" 2
+  ok    58  expect lines "$DIR/book/.scribodo/renames.jsonl" "\"from\":\"Chapter Two.md\",\"to\":\"Chapter 2.md\"" 1
+  ok    61  expect file "$DIR/book/Chapter 2.md" "Dvořák waited. Again. Third."
+  ok    68  expect record "Dvo"
+  ok    75  expect status "Renamed to Second.md"
+  ok    78  expect selection 0 3
+  ok    79  expect status "Source passage selected"
+  ok    86  expect status "Imported 2 of 2 documents"
+  ok    87  expect file "$DIR/book/one 2.md" "An imported draft."
+  ok    88  expect file "$DIR/book/notes.txt" "Plain notes."
+  ok    89  expect file "$DIR/book/one.md" "Zoë Ångström climbed the stairs."
+  ok    90  expect file "$DIR/elsewhere/one.md" "An imported draft."
+  ok    96  expect status "Save the current document first"
+  ok   100  expect status "Opened other"
+  ok   101  expect element_w DocItem0 0 0
+  ok   103  expect lines "$DIR/.scribodo-state/recent.json" "book" 1
+  35 passed, 0 failed
+
+script tests/ui/revision_identity.scribo
+  ok    10  expect dirty no
+  ok    11  expect element_w RevItem0 10 2000
+  ok    16  expect dirty no
+  ok    17  expect element_w RevItem0 10 2000
+  ok    19  expect text "FIRST A"
+  ok    21  expect text "FIRST A"
+  ok    32  expect text "COLON"
+  ok    33  expect status "History identity or storage could not be verified"
+  ok    34  expect element_w RevItem0 0 0
+  ok    35  expect file "$DIR/ambiguous/.scribodo/revisions/part_one.md/20261125-120000-000-save.md" "MIXED"
+  10 passed, 0 failed
+
+script tests/ui/scroll.scribo
+  ok     3  expect scrolled no
+  ok     6  expect scrolled yes
+  ok     8  expect scrolled no
+  ok     9  expect visible 0 yes
+  ok    11  expect visible 16200 yes
+  ok    12  expect visible 0 no
+  ok    18  expect cursor_range 3000 16200
+  ok    19  expect scrolled yes
+  8 passed, 0 failed
+
+script tests/ui/smoke.scribo
+  ok     4  expect text "The fog came in off the fjord the way it always did in late October: quietly, completely, and without asking. Zoë Ångström stood at the top of the lighthouse stairs with a lantern in one hand and her grandmother’s letter in the other.\n\n“You’re late,” said Dvořák.\n"
+  ok     6  expect cursor 264
+  ok     8  expect dirty yes
+  ok    10  expect dirty no
+  4 passed, 0 failed
+
+script tests/ui/typing.scribo
+  ok     3  expect readonly no
+  ok     4  expect status "New file"
+  ok     6  expect text "The fog came in"
+  ok     8  expect text "The fog came "
+  ok    10  expect text "The fog "
+  ok    12  expect text "The fog came "
+  ok    14  expect text "The fog came in"
+  ok    17  expect cursor 13
+  ok    19  expect text "The fog in"
+  ok    21  expect cursor 10
+  ok    26  expect text "The fog in\nSecond\tline"
+  ok    29  expect dirty no
+  ok    30  expect status "Saved"
+  ok    31  expect file "$DIR/new.md" "The fog in\nSecond\tline"
+  ok    34  expect dirty yes
+  ok    36  expect text "The fog in\nSecond\tline"
+  ok    37  expect dirty no
+  ok    40  expect text "The fog in\nSecond\tline"
+  18 passed, 0 failed
+
+script tests/ui/writing.scribo
+  ok    11  expect status "Appearance saved"
+  ok    12  expect lines "$DIR/appearance.json" "\"theme\":\"paper\",\"typewriter\":true,\"dim_paragraphs\":true" 1
+  ok    16  expect scrolled yes
+  ok    22  expect selection 15323 15410
+  ok    25  expect selection 15323 15327
+  ok    32  expect lines "$DIR/appearance.json" "\"theme\":\"paper\"" 1
+  ok    35  expect status "Focus mode"
+  ok    36  expect element_w Explorer 0 0
+  ok    37  expect element_w Chat 0 0
+  ok    38  expect element_w Editor 1200 1500
+  ok    40  expect dirty yes
+  ok    45  expect element_w Explorer 205 215
+  ok    46  expect element_w Chat 410 430
+  ok    49  expect element_w Chat 0 0
+  ok    51  expect element_w Chat 410 430
+  ok    54  expect element_w Recall 255 265
+  ok    55  expect element_w Explorer 205 215
+  ok    61  expect lines "$DIR/appearance.json" "\"theme\":\"dark\",\"typewriter\":true" 1
+  18 passed, 0 failed
+

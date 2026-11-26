@@ -1,7 +1,8 @@
 # COMPOSITION-001 C02 — revision identity boundary
 
 **Date:** 2026-11-25. **Baseline:** `50286c2`.
-**State:** design and red contract probe; no production format change or data migration.
+**State:** verified C02 production repair; original contract and final acceptance gates green.
+No author data has been migrated.
 **Prototype review:** [REDTEAM-026](REDTEAM-026-revision-identity-prototype.md); original counts below are
 historical, with the remediated control and negative-control results recorded separately.
 **Plan:** [COMPOSITION-001](COMPOSITION-001-plan.md).
@@ -60,7 +61,8 @@ Other constraints discovered:
 production writer until rename/set-aside and import enumeration can use the same identity contract.**
 This is a temporary development boundary, not a permanent runtime backend flag or another shipped store.
 
-Evaluate two small representations in the isolated C02 harness:
+Compare the complete protocols in the isolated C02 harness (the literal candidate was added after the
+initial two-arm key experiment):
 
 1. **Full-byte reversible keys in a versioned namespace.** Directory components encode the complete
    basename, with explicit length and bounded components. No hash collision or name metadata is needed,
@@ -68,6 +70,9 @@ Evaluate two small representations in the isolated C02 harness:
 2. **Bounded digest key plus exact owner metadata.** A versioned directory uses an existing native SHA-256
    primitive; the full original name and format version are stored and checked, not inferred from the digest.
    This is shallower but adds a durable ownership publication/recovery boundary, especially across renames.
+3. **Complete literal basenames in a versioned namespace.** Use the same filesystem naming semantics as
+   the manuscript directory, without lossy transformation or a codec. Validate component/path bounds and
+   namespace separation; test archive, volume and legacy behavior before treating this as sufficient.
 
 The selection gate is not speed or aesthetics: choose the representation with the smaller complete,
 tested rename/archive/import/recovery protocol. No new crypto package, Unicode normalizer, global
@@ -157,7 +162,7 @@ recovery**. A digest path is 74 bytes versus A's maximum relative path of 528 by
 not runtime-memory or latency measurements. Native source-path bounds must reject a project+key path that
 does not fit rather than truncate it; A's longer key cannot be ignored merely because typical projects fit.
 
-**Working preference:** A, because it removes a separate owner-file commit and digest-binding failure mode.
+**Initial working preference before the literal arm:** A, because it removes a separate owner-file commit and digest-binding failure mode.
 Do not promote that preference yet: the prototype's rename/archive moves test directory topology only.
 It does not implement the app's source-name journal, logical archive generations, imported IDs, read-only
 legacy discovery or symlink-safe resolver. Those are the next selection gates. No production identity
@@ -171,3 +176,72 @@ assertions**, including seeded arbitrary-byte/corrupted-key properties; all five
 controls fail with assertion exit 1. The public-API probe distinguishes setup/control errors (exit 2)
 from expected unresolved product failures (exit 1). Its F2 result remains **52 checks, 12 failures,
 zero setup/control errors**. See the review/journal for commands and repository-gate outcomes.
+
+### Post-checkpoint discovery experiment
+
+REDTEAM-026 was committed and pushed as `1c1ab15` before this subsequent work. The isolated
+`journal/composition001/c02/resolver_probe.c` now exercises logical inventory, deleted-document histories,
+archive generations, active-authority duplication, failure-output clearing, known legacy ambiguity,
+symlink rejection and malformed identity markers. Its final standalone ASan/UBSan run passes **85 checks**,
+with no compiler or Clang-analyzer diagnostic. Marker fixtures are not valid production revision indexes;
+these results do not prove import, source hydration or crash recovery.
+
+A third, simpler candidate is now being compared: complete literal basenames under `.literal-v1/`.
+The same-volume filesystem supplies the same filename equivalence as the manuscript directory, without
+hex encoding or digest-owner metadata. Its maximum relative key is **267 bytes**, and the prototype keeps
+actual 255-byte directory names, long shared prefixes and colon/underscore identities distinct. Do not
+assume cross-volume/case/normalization parity without the planned volume tests. Literal archive and dated
+source-reference behavior remain unimplemented. Compare complete protocols before selecting a format;
+only the winner would enter production. F2 is still open.
+
+## Production integration under verification
+
+The current working implementation uses **complete literal basenames**, not the hex or digest candidates.
+It retains ordinary short history locations for compatibility and uses
+`.scribodo/revisions/.exact-v1/<complete-basename>` for names the old mapping would transform (including the
+199-byte boundary). New/empty histories receive a small `.format` path-format tag. An explicit author
+rename may also establish the new path format; the tag never certifies historical interpretations or
+reconstructs deleted ownership evidence.
+
+Existing transformed/truncated legacy buckets are not rewritten. An unverified old bucket that would be
+used by a lossy lookup causes refusal, even if a new path could be created beside it. Ordinary legacy
+literal labels remain readable; known competing sanitized filenames cause refusal instead of merging.
+That compatibility behavior is not proof about deleted historical owners.
+
+Reads, writes, snapshots, rename preflight, history moves/set-aside and SQL import discovery now share the
+file-history resolver. A revisions-root lock serializes namespace changes with readers/writers, including
+renames across two document directories; read-only histories do not need a newly created per-history lock
+file. Import enumerates logical complete names rather than assuming every physical directory is a document.
+New namespace tags are checked and corrupt tags fail closed. Index and snapshot reads reject final-component
+symlinks; no new symlink-resistance guarantee is claimed for arbitrary concurrent ancestor replacement.
+
+Archived generations use bounded unique virtual names and dated rename records containing the complete
+original name; no manuscript text or snapshot is renamed by truncating the original document identity.
+New snapshot tokens retain the leading legacy timestamp shape but add an exact microsecond timestamp and
+a random 128-bit identifier. Shared time parsing preserves old tokens and avoids millisecond-only name-reuse
+misrouting. Import resolves case/normalization aliases using actual history-directory device/inode equality,
+never string folding or content matching. History errors are displayed as unavailable, not “No revisions yet.”
+
+The initial move/log sequencing was replaced with a durable, replayable `.pending-move.json` receipt.
+It records full names, manuscript/history device+inode guards, a unique operation ID and exact event time.
+Under the exclusive namespace lock, replay moves only the recorded objects, syncs their parents, publishes
+the dated rename once, then removes/syncs the receipt. A malformed/conflicting receipt blocks access and
+remains intact; recovery never guesses identity from manuscript contents. Hardlinked manuscript renames
+are refused because identical inode numbers do not prove two names are one case/normalization alias.
+Project/document opens, source-name resolution and History access check recovery before using the namespace.
+Final-component symlinks are refused; concurrent hostile ancestor replacement remains outside the guarantee.
+
+Evidence so far: the original public contract passes **52 checks, zero failures and zero setup errors**.
+The final file-only recovery suite passes **1,145 checks** (48 interruption/control cases, legacy-layout
+publication, foreign-inode refusal, log refusal and long escaped names). Persistence faults pass **8,059
+checks**, including 392 one-shot/permanent rename allocation cases. The initial isolated SQL suite passes,
+including seven source identities through long/sanitized/Unicode names, rename/name reuse and export/reimport.
+Exact commands and coverage versions are in the progress journal; these are not final adoption claims.
+
+**Verification complete; checkpoint authorized 2026-11-26:** after the author restored the unlocked display,
+final file UI (524 assertions), case-sensitive-volume UI (3 assertions) and DB UI (317 assertions) pass,
+all exit 0. Final tests/sanitizers, analyzer, TSan, isolated DB/crash, public contract and five negative controls pass. The
+[integration review](REDTEAM-027-revision-identity-integration.md) verifies immediate first-reader
+oracles and the uncertain-retry result repair. SIGKILL tests are not power-loss proof, and scripted UI tests
+do not certify real IME/accessibility or model quality. Do not use this uncommitted integration to migrate
+an author's data.
