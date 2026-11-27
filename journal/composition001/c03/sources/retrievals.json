@@ -1,0 +1,276 @@
+[
+  {
+    "url": "https://api.osv.dev/v1/vulns/CVE-2026-133710",
+    "file": "CVE-2026-133710.json",
+    "sha256": "sha256:d5cf3682e6f75763c3b2f8ed369edd45e2b1b60828f1ec3be2c47df97e890ccf",
+    "bytes": 13149,
+    "retrieved_utc": "2026-11-26T18:51:23.503565+00:00",
+    "headers": {
+      "Content-Type": "application/json",
+      "Date": "Thu, 26 Nov 2026 18:51:23 GMT"
+    }
+  },
+  {
+    "url": "https://github.com/ggml-org/llama.cpp/commit/50518b64c6f2191a116d2760042f106c4b3387d7.patch",
+    "file": "50518b64c6f2191a116d2760042f106c4b3387d7.patch",
+    "sha256": "sha256:89b8760a6c215b383ff1041210f2dc5e7731b79493c3141459c2494d1b431958",
+    "bytes": 2228,
+    "retrieved_utc": "2026-11-26T18:51:23.938735+00:00",
+    "headers": {
+      "Content-Type": "text/plain; charset=utf-8",
+      "ETag": "W/\"89b8760a6c215b383ff1041210f2dc5e\"",
+      "Date": "Thu, 26 Nov 2026 18:51:23 GMT"
+    }
+  },
+  {
+    "url": "https://api.github.com/repos/ggml-org/llama.cpp/commits/50518b64c6f2191a116d2760042f106c4b3387d7",
+    "file": "50518b64c6f2191a116d2760042f106c4b3387d7-commit.json",
+    "sha256": "sha256:7f93b63bb72fcddb61dc7d302c7c87b7ec4dfc5cd06397bb91b8fea9d0e1cc5b",
+    "bytes": 7220,
+    "retrieved_utc": "2026-11-26T18:51:24.381892+00:00",
+    "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "ETag": "W/\"7f93b63bb72fcddb61dc7d302c7c87b7ec4dfc5cd06397bb91b8fea9d0e1cc5b\"",
+      "Last-Modified": "Thu, 19 Nov 2026 22:21:03 GMT",
+      "Date": "Thu, 26 Nov 2026 18:51:24 GMT"
+    }
+  },
+  {
+    "url": "https://api.osv.dev/v1/vulns/CVE-2026-134540",
+    "file": "CVE-2026-134540.json",
+    "sha256": "sha256:c85d43aff9d7a2464a2ce83919ceadd834582ef402ed2d179be361723bfc1bf9",
+    "bytes": 7883,
+    "retrieved_utc": "2026-11-26T18:51:24.564984+00:00",
+    "headers": {
+      "Content-Type": "application/json",
+      "Date": "Thu, 26 Nov 2026 18:51:24 GMT"
+    }
+  },
+  {
+    "url": "https://github.com/ggml-org/llama.cpp/commit/9f26fe11c73c7e74a5e99e7f1b6370ad8e1cb22d.patch",
+    "file": "9f26fe11c73c7e74a5e99e7f1b6370ad8e1cb22d.patch",
+    "sha256": "sha256:ec05b6b2186b3b2e39691a77b25257e502246b3237dc38f70966833ed5e9125e",
+    "bytes": 1006,
+    "retrieved_utc": "2026-11-26T18:51:24.938088+00:00",
+    "headers": {
+      "Content-Type": "text/plain; charset=utf-8",
+      "ETag": "W/\"ec05b6b2186b3b2e39691a77b25257e5\"",
+      "Date": "Thu, 26 Nov 2026 18:51:24 GMT"
+    }
+  },
+  {
+    "url": "https://api.github.com/repos/ggml-org/llama.cpp/commits/9f26fe11c73c7e74a5e99e7f1b6370ad8e1cb22d",
+    "file": "9f26fe11c73c7e74a5e99e7f1b6370ad8e1cb22d-commit.json",
+    "sha256": "sha256:ae714bd2aa3e8aac77b5fa6eda06bfe860f2a1e52785febc2575c5557c948ff0",
+    "bytes": 5708,
+    "retrieved_utc": "2026-11-26T18:51:25.328389+00:00",
+    "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "ETag": "W/\"ae714bd2aa3e8aac77b5fa6eda06bfe860f2a1e52785febc2575c5557c948ff0\"",
+      "Last-Modified": "Sat, 14 Nov 2026 23:32:37 GMT",
+      "Date": "Thu, 26 Nov 2026 18:51:25 GMT"
+    }
+  },
+  {
+    "url": "https://api.osv.dev/v1/vulns/CVE-2026-137057",
+    "file": "CVE-2026-137057.json",
+    "sha256": "sha256:97fb5bc0e4948fa7a1bd758c9378a20342f6ebb097abda7b45b3b67d037b4d8d",
+    "bytes": 35191,
+    "retrieved_utc": "2026-11-26T18:51:25.561103+00:00",
+    "headers": {
+      "Content-Type": "application/json",
+      "Date": "Thu, 26 Nov 2026 18:51:25 GMT"
+    }
+  },
+  {
+    "url": "https://github.com/ggml-org/llama.cpp/commit/46eb1742db6d2caec1bfa848c5702b1bdcc815e5.patch",
+    "file": "46eb1742db6d2caec1bfa848c5702b1bdcc815e5.patch",
+    "sha256": "sha256:cb19e345ad26e691f132c85c55822ca54f26d217b52071e2468aef2983dfd57b",
+    "bytes": 991,
+    "retrieved_utc": "2026-11-26T18:51:25.922111+00:00",
+    "headers": {
+      "Content-Type": "text/plain; charset=utf-8",
+      "ETag": "W/\"cb19e345ad26e691f132c85c55822ca5\"",
+      "Date": "Thu, 26 Nov 2026 18:51:25 GMT"
+    }
+  },
+  {
+    "url": "https://api.github.com/repos/ggml-org/llama.cpp/commits/46eb1742db6d2caec1bfa848c5702b1bdcc815e5",
+    "file": "46eb1742db6d2caec1bfa848c5702b1bdcc815e5-commit.json",
+    "sha256": "sha256:a6db8989823f5283bfae865220d3e793578e2a731e9b1669320682325e75392f",
+    "bytes": 5625,
+    "retrieved_utc": "2026-11-26T18:51:26.373498+00:00",
+    "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "ETag": "W/\"a6db8989823f5283bfae865220d3e793578e2a731e9b1669320682325e75392f\"",
+      "Last-Modified": "Sat, 21 Nov 2026 06:00:30 GMT",
+      "Date": "Thu, 26 Nov 2026 18:51:26 GMT"
+    }
+  },
+  {
+    "url": "https://api.osv.dev/v1/vulns/CVE-2026-137567",
+    "file": "CVE-2026-137567.json",
+    "sha256": "sha256:7314f432256062bb8cec2e72943f34d77df7a27aa9448c617cd515f457ecdeb5",
+    "bytes": 10872,
+    "retrieved_utc": "2026-11-26T18:51:26.576065+00:00",
+    "headers": {
+      "Content-Type": "application/json",
+      "Date": "Thu, 26 Nov 2026 18:51:26 GMT"
+    }
+  },
+  {
+    "url": "https://github.com/ggml-org/llama.cpp/commit/03813c56e47f6cd7a9b9bc2ad8edcebed88ce342.patch",
+    "file": "03813c56e47f6cd7a9b9bc2ad8edcebed88ce342.patch",
+    "sha256": "sha256:ebe53f862f7ea3a619b18db091cf00654bbecf5251d727fc125afc05adfcb3a6",
+    "bytes": 87276,
+    "retrieved_utc": "2026-11-26T18:51:27.052619+00:00",
+    "headers": {
+      "Content-Type": "text/plain; charset=utf-8",
+      "ETag": "W/\"ebe53f862f7ea3a619b18db091cf0065\"",
+      "Date": "Thu, 26 Nov 2026 18:51:26 GMT"
+    }
+  },
+  {
+    "url": "https://api.github.com/repos/ggml-org/llama.cpp/commits/03813c56e47f6cd7a9b9bc2ad8edcebed88ce342",
+    "file": "03813c56e47f6cd7a9b9bc2ad8edcebed88ce342-commit.json",
+    "sha256": "sha256:7b9d9cb0abd270bace863ac3af08dae79c8acf7a0a1efa76601aed9cee18c435",
+    "bytes": 95450,
+    "retrieved_utc": "2026-11-26T18:51:27.618738+00:00",
+    "headers": {
+      "Content-Type": "application/json; charset=utf-8",
+      "ETag": "W/\"7b9d9cb0abd270bace863ac3af08dae79c8acf7a0a1efa76601aed9cee18c435\"",
+      "Last-Modified": "Mon, 23 Nov 2026 14:28:40 GMT",
+      "Date": "Thu, 26 Nov 2026 18:51:27 GMT"
+    }
+  },
+  {
+    "url": "https://registry-1.docker.io/v2/library/mariadb/manifests/sha256:5e73baf8179b29f115101bb102763a47a017361f3e9792daccba6646c3ab1532",
+    "file": "mariadb-pinned.json",
+    "sha256": "sha256:5e73baf8179b29f115101bb102763a47a017361f3e9792daccba6646c3ab1532",
+    "bytes": 5133,
+    "retrieved_utc": "2026-11-26T18:51:28.191864+00:00",
+    "headers": {
+      "Content-Type": "application/vnd.oci.image.index.v1+json",
+      "Docker-Content-Digest": "sha256:5e73baf8179b29f115101bb102763a47a017361f3e9792daccba6646c3ab1532",
+      "ETag": "\"sha256:5e73baf8179b29f115101bb102763a47a017361f3e9792daccba6646c3ab1532\"",
+      "Date": "Thu, 26 Nov 2026 18:51:28 GMT"
+    }
+  },
+  {
+    "url": "https://registry-1.docker.io/v2/library/mariadb/manifests/sha256:f6eca93803e34766e787a96bad9e2ac5abbcdcb8e7f390a6f34e9bf3eee525e6",
+    "file": "mariadb-pinned-amd64-f6eca93803e3.json",
+    "sha256": "sha256:f6eca93803e34766e787a96bad9e2ac5abbcdcb8e7f390a6f34e9bf3eee525e6",
+    "bytes": 2479,
+    "retrieved_utc": "2026-11-26T18:51:28.499142+00:00",
+    "headers": {
+      "Content-Type": "application/vnd.oci.image.manifest.v1+json",
+      "Docker-Content-Digest": "sha256:f6eca93803e34766e787a96bad9e2ac5abbcdcb8e7f390a6f34e9bf3eee525e6",
+      "ETag": "\"sha256:f6eca93803e34766e787a96bad9e2ac5abbcdcb8e7f390a6f34e9bf3eee525e6\"",
+      "Date": "Thu, 26 Nov 2026 18:51:28 GMT"
+    }
+  },
+  {
+    "url": "https://registry-1.docker.io/v2/library/mariadb/blobs/sha256:3ead04fc44efca664e31dcba81eed32dd660597b27410a62113c6cf14dd6dc74",
+    "file": "mariadb-pinned-amd64-f6eca93803e3-config.json",
+    "sha256": "sha256:3ead04fc44efca664e31dcba81eed32dd660597b27410a62113c6cf14dd6dc74",
+    "bytes": 8773,
+    "retrieved_utc": "2026-11-26T18:51:29.019776+00:00",
+    "headers": {
+      "Content-Type": "application/octet-stream",
+      "ETag": "\"2a9bf2375e534c11641a38e17e6206b0\"",
+      "Last-Modified": "Wed, 11 Nov 2026 23:30:41 GMT",
+      "Date": "Thu, 26 Nov 2026 18:51:29 GMT"
+    }
+  },
+  {
+    "url": "https://registry-1.docker.io/v2/library/mariadb/manifests/sha256:7bbca77eb05b2f7f70ab0448f09f2e6db7721ce30611de7e783bd2c520bdbe62",
+    "file": "mariadb-pinned-arm64-7bbca77eb05b.json",
+    "sha256": "sha256:7bbca77eb05b2f7f70ab0448f09f2e6db7721ce30611de7e783bd2c520bdbe62",
+    "bytes": 2481,
+    "retrieved_utc": "2026-11-26T18:51:29.335054+00:00",
+    "headers": {
+      "Content-Type": "application/vnd.oci.image.manifest.v1+json",
+      "Docker-Content-Digest": "sha256:7bbca77eb05b2f7f70ab0448f09f2e6db7721ce30611de7e783bd2c520bdbe62",
+      "ETag": "\"sha256:7bbca77eb05b2f7f70ab0448f09f2e6db7721ce30611de7e783bd2c520bdbe62\"",
+      "Date": "Thu, 26 Nov 2026 18:51:29 GMT"
+    }
+  },
+  {
+    "url": "https://registry-1.docker.io/v2/library/mariadb/blobs/sha256:08e0749c8c94a20a53adc32169e21430cdbea0befe2707f25555a89084a34212",
+    "file": "mariadb-pinned-arm64-7bbca77eb05b-config.json",
+    "sha256": "sha256:08e0749c8c94a20a53adc32169e21430cdbea0befe2707f25555a89084a34212",
+    "bytes": 8781,
+    "retrieved_utc": "2026-11-26T18:51:29.873128+00:00",
+    "headers": {
+      "Content-Type": "application/octet-stream",
+      "ETag": "\"56fdf8202e871f41e72e09aeb4efc3d1\"",
+      "Last-Modified": "Wed, 11 Nov 2026 23:34:39 GMT",
+      "Date": "Thu, 26 Nov 2026 18:51:29 GMT"
+    }
+  },
+  {
+    "url": "https://registry-1.docker.io/v2/library/mariadb/manifests/11.4.13",
+    "file": "mariadb-tag.json",
+    "sha256": "sha256:a8992b5e5404d11e03c54a31d0c1bdea3fd116d283aa6d1a627551f29045309b",
+    "bytes": 5133,
+    "retrieved_utc": "2026-11-26T18:51:30.201991+00:00",
+    "headers": {
+      "Content-Type": "application/vnd.oci.image.index.v1+json",
+      "Docker-Content-Digest": "sha256:a8992b5e5404d11e03c54a31d0c1bdea3fd116d283aa6d1a627551f29045309b",
+      "ETag": "\"sha256:a8992b5e5404d11e03c54a31d0c1bdea3fd116d283aa6d1a627551f29045309b\"",
+      "Date": "Thu, 26 Nov 2026 18:51:30 GMT"
+    }
+  },
+  {
+    "url": "https://registry-1.docker.io/v2/library/mariadb/manifests/sha256:9c8b5172fa219e01913060f26c5498029999657fb9b7e7bbd0ca9e87f51020e2",
+    "file": "mariadb-tag-amd64-9c8b5172fa21.json",
+    "sha256": "sha256:9c8b5172fa219e01913060f26c5498029999657fb9b7e7bbd0ca9e87f51020e2",
+    "bytes": 2479,
+    "retrieved_utc": "2026-11-26T18:51:30.521762+00:00",
+    "headers": {
+      "Content-Type": "application/vnd.oci.image.manifest.v1+json",
+      "Docker-Content-Digest": "sha256:9c8b5172fa219e01913060f26c5498029999657fb9b7e7bbd0ca9e87f51020e2",
+      "ETag": "\"sha256:9c8b5172fa219e01913060f26c5498029999657fb9b7e7bbd0ca9e87f51020e2\"",
+      "Date": "Thu, 26 Nov 2026 18:51:30 GMT"
+    }
+  },
+  {
+    "url": "https://registry-1.docker.io/v2/library/mariadb/blobs/sha256:2194236514de2a3170e28e208f9331f0cf9bbef02080be81e2c556a68bda20a9",
+    "file": "mariadb-tag-amd64-9c8b5172fa21-config.json",
+    "sha256": "sha256:2194236514de2a3170e28e208f9331f0cf9bbef02080be81e2c556a68bda20a9",
+    "bytes": 8770,
+    "retrieved_utc": "2026-11-26T18:51:30.929012+00:00",
+    "headers": {
+      "Content-Type": "application/octet-stream",
+      "ETag": "\"0ce6da12798009845cf92e18349e266a\"",
+      "Last-Modified": "Fri, 20 Nov 2026 03:29:27 GMT",
+      "Date": "Fri, 20 Nov 2026 05:38:09 GMT"
+    }
+  },
+  {
+    "url": "https://registry-1.docker.io/v2/library/mariadb/manifests/sha256:22f804c5522814840a1a6659267e4f61359834f96ef387e9f703f638fe1b708f",
+    "file": "mariadb-tag-arm64-22f804c55228.json",
+    "sha256": "sha256:22f804c5522814840a1a6659267e4f61359834f96ef387e9f703f638fe1b708f",
+    "bytes": 2481,
+    "retrieved_utc": "2026-11-26T18:51:31.245091+00:00",
+    "headers": {
+      "Content-Type": "application/vnd.oci.image.manifest.v1+json",
+      "Docker-Content-Digest": "sha256:22f804c5522814840a1a6659267e4f61359834f96ef387e9f703f638fe1b708f",
+      "ETag": "\"sha256:22f804c5522814840a1a6659267e4f61359834f96ef387e9f703f638fe1b708f\"",
+      "Date": "Thu, 26 Nov 2026 18:51:31 GMT"
+    }
+  },
+  {
+    "url": "https://registry-1.docker.io/v2/library/mariadb/blobs/sha256:ce276470f1f01d31ffa716317787b0f19ee64fcc299bf00efe391858ec76f9c1",
+    "file": "mariadb-tag-arm64-22f804c55228-config.json",
+    "sha256": "sha256:ce276470f1f01d31ffa716317787b0f19ee64fcc299bf00efe391858ec76f9c1",
+    "bytes": 8790,
+    "retrieved_utc": "2026-11-26T18:51:31.641424+00:00",
+    "headers": {
+      "Content-Type": "application/octet-stream",
+      "ETag": "\"2e55b0944249576a0ab810cd994e5a44\"",
+      "Last-Modified": "Fri, 20 Nov 2026 03:29:50 GMT",
+      "Date": "Fri, 20 Nov 2026 12:12:24 GMT"
+    }
+  }
+]

@@ -1,0 +1,9 @@
+{
+  "archive": "/Users/ztflynn/Library/Application Support/Scribodo/evidence/scribodo-evidence-2026-11-27-composition001-c03-redteam01.tar.gz",
+  "sha256": "305cbbdef4f240ab4db8264905548dcea0e9772654ce7432972033b5e3d3149a",
+  "bytes": 14765482,
+  "files": 264,
+  "manifest": "/Users/ztflynn/Library/Application Support/Scribodo/evidence/manifest-scribodo-evidence-2026-11-27-composition001-c03-redteam01.json",
+  "verification": "all member bytes rehashed without extraction",
+  "exit": 0
+}

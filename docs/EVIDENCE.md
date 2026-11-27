@@ -307,3 +307,35 @@ Its last verification items (journal `room-per-token.md`: the full-pool runs, th
 `scribodo-evidence-2026-11-17-room-c.tar.gz` (6 files under `build/room`), with
 `manifest-scribodo-evidence-2026-11-17-room-c.txt` and an entry in `SHA256SUMS`: `G5`, `G5b`, `summary4.txt` and
 `app/launch-morning.log`. Archive SHA-256: `c5f50a2bf0b0bc6d0535dce5015a169d37c1372ab379825239f9b01fcc547003`.
+
+The first COMPOSITION-001 C03 compatibility run is in
+`scribodo-evidence-2026-11-26-composition001-c03-parity01.tar.gz` (**201 files, 14,370,535 bytes**),
+with a JSON per-file hash manifest and a same-basename `.sha256` sidecar in the existing evidence folder:
+
+- `c03/parity-01/`: full F32 reference distributions, baseline/candidate replies and verbose server logs,
+  artifact identity metadata and comparison;
+- `c03/candidate-build/`: CMake cache and generated link commands;
+- `c03/reference-source/`: pinned reference Python/configuration files, not weights;
+- `source/`: the capture/probe/review scripts, their logs/public-source evidence and unchanged legacy helpers.
+
+All archive members were read back and SHA-256 checked without extraction. No model weights, binaries,
+author data or API-key files are included. The malformed-input proposal was excluded and remains unexecuted.
+Archive SHA-256: `201847a31561b2c9383ad059eb52e268df19e1e330e2e949c9e2c069bd61ffc1`.
+The receipt is `journal/composition001/c03/parity-archive.json`. These observations are first-pass
+compatibility evidence, not production pin adoption or final acceptance.
+
+The REDTEAM-028 working-tree verification is in
+`scribodo-evidence-2026-11-27-composition001-c03-redteam01.tar.gz`
+(**264 files, 14,765,482 bytes**), with per-file JSON manifest and `.sha256` sidecar.
+`c03/redteam-evidence01/` contains fresh `parity-02` distributions and all `redteam-gates01` live adapter,
+schema/slot/Qwen-role, full test/analyzer/sanitizer/TSan logs, raw bodies and exit ledgers.
+It also snapshots C03 tooling, the Makefile/regression suite, unchanged helpers and candidate CMake/link
+configuration. All member bytes were rehashed on read-back; no weights, binaries or API-key files.
+SHA-256: `305cbbdef4f240ab4db8264905548dcea0e9772654ce7432972033b5e3d3149a`.
+Receipt: `journal/composition001/c03/redteam-archive.json`. Subsequent receipt/doc/push-driver edits
+are not retroactively part of that immutable archive.
+
+The conditional committed-snapshot verifier writes a separate
+`scribodo-evidence-2026-11-27-composition001-c03-committed01.tar.gz`, per-file manifest and checksum,
+before permitting the push. Its exact receipt is written to the runtime scratch directory as
+`committed01-archive-receipt.json`; the pipeline must exit 0, not merely create a tarball.

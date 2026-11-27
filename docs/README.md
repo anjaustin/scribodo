@@ -27,6 +27,8 @@ replaced it.
 | [COMPOSITION-001](COMPOSITION-001-plan.md) | **Active P0:** lightweight component adoption plan, decision gates and cross-session work ledger |
 | [COMPOSITION-001 revision identity](COMPOSITION-001-revision-identity.md) | Active C02 boundary map, legacy-ownership constraints and recovery evidence |
 | [REDTEAM-027](REDTEAM-027-revision-identity-integration.md) | C02 production identity/recovery review, remediations and acceptance limits |
+| [COMPOSITION-001 runtime security](COMPOSITION-001-runtime-security.md) | C03 advisory/manifest triage, isolated runtime compatibility and adoption gates |
+| [REDTEAM-028](REDTEAM-028-runtime-compatibility.md) | C03 acceptance-oracle, evidence-isolation and lifecycle review |
 | [REDTEAM-026](REDTEAM-026-revision-identity-prototype.md) | C02 prototype confinement, test-oracle and red-evidence review |
 | [REDTEAM-025](REDTEAM-025-composition-save-state.md) | Adversarial C01 save-state review, remediations and verification boundaries |
 | [PRODUCT-GAPS](PRODUCT-GAPS.md) | The five product-readiness gaps (GAP-001 to 005) and the working order |
@@ -108,6 +110,7 @@ No REDTEAM-002 exists.
 | [023](REDTEAM-023-native-services-and-batch.md) | The native services and the micro-batch |
 | [024](REDTEAM-024-chat-lifecycle.md) | Archive, groups and delete for chats |
 | [025](REDTEAM-025-composition-save-state.md), [026](REDTEAM-026-revision-identity-prototype.md), [027](REDTEAM-027-revision-identity-integration.md) | Lightweight composition: save-state guards, identity prototype and production namespace recovery |
+| [028](REDTEAM-028-runtime-compatibility.md) | Runtime compatibility checkpoint: fail-closed evidence, isolated model verification and adoption limits |
 
 ## Outside `docs/`
 

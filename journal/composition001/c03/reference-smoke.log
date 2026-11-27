@@ -1,0 +1,15 @@
+torch 2.15.0
+transformers 5.22.1
+numpy 2.5.4
+huggingface_hub 2.4.0
+tokenizers 0.23.3
+safetensors 0.8.0
+requests 2.34.2
+torch device gate: CPU reference, F32 parameter load requested by existing harness 2.15.0
+tokenizer class TokenizersBackend short prompt lengths [22, 35, 27, 46]
+build/llama/bin/llama-server exit 0 version: 0.9.0-dev (build 12116, commit 5851a8e50)
+built with AppleClang 21.0.0.21000101 for Darwin arm64
+
+/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-c03-runtime.D8CKUp/build/bin/llama-server exit 0 version: 1.0.0-dev (build 12658, commit 03813c56e)
+built with AppleClang 21.0.0.21000101 for Darwin arm64
+

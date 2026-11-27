@@ -1,0 +1,48 @@
+From 50518b64c6f2191a116d2760042f106c4b3387d7 Mon Sep 17 00:00:00 2001
+From: Imdadullah Mohammed <7274724+imdadvs@users.noreply.github.com>
+Date: Fri, 20 Nov 2026 09:21:03 +1100
+Subject: [PATCH] model : hrm : do not compute slot count as uint32_t (#32601)
+
+load_arch_hparams multiplies n_hrm_layers_per_stack, n_hrm_h_cycles and
+(n_hrm_l_cycles + 1) into a uint32_t, then asserts the product equals
+block_count.
+
+Any factors whose true product is block_count + k*2^32 still pass the
+assert; 1073741825 * 2 * 2 = 2^32 + 4 compares equal to block_count = 4.
+
+load_arch_tensors iterates the same three values in int and writes past
+the end of the block_count-sized layers vector.
+---
+ src/models/hrm-text.cpp | 13 +++++++++++--
+ 1 file changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/src/models/hrm-text.cpp b/src/models/hrm-text.cpp
+index 8e3b34c57580..4c3d52e32702 100644
+--- a/src/models/hrm-text.cpp
++++ b/src/models/hrm-text.cpp
+@@ -1,5 +1,7 @@
+ #include "models.h"
+ 
++#include <cinttypes>
++
+ // HRM-Text: alternating low/high transformer stacks over the same token stream.
+ // Reference: HrmTextModel in transformers, DFM Mimir 1B.
+ 
+@@ -19,8 +21,15 @@ void llama_model_hrm_text::load_arch_hparams(llama_model_loader & ml) {
+     GGML_ASSERT(hparams.n_hrm_l_cycles > 0);
+ 
+     // the GGUF block count is the expanded cache-slot count
+-    const uint32_t n_slot = hparams.n_hrm_layers_per_stack * hparams.n_hrm_h_cycles * (hparams.n_hrm_l_cycles + 1);
+-    GGML_ASSERT(hparams.n_layer() == n_slot);
++    // 64-bit: a 32-bit product can wrap and match n_layer(), then load_arch_tensors() indexes past model.layers
++    const uint64_t n_slot = (uint64_t) hparams.n_hrm_layers_per_stack * hparams.n_hrm_h_cycles * (hparams.n_hrm_l_cycles + 1);
++    if (hparams.n_hrm_layers_per_stack >= hparams.n_layer() || n_slot != hparams.n_layer()) {
++        throw std::runtime_error(format(
++            "hrm: cache-slot count %" PRIu64 " (layers_per_stack %u, h_cycles %u, l_cycles %u) "
++            "does not match block_count %u",
++            n_slot, hparams.n_hrm_layers_per_stack, hparams.n_hrm_h_cycles,
++            hparams.n_hrm_l_cycles, hparams.n_layer()));
++    }
+ 
+     switch (hparams.n_embd) {
+         case 1536:

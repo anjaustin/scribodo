@@ -1,0 +1,27 @@
+From 9f26fe11c73c7e74a5e99e7f1b6370ad8e1cb22d Mon Sep 17 00:00:00 2001
+From: IsNot <209144869@qq.com>
+Date: Sun, 15 Nov 2026 07:32:37 +0800
+Subject: [PATCH] common : reject out-of-range grammar_triggers type instead of
+ aborting (#30835) (#31478)
+
+* common : reject out-of-range grammar_triggers type instead of aborting (#30835)
+
+* tests : remove the invalid grammar trigger type regression test (#30835)
+---
+ common/sampling.cpp | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/common/sampling.cpp b/common/sampling.cpp
+index 564fa9c4dbf4..0fe1c7405e14 100644
+--- a/common/sampling.cpp
++++ b/common/sampling.cpp
+@@ -255,7 +255,8 @@ struct common_sampler * common_sampler_init(
+                     break;
+                 }
+                 default:
+-                    GGML_ASSERT(false && "unknown trigger type");
++                    throw std::runtime_error(
++                        "unknown grammar trigger type: " + std::to_string(trigger.type));
+             }
+         }
+ 

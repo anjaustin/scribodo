@@ -1,0 +1,255 @@
+diff --git a/ggml/src/ggml-metal/kernels/mul_mm.metal b/ggml/src/ggml-metal/kernels/mul_mm.metal
+index edcc061d5..fab720097 100644
+--- a/ggml/src/ggml-metal/kernels/mul_mm.metal
++++ b/ggml/src/ggml-metal/kernels/mul_mm.metal
+@@ -895,7 +895,8 @@ typedef decltype(kernel_mul_mm<half, half4x4, simdgroup_half8x8, half, half2x4,
+ template [[host_name("kernel_mul_mm_f32_f32")]]     kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   float4x4,      1,     dequantize_f32,     float,  float4x4,  float, float2x4>;
+ template [[host_name("kernel_mul_mm_f16_f32")]]     kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   half4x4,       1,     dequantize_f16,     half,   half4x4,   float, float2x4>;
+ #if defined(GGML_METAL_HAS_BF16)
+-template [[host_name("kernel_mul_mm_bf16_f32")]]    kernel mul_mm_t kernel_mul_mm<bfloat, bfloat4x4, simdgroup_bfloat8x8, bfloat, bfloat2x4, simdgroup_bfloat8x8, bfloat4x4,     1,     dequantize_bf16,    bfloat, bfloat4x4, float, float2x4>;
++template [[host_name("kernel_mul_mm_bf16_f32")]]    kernel mul_mm_t kernel_mul_mm<bfloat, bfloat4x4, simdgroup_bfloat8x8, bfloat, bfloat2x4, simdgroup_bfloat8x8, bfloat4x4,     1,     dequantize_bf16,    bfloat, bfloat4x4, float,  float2x4>;
++template [[host_name("kernel_mul_mm_bf16_bf16")]]   kernel mul_mm_t kernel_mul_mm<bfloat, bfloat4x4, simdgroup_bfloat8x8, bfloat, bfloat2x4, simdgroup_bfloat8x8, bfloat4x4,     1,     dequantize_bf16,    bfloat, bfloat4x4, bfloat, bfloat2x4>;
+ #endif
+ template [[host_name("kernel_mul_mm_q1_0_f32")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q1_0,    8,     dequantize_q1_0,    float,  float4x4,  float, float2x4>;
+ template [[host_name("kernel_mul_mm_q2_0_f32")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q2_0,    4,     dequantize_q2_0,    float,  float4x4,  float, float2x4>;
+diff --git a/ggml/src/ggml-metal/kernels/mul_mv.metal b/ggml/src/ggml-metal/kernels/mul_mv.metal
+index 5d012e484..de9d76ff6 100644
+--- a/ggml/src/ggml-metal/kernels/mul_mv.metal
++++ b/ggml/src/ggml-metal/kernels/mul_mv.metal
+@@ -290,7 +290,7 @@ void mul_vec_q_n_f32_impl(
+         //yb += NSG*NQ*QK4_0;
+     }
+ 
+-    device float * dst_f32 = (device float *) dst + im*args.ne0*args.ne1 + r1*args.ne0;
++    device float * dst_f32 = (device float *) dst + (uint64_t)im*args.ne0*args.ne1 + (uint64_t)r1*args.ne0;
+ 
+     //helper_mv_reduce_and_write<NR0>(dst_f32, sumf, r0, args.ne01, tiisg, sgitg, shmem);
+ 
+diff --git a/ggml/src/ggml-metal/kernels/norm.metal b/ggml/src/ggml-metal/kernels/norm.metal
+index c76d0c7ff..983d9b5cb 100644
+--- a/ggml/src/ggml-metal/kernels/norm.metal
++++ b/ggml/src/ggml-metal/kernels/norm.metal
+@@ -236,37 +236,59 @@ typedef decltype(kernel_l2_norm_impl<float, float>) kernel_l2_norm_t;
+ template [[host_name("kernel_l2_norm_f32_f32")]]   kernel kernel_l2_norm_t kernel_l2_norm_impl<float,  float>;
+ template [[host_name("kernel_l2_norm_f32_f32_4")]] kernel kernel_l2_norm_t kernel_l2_norm_impl<float4, float4>;
+ 
++constant bool FC_group_norm_flat [[function_constant(FC_GROUP_NORM + 0)]];
++
+ kernel void kernel_group_norm_f32(
+         constant ggml_metal_kargs_group_norm & args,
+-        device const float * src0,
+-        device       float * dst,
++        device const char * src0,
++        device       char * dst,
+         threadgroup float  * buf [[threadgroup(0)]],
+-        uint tgpig[[threadgroup_position_in_grid]],
+-        uint tpitg[[thread_position_in_threadgroup]],
+-        uint sgitg[[simdgroup_index_in_threadgroup]],
+-        uint tiisg[[thread_index_in_simdgroup]],
+-        uint   ntg[[threads_per_threadgroup]]) {
+-    const int64_t ne = args.ne00*args.ne01*args.ne02;
+-    const int64_t gs = args.ne00*args.ne01*((args.ne02 + args.ngrp - 1) / args.ngrp);
++        uint3   tgpig[[threadgroup_position_in_grid]],
++        ushort3 tpitg[[thread_position_in_threadgroup]],
++        ushort  sgitg[[simdgroup_index_in_threadgroup]],
++        ushort  tiisg[[thread_index_in_simdgroup]],
++        ushort3   ntg[[threads_per_threadgroup]]) {
++    const int64_t ne00 = args.ne00;
++    const int64_t ne01 = args.ne01;
++    const int64_t ne02 = args.ne02;
+ 
+-    int start = tgpig * gs;
+-    int end   = start + gs;
++    const int64_t ngrp = args.ngrp;
+ 
+-    start += tpitg;
++    const int64_t i03 = tgpig.z; // batch index
++    const int64_t ig  = tgpig.x; // group index
+ 
+-    if (end >= ne) {
+-        end = ne;
+-    }
++    const int64_t cpg = (ne02 + ngrp - 1)/ngrp;
++
++    const int64_t c0 =  ig*cpg;
++    const int64_t c1 = (c0 + cpg < ne02) ? c0 + cpg : ne02;
++
++    const int64_t npf  = ne00*ne01;      // elements per channel
++    const int64_t gs   = npf*(c1 - c0);  // elements in this group
++
++    device const char * x03 = src0 + i03*args.nb03 + c0*args.nb02;
++    device       char * y03 = dst  + i03*args.nb3  + c0*args.nb2;
+ 
+     float tmp = 0.0f; // partial sum for thread in warp
+ 
+-    for (int j = start; j < end; j += ntg) {
+-        tmp += src0[j];
++    if (FC_group_norm_flat) {
++        device const float * x = (device const float *) x03;
++        for (int64_t e = tpitg.x; e < gs; e += ntg.x) {
++            tmp += x[e];
++        }
++    } else {
++        for (int64_t e = tpitg.x; e < gs; e += ntg.x) {
++            const int64_t i02 = c0 + e/npf;
++            const int64_t ir  = e - (i02 - c0)*npf;
++            const int64_t i01 = ir/ne00;
++            const int64_t i00 = ir - i01*ne00;
++
++            tmp += *(device const float *)(x03 + (i02 - c0)*args.nb02 + i01*args.nb01 + i00*sizeof(float));
++        }
+     }
+ 
+     threadgroup_barrier(mem_flags::mem_threadgroup);
+     tmp = simd_sum(tmp);
+-    if (ntg > N_SIMDWIDTH) {
++    if (ntg.x > N_SIMDWIDTH) {
+         if (sgitg == 0) {
+             buf[tiisg] = 0.0f;
+         }
+@@ -286,14 +308,31 @@ kernel void kernel_group_norm_f32(
+     const float mean = tmp / gs;
+     tmp = 0.0f;
+ 
+-    for (int j = start; j < end; j += ntg) {
+-        float xi = src0[j] - mean;
+-        dst[j] = xi;
+-        tmp += xi * xi;
++    if (FC_group_norm_flat) {
++        device const float * x = (device const float *) x03;
++        device       float * y = (device       float *) y03;
++        for (int64_t e = tpitg.x; e < gs; e += ntg.x) {
++            const float xi = x[e] - mean;
++            y[e] = xi;
++            tmp += xi*xi;
++        }
++    } else {
++        for (int64_t e = tpitg.x; e < gs; e += ntg.x) {
++            const int64_t i02 = c0 + e/npf;
++            const int64_t ir  = e - (i02 - c0)*npf;
++            const int64_t i01 = ir/ne00;
++            const int64_t i00 = ir - i01*ne00;
++
++            const float xi = *(device const float *)(x03 + (i02 - c0)*args.nb02 + i01*args.nb01 + i00*sizeof(float)) - mean;
++
++            *(device float *)(y03 + (i02 - c0)*args.nb2 + i01*args.nb1 + i00*sizeof(float)) = xi;
++
++            tmp += xi*xi;
++        }
+     }
+ 
+     tmp = simd_sum(tmp);
+-    if (ntg > N_SIMDWIDTH) {
++    if (ntg.x > N_SIMDWIDTH) {
+         if (sgitg == 0) {
+             buf[tiisg] = 0.0f;
+         }
+@@ -312,7 +351,20 @@ kernel void kernel_group_norm_f32(
+ 
+     const float variance = tmp / gs;
+     const float scale = 1.0f/sqrt(variance + args.eps);
+-    for (int j = start; j < end; j += ntg) {
+-        dst[j] *= scale;
++
++    if (FC_group_norm_flat) {
++        device float * y = (device float *) y03;
++        for (int64_t e = tpitg.x; e < gs; e += ntg.x) {
++            y[e] *= scale;
++        }
++    } else {
++        for (int64_t e = tpitg.x; e < gs; e += ntg.x) {
++            const int64_t i02 = c0 + e/npf;
++            const int64_t ir  = e - (i02 - c0)*npf;
++            const int64_t i01 = ir/ne00;
++            const int64_t i00 = ir - i01*ne00;
++
++            *(device float *)(y03 + (i02 - c0)*args.nb2 + i01*args.nb1 + i00*sizeof(float)) *= scale;
++        }
+     }
+ }
+diff --git a/src/models/lfm-base.cpp b/src/models/lfm-base.cpp
+index 74944c13c..03e59bd09 100644
+--- a/src/models/lfm-base.cpp
++++ b/src/models/lfm-base.cpp
+@@ -2,16 +2,12 @@
+ 
+ #include "llama-memory-recurrent.h"
+ 
+-#include <algorithm>
+-
+ llm_build_lfm_base::llm_build_lfm_base(const llm_graph_params & params) : llm_graph_context(params) {}
+ 
+-ggml_tensor * llm_build_lfm_base::build_lfm_shortconv(const llama_model & model,
+-                                                      const llama_memory_recurrent_context * mctx_recr,
++ggml_tensor * llm_build_lfm_base::build_lfm_shortconv(const llama_memory_recurrent_context * mctx_recr,
+                                                       llm_graph_input_rs * inp_recr,
+                                                       ggml_tensor * cur,
+                                                       int il) {
+-    const uint32_t kv_head      = mctx_recr->get_head();
+     const int64_t  n_seq_tokens = ubatch.n_seq_tokens;
+     const int64_t  n_seqs       = ubatch.n_seqs;
+     GGML_ASSERT(n_seqs != 0);
+@@ -55,20 +51,7 @@ ggml_tensor * llm_build_lfm_base::build_lfm_shortconv(const llama_model & model,
+     }
+     GGML_ASSERT(bx->ne[0] > conv->ne[0]);
+ 
+-    // write conv states: slot 0 = the final state, slot s = the state s tokens back (partial rollback)
+-    const int64_t K         = hparams.causal_attn && cparams.n_rs_seq > 0 ? (int64_t) cparams.n_rs_seq + 1 : 1;
+-    const int64_t n_written = std::min<int64_t>(n_seq_tokens, K);
+-    const auto    mem_size  = mctx_recr->get_size();
+-    const size_t  row_size  = ggml_row_size(conv_state->type, (int64_t) d_conv * n_embd);
+-
+-    for (int64_t slot = 0; slot < n_written; ++slot) {
+-        auto * conv_snap = ggml_view_3d(ctx0, bx, d_conv, bx->ne[1], bx->ne[2], bx->nb[1], bx->nb[2],
+-                                        (bx->ne[0] - d_conv - slot) * ggml_element_size(bx));
+-        ggml_build_forward_expand(gf, ggml_cpy(ctx0, conv_snap,
+-                                               ggml_view_2d(ctx0, conv_state, (int64_t) d_conv * n_embd, n_seqs,
+-                                                            conv_state->nb[1],
+-                                                            ((size_t) slot * mem_size + kv_head) * row_size)));
+-    }
++    build_conv_state_store(inp_recr, conv_state, bx, d_conv, 0);
+ 
+     auto * conv_kernel = model.layers[il].shortconv.conv;
+     auto * conv_out    = ggml_ssm_conv(ctx0, bx, conv_kernel);
+@@ -83,8 +66,7 @@ ggml_tensor * llm_build_lfm_base::build_lfm_shortconv(const llama_model & model,
+     return y;
+ }
+ 
+-ggml_tensor * llm_build_lfm_base::build_lfm_shortconv(const llama_model & model,
+-                                                      ggml_tensor * cur,
++ggml_tensor * llm_build_lfm_base::build_lfm_shortconv(ggml_tensor * cur,
+                                                       int il) {
+     const int64_t d_conv = hparams.n_shortconv_l_cache - 1;
+ 
+@@ -110,8 +92,7 @@ ggml_tensor * llm_build_lfm_base::build_lfm_shortconv(const llama_model & model,
+     return y;
+ }
+ 
+-ggml_tensor * llm_build_lfm_base::build_lfm_dense_ffn(const llama_model & model,
+-                                                      ggml_tensor * cur,
++ggml_tensor * llm_build_lfm_base::build_lfm_dense_ffn(ggml_tensor * cur,
+                                                       int il) {
+     GGML_ASSERT(!model.layers[il].ffn_up_b);
+     GGML_ASSERT(!model.layers[il].ffn_gate_b);
+@@ -123,8 +104,7 @@ ggml_tensor * llm_build_lfm_base::build_lfm_dense_ffn(const llama_model & model,
+         NULL, LLM_FFN_SILU, LLM_FFN_PAR, il);
+ }
+ 
+-ggml_tensor * llm_build_lfm_base::build_lfm_moe_ffn(const llama_model & model,
+-                                                    ggml_tensor * cur,
++ggml_tensor * llm_build_lfm_base::build_lfm_moe_ffn(ggml_tensor * cur,
+                                                     int il) {
+     return build_moe_ffn(cur,
+             model.layers[il].ffn_gate_inp,
+@@ -136,10 +116,5 @@ ggml_tensor * llm_build_lfm_base::build_lfm_moe_ffn(const llama_model & model,
+             LLM_FFN_SILU, true,
+             hparams.expert_weights_scale,
+             static_cast<llama_expert_gating_func_type>(hparams.expert_gating_func),
+-            il,
+-            nullptr,
+-            nullptr,
+-            model.layers[il].ffn_up_exps_s,
+-            model.layers[il].ffn_gate_exps_s,
+-            model.layers[il].ffn_down_exps_s);
++            il);
+ }

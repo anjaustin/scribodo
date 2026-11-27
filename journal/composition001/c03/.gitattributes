@@ -1,0 +1,6 @@
+# Raw evidence is byte-preserved (hashes include upstream/context whitespace).
+# Source scripts, tests and Markdown retain the normal whitespace checks.
+*.log -text whitespace=-blank-at-eol,-blank-at-eof
+*.diff -text whitespace=-blank-at-eol,-blank-at-eof
+sources/*.patch -text whitespace=-blank-at-eol,-blank-at-eof
+sources/*.json -text

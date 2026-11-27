@@ -1,0 +1,9 @@
+['/opt/homebrew/bin/python3.12', '--version'] exit 0 Python 3.12.15
+['uv', '--version'] exit 0 uv 0.13.6 (Homebrew 2026-10-26 aarch64-apple-darwin)
+['git', '-C', '/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-c03-runtime.D8CKUp/source', 'rev-parse', 'HEAD'] exit 0 03813c56e47f6cd7a9b9bc2ad8edcebed88ce342
+['git', '-C', '/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-c03-runtime.D8CKUp/source', 'status', '--short'] exit 0 
+tools/envs/venv-causal.lock dcd5780f9e4384a52bf749e21397d9b3bde1d5c243b45569fe4163fcbae5c575
+tools/model_check/lfm3_check.py 0f8b2f264a6ba86cf86230d95f9b52df2e18a168dbcd16b95b4b7082ede512ff
+tools/model_check/lfm3_redteam.py ff91144eaccde69ebb380300bb3f6e13e3162ebfcf60f166b6a9b4dd08f93119
+tools/model_check/gguf_identity.py aac1732f80abb830f0552145e6a22c054d80009e6929ff62af4ca2bacc265c8c
+existing server count 0

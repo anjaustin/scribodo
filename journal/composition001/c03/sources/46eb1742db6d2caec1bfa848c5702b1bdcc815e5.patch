@@ -1,0 +1,28 @@
+From 46eb1742db6d2caec1bfa848c5702b1bdcc815e5 Mon Sep 17 00:00:00 2001
+From: Daniel Kuts <kutz@ispras.ru>
+Date: Sat, 21 Nov 2026 09:00:30 +0300
+Subject: [PATCH] llama-grammar: Fix integer overflow (#32551)
+
+* llama-grammar: Fix integer overflow
+
+* Check incorrect values at parsing and bail out nicely
+
+* fix style
+---
+ src/llama-grammar.cpp | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/src/llama-grammar.cpp b/src/llama-grammar.cpp
+index bb853b1e5bea..9a0de14307e5 100644
+--- a/src/llama-grammar.cpp
++++ b/src/llama-grammar.cpp
+@@ -668,6 +668,9 @@ const char * llama_grammar_parser::parse_sequence(
+             if (max_times != UINT64_MAX && max_times > MAX_REPETITION_THRESHOLD) {
+                 max_times = UINT64_MAX;
+             }
++            if (max_times < min_times) {
++                throw std::runtime_error(std::string("incorrect number of repetitions"));
++            }
+             handle_repetitions(min_times, max_times);
+         } else {
+             break;

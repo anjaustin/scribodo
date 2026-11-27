@@ -1,0 +1,109 @@
+[  0%] Provisioning UI assets
+CMake Warning at /private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-c03-runtime.D8CKUp/source/scripts/ui-assets.cmake:621 (message):
+  UI: no assets available - building without an embedded UI.  In a
+  disconnected environment, download the pre-built UI from a llama.cpp
+  release at https://github.com/ggml-org/llama.cpp/releases and extract to
+  ui/apps/chat/dist.
+
+
+[  3%] Built target vendor-hash
+-- UI: assets unchanged, skipping embedding
+[  5%] Built target llama-common-base
+[  5%] Building CXX object vendor/cpp-httplib/CMakeFiles/cpp-httplib.dir/httplib.cpp.o
+[  5%] Built target llama-ui-assets
+[  8%] Built target ggml-base
+[  8%] Built target llama-ui
+[  8%] Built target ggml-blas
+[ 38%] Built target ggml-metal
+[ 45%] Built target ggml-cpu
+[ 47%] Built target ggml
+[ 64%] Built target llama
+[ 71%] Built target mtmd
+[ 71%] Linking CXX static library libcpp-httplib.a
+[ 71%] Built target cpp-httplib
+[ 72%] Building CXX object common/CMakeFiles/llama-common.dir/parsers/parsers.cpp.o
+[ 72%] Building CXX object common/CMakeFiles/llama-common.dir/parsers/gemma4.cpp.o
+[ 72%] Building CXX object common/CMakeFiles/llama-common.dir/parsers/functionary-v3-2.cpp.o
+[ 72%] Building CXX object common/CMakeFiles/llama-common.dir/parsers/cohere2moe.cpp.o
+[ 72%] Building CXX object common/CMakeFiles/llama-common.dir/parsers/deepseek.cpp.o
+[ 74%] Building CXX object common/CMakeFiles/llama-common.dir/parsers/gigachat-v3.cpp.o
+[ 74%] Building CXX object common/CMakeFiles/llama-common.dir/parsers/gpt-oss.cpp.o
+[ 74%] Building CXX object common/CMakeFiles/llama-common.dir/parsers/harmony-xml.cpp.o
+[ 74%] Building CXX object common/CMakeFiles/llama-common.dir/parsers/inkling.cpp.o
+[ 76%] Building CXX object common/CMakeFiles/llama-common.dir/parsers/k2-horizon.cpp.o
+[ 76%] Building CXX object common/CMakeFiles/llama-common.dir/parsers/kimi-k2.cpp.o
+[ 76%] Building CXX object common/CMakeFiles/llama-common.dir/parsers/kimi-k3.cpp.o
+[ 76%] Building CXX object common/CMakeFiles/llama-common.dir/parsers/ling3.cpp.o
+[ 76%] Building CXX object common/CMakeFiles/llama-common.dir/parsers/lfm2.cpp.o
+[ 77%] Building CXX object common/CMakeFiles/llama-common.dir/parsers/llm-jp-harmony.cpp.o
+[ 77%] Building CXX object common/CMakeFiles/llama-common.dir/parsers/minicpm5.cpp.o
+[ 77%] Building CXX object common/CMakeFiles/llama-common.dir/parsers/minimax-m3.cpp.o
+[ 77%] Building CXX object common/CMakeFiles/llama-common.dir/parsers/ministral3.cpp.o
+[ 79%] Building CXX object common/CMakeFiles/llama-common.dir/parsers/muse-glimmer.cpp.o
+[ 79%] Building CXX object common/CMakeFiles/llama-common.dir/parsers/muse-spark.cpp.o
+[ 79%] Building CXX object common/CMakeFiles/llama-common.dir/parsers/qwen3-coder.cpp.o
+[ 79%] Building CXX object common/CMakeFiles/llama-common.dir/parsers/translate-gemma.cpp.o
+[ 79%] Building CXX object common/CMakeFiles/llama-common.dir/arg.cpp.o
+[ 81%] Building CXX object common/CMakeFiles/llama-common.dir/chat-auto-parser-generator.cpp.o
+[ 81%] Building CXX object common/CMakeFiles/llama-common.dir/chat-auto-parser-helpers.cpp.o
+[ 81%] Building CXX object common/CMakeFiles/llama-common.dir/chat-diff-analyzer.cpp.o
+[ 81%] Building CXX object common/CMakeFiles/llama-common.dir/chat-peg-parser.cpp.o
+[ 81%] Building CXX object common/CMakeFiles/llama-common.dir/chat-tts-norm.cpp.o
+[ 83%] Building CXX object common/CMakeFiles/llama-common.dir/chat.cpp.o
+[ 83%] Building CXX object common/CMakeFiles/llama-common.dir/common.cpp.o
+[ 83%] Building CXX object common/CMakeFiles/llama-common.dir/console.cpp.o
+[ 83%] Building CXX object common/CMakeFiles/llama-common.dir/debug.cpp.o
+[ 84%] Building CXX object common/CMakeFiles/llama-common.dir/download.cpp.o
+[ 84%] Building CXX object common/CMakeFiles/llama-common.dir/fit.cpp.o
+[ 84%] Building CXX object common/CMakeFiles/llama-common.dir/file-lock.cpp.o
+[ 84%] Building CXX object common/CMakeFiles/llama-common.dir/hf-cache.cpp.o
+[ 84%] Building CXX object common/CMakeFiles/llama-common.dir/imatrix-loader.cpp.o
+[ 86%] Building CXX object common/CMakeFiles/llama-common.dir/json-schema-to-grammar.cpp.o
+[ 86%] Building CXX object common/CMakeFiles/llama-common.dir/json-schema.cpp.o
+[ 86%] Building CXX object common/CMakeFiles/llama-common.dir/json.cpp.o
+[ 86%] Building CXX object common/CMakeFiles/llama-common.dir/llguidance.cpp.o
+[ 88%] Building CXX object common/CMakeFiles/llama-common.dir/log.cpp.o
+[ 88%] Building CXX object common/CMakeFiles/llama-common.dir/ngram-cache.cpp.o
+[ 88%] Building CXX object common/CMakeFiles/llama-common.dir/ngram-map.cpp.o
+[ 88%] Building CXX object common/CMakeFiles/llama-common.dir/ngram-mod.cpp.o
+[ 88%] Building CXX object common/CMakeFiles/llama-common.dir/peg-parser.cpp.o
+[ 89%] Building CXX object common/CMakeFiles/llama-common.dir/preset.cpp.o
+[ 89%] Building CXX object common/CMakeFiles/llama-common.dir/reasoning-budget.cpp.o
+[ 89%] Building CXX object common/CMakeFiles/llama-common.dir/sampling.cpp.o
+[ 89%] Building CXX object common/CMakeFiles/llama-common.dir/speculative.cpp.o
+[ 89%] Building CXX object common/CMakeFiles/llama-common.dir/subproc.cpp.o
+[ 91%] Building CXX object common/CMakeFiles/llama-common.dir/trie.cpp.o
+[ 91%] Building CXX object common/CMakeFiles/llama-common.dir/unicode.cpp.o
+[ 91%] Building CXX object common/CMakeFiles/llama-common.dir/jinja/lexer.cpp.o
+[ 91%] Building CXX object common/CMakeFiles/llama-common.dir/jinja/parser.cpp.o
+[ 93%] Building CXX object common/CMakeFiles/llama-common.dir/jinja/runtime.cpp.o
+[ 93%] Building CXX object common/CMakeFiles/llama-common.dir/jinja/value.cpp.o
+[ 93%] Building CXX object common/CMakeFiles/llama-common.dir/jinja/string.cpp.o
+[ 93%] Building CXX object common/CMakeFiles/llama-common.dir/jinja/caps.cpp.o
+[ 93%] Linking CXX static library libllama-common.a
+[ 93%] Built target llama-common
+[ 96%] Built target server-context
+[ 96%] Building CXX object tools/server/CMakeFiles/llama-server-impl.dir/server.cpp.o
+[ 96%] Building CXX object tools/server/CMakeFiles/llama-server-impl.dir/server-connect.cpp.o
+[ 96%] Building CXX object tools/server/CMakeFiles/llama-server-impl.dir/server-http.cpp.o
+[ 98%] Building CXX object tools/server/CMakeFiles/llama-server-impl.dir/server-models-sched.cpp.o
+[ 98%] Building CXX object tools/server/CMakeFiles/llama-server-impl.dir/server-models.cpp.o
+[ 98%] Linking CXX static library libllama-server-impl.a
+[ 98%] Built target llama-server-impl
+[ 98%] Building CXX object tools/server/CMakeFiles/llama-server.dir/main.cpp.o
+[100%] Linking CXX executable ../../bin/llama-server
+[100%] Built target llama-server
+[  5%] Built target ggml-base
+[  5%] Built target ggml-blas
+[ 57%] Built target ggml-metal
+[ 68%] Built target ggml-cpu
+[ 71%] Built target ggml
+[100%] Built target llama
+[100%] Built target test-grammar-parser
+[  5%] Built target ggml-base
+[  5%] Built target ggml-blas
+[ 55%] Built target ggml-metal
+[ 66%] Built target ggml-cpu
+[ 69%] Built target ggml
+[ 97%] Built target llama
+[100%] Built target test-sampling

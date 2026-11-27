@@ -1,0 +1,44 @@
+otool -L build/llama/bin/llama-server exit 0
+build/llama/bin/llama-server:
+	/System/Library/Frameworks/Accelerate.framework/Versions/A/Accelerate (compatibility version 1.0.0, current version 4.0.0)
+	/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)
+	/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation (compatibility version 300.0.0, current version 5026.5.4)
+	/System/Library/Frameworks/Metal.framework/Versions/A/Metal (compatibility version 1.0.0, current version 373.2.0)
+	/System/Library/Frameworks/MetalKit.framework/Versions/A/MetalKit (compatibility version 1.0.0, current version 173.7.0)
+	/usr/lib/libc++.1.dylib (compatibility version 1.0.0, current version 2100.43.0)
+	/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5026.5.4)
+	/usr/lib/libobjc.A.dylib (compatibility version 1.0.0, current version 228.0.0)
+otool -L /private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-c03-runtime.D8CKUp/build/bin/llama-server exit 0
+/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-c03-runtime.D8CKUp/build/bin/llama-server:
+	/System/Library/Frameworks/Accelerate.framework/Versions/A/Accelerate (compatibility version 1.0.0, current version 4.0.0)
+	/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)
+	/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation (compatibility version 300.0.0, current version 5026.5.4)
+	/System/Library/Frameworks/Metal.framework/Versions/A/Metal (compatibility version 1.0.0, current version 373.2.0)
+	/System/Library/Frameworks/MetalKit.framework/Versions/A/MetalKit (compatibility version 1.0.0, current version 173.7.0)
+	/opt/homebrew/opt/openssl@4/lib/libssl.4.dylib (compatibility version 4.0.0, current version 4.0.0)
+	/opt/homebrew/opt/openssl@4/lib/libcrypto.4.dylib (compatibility version 4.0.0, current version 4.0.0)
+	/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0, current version 5026.5.4)
+	/System/Library/Frameworks/Security.framework/Versions/A/Security (compatibility version 1.0.0, current version 61901.120.67)
+	/usr/lib/libc++.1.dylib (compatibility version 1.0.0, current version 2100.43.0)
+	/usr/lib/libobjc.A.dylib (compatibility version 1.0.0, current version 228.0.0)
+cache build/llama/CMakeCache.txt
+BUILD_SHARED_LIBS:BOOL=OFF
+CMAKE_CXX_COMPILER:FILEPATH=/usr/bin/c++
+GGML_RPC:BOOL=OFF
+LLAMA_BUILD_TESTS:BOOL=OFF
+LLAMA_CURL:UNINITIALIZED=OFF
+LLAMA_OPENSSL:BOOL=ON
+OPENSSL_CRYPTO_LIBRARY:FILEPATH=OPENSSL_CRYPTO_LIBRARY-NOTFOUND
+OPENSSL_INCLUDE_DIR:PATH=OPENSSL_INCLUDE_DIR-NOTFOUND
+OPENSSL_SSL_LIBRARY:FILEPATH=OPENSSL_SSL_LIBRARY-NOTFOUND
+cache /private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-c03-runtime.D8CKUp/build/CMakeCache.txt
+BUILD_SHARED_LIBS:BOOL=OFF
+CMAKE_CXX_COMPILER:FILEPATH=/usr/bin/c++
+GGML_RPC:BOOL=OFF
+LLAMA_BUILD_TESTS:BOOL=ON
+LLAMA_CURL:UNINITIALIZED=OFF
+LLAMA_OPENSSL:BOOL=ON
+OPENSSL_CRYPTO_LIBRARY:FILEPATH=/opt/homebrew/Cellar/openssl@4/4.1.0/lib/libcrypto.dylib
+OPENSSL_INCLUDE_DIR:PATH=/opt/homebrew/Cellar/openssl@4/4.1.0/include
+OPENSSL_SSL_LIBRARY:FILEPATH=/opt/homebrew/Cellar/openssl@4/4.1.0/lib/libssl.dylib
+reference interpreter present False

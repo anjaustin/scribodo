@@ -1,0 +1,4 @@
+docs/COMPOSITION-001-runtime-security.md:21: build/launch is in no archive, not declared not-evidence (tests/fixtures/evidence_not_archived.txt), not recorded as lost (tests/fixtures/evidence_lost.txt)
+docs/COMPOSITION-001-runtime-security.md:60: build/link is in no archive, not declared not-evidence (tests/fixtures/evidence_not_archived.txt), not recorded as lost (tests/fixtures/evidence_lost.txt)
+journal/composition001-progress.md:708: build/link is in no archive, not declared not-evidence (tests/fixtures/evidence_not_archived.txt), not recorded as lost (tests/fixtures/evidence_lost.txt)
+evidence_check: 3 violation(s) over 1159 citations (956 archived, 34 build-folder, 50 lost, 116 not-evidence, 3 unarchived); files looked for under /Users/ztflynn/Projects/scribodo/build

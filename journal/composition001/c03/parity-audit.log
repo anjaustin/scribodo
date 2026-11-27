@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "/Users/ztflynn/Projects/scribodo/journal/composition001/c03/verify_parity.py", line 111, in <module>
+    main()
+  File "/Users/ztflynn/Projects/scribodo/journal/composition001/c03/verify_parity.py", line 73, in main
+    value = distribution(ref["logprobs"], actual["reply"])
+  File "/Users/ztflynn/Projects/scribodo/journal/composition001/c03/verify_parity.py", line 35, in distribution
+    require(len(reference) == 128256 and all(math.isfinite(x) for x in reference),
+  File "/Users/ztflynn/Projects/scribodo/journal/composition001/c03/verify_parity.py", line 19, in require
+    raise RuntimeError(message)
+RuntimeError: Reference must contain the complete finite vocabulary

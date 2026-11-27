@@ -7,12 +7,22 @@ Canonical work ledger: [COMPOSITION-001](../docs/COMPOSITION-001-plan.md).
 - **Active P0:** lightweight composition, authorized 2026-11-25.
 - **Completed slice:** C01 and REDTEAM-025 — file chat failure guards / retry acknowledgement (AUDIT-005 F1/F3),
   with passing unit/analyzer/sanitizer/race, file UI, isolated DB/crash/DB UI gates.
-- **Completed verification:** C02 revision identity/recovery repair. Literal names selected; final public
+- **Completed/promoted:** C02 revision identity/recovery repair, `4d380a4`, pushed to `origin/main`.
+  Literal names selected; final public
   contract (52 checks), recovery (1,145 checks), full gates and final UI reruns pass.
   See `docs/COMPOSITION-001-revision-identity.md` and REDTEAM-027 for exact limits.
-- **Next action:** the author authorized commit/push on 2026-11-26. Verify the committed snapshot using
-  the recorded serial driver, push only on success, then resume C03 runtime dependency triage. No new
-  production slice, dependency update or real-data operation is part of this checkpoint.
+- **Active slice / next action:** C03, authorized 2026-11-26 (“Let's do it”). Source/manifest triage
+  identifies four runtime advisories and a candidate containing their fixes; isolated build and standard
+  upstream grammar/sampling tests pass. The author explicitly authorized compatibility execution (“Do it”).
+  Isolated offline F32 reference, artifact identity, short/long parity and template/tokenizer checks pass.
+  Author authorized end-to-end red-team/remediation/verification followed by commit/push on 2026-11-27.
+  REDTEAM-028 found and is repairing false-acceptance, evidence isolation and lifecycle flaws.
+  Fresh parity, 27 regression cases, both live adapters, schema/slot/Qwen role smoke and all full
+  mechanical gates pass; raw evidence is archived. The author authorized this bounded tooling checkpoint,
+  with commit/push conditional on the clean committed-snapshot verifier below. Remaining work is broader
+  production adoption, not automatic pin promotion.
+  The author reported tool safety errors; retain the new malformed-input fixture as unexecuted and do not
+  try alternate ways to run that reproducer. No product dependency/model changes or author-data operations.
 - **Checkpoint completed:** `1c1ab15`, REDTEAM-026, committed and pushed to `origin/main`; F2 resumed afterward.
   C02 follows that checkpoint, with its own complete gate evidence below.
 - **Baseline:** `69b98abf1ecf86c560b435a209327175c182eab1`.
@@ -666,3 +676,257 @@ now accepts an optional evidence directory. After the commit, run:
 The directory is a fresh approved temporary evidence location, not author data. All gates remain serial
 and isolated. Push is conditional on the command exiting 0. The commit/ref and push outcome are verified
 from git after execution; this pre-commit entry does not claim those actions have already succeeded.
+
+### C02 committed-snapshot result and push
+
+The authorized commit is `4d380a4c5abec8808cfdbbb8d093f558761e666f`.
+The recorded committed-snapshot driver completed **0**: services-up, test, sanitize, analyze, TSan,
+isolated DB, crash, file UI, case-sensitive UI, DB UI and services-down all exit **0** in
+`/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-c02-commit.l8YZY2/committed-gates.tsv`.
+The conditional command then verified unchanged HEAD and a clean worktree and ran `git push origin main`,
+exit **0**, advancing `origin/main` from `1c1ab15` to `4d380a4`. `git ls-remote origin refs/heads/main`
+independently returned the full commit above; working tree was clean. The temporary native `caffeinate`
+assertion exited automatically after that process ended; no power/security settings were changed.
+
+## 2026-11-26 — C03 runtime security/dependency triage (active)
+
+Author authorization: “Let's do it” after identifying C03 as next in the P0 plan.
+Initial `git status --short --branch` / `git diff --stat` exited **0**: clean `main`, aligned with
+`origin/main` at `4d380a4`. Read CONTRIBUTING, the plan, AUDIT-005 and MODEL-001 before changes.
+`git submodule status` and the llama.cpp status/log command exited **0**: the runtime remains pinned
+at `5851a8e505f4d5fbb183f2847698eb6155d176b7`; its checkout has no modifications.
+
+Work in this slice starts with source/manifest triage, not an update to latest upstream.
+Preserve the BF16/F32-only generative policy, pinned artifacts, explicit local-only routing and existing
+source/authority rules. No exploit against a live server, untrusted model load, model request, production
+database action or dependency pin change is part of the initial investigation.
+Retained source records and exact command outcomes go under `journal/composition001/c03/`.
+
+### Safety-layer interruption and revised test boundary
+
+The author reported repeated `cyber_policy` errors during the next-step preparation. The exact internal
+trigger is not available. `journal/composition001/c03/grammar_rejection.cpp` was written as a proposed
+candidate-only regression but **has not been compiled or run**. Retain it as an unexecuted experiment;
+do not repackage or reroute it to evade the safety layer.
+
+Continue with public fix/source/ancestry review, build and linkage inventory, ordinary upstream test targets
+and legitimate model correctness/precision checks. No adversarial request was sent to a server, no
+untrusted GGUF was loaded, and no live author process or project was targeted. The product's runtime
+gitlink and model/precision configuration remain unchanged. C03 is not accepted or promoted.
+
+### C03 source/build outcomes before compatibility execution
+
+- `python3 tools/dependency_report.py --output journal/composition001/c03/dependency-report.md > journal/composition001/c03/dependency-report.log 2>&1`
+  exited **1**: four runtime OSV matches plus the moved MariaDB tag. This is not a green dependency gate.
+- `python3 journal/composition001/c03/capture_primary_sources.py > journal/composition001/c03/primary-sources.log 2>&1`
+  exited **0**: public OSV, upstream commit/patch and immutable registry bodies/hashes retained in `c03/sources/`.
+  Registry tokens were not retained; immutable response body digests were checked.
+- Initial `git cat-file` for an unfetched fix exited **128**; the subsequent explicit four-commit
+  `git -C third_party/llama.cpp fetch --no-tags origin 50518b64c6f2191a116d2760042f106c4b3387d7 9f26fe11c73c7e74a5e99e7f1b6370ad8e1cb22d 46eb1742db6d2caec1bfa848c5702b1bdcc815e5 03813c56e47f6cd7a9b9bc2ad8edcebed88ce342`
+  exited **0** (`upstream-fetch.log`). No product checkout/gitlink change.
+- Exact ancestry commands/statuses are retained in `candidate-ancestry.log`: baseline and earlier fixes
+  are ancestors of candidate `03813c56e47f6cd7a9b9bc2ad8edcebed88ce342`, exit **0**.
+  Candidate OSV query completed **0** with zero matches (`candidate-osv.log`), not proof of security.
+- Detached worktree creation exited **0** (`candidate-worktree.log`). Scratch root for all following
+  commands: `/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-c03-runtime.D8CKUp`.
+- Initial direct CMake configure exited **127** (not on PATH). Retrying through `uvx --from cmake cmake`
+  configured/built `llama-server`, `test-grammar-parser`, `test-sampling`; grammar ctest exited **0**.
+  Flags/output remain in `candidate-configure2.log`, `candidate-build.log`, `candidate-grammar-test.log`.
+- Initial candidate linked Homebrew OpenSSL 4; the baseline uses only Apple/system libraries.
+  `uvx --from cmake cmake -S <scratch>/source -B <scratch>/build -DLLAMA_OPENSSL=OFF`,
+  rebuild of the same targets and parser ctest chain exited **0**. Final `otool -L` lists only Apple/system
+  libraries; RPC remains OFF. See `candidate-*-local-only.log`; cache/link commands are archived below.
+- MariaDB immutable evidence explains the tag as the same source commit/package version rebuilt
+  November 20 on refreshed Ubuntu noble bases. This is not package equivalence/provenance proof.
+  The old digest remains retrievable and unchanged; no image/container/author-store operation.
+
+### C03 benign compatibility execution and verification
+
+The author explicitly authorized execution (“Do it”). Existing official artifacts were cached at their
+MODEL-001 revisions; preflight found no existing `llama-server`. This is a compatibility experiment,
+not candidate adoption or proof that all advisories are unreachable.
+
+- `uv venv --python /opt/homebrew/bin/python3.12 <scratch>/reference-env` followed by
+  `uv pip install --offline --python <scratch>/reference-env/bin/python -r journal/composition001/c03/reference-requirements.txt`
+  and `uv pip freeze --python <scratch>/reference-env/bin/python` completed **0**. Logs/freeze are the
+  `reference-env-*` files: Python **3.12.15**, 39 packages, PyTorch **2.15.0**, Transformers **5.22.1**.
+  Dependencies reuse frozen project locks; not claimed byte-identical to the absent historical environment.
+- Offline import/tokenizer/version smoke check exited **0** (`reference-smoke.log`), identifying expected
+  baseline/candidate binaries; tokenizer prompt lengths 22/35/27/46. No model load in that smoke check.
+- `bash -n journal/composition001/c03/run-compatibility.sh`, Python byte-compilation and `git diff --check`
+  exited **0**. `python3 journal/composition001/c03/test_compatibility_probe.py > journal/composition001/c03/compatibility-oracle-test.log 2>&1`
+  exited **0**: five toy oracle tests, including missing top-10 coverage and duplicate/nonfinite refusal.
+- `bash journal/composition001/c03/run-compatibility.sh > journal/composition001/c03/parity-driver.log 2>&1`
+  completed **0**. Because the retained exact driver uses `set -eu` and a direct watchdog exit for each
+  serial stage, all six stages exited **0**: artifact identity, F32 short, F32 long, baseline, candidate,
+  comparison. No overlapping model stage; no watchdog expiry. Exact flags/environment are in the driver.
+- Identity: **286** originals matched exactly, no reorder/missing/unmatched; **154 BF16 + 133 F32** GGUF
+  tensors, F32 lossless BF16 widenings. GGUF hash remains `39158a79f56edb85e0c4252ce6447b8d7883ef82ffedd02f0cda7c84da5e9f68`.
+  Reference short parameters and long computation report F32.
+- Worst short/long reference-top-10 gaps: baseline **0.025735 / 0.082297**; candidate **0.022585 / 0.083621**.
+  All four short and ten long positions meet the existing **<0.05 / <0.12** gates with complete top-10
+  coverage. Both match **40/40** greedy positions on all four prompts, **5/5** template cases and **9/9**
+  document/Unicode tokenization samples. Templates include stripped prior reasoning and thinking disabled.
+  These are benign template checks, not yet captured production schema/streaming requests.
+- Both used unchanged BF16 KV and flash-attention-off, plus product batch/microbatch/checkpoint settings;
+  this first pass uses one slot/8K pool. The legacy raw-reasoning/literal-role-marker diagnostics were
+  not run. `grammar_rejection.cpp` remains uncompiled/unexecuted.
+- `uvx --from cmake ctest --test-dir <scratch>/build -R '^(test-sampling|test-grammar-parser)$' --output-on-failure > journal/composition001/c03/candidate-standard-tests.log 2>&1`
+  exited **0**: 2/2 ordinary upstream tests pass.
+- Source review: causal LFM3 uses unchanged F32 SSM kernels, not new half-staging 2D convolution.
+  BF16/F32 matmul specialization retains its types; added observed RMS norm/mul/add fusion uses `float4`.
+  Exact selected-path diffs are retained. Log extraction initially exited **1** on a non-UTF-8 byte;
+  review now uses backslash escapes without changing raw bytes. `parity-kernel-review.json` records the
+  raw log hashes: **19 baseline / 20 candidate** pipeline bases, **0 F16 / 0 quantized** names, BF16 K/V
+  and disabled flash attention. Compile-pipeline logs are not exhaustive GPU instruction tracing.
+- Independent offline postflight `python3 journal/composition001/c03/verify_parity.py <scratch>/parity-01 > journal/composition001/c03/parity-postflight.json 2> journal/composition001/c03/parity-postflight.log`
+  exited **0**, recomputing every gap and checking complete finite reference vocabulary, observation
+  counts/IDs, source/provenance/binary hashes, templates, tokenization and greedy lengths.
+  Two earlier attempts exited **1**: wrong assumed vocabulary (128256, corrected to pinned 128000), then
+  a new 1e-5 normalization assertion. Residuals when Python F64 re-sums F32 reference probabilities reach
+  **0.000111**. That extra diagnostic is reported, not a changed MODEL-001 gate; its cause is unverified.
+  No observations/probabilities were rewritten or renormalized; established gap limits are unchanged.
+
+Raw observations remain at `<scratch>/parity-01`. Final syntax/byte-compilation, five oracle unit tests
+and `git diff --check` exited **0** again. `python3 journal/composition001/c03/archive_parity.py`
+completed **0**, creating the archive listed in `docs/EVIDENCE.md`: **201 files / 14,370,535 bytes**,
+SHA-256 `201847a31561b2c9383ad059eb52e268df19e1e330e2e949c9e2c069bd61ffc1`.
+Every member was read back and rehashed without extraction; receipt `c03/parity-archive.json`.
+This includes the raw distributions/replies/server bytes, source/config snapshots and CMake/link commands,
+not weights, binaries, author data or API keys. The archive precedes its receipt and final doc updates.
+
+Next exact action: reuse the existing `answer_bedrock_probe.py` request-replay/Unix-HTTP mechanism with
+explicit isolated baseline/candidate binaries and output paths. First admit only known synthetic/
+public-domain captures, freeze request bytes/provenance and predeclare the comparison criteria; do not
+use `answer_product_run.py` unchanged (it hardcodes the baseline binary and launches DB/UI fixtures).
+Still open before pin promotion: production request/adapter paths; embedding/reranker roles; multi-slot,
+context/checkpoint and whole-system resource behavior; linked-license closure; independent adversarial
+review/remediation; full `make test`, `make analyze`, `make sanitize` (serial test/sanitize) and affected
+TSan/UI/observer/retrieval gates. No final repository acceptance has been run for C03, no model/pin or
+database change, and no commit/push requested or performed.
+
+Final worktree check exited **0**: only C03 documentation/evidence/dev-only tools are modified/untracked;
+the vendored runtime is clean at the original pin and no `llama-server` process remains (`pgrep` **1**,
+zero matches). `git diff --check` exited **0**. The additional
+`python3 tools/evidence_check.py > journal/composition001/c03/evidence-check.log 2>&1`
+completed **1**: three false path citations from slash-separated prose about builds, linkage and launch.
+Reworded those phrases without changing checker rules or adding exemptions.
+`python3 tools/evidence_check.py > journal/composition001/c03/evidence-check-final.log 2>&1 && git diff --check`
+completed **0**: 1,156 citations accounted for, no violations; whitespace check also passed.
+This standalone checker is not the full `make test`.
+
+## 2026-11-27 — REDTEAM-028 and authorized C03 checkpoint
+
+The author requested end-to-end red-team, remediation/verification/iteration, then commit and push.
+Initial status/diff/submodule inspection exited **0**: only existing C03 work is dirty, baseline `4d380a4`,
+runtime pin still `5851a8e50`. CONTRIBUTING/plan/handoff read before changes. No unrelated work discarded.
+
+`python3 tests/test_c03_acceptance.py > journal/composition001/c03/redteam-oracle-red.log 2>&1`
+exited **1**, **15 tests / 13 false-acceptance assertion failures**. Reproduced empty/truncated evidence,
+wrong artifact/flags/reference precision, mixed provenance, mislabeled duplicate binaries, fabricated
+equality booleans, repeated cases, missing continuations and invalid token IDs being falsely accepted.
+This is an acceptance-harness defect, not evidence that the original measured model result was wrong.
+
+Repairs and test boundaries are in `docs/REDTEAM-028-runtime-compatibility.md`.
+The comparator now rejects incomplete/mixed evidence and derives equality directly from raw values.
+Runner/source-capture/archive paths are explicit and refuse existing output; archives refuse tree symlinks.
+Health readiness calls are bounded individually; SIGTERM enters owned-child cleanup.
+No production pin/model/precision/database change. The proposed malformed-input reproducer stays unexecuted.
+
+`python3 tests/test_c03_acceptance.py > journal/composition001/c03/redteam-oracle-final.log 2>&1`,
+the original toy suite, shell syntax and whitespace checks run before starting the fresh parity runner.
+The chain is active as shell `sh_21e99ec40001AyU0GYcs8xbm2D`:
+`bash journal/composition001/c03/run-compatibility.sh /private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-c03-runtime.D8CKUp /private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-c03-runtime.D8CKUp/parity-02 > journal/composition001/c03/redteam-parity02-driver.log 2>&1`.
+It serializes every model stage, pins the reference/model environment, records per-stage exits, and leaves
+`parity-01` and its immutable archive untouched. Do not edit the probe/helpers while this run is active.
+
+The parity chain completed **0**: all six `parity-02/exits.tsv` entries are **0**.
+Independent postflight (`verify_parity.py <scratch>/parity-02`, stdout/stderr in
+`redteam-parity02-postflight.*`) exited **0**, reproducing the exact earlier short/long gaps and 40/40
+continuations. The expanded regression suite (`redteam-oracle-round2.log`) exits **0**: **26 tests**.
+The five original toy tests also pass. No original result/source snapshot/archive was overwritten.
+
+`bash journal/composition001/c03/run-redteam-gates.sh <scratch> <scratch>/redteam-gates01 > journal/composition001/c03/redteam-gates01-driver.log 2>&1`
+is active as shell `sh_21e9d7dd7001oRrb8D5kCVousw`. It runs live adapter tests with the baseline and
+candidate through `make llmtest LLAMA_BIN=<explicit-binary>`, then the separately hash-admitted cached
+chat/embedding/reranker synthetic role checks, then full test/analyzer/sanitizer/TSan serially.
+No database suite or UI/author project is opened. The live adapter suite uses its existing synthetic
+throwaway file fixture/run directories and tests ordinary source delivery, streaming, dense-context
+trimming, authentication, owned-server death/restart and neutralization; no malformed-grammar reproducer.
+
+Offline normalization sensitivity calculation on preserved `parity-02` distributions exited **0**
+(`redteam-normalization-sensitivity.json`): max absolute log-normalization shift is **0.000104 short /
+0.000111 long**. By triangle inequality, renormalizing could not push either runtime outside the
+unchanged gates; candidate upper bounds **0.022689 / 0.083732**. No distribution was modified or
+renormalized for acceptance, and the underlying numerical cause remains unverified.
+
+Second boundedness pass found source capture's response read was uncapped.
+`python3 tests/test_c03_acceptance.py OutputIsolationTests.test_capture_body_limit > journal/composition001/c03/redteam-capture-limit-red.log 2>&1`
+exited **1** (one false-refusal assertion). Added a **16 MiB** per-response cap before publication.
+Full expanded suite `redteam-oracle-round3.log` now exits **0**, **27 tests**; whitespace check **0**.
+No network request or malicious payload was used for this test (a mocked ordinary byte stream).
+
+Read-only primary-source recheck exited **0** (`redteam-source-integrity.json`): all **22** captured
+responses match their recorded SHA-256/byte counts and approved public hosts; no Authorization,
+Cookie or Set-Cookie response headers were retained. Candidate OSV request/response remain separately
+captured outside that original retrieval manifest and are not miscounted as extra verified responses.
+
+### Extended gate result and checkpoint disposition
+
+The `run-redteam-gates.sh` driver completed **0**. All ten `redteam-gates01/exits.tsv` entries are **0**:
+oracle, live-baseline, live-candidate, roles-baseline, roles-candidate, test, analyze, sanitize, tsan,
+whitespace. Full test/sanitize ran serially without evidence/yardstick skips; analyzer reports **0
+warnings / 113 sources**. The standalone oracle stage preceded the final response-cap case; later
+full test/sanitize cover all **27** tests, as does the separately recorded round-3 suite.
+
+Both live C adapters pass **24 checks / zero failures**, including auth, 133-token source-budget/amber
+oracle, streamed chat, dense-context cutoff, neutralization, owned-server crash/restart and socket cleanup.
+Valid production-derived schema extraction is source-exact on **4/4** requests each (slot 0 fresh/reuse,
+slot 1, return to slot 0). Frozen request bytes match between runtimes. All four Qwen embedding vectors
+are finite, 1,024-D and component-identical; the identical source ranks first. Reranker scores agree
+**1/0/0** on the three synthetic pairs. Raw bodies and summaries are in the role directories and
+`redteam-role-comparison.json`. These smoke cases do not establish held-out retrieval/reranker quality.
+
+`redteam-platform.log` retains OS/architecture/CPU/RAM/compiler/uv and clean baseline/candidate source
+checks, command exits **0**. Candidate retains system-only dynamic linkage and explicit RPC/OpenSSL OFF.
+No model server remains (`pgrep` **1**, zero matches). Pattern scan of **138** explicitly admitted raw/
+source files exits **0** with zero credential-pattern matches (`redteam-secret-scan.json`); scope/limits
+are explicit, not a general no-secrets proof.
+
+R1–R6 remediations are verified. R7 is contained by keeping candidate adoption blocked, not declared
+universally solved. This checkpoint changes only C03 measurement/development tooling, its Make test hook,
+reports and evidence. No product runtime/model/schema/digest/precision, author data or database changes.
+No DB/crash/UI rerun is claimed for this dev-only checkpoint. Wider production/whole-system resource/
+context/contention and independent/license/install acceptance remain required before a separate pin decision.
+
+Archival/remediation precommit check:
+`python3 tests/test_c03_acceptance.py > journal/composition001/c03/redteam-oracle-precommit.log 2>&1 && git diff --check`
+completed **0**, 27 tests. The hardened archive creator (explicit `--run <scratch>/redteam-evidence01`,
+`--candidate-build <scratch>/build`, `--name scribodo-evidence-2026-11-27-composition001-c03-redteam01`)
+completed **0**: **264 files / 14,765,482 bytes**, SHA-256
+`305cbbdef4f240ab4db8264905548dcea0e9772654ce7432972033b5e3d3149a`.
+Every member was rehashed on read-back. Receipt `c03/redteam-archive.json`; see `docs/EVIDENCE.md`.
+The combined raw tree is a copy of the immutable completed parity-02/gates01 outputs, not a rerun or
+rewrite of their original paths. The archive precedes its receipt and final doc/push-driver additions.
+
+### Authorized committed-snapshot verification and push contract
+
+Only the bounded C03 checkpoint is to be staged: Makefile test hook, `tests/test_c03_acceptance.py`,
+C03 source/evidence/report files, docs index/evidence registry, plan and progress ledger.
+No vendor gitlink, production model/configuration, SQL schema or Docker digest is included.
+
+After committing, run
+`bash journal/composition001/c03/verify-committed-and-push.sh <scratch> <scratch>/committed01 "$(git rev-parse HEAD)" > <scratch>/committed01-driver.log 2>&1`.
+It refuses a dirty/changed HEAD, repeats all six parity stages and independent postflight, then the ten
+live/role/mechanical gates serially, archives the committed raw observations under the separate name in
+EVIDENCE, rechecks clean unchanged HEAD, pushes `origin main`, and checks `ls-remote` against that exact
+commit. The authoritative per-stage exits are `<scratch>/committed01/parity/exits.tsv` and
+`<scratch>/committed01/gates/exits.tsv`; archive receipt `<scratch>/committed01-archive-receipt.json`.
+This is a conditional execution plan, not a preclaim that commit/push already occurred.
+
+The staged whitespace check (unlike earlier unstaged checks) exited **2** on **124 trailing-space /
+3 final-blank-line** observations, all in immutable raw `.log`/`.diff`/upstream `.patch` evidence,
+not implementation source. Do not strip those bytes and invalidate recorded response hashes.
+Following the existing C02 raw-evidence attribute pattern, C03 adds scoped byte-preservation and raw
+trailing/final-blank whitespace attributes. Python/shell/tests/Markdown checks remain unchanged.
+The staged check must pass with these scoped data attributes before commit.

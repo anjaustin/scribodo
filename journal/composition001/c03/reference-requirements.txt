@@ -1,0 +1,7 @@
+# Reference versions already frozen by this project (MODEL-001 uses torch/transformers below).
+-r ../../../tools/envs/venv-causal.lock
+# HTTP client dependencies from the existing venv-coref lock.
+certifi==2026.10.23
+charset-normalizer==3.5.2
+requests==2.34.2
+urllib3==2.8.0

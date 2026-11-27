@@ -1,0 +1,13 @@
+F
+======================================================================
+FAIL: test_capture_body_limit (__main__.OutputIsolationTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/ztflynn/Projects/scribodo/tests/test_c03_acceptance.py", line 168, in test_capture_body_limit
+    capture.capture("https://example.test/public", "public.json")
+AssertionError: RuntimeError not raised
+
+----------------------------------------------------------------------
+Ran 1 test in 0.004s
+
+FAILED (failures=1)

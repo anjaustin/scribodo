@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "/Users/ztflynn/Projects/scribodo/journal/composition001/c03/verify_parity.py", line 111, in <module>
+    main()
+  File "/Users/ztflynn/Projects/scribodo/journal/composition001/c03/verify_parity.py", line 73, in main
+    value = distribution(ref["logprobs"], actual["reply"])
+  File "/Users/ztflynn/Projects/scribodo/journal/composition001/c03/verify_parity.py", line 37, in distribution
+    require(abs(sum(math.exp(x) for x in reference) - 1) < 1e-5,
+  File "/Users/ztflynn/Projects/scribodo/journal/composition001/c03/verify_parity.py", line 19, in require
+    raise RuntimeError(message)
+RuntimeError: Reference distribution is not normalized

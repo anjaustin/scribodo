@@ -1,0 +1,30 @@
+{
+  "short": {
+    "maximum_abs_log_normalization_shift": 0.00010372983394367307,
+    "gate": 0.05,
+    "runtime_bounds": {
+      "baseline": {
+        "worst_gap_upper_bound_if_reference_were_normalized": 0.025735433558309623,
+        "all_still_below_original_gate": true
+      },
+      "candidate": {
+        "worst_gap_upper_bound_if_reference_were_normalized": 0.022688644995076484,
+        "all_still_below_original_gate": true
+      }
+    }
+  },
+  "long": {
+    "maximum_abs_log_normalization_shift": 0.00011074771901492372,
+    "gate": 0.12,
+    "runtime_bounds": {
+      "baseline": {
+        "worst_gap_upper_bound_if_reference_were_normalized": 0.08238639462062003,
+        "all_still_below_original_gate": true
+      },
+      "candidate": {
+        "worst_gap_upper_bound_if_reference_were_normalized": 0.08373153438588504,
+        "all_still_below_original_gate": true
+      }
+    }
+  }
+}

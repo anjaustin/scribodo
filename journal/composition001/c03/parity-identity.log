@@ -1,0 +1,8 @@
+gguf: LFM3-1.7B-BF16.gguf @ cd0c74c5
+sha256: 39158a79f56edb85e0c4252ce6447b8d7883ef82ffedd02f0cda7c84da5e9f68
+tensor types: {'F32': 133, 'BF16': 154}
+matched to original: exact 286, reordered 0
+F32 tensors that are not lossless BF16 widenings: none
+unmatched GGUF tensors: none
+original tensors not found in GGUF: none
+RESULT: IDENTICAL (bit-exact BF16 weights)

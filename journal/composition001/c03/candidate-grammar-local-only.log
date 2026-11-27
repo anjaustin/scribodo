@@ -1,0 +1,10 @@
+Test project /private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-c03-runtime.D8CKUp/build
+    Start 20: test-grammar-parser
+1/1 Test #20: test-grammar-parser ..............   Passed    0.01 sec
+
+100% tests passed out of 1
+
+Label Time Summary:
+behavior    =   0.01 sec*proc (1 test)
+
+Total Test time (real) =   0.02 sec

@@ -356,6 +356,7 @@ test: $(TESTS) $(CORE_OBJS) $(LLM_OBJS) $(APP_OBJS) $(APP)
 	$(WATCHDOG) $(TEST_TIMEOUT) test_observer_rules python3 tests/test_observer_rules.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_observer_formats_py python3 tests/test_observer_formats.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_probes python3 tests/test_answer_probes.py
+	$(WATCHDOG) $(TEST_TIMEOUT) test_c03_acceptance python3 tests/test_c03_acceptance.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_live_capture python3 tests/test_answer_live_capture.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_live_audit python3 tests/test_answer_live_audit.py
 	$(WATCHDOG) $(TEST_TIMEOUT) test_answer_live_ablation python3 tests/test_answer_live_ablation.py

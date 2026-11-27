@@ -1,0 +1,9 @@
+{
+  "archive": "/Users/ztflynn/Library/Application Support/Scribodo/evidence/scribodo-evidence-2026-11-26-composition001-c03-parity01.tar.gz",
+  "sha256": "201847a31561b2c9383ad059eb52e268df19e1e330e2e949c9e2c069bd61ffc1",
+  "bytes": 14370535,
+  "files": 201,
+  "manifest": "/Users/ztflynn/Library/Application Support/Scribodo/evidence/manifest-scribodo-evidence-2026-11-26-composition001-c03-parity01.json",
+  "verification": "all member bytes rehashed without extraction",
+  "exit": 0
+}

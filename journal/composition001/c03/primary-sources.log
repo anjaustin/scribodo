@@ -1,0 +1,10 @@
+CVE-2026-133710 llama.cpp b11003 before b12556 Heap Out-of-Bounds Write via hrm_text Model Loader fixes=50518b64c6f2191a116d2760042f106c4b3387d7
+CVE-2026-134540 ggml-org llama.cpp llama-server sampling.cpp common_sampler_init input validation fixes=9f26fe11c73c7e74a5e99e7f1b6370ad8e1cb22d
+CVE-2026-137057 llama.cpp b7118 before b12604 Integer Underflow in Grammar Parser parse_sequence fixes=46eb1742db6d2caec1bfa848c5702b1bdcc815e5
+CVE-2026-137567 llama.cpp b11450 before b12658 Out-of-Bounds Write via RPC copy_tensor fixes=03813c56e47f6cd7a9b9bc2ad8edcebed88ce342
+mariadb pinned application/vnd.oci.image.index.v1+json
+pinned amd64 manifest=sha256:f6eca93803e34766e787a96bad9e2ac5abbcdcb8e7f390a6f34e9bf3eee525e6 config=sha256:3ead04fc44efca664e31dcba81eed32dd660597b27410a62113c6cf14dd6dc74 created=2026-11-11T23:30:24.603148071Z env=['PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', 'GOSU_VERSION=1.19', 'LANG=C.UTF-8', 'MARIADB_VERSION=1:11.4.13+maria~ubu2404']
+pinned arm64 manifest=sha256:7bbca77eb05b2f7f70ab0448f09f2e6db7721ce30611de7e783bd2c520bdbe62 config=sha256:08e0749c8c94a20a53adc32169e21430cdbea0befe2707f25555a89084a34212 created=2026-11-11T23:34:22.58806806Z env=['PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', 'GOSU_VERSION=1.19', 'LANG=C.UTF-8', 'MARIADB_VERSION=1:11.4.13+maria~ubu2404']
+mariadb tag application/vnd.oci.image.index.v1+json
+tag amd64 manifest=sha256:9c8b5172fa219e01913060f26c5498029999657fb9b7e7bbd0ca9e87f51020e2 config=sha256:2194236514de2a3170e28e208f9331f0cf9bbef02080be81e2c556a68bda20a9 created=2026-11-20T03:29:13.41858752Z env=['PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', 'GOSU_VERSION=1.19', 'LANG=C.UTF-8', 'MARIADB_VERSION=1:11.4.13+maria~ubu2404']
+tag arm64 manifest=sha256:22f804c5522814840a1a6659267e4f61359834f96ef387e9f703f638fe1b708f config=sha256:ce276470f1f01d31ffa716317787b0f19ee64fcc299bf00efe391858ec76f9c1 created=2026-11-20T03:29:34.372913231Z env=['PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', 'GOSU_VERSION=1.19', 'LANG=C.UTF-8', 'MARIADB_VERSION=1:11.4.13+maria~ubu2404']

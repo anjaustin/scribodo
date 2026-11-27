@@ -1,0 +1,73 @@
+{
+  "baseline": {
+    "log_sha256": "98abda4752987f9e04c0d25c29144308afa35ef06ca6817d4ec8c814233c909f",
+    "decode_policy": "UTF-8 with backslashreplace for review only; original bytes unchanged",
+    "pipeline_bases": [
+      "kernel_bin_fuse_f32_f32_f32",
+      "kernel_bin_fuse_f32_f32_f32_4",
+      "kernel_concat_f32",
+      "kernel_cpy_f32_f32",
+      "kernel_get_rows_f32",
+      "kernel_mul_mm_bf16_f32",
+      "kernel_mul_mv_bf16_f32_4",
+      "kernel_mul_mv_ext_bf16_f32_r1_2",
+      "kernel_mul_mv_mma_bf16_f32_nt1_rt1",
+      "kernel_mul_mv_mma_bf16_f32_nt2_rt1",
+      "kernel_mul_mv_mma_bf16_f32_nt4_rt1",
+      "kernel_rms_norm_mul_f32_4",
+      "kernel_rope_neox_f32",
+      "kernel_set_rows_f32_i64_bf16",
+      "kernel_soft_max_f32_4",
+      "kernel_ssm_conv_f32_f32",
+      "kernel_ssm_conv_f32_f32_batched",
+      "kernel_swiglu_f32",
+      "kernel_unary_f32_f32_4"
+    ],
+    "f16_pipeline_bases": [],
+    "quantized_pipeline_bases": [],
+    "type_evidence": [
+      "0.00.165.041 I llama_context: flash_attn            = disabled",
+      "0.00.165.220 I llama_kv_cache: size =   96.00 MiB (  8192 cells,   6 layers,  1/1 seqs), K (bf16):   48.00 MiB, V (bf16):   48.00 MiB",
+      "0.00.165.235 I llama_kv_cache: size =    5.00 MiB (   512 cells,   5 layers,  1/1 seqs), K (bf16):    2.50 MiB, V (bf16):    2.50 MiB",
+      "0.00.353.748 I llama_context: flash_attn            = disabled",
+      "0.00.358.649 I llama_kv_cache: size =   96.00 MiB (  8192 cells,   6 layers,  1/1 seqs), K (bf16):   48.00 MiB, V (bf16):   48.00 MiB",
+      "0.00.358.909 I llama_kv_cache: size =    5.00 MiB (   512 cells,   5 layers,  1/1 seqs), K (bf16):    2.50 MiB, V (bf16):    2.50 MiB"
+    ]
+  },
+  "candidate": {
+    "log_sha256": "2ab7913b88e986b17c94e10ed0682d98cac4707a62ea185b44dec4466c18cb99",
+    "decode_policy": "UTF-8 with backslashreplace for review only; original bytes unchanged",
+    "pipeline_bases": [
+      "kernel_bin_fuse_f32_f32_f32",
+      "kernel_bin_fuse_f32_f32_f32_4",
+      "kernel_concat_f32",
+      "kernel_cpy_f32_f32",
+      "kernel_get_rows_f32",
+      "kernel_mul_mm_bf16_f32",
+      "kernel_mul_mv_bf16_f32_4",
+      "kernel_mul_mv_ext_bf16_f32_r1_2",
+      "kernel_mul_mv_mma_bf16_f32_nt1_rt1",
+      "kernel_mul_mv_mma_bf16_f32_nt2_rt1",
+      "kernel_mul_mv_mma_bf16_f32_nt4_rt1",
+      "kernel_rms_norm_mul_add_f32_4",
+      "kernel_rms_norm_mul_f32_4",
+      "kernel_rope_neox_f32",
+      "kernel_set_rows_f32_i64_bf16",
+      "kernel_soft_max_f32_4",
+      "kernel_ssm_conv_f32_f32",
+      "kernel_ssm_conv_f32_f32_batched",
+      "kernel_swiglu_f32",
+      "kernel_unary_f32_f32_4"
+    ],
+    "f16_pipeline_bases": [],
+    "quantized_pipeline_bases": [],
+    "type_evidence": [
+      "0.04.152.501 I llama_context: flash_attn            = disabled",
+      "0.04.152.723 I llama_kv_cache: size =   96.00 MiB (  8192 cells,   6 layers,  1/1 seqs), K (bf16):   48.00 MiB, V (bf16):   48.00 MiB",
+      "0.04.152.736 I llama_kv_cache: size =    5.00 MiB (   512 cells,   5 layers,  1/1 seqs), K (bf16):    2.50 MiB, V (bf16):    2.50 MiB",
+      "0.04.345.402 I llama_context: flash_attn            = disabled",
+      "0.04.350.234 I llama_kv_cache: size =   96.00 MiB (  8192 cells,   6 layers,  1/1 seqs), K (bf16):   48.00 MiB, V (bf16):   48.00 MiB",
+      "0.04.350.506 I llama_kv_cache: size =    5.00 MiB (   512 cells,   5 layers,  1/1 seqs), K (bf16):    2.50 MiB, V (bf16):    2.50 MiB"
+    ]
+  }
+}

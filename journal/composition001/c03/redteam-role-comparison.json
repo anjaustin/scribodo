@@ -1,0 +1,33 @@
+{
+  "chat": {
+    "request_count_per_runtime": 8,
+    "request_bodies_identical": true,
+    "baseline_binary_sha256": "39319bf4cbeffca9aaa9ae055fb688ceb5bb7422b0a90e8a80acaba4dd892e02",
+    "candidate_binary_sha256": "3bc3fa3817e1b84cbea5cf8ca688fece76325cd500bf0f293c37282a6f6ba46e",
+    "source_exact_extractions_each": 4
+  },
+  "embed": {
+    "request_count_per_runtime": 1,
+    "request_bodies_identical": true,
+    "baseline_binary_sha256": "39319bf4cbeffca9aaa9ae055fb688ceb5bb7422b0a90e8a80acaba4dd892e02",
+    "candidate_binary_sha256": "3bc3fa3817e1b84cbea5cf8ca688fece76325cd500bf0f293c37282a6f6ba46e",
+    "vector_components_identical": true,
+    "cosines": [
+      0.8205647059367586,
+      0.21185844817804111,
+      0.25263251548137977
+    ]
+  },
+  "rerank": {
+    "request_count_per_runtime": 5,
+    "request_bodies_identical": true,
+    "baseline_binary_sha256": "39319bf4cbeffca9aaa9ae055fb688ceb5bb7422b0a90e8a80acaba4dd892e02",
+    "candidate_binary_sha256": "3bc3fa3817e1b84cbea5cf8ca688fece76325cd500bf0f293c37282a6f6ba46e",
+    "scores_identical": true,
+    "scores": [
+      1.0,
+      0.0,
+      0.0
+    ]
+  }
+}

@@ -1,0 +1,2733 @@
+git -C third_party/llama.cpp merge-base --is-ancestor 5851a8e505f4d5fbb183f2847698eb6155d176b7 03813c56e47f6cd7a9b9bc2ad8edcebed88ce342 exit=0
+git -C third_party/llama.cpp merge-base --is-ancestor 50518b64c6f2191a116d2760042f106c4b3387d7 03813c56e47f6cd7a9b9bc2ad8edcebed88ce342 exit=0
+git -C third_party/llama.cpp merge-base --is-ancestor 9f26fe11c73c7e74a5e99e7f1b6370ad8e1cb22d 03813c56e47f6cd7a9b9bc2ad8edcebed88ce342 exit=0
+git -C third_party/llama.cpp merge-base --is-ancestor 46eb1742db6d2caec1bfa848c5702b1bdcc815e5 03813c56e47f6cd7a9b9bc2ad8edcebed88ce342 exit=0
+git -C third_party/llama.cpp rev-list --count 5851a8e505f4d5fbb183f2847698eb6155d176b7..03813c56e47f6cd7a9b9bc2ad8edcebed88ce342 exit=0
+542
+git -C third_party/llama.cpp show -s --format=fuller 03813c56e47f6cd7a9b9bc2ad8edcebed88ce342 exit=0
+commit 03813c56e47f6cd7a9b9bc2ad8edcebed88ce342
+Author:     Aman Gupta <amangupta052@gmail.com>
+AuthorDate: Mon Nov 23 22:28:40 2026 +0800
+Commit:     GitHub <noreply@github.com>
+CommitDate: Mon Nov 23 22:28:40 2026 +0800
+
+    rpc : typed request helpers and a single validation step on the server (#32651)
+    
+    * rpc : typed request helpers and a single validation step on the server
+    
+    Client and server share one table (rpc_msg_types) that maps each
+    fixed-size command to its request and response structs. The client sends
+    them with dispatcher->call<CMD>() and call_async<CMD>(), the server serves
+    them with rpc_serve<CMD>(), so the per-command code in rpc_serve_client
+    and at the call sites is gone and a wrong struct for a command does not
+    compile. SET_TENSOR, SET_TENSOR_2D and GRAPH_COMPUTE get header structs,
+    written with rpc_writer and parsed with a bounds-checked rpc_reader. The
+    wire format is unchanged.
+    
+    Validation of client data is now in one place:
+    - deserialize_tensor rejects what ggml_new_tensor would assert on (op
+      range, ne[0] not a multiple of the block size, element count overflow)
+      and computes the tensor size without overflow before the buffer check
+    - rpc_check_region replaces the per-handler bounds checks and checks the
+      request against the tensor size, which ggml_backend_tensor_set/get/memset
+      assert on, so an in-buffer but out-of-tensor request no longer aborts
+    - graph_compute builds the graph in one pass over the tensors, which the
+      client sends in topological order: no recursion, and unknown or
+      duplicate ids, duplicate nodes, sources sent after their users, compute
+      nodes with unallocated operands and views outside their view_src buffer
+      are rejected; a tensor may be its own source (ggml_cast)
+    - GET_ALLOC_SIZE fails if a source tensor is invalid
+    - a client-sized allocation that fails closes the connection instead of
+      terminating the server
+    
+    * rpc : trim comments
+git -C third_party/llama.cpp diff --stat 5851a8e505f4d5fbb183f2847698eb6155d176b7 03813c56e47f6cd7a9b9bc2ad8edcebed88ce342 exit=0
+ .devops/cann.Dockerfile                            |    12 +-
+ .devops/cpu.Dockerfile                             |    18 +-
+ .devops/cuda.Dockerfile                            |    15 +-
+ .devops/intel.Dockerfile                           |    36 +-
+ .devops/musa.Dockerfile                            |    12 +-
+ .devops/nix/package.nix                            |   179 +-
+ .devops/nix/python-scripts.nix                     |     4 -
+ .devops/openvino.Dockerfile                        |    22 +-
+ .devops/rocm.Dockerfile                            |    12 +-
+ .devops/vulkan.Dockerfile                          |    28 +-
+ .devops/zendnn.Dockerfile                          |    12 +-
+ .dockerignore                                      |     2 +-
+ .editorconfig                                      |     2 +-
+ .github/actions/get-tag-name/action.yml            |     4 +-
+ .github/actions/windows-setup-cuda/action.yml      |   102 +-
+ .github/labeler.yml                                |     3 +-
+ .github/workflows/behavior-check.yml               |     5 +
+ .github/workflows/build-3rd-party.yml              |     4 +-
+ .github/workflows/build-and-test-snapdragon.yml    |     6 +-
+ .github/workflows/build-android.yml                |     7 +-
+ .github/workflows/build-cache.yml                  |     4 +-
+ .github/workflows/build-cmake-pkg.yml              |    57 -
+ .github/workflows/build-cpu.yml                    |    97 +-
+ .github/workflows/build-cross.yml                  |     8 +-
+ .github/workflows/build-cuda-ubuntu.yml            |     2 +-
+ .github/workflows/build-cuda-windows.yml           |     8 +-
+ .github/workflows/build-ibm.yml                    |    12 +-
+ .github/workflows/build-opencl.yml                 |     5 +
+ .github/workflows/build-openvino.yml               |    57 +-
+ .github/workflows/build-sanitize.yml               |    56 +-
+ .github/workflows/build-sycl.yml                   |    24 +-
+ .github/workflows/build-virtgpu.yml                |     4 +-
+ .github/workflows/build-vulkan.yml                 |    21 +-
+ .github/workflows/build-wasi.yml                   |     6 +-
+ .github/workflows/build-wasm.yml                   |     8 +-
+ .github/workflows/build-webgpu.yml                 |     4 +-
+ .github/workflows/ci-self-hosted-cpu.yml           |    39 +-
+ .github/workflows/ci-self-hosted-cuda.yml          |    80 +-
+ .github/workflows/ci-self-hosted-openvino.yml      |     4 +-
+ .github/workflows/ci-self-hosted-webgpu.yml        |     7 +-
+ .github/workflows/copilot-setup-steps.yml          |     2 +-
+ .github/workflows/docker.yml                       |    47 +-
+ .github/workflows/gguf-publish.yml                 |     2 +-
+ .github/workflows/make-release.yml                 |     2 +-
+ .github/workflows/models-check.yml                 |    16 +-
+ .github/workflows/pr-video-demo-label.yml          |     2 +-
+ .github/workflows/python-check-requirements.yml    |     2 +-
+ .github/workflows/python-type-check.yml            |     2 +-
+ .github/workflows/release-publish.yml              |    10 +-
+ .github/workflows/release.yml                      |    82 +-
+ .github/workflows/server-sanitize.yml              |     2 +
+ .github/workflows/server-self-hosted.yml           |     2 +
+ .github/workflows/server-speculative.yml           |   100 +
+ .github/workflows/server.yml                       |    11 +-
+ .github/workflows/ui-build-self-hosted.yml         |     8 +-
+ .github/workflows/ui-build.yml                     |    12 +-
+ .github/workflows/ui-chat-publish.yml              |   183 +
+ .github/workflows/ui-lib-publish.yml               |   230 +
+ .github/workflows/ui-publish.yml                   |    10 +-
+ .github/workflows/ui-self-hosted.yml               |    30 +-
+ .github/workflows/ui-storybook.yml                 |    84 +
+ .github/workflows/ui.yml                           |   108 +-
+ .github/workflows/winget.yml                       |     2 +-
+ AUTHORS                                            |    55 +-
+ CMakeLists.txt                                     |     6 +-
+ CODEOWNERS                                         |     3 +-
+ CONTRIBUTING.md                                    |    12 +
+ README.md                                          |    55 +-
+ SECURITY.md                                        |     2 +-
+ ci/run.sh                                          |    32 +-
+ cmake/download-models.cmake                        |     4 +-
+ cmake/win-app.cmake                                |     2 +-
+ cmake/win-app.rc.in                                |     3 -
+ common/CMakeLists.txt                              |     2 +
+ common/arg.cpp                                     |   132 +-
+ common/arg.h                                       |     3 +
+ common/chat-auto-parser-generator.cpp              |    32 +-
+ common/chat-auto-parser.h                          |     1 +
+ common/chat-peg-parser.cpp                         |   116 +-
+ common/chat-peg-parser.h                           |    27 +-
+ common/chat-tts-norm.cpp                           |   902 +
+ common/chat-tts-norm.h                             |    81 +
+ common/chat.cpp                                    |   143 +-
+ common/chat.h                                      |    24 +-
+ common/common.cpp                                  |    69 +-
+ common/common.h                                    |    81 +-
+ common/download.cpp                                |   104 +-
+ common/download.h                                  |     2 +
+ common/fit.cpp                                     |    61 +-
+ common/fit.h                                       |    13 +-
+ common/hf-cache.cpp                                |    11 +-
+ common/http.h                                      |    20 +
+ common/jinja/caps.cpp                              |    17 +-
+ common/jinja/caps.h                                |     3 +
+ common/jinja/lexer.cpp                             |    35 -
+ common/jinja/lexer.h                               |     6 +-
+ common/jinja/parser.cpp                            |    42 +-
+ common/jinja/runtime.cpp                           |   238 +-
+ common/jinja/runtime.h                             |   105 +-
+ common/jinja/string.cpp                            |    55 +-
+ common/jinja/string.h                              |     3 +
+ common/jinja/value.cpp                             |   110 +-
+ common/jinja/value.h                               |   232 +-
+ common/json-schema-to-grammar.cpp                  |    41 +-
+ common/json-schema.h                               |    62 +-
+ common/parsers/deepseek.cpp                        |     2 +-
+ common/parsers/gemma4.cpp                          |   459 +-
+ common/parsers/gpt-oss.cpp                         |    61 +-
+ common/parsers/harmony-xml.cpp                     |     7 +-
+ common/parsers/inkling.cpp                         |   163 +
+ common/parsers/k2-horizon.cpp                      |     9 +-
+ common/parsers/lfm2.cpp                            |     3 +-
+ common/parsers/minicpm5.cpp                        |     4 +-
+ common/parsers/minimax-m3.cpp                      |     6 +-
+ common/parsers/ministral3.cpp                      |     6 +-
+ common/parsers/muse-glimmer.cpp                    |    54 +-
+ common/parsers/muse-spark.cpp                      |    23 +-
+ common/parsers/parsers.h                           |     8 +-
+ common/parsers/qwen3-coder.cpp                     |    79 +-
+ common/parsers/sources.cmake                       |     1 +
+ common/peg-parser.cpp                              |   664 +-
+ common/peg-parser.h                                |    94 +-
+ common/preset.cpp                                  |     2 +-
+ common/reasoning-budget.cpp                        |     8 +-
+ common/sampling.cpp                                |    10 +-
+ common/speculative.cpp                             |   861 +-
+ common/speculative.h                               |     2 +-
+ common/trie.cpp                                    |    74 +-
+ common/trie.h                                      |    61 +-
+ conversion/__init__.py                             |    36 +
+ conversion/bailingmoe.py                           |    13 +
+ conversion/base.py                                 |   225 +-
+ conversion/beam.py                                 |     3 +-
+ conversion/bert.py                                 |    21 +-
+ conversion/chatglm.py                              |    35 +-
+ conversion/chatterbox.py                           |     4 +-
+ conversion/deepseek.py                             |     7 +-
+ conversion/deepseek41.py                           |     4 +-
+ conversion/domynedge.py                            |    53 +
+ conversion/dots3.py                                |     3 +-
+ conversion/drama3.py                               |   186 +-
+ conversion/dream.py                                |     5 +-
+ conversion/fish_s2.py                              |   144 +
+ conversion/glm.py                                  |    18 +-
+ conversion/gpt_oss.py                              |    10 +
+ conversion/granite.py                              |    14 +-
+ conversion/higgs_audio.py                          |    74 +
+ conversion/hunyuan.py                              |    14 +-
+ conversion/inkling2.py                             |   386 +
+ conversion/internlm.py                             |     2 +-
+ conversion/kimi_k3.py                              |    30 +
+ conversion/kimi_linear.py                          |     7 +-
+ conversion/kimivl.py                               |    28 +-
+ conversion/kokoro.py                               |   419 +
+ conversion/lev.py                                  |     4 +-
+ conversion/lfm3.py                                 |    10 +-
+ conversion/llada.py                                |     5 +-
+ conversion/magevl.py                               |    77 +
+ conversion/minicpm.py                              |     7 +-
+ conversion/minimax.py                              |    58 +-
+ conversion/minimax_music3.py                       |   285 +
+ conversion/mistral.py                              |     6 +-
+ conversion/moshi.py                                |   378 +
+ conversion/muse_glimmer.py                         |     5 +-
+ conversion/muse_spark.py                           |     3 +-
+ conversion/nemotron.py                             |    15 +-
+ conversion/pockettts.py                            |   150 +-
+ conversion/pplx_decider.py                         |     7 +-
+ conversion/qwen.py                                 |    72 +-
+ conversion/qwen3tts.py                             |    80 +-
+ conversion/qwen3vl.py                              |     7 +-
+ conversion/qwen4exp.py                             |    69 +-
+ conversion/ricursive.py                            |    92 +
+ conversion/t5.py                                   |     4 +-
+ conversion/tiny_voca.py                            |   443 +
+ conversion/vibevoice_asr.py                        |   157 +
+ conversion/voxcpm.py                               |   314 +
+ conversion/xing.py                                 |   133 +
+ conversion/xverse.py                               |    11 +-
+ conversion/yue2.py                                 |   234 +
+ conversion/zaya1.py                                |   144 +
+ conversion/zonos3.py                               |   575 +
+ convert_hf_to_gguf.py                              |    14 +
+ convert_hf_to_gguf_update.py                       |    13 +-
+ convert_lora_to_gguf.py                            |     3 +-
+ docs/backend/OPENCL.md                             |     6 +
+ docs/backend/OPENVINO.md                           |   619 +-
+ docs/backend/SYCL.md                               |    42 +-
+ docs/backend/snapdragon/README.md                  |    12 +-
+ docs/backend/snapdragon/developer.md               |    26 +-
+ docs/build.md                                      |    20 +-
+ docs/development/HOWTO-add-model.md                |     2 +-
+ docs/development/parsing.md                        |   131 +
+ docs/models.md                                     |    20 +
+ docs/moe-cache.md                                  |    26 +
+ docs/multimodal/tts.md                             |   529 +
+ docs/ops.md                                        |   242 +-
+ docs/ops/BLAS.csv                                  |     3 -
+ docs/ops/CANN.csv                                  |     3 -
+ docs/ops/CPU.csv                                   |     3 -
+ docs/ops/CUDA.csv                                  |     3 -
+ docs/ops/ET.csv                                    |     3 -
+ docs/ops/Hexagon.csv                               | 13251 ++++++-----
+ docs/ops/Metal.csv                                 |     3 -
+ docs/ops/OPENVINO.csv                              | 23719 +++++++++++++++++++
+ docs/ops/OpenCL.csv                                |    39 +-
+ docs/ops/SYCL.csv                                  |     3 -
+ docs/ops/Vulkan.csv                                |    31 +-
+ docs/ops/WebGPU.csv                                |   384 +-
+ docs/ops/ZenDNN.csv                                |     3 -
+ docs/ops/zDNN.csv                                  |     3 -
+ docs/speculative.md                                |    58 +-
+ docs/tts-norm-patterns.md                          |   156 +
+ examples/batched.swift/Sources/main.swift          |    60 +-
+ examples/eval-callback/CMakeLists.txt              |     5 +-
+ examples/eval-callback/README.md                   |    10 +-
+ examples/json_schema_pydantic_example.py           |    82 -
+ .../llama.android/lib/src/main/cpp/ai_chat.cpp     |     2 +-
+ .../llama.swiftui/llama.cpp.swift/LibLlama.swift   |    71 +-
+ examples/llama.vim                                 |   783 -
+ .../scripts/causal/compare-logits.py               |     2 +-
+ .../causal/run-casual-gen-embeddings-org.py        |     7 +-
+ .../scripts/embedding/run-original-model.py        |     2 +-
+ .../model-conversion/scripts/utils/check-nmse.py   |     2 +-
+ .../scripts/utils/compare_tokens.py                |     2 +-
+ .../scripts/utils/semantic_check.py                |     7 +-
+ examples/pydantic_models_to_grammar.py             |  1322 --
+ examples/pydantic_models_to_grammar_examples.py    |   312 -
+ examples/realtime_client.py                        |   211 -
+ examples/reason-act.sh                             |    16 -
+ examples/server-llama2-13B.sh                      |    26 -
+ examples/server_embd.py                            |    35 -
+ examples/speculative-simple/speculative-simple.cpp |     7 +-
+ examples/speculative/speculative.cpp               |     3 +
+ examples/sycl/build.sh                             |    61 +-
+ examples/sycl/win-build-sycl.bat                   |    35 +-
+ examples/test-cmake/CMakeLists.txt                 |     2 +-
+ flake.nix                                          |     5 +
+ ggml/CMakeLists.txt                                |     7 +-
+ ggml/cmake/common.cmake                            |     2 +-
+ ggml/include/ggml-rpc.h                            |    15 +-
+ ggml/include/ggml.h                                |   456 +-
+ ggml/src/CMakeLists.txt                            |    26 +-
+ ggml/src/ggml-alloc.c                              |     4 +-
+ ggml/src/ggml-backend-impl.h                       |     3 +-
+ ggml/src/ggml-backend-meta.cpp                     |    53 +-
+ ggml/src/ggml-backend-reg.cpp                      |    29 +-
+ ggml/src/ggml-backend.cpp                          |   132 +-
+ ggml/src/ggml-cann/aclnn_ops.cpp                   |    29 +-
+ ggml/src/ggml-cann/aclnn_ops.h                     |    15 -
+ ggml/src/ggml-cann/ggml-cann.cpp                   |    80 +-
+ ggml/src/ggml-cpu/CMakeLists.txt                   |     2 +-
+ ggml/src/ggml-cpu/arch/wasm/quants.c               |   274 +-
+ ggml/src/ggml-cpu/arch/x86/quants.c                |    28 +-
+ ggml/src/ggml-cpu/ggml-cpu.c                       |   101 +-
+ ggml/src/ggml-cpu/ggml-cpu.cpp                     |     5 +-
+ ggml/src/ggml-cpu/kleidiai/CMakeLists.txt          |     4 +-
+ ggml/src/ggml-cpu/llamafile/sgemm.cpp              |   632 +-
+ ggml/src/ggml-cpu/ops.cpp                          |   657 +-
+ ggml/src/ggml-cpu/ops.h                            |     4 +-
+ ggml/src/ggml-cpu/simd-gemm.h                      |     2 +-
+ ggml/src/ggml-cpu/spacemit/ime.cpp                 |    43 +-
+ ggml/src/ggml-cpu/spacemit/ime2_kernels.cpp        |   119 +-
+ ggml/src/ggml-cpu/spacemit/rvv_kernels.cpp         |   195 +
+ ggml/src/ggml-cpu/spacemit/rvv_kernels.h           |     2 +
+ ggml/src/ggml-cpu/vec.cpp                          |    79 +
+ ggml/src/ggml-cpu/vec.h                            |    65 +-
+ ggml/src/ggml-cuda/CMakeLists.txt                  |     9 +-
+ ggml/src/ggml-cuda/argmax.cu                       |     8 +-
+ ggml/src/ggml-cuda/{batch-get.cu => batch-copy.cu} |   109 +-
+ .../ggml-cuda/{batch-get.cuh => batch-copy.cuh}    |     4 +
+ ggml/src/ggml-cuda/common.cuh                      |   484 +-
+ ggml/src/ggml-cuda/conv2d.cu                       |    38 +-
+ ggml/src/ggml-cuda/convert.cu                      |    12 +
+ ggml/src/ggml-cuda/convert.cuh                     |    30 +
+ ggml/src/ggml-cuda/cp-async.cuh                    |    20 +
+ ggml/src/ggml-cuda/cpy.cu                          |    35 +
+ ggml/src/ggml-cuda/diagmask.cu                     |    40 -
+ ggml/src/ggml-cuda/diagmask.cuh                    |     5 -
+ ggml/src/ggml-cuda/fattn-common.cuh                |    90 +-
+ ggml/src/ggml-cuda/fattn-mma-f16.cuh               |   282 +-
+ ggml/src/ggml-cuda/fattn-tile.cuh                  |     7 +-
+ ggml/src/ggml-cuda/fattn-vec.cuh                   |    33 +-
+ ggml/src/ggml-cuda/fattn.cu                        |    73 +-
+ ggml/src/ggml-cuda/fp8.cu                          |   206 +
+ ggml/src/ggml-cuda/fp8.cuh                         |     7 +
+ ggml/src/ggml-cuda/fwht.cu                         |     4 +-
+ ggml/src/ggml-cuda/gated-delta-net-mma.cu          |   213 +-
+ ggml/src/ggml-cuda/getrows.cu                      |     4 +
+ ggml/src/ggml-cuda/ggml-cuda.cu                    |   777 +-
+ ggml/src/ggml-cuda/graph.cuh                       |   221 +
+ ggml/src/ggml-cuda/lightning-indexer.cu            |   323 +-
+ ggml/src/ggml-cuda/mma.cuh                         |    10 +-
+ ggml/src/ggml-cuda/mmf.cu                          |    31 +-
+ ggml/src/ggml-cuda/mmf.cuh                         |   294 +-
+ ggml/src/ggml-cuda/mmid.cu                         |   267 +-
+ ggml/src/ggml-cuda/mmid.cuh                        |    15 +-
+ ggml/src/ggml-cuda/mmq-config-gcn.cuh              |   537 +-
+ ggml/src/ggml-cuda/mmq-config-pascal-dp4a.cuh      |    44 +-
+ ggml/src/ggml-cuda/mmq-few.cu                      |   943 +
+ ggml/src/ggml-cuda/mmq-few.cuh                     |     8 +
+ ggml/src/ggml-cuda/mmq-load-tiles.cuh              |    30 +-
+ ggml/src/ggml-cuda/mmq.cu                          |    71 +-
+ ggml/src/ggml-cuda/mmq.cuh                         |   449 +-
+ ggml/src/ggml-cuda/mmvf.cu                         |   119 +-
+ ggml/src/ggml-cuda/mmvf.cuh                        |     2 +-
+ ggml/src/ggml-cuda/mmvq.cu                         |   102 +-
+ ggml/src/ggml-cuda/norm.cu                         |   252 +-
+ ggml/src/ggml-cuda/norm.cuh                        |     5 +-
+ ggml/src/ggml-cuda/pad_reflect_1d.cu               |    27 +-
+ ggml/src/ggml-cuda/pool1d.cu                       |    36 +
+ ggml/src/ggml-cuda/pool1d.cuh                      |     1 +
+ ggml/src/ggml-cuda/pool2d.cu                       |     2 +-
+ ggml/src/ggml-cuda/quantize.cu                     |   223 +-
+ ggml/src/ggml-cuda/quantize.cuh                    |    28 +-
+ ggml/src/ggml-cuda/rope.cu                         |    68 +-
+ ggml/src/ggml-cuda/set-rows.cu                     |    63 +-
+ ggml/src/ggml-cuda/sleep.cu                        |    32 +
+ ggml/src/ggml-cuda/sleep.cuh                       |     3 +
+ ggml/src/ggml-cuda/softmax.cu                      |   220 +-
+ ggml/src/ggml-cuda/ssm-conv.cu                     |     3 +-
+ ggml/src/ggml-cuda/ssm-scan.cu                     |    14 +-
+ .../fattn-mma-f16-instance-ncols1_1-ncols2_8.cu    |     2 +
+ .../fattn-mma-f16-instance-ncols1_16-ncols2_1.cu   |     2 +
+ .../fattn-mma-f16-instance-ncols1_16-ncols2_2.cu   |     2 +
+ .../fattn-mma-f16-instance-ncols1_16-ncols2_4.cu   |     2 +
+ .../fattn-mma-f16-instance-ncols1_2-ncols2_4.cu    |     2 +
+ .../fattn-mma-f16-instance-ncols1_2-ncols2_8.cu    |     2 +
+ .../fattn-mma-f16-instance-ncols1_32-ncols2_1.cu   |     2 +
+ .../fattn-mma-f16-instance-ncols1_32-ncols2_2.cu   |     2 +
+ .../fattn-mma-f16-instance-ncols1_4-ncols2_2.cu    |     2 +
+ .../fattn-mma-f16-instance-ncols1_4-ncols2_4.cu    |     2 +
+ .../fattn-mma-f16-instance-ncols1_4-ncols2_8.cu    |     2 +
+ .../fattn-mma-f16-instance-ncols1_64-ncols2_1.cu   |     2 +
+ .../fattn-mma-f16-instance-ncols1_8-ncols2_1.cu    |     2 +
+ .../fattn-mma-f16-instance-ncols1_8-ncols2_2.cu    |     2 +
+ .../fattn-mma-f16-instance-ncols1_8-ncols2_4.cu    |     2 +
+ .../fattn-mma-f16-instance-ncols1_8-ncols2_8.cu    |     2 +
+ .../fattn-vec-instance-bf16-f8_e4m3.cu             |     7 +
+ .../fattn-vec-instance-f16-f8_e4m3.cu              |     7 +
+ .../fattn-vec-instance-f8_e4m3-bf16.cu             |     7 +
+ .../fattn-vec-instance-f8_e4m3-f16.cu              |     7 +
+ .../fattn-vec-instance-f8_e4m3-f8_e4m3.cu          |     7 +
+ .../fattn-vec-instance-f8_e4m3-q4_0.cu             |     7 +
+ .../fattn-vec-instance-f8_e4m3-q4_1.cu             |     7 +
+ .../fattn-vec-instance-f8_e4m3-q5_0.cu             |     7 +
+ .../fattn-vec-instance-f8_e4m3-q5_1.cu             |     7 +
+ .../fattn-vec-instance-f8_e4m3-q8_0.cu             |     7 +
+ .../fattn-vec-instance-q4_0-f8_e4m3.cu             |     7 +
+ .../fattn-vec-instance-q4_1-f8_e4m3.cu             |     7 +
+ .../fattn-vec-instance-q5_0-f8_e4m3.cu             |     7 +
+ .../fattn-vec-instance-q5_1-f8_e4m3.cu             |     7 +
+ .../fattn-vec-instance-q8_0-f8_e4m3.cu             |     7 +
+ .../template-instances/generate_cu_files.py        |     6 +-
+ ggml/src/ggml-cuda/top-k.cu                        |    99 +-
+ ggml/src/ggml-cuda/topk-moe.cu                     |   115 +-
+ ggml/src/ggml-cuda/vendors/cuda.h                  |     4 +
+ ggml/src/ggml-cuda/vendors/hip.h                   |    27 +-
+ ggml/src/ggml-cuda/vendors/musa.h                  |     4 +
+ ggml/src/ggml-et/ggml-et-ops.cpp                   |     2 +-
+ ggml/src/ggml-et/ggml-et.cpp                       |     7 +-
+ ggml/src/ggml-hexagon/CMakeLists.txt               |     9 +-
+ ggml/src/ggml-hexagon/ggml-hexagon.cpp             |   851 +-
+ ggml/src/ggml-hexagon/htp-common.h                 |    75 +-
+ ggml/src/ggml-hexagon/htp-drv.cpp                  |   196 +-
+ ggml/src/ggml-hexagon/htp-drv.h                    |     6 +
+ ggml/src/ggml-hexagon/htp-fusion.cpp               |    59 +-
+ ggml/src/ggml-hexagon/htp-fusion.h                 |     1 +
+ ggml/src/ggml-hexagon/htp-kparams.cpp              |  1163 +-
+ ggml/src/ggml-hexagon/htp-kparams.h                |    10 +
+ ggml/src/ggml-hexagon/htp-opnode.cpp               |    71 +-
+ ggml/src/ggml-hexagon/htp-repack.cpp               |   321 +-
+ ggml/src/ggml-hexagon/htp-repack.h                 |    27 +-
+ ggml/src/ggml-hexagon/htp/CMakeLists.txt           |     2 +
+ ggml/src/ggml-hexagon/htp/allreduce-ops.c          |    87 +-
+ ggml/src/ggml-hexagon/htp/allreduce-ops.h          |    10 +-
+ ggml/src/ggml-hexagon/htp/argsort-ops.c            |    62 +-
+ ggml/src/ggml-hexagon/htp/argsort-ops.h            |    24 +-
+ ggml/src/ggml-hexagon/htp/binary-ops.c             |   128 +-
+ ggml/src/ggml-hexagon/htp/binary-ops.h             |    54 +-
+ ggml/src/ggml-hexagon/htp/concat-ops.c             |    52 +-
+ ggml/src/ggml-hexagon/htp/concat-ops.h             |    16 +-
+ ggml/src/ggml-hexagon/htp/conv2d-ops.c             |   304 +-
+ ggml/src/ggml-hexagon/htp/conv2d-ops.h             |    24 +-
+ ggml/src/ggml-hexagon/htp/cpy-ops.c                |    74 +-
+ ggml/src/ggml-hexagon/htp/cpy-ops.h                |    20 +-
+ ggml/src/ggml-hexagon/htp/cumsum-ops.c             |    42 +-
+ ggml/src/ggml-hexagon/htp/cumsum-ops.h             |    16 +-
+ ggml/src/ggml-hexagon/htp/diag-ops.c               |    42 +-
+ ggml/src/ggml-hexagon/htp/diag-ops.h               |    16 +-
+ ggml/src/ggml-hexagon/htp/dma-queue.h              |     2 +-
+ ggml/src/ggml-hexagon/htp/dsv4-hc-ops.c            |    78 +-
+ ggml/src/ggml-hexagon/htp/dsv4-hc-ops.h            |    12 +-
+ ggml/src/ggml-hexagon/htp/fill-ops.c               |    28 +-
+ ggml/src/ggml-hexagon/htp/fill-ops.h               |     2 +-
+ ggml/src/ggml-hexagon/htp/flash-attn-ops.c         |   150 +-
+ ggml/src/ggml-hexagon/htp/flash-attn-ops.h         |    36 +-
+ ggml/src/ggml-hexagon/htp/gated-delta-net-ops.c    |    70 +-
+ ggml/src/ggml-hexagon/htp/gated-delta-net-ops.h    |    34 +-
+ ggml/src/ggml-hexagon/htp/gather-rows.c            |    34 +-
+ ggml/src/ggml-hexagon/htp/gather-rows.h            |    20 +-
+ ggml/src/ggml-hexagon/htp/get-rows-ops.c           |    50 +-
+ ggml/src/ggml-hexagon/htp/get-rows-ops.h           |    16 +-
+ ggml/src/ggml-hexagon/htp/glu-ops.c                |    90 +-
+ ggml/src/ggml-hexagon/htp/glu-ops.h                |    32 +-
+ ggml/src/ggml-hexagon/htp/hex-profile.h            |    66 -
+ ggml/src/ggml-hexagon/htp/hex-utils.h              |    31 +-
+ ggml/src/ggml-hexagon/htp/hmx-mm-kernels-tiled.h   |   207 +-
+ ggml/src/ggml-hexagon/htp/hmx-queue.c              |    14 +-
+ ggml/src/ggml-hexagon/htp/hmx-queue.h              |     9 +-
+ ggml/src/ggml-hexagon/htp/htp-ctx.h                |    58 +-
+ ggml/src/ggml-hexagon/htp/htp-dcache.c             |    47 +-
+ ggml/src/ggml-hexagon/htp/htp-dcache.h             |     6 +-
+ ggml/src/ggml-hexagon/htp/htp-ops.h                |    40 +-
+ ggml/src/ggml-hexagon/htp/htp-tensor.h             |    22 +-
+ ggml/src/ggml-hexagon/htp/htp-thread.h             |    33 +
+ ggml/src/ggml-hexagon/htp/htp-trace.h              |    38 +
+ ggml/src/ggml-hexagon/htp/hvx-mm-kernels-tiled.h   |   507 +
+ ggml/src/ggml-hexagon/htp/hvx-norm.h               |    65 +
+ ggml/src/ggml-hexagon/htp/im2col-ops.c             |   114 +-
+ ggml/src/ggml-hexagon/htp/im2col-ops.h             |    20 +-
+ ggml/src/ggml-hexagon/htp/iq2xxs-tables.h          |    54 +
+ ggml/src/ggml-hexagon/htp/lightning-indexer-ops.c  |   122 +-
+ ggml/src/ggml-hexagon/htp/lightning-indexer-ops.h  |    30 +-
+ ggml/src/ggml-hexagon/htp/main.c                   |   107 +-
+ ggml/src/ggml-hexagon/htp/matmul-ops.c             |   692 +-
+ ggml/src/ggml-hexagon/htp/matmul-ops.h             |   134 +-
+ ggml/src/ggml-hexagon/htp/pad-ops.c                |    54 +-
+ ggml/src/ggml-hexagon/htp/pad-ops.h                |    16 +-
+ ggml/src/ggml-hexagon/htp/pool-ops.c               |    36 +-
+ ggml/src/ggml-hexagon/htp/pool-ops.h               |    20 +-
+ ggml/src/ggml-hexagon/htp/repeat-ops.c             |    20 +-
+ ggml/src/ggml-hexagon/htp/repeat-ops.h             |     2 +-
+ ggml/src/ggml-hexagon/htp/roll-ops.c               |    20 +-
+ ggml/src/ggml-hexagon/htp/roll-ops.h               |     2 +-
+ ggml/src/ggml-hexagon/htp/rope-ops.c               |    30 +-
+ ggml/src/ggml-hexagon/htp/rope-ops.h               |    10 +-
+ ggml/src/ggml-hexagon/htp/set-rows-ops.c           |    43 +-
+ ggml/src/ggml-hexagon/htp/set-rows-ops.h           |    16 +-
+ ggml/src/ggml-hexagon/htp/softmax-ops.c            |    64 +-
+ ggml/src/ggml-hexagon/htp/softmax-ops.h            |    22 +-
+ ggml/src/ggml-hexagon/htp/solve-tri-ops.c          |    36 +-
+ ggml/src/ggml-hexagon/htp/solve-tri-ops.h          |     2 +-
+ ggml/src/ggml-hexagon/htp/ssm-conv.c               |   110 +-
+ ggml/src/ggml-hexagon/htp/ssm-conv.h               |    32 +-
+ ggml/src/ggml-hexagon/htp/ssm-scan-ops.c           |  1566 ++
+ ggml/src/ggml-hexagon/htp/ssm-scan-ops.h           |   165 +
+ ggml/src/ggml-hexagon/htp/sum-rows-ops.c           |    96 +-
+ ggml/src/ggml-hexagon/htp/sum-rows-ops.h           |     4 +-
+ ggml/src/ggml-hexagon/htp/timestep-ops.c           |   217 +
+ ggml/src/ggml-hexagon/htp/timestep-ops.h           |    67 +
+ ggml/src/ggml-hexagon/htp/top-k-mask-ops.c         |    60 +-
+ ggml/src/ggml-hexagon/htp/top-k-mask-ops.h         |    14 +-
+ ggml/src/ggml-hexagon/htp/unary-ops.c              |   282 +-
+ ggml/src/ggml-hexagon/htp/unary-ops.h              |    74 +-
+ ggml/src/ggml-hexagon/htp/upscale-ops.c            |    34 +-
+ ggml/src/ggml-hexagon/htp/upscale-ops.h            |    36 +-
+ ggml/src/ggml-hexagon/htp/work-queue.c             |    53 +-
+ ggml/src/ggml-hexagon/htp/work-queue.h             |    23 +-
+ ggml/src/ggml-hip/CMakeLists.txt                   |     4 +-
+ ggml/src/ggml-impl.h                               |    19 +-
+ ggml/src/ggml-metal/ggml-metal-common.cpp          |     2 +-
+ ggml/src/ggml-metal/ggml-metal-context.m           |    45 +-
+ ggml/src/ggml-metal/ggml-metal-device.cpp          |    95 +-
+ ggml/src/ggml-metal/ggml-metal-device.h            |     4 +-
+ ggml/src/ggml-metal/ggml-metal-device.m            |    33 +-
+ ggml/src/ggml-metal/ggml-metal-fusion.cpp          |   259 +-
+ ggml/src/ggml-metal/ggml-metal-impl.h              |    14 +
+ ggml/src/ggml-metal/ggml-metal-ops.cpp             |   177 +-
+ ggml/src/ggml-metal/ggml-metal-ops.h               |     2 +
+ ggml/src/ggml-metal/ggml-metal.cpp                 |     4 +
+ ggml/src/ggml-metal/kernels/argsort.metal          |   207 +-
+ ggml/src/ggml-metal/kernels/conv.metal             |   356 +
+ ggml/src/ggml-metal/kernels/fa_vec_common.metal    |     8 +-
+ ggml/src/ggml-metal/kernels/mul_mm.metal           |     3 +-
+ ggml/src/ggml-metal/kernels/mul_mv.metal           |     2 +-
+ ggml/src/ggml-metal/kernels/norm.metal             |   102 +-
+ ggml/src/ggml-metal/kernels/solve_tri.metal        |     8 +-
+ ggml/src/ggml-metal/kernels/tri.metal              |     3 +-
+ ggml/src/ggml-opencl/CMakeLists.txt                |    19 +-
+ ggml/src/ggml-opencl/ggml-opencl.cpp               |  2846 ++-
+ ggml/src/ggml-opencl/kernels/arange.cl             |    14 +
+ ggml/src/ggml-opencl/kernels/cpy.cl                |   115 +-
+ ggml/src/ggml-opencl/kernels/diag_mask_inf.cl      |    58 -
+ ggml/src/ggml-opencl/kernels/dsv4_hc.cl            |   101 +
+ ggml/src/ggml-opencl/kernels/flash_attn_pre_f16.cl |   120 +
+ .../ggml-opencl/kernels/flash_attn_pv_direct.cl    |   106 +
+ ggml/src/ggml-opencl/kernels/flash_attn_q8_rows.cl |    77 +
+ .../kernels/gemm_coopk_q4_k_q8_1_dp4a_bin_c8.cl    |   187 +
+ .../kernels/gemm_noshuffle_q4_0_f32_coopmat.cl     |   145 +
+ .../kernels/gemm_noshuffle_q4_k_f32_coopmat.cl     |   148 +
+ .../kernels/gemm_noshuffle_q5_0_f32_coopmat.cl     |   157 +
+ .../kernels/gemm_noshuffle_q5_k_f32_coopmat.cl     |   164 +
+ .../kernels/gemm_noshuffle_q6_k_f32_coopmat.cl     |   145 +
+ .../kernels/gemm_noshuffle_q8_0_f32_coopmat.cl     |   157 +
+ .../ggml-opencl/kernels/gemv_moe_q4_0_f32_ns.cl    |     9 +-
+ .../ggml-opencl/kernels/gemv_moe_q4_1_f32_ns.cl    |     9 +-
+ .../ggml-opencl/kernels/gemv_moe_q4_k_f32_ns.cl    |    18 +-
+ .../ggml-opencl/kernels/gemv_moe_q5_0_f32_ns.cl    |     9 +-
+ .../ggml-opencl/kernels/gemv_moe_q5_1_f32_ns.cl    |     9 +-
+ .../ggml-opencl/kernels/gemv_moe_q5_k_f32_ns.cl    |     9 +-
+ .../ggml-opencl/kernels/gemv_moe_q6_k_f32_ns.cl    |     9 +-
+ .../kernels/gemv_noshuffle_q6_k_f32_tiled.cl       |    34 +-
+ .../ggml-opencl/kernels/gemv_noshuffle_q8_0_f32.cl |    82 +
+ ggml/src/ggml-opencl/kernels/glu.cl                |    38 +
+ ggml/src/ggml-opencl/kernels/group_norm.cl         |     3 +
+ .../ggml-opencl/kernels/mul_mm_f16_f32_kq_p8.cl    |   260 +
+ ggml/src/ggml-opencl/kernels/mul_mm_id_f32_f32.cl  |    98 +
+ ggml/src/ggml-opencl/kernels/mul_mm_q8_f32_kqv.cl  |   131 +
+ ggml/src/ggml-opencl/kernels/mul_mm_q8_kq_p8.cl    |   174 +
+ .../ggml-opencl/kernels/mul_mm_q8_kq_p8_dk512.cl   |   170 +
+ ggml/src/ggml-opencl/kernels/mul_mv_id_f32_f32.cl  |    89 +
+ .../ggml-opencl/kernels/mul_mv_q4_k_f32_flat.cl    |     2 +-
+ ggml/src/ggml-opencl/kernels/pack_b_f16_coopmat.cl |    48 +
+ ggml/src/ggml-opencl/kernels/repeat.cl             |    79 +-
+ ggml/src/ggml-opencl/kernels/sigmoid.cl            |    77 +-
+ ggml/src/ggml-opencl/kernels/silu.cl               |    85 +
+ ggml/src/ggml-opencl/kernels/softmax_4_f16.cl      |   173 +
+ ggml/src/ggml-opencl/kernels/unary_ext.cl          |    26 +
+ ggml/src/ggml-openvino/CMakeLists.txt              |    17 +
+ ggml/src/ggml-openvino/README.md                   |    51 +-
+ .../ggml-openvino/dev_doc/MTP-SAMPLING-GRAPH.md    |    45 +
+ .../dev_doc/OPENVINO-RECURRENT-CACHE.md            |    62 +
+ .../src/ggml-openvino/dev_doc/OpenVINO-ENV-VARS.md |   221 +
+ ggml/src/ggml-openvino/dev_doc/README.md           |     8 +
+ ggml/src/ggml-openvino/device/npu_config.cpp       |   113 +
+ ggml/src/ggml-openvino/device/npu_config.h         |    33 +
+ ggml/src/ggml-openvino/device/npu_quant_policy.cpp |    50 +
+ ggml/src/ggml-openvino/device/npu_quant_policy.h   |    19 +
+ ggml/src/ggml-openvino/ggml-decoder.cpp            |  1040 +-
+ ggml/src/ggml-openvino/ggml-decoder.h              |   314 +-
+ ggml/src/ggml-openvino/ggml-openvino-extra.cpp     |   964 +-
+ ggml/src/ggml-openvino/ggml-openvino-extra.h       |   155 +-
+ ggml/src/ggml-openvino/ggml-openvino.cpp           |   645 +-
+ ggml/src/ggml-openvino/ggml-quants.cpp             |   119 +-
+ ggml/src/ggml-openvino/model-cache.cpp             |   281 +-
+ ggml/src/ggml-openvino/model-cache.h               |    64 +
+ ggml/src/ggml-openvino/openvino/decoder.h          |     5 +
+ ggml/src/ggml-openvino/openvino/node_context.h     |     2 +
+ ggml/src/ggml-openvino/openvino/op/arange.cpp      |    22 +
+ ggml/src/ggml-openvino/openvino/op/argsort.cpp     |    53 +
+ ggml/src/ggml-openvino/openvino/op/cpy.cpp         |   139 +-
+ ggml/src/ggml-openvino/openvino/op/div.cpp         |     4 +
+ ggml/src/ggml-openvino/openvino/op/fill.cpp        |    11 +-
+ .../ggml-openvino/openvino/op/flash_attn_ext.cpp   |   286 +-
+ .../ggml-openvino/openvino/op/gated_delta_net.cpp  |   364 +-
+ .../ggml-openvino/openvino/op/gated_delta_net.hpp  |     3 +
+ ggml/src/ggml-openvino/openvino/op/get_rows.cpp    |    69 +-
+ ggml/src/ggml-openvino/openvino/op/mul_mat_id.cpp  |   109 +-
+ ggml/src/ggml-openvino/openvino/op/mulmat.cpp      |    34 +-
+ ggml/src/ggml-openvino/openvino/op/pad.cpp         |    54 +-
+ ggml/src/ggml-openvino/openvino/op/permute.cpp     |   119 +-
+ ggml/src/ggml-openvino/openvino/op/pool_1d.cpp     |    48 +
+ .../openvino/op/recurrent_cache_update.hpp         |    65 +
+ ggml/src/ggml-openvino/openvino/op/reshape.cpp     |    15 +
+ ggml/src/ggml-openvino/openvino/op/rms_norm.cpp    |    66 +-
+ ggml/src/ggml-openvino/openvino/op/rope.cpp        |     2 +
+ ggml/src/ggml-openvino/openvino/op/scale.cpp       |    62 +-
+ .../ggml-openvino/openvino/op/selective_ssm.hpp    |    42 +
+ ggml/src/ggml-openvino/openvino/op/set_rows.cpp    |   254 +-
+ ggml/src/ggml-openvino/openvino/op/softmax.cpp     |    48 +-
+ ggml/src/ggml-openvino/openvino/op/ssm_scan.cpp    |    63 +
+ ggml/src/ggml-openvino/openvino/op/tri.cpp         |     3 +-
+ ggml/src/ggml-openvino/openvino/op/view.cpp        |    20 +
+ ggml/src/ggml-openvino/openvino/op_table.cpp       |     5 +-
+ ggml/src/ggml-openvino/openvino/op_table.h         |     7 +
+ .../openvino/pass/keep_sum_square_fp32.cpp         |   147 +
+ .../openvino/pass/keep_sum_square_fp32.h           |    22 +
+ .../openvino/pass/move_scale_before_matmul.cpp     |    89 +
+ .../openvino/pass/move_scale_before_matmul.h       |    24 +
+ .../openvino/pass_registry/common.cpp              |    73 +
+ .../ggml-openvino/openvino/pass_registry/cpu.cpp   |    17 +
+ .../ggml-openvino/openvino/pass_registry/gpu.cpp   |    49 +
+ .../ggml-openvino/openvino/pass_registry/npu.cpp   |    23 +
+ .../openvino/pass_registry/pipeline.h              |    52 +
+ .../openvino/recurrent_cache_fusion.cpp            |   315 +
+ .../openvino/recurrent_cache_fusion.h              |    26 +
+ .../ggml-openvino/openvino/translate_session.cpp   |   155 +-
+ ggml/src/ggml-openvino/openvino/utils.cpp          |   436 +-
+ ggml/src/ggml-openvino/openvino/utils.h            |    34 +
+ ggml/src/ggml-openvino/utils.cpp                   |  1830 +-
+ ggml/src/ggml-openvino/utils.h                     |    58 +-
+ ggml/src/ggml-quants.c                             |   119 +-
+ ggml/src/ggml-rpc/ggml-rpc.cpp                     |  1436 +-
+ ggml/src/ggml-rpc/transport.cpp                    |    30 +-
+ ggml/src/ggml-sycl/CMakeLists.txt                  |    16 +-
+ ggml/src/ggml-sycl/binbcast.cpp                    |    56 +-
+ ggml/src/ggml-sycl/common.cpp                      |    89 +-
+ ggml/src/ggml-sycl/common.hpp                      |    61 +-
+ ggml/src/ggml-sycl/conv.cpp                        |    13 +-
+ ggml/src/ggml-sycl/convert.cpp                     |    22 +-
+ ggml/src/ggml-sycl/cpy.hpp                         |    61 +-
+ ggml/src/ggml-sycl/dequantize.hpp                  |    64 +
+ ggml/src/ggml-sycl/element_wise.cpp                |    71 +-
+ ggml/src/ggml-sycl/esimd.hpp                       |     9 +-
+ ggml/src/ggml-sycl/fattn-mkl.cpp                   |     4 +-
+ ggml/src/ggml-sycl/fattn-onednn.cpp                |    96 +-
+ ggml/src/ggml-sycl/fattn-onednn.hpp                |     4 +
+ ggml/src/ggml-sycl/fattn.cpp                       |     4 +-
+ ggml/src/ggml-sycl/fused-gemm-esimd.cpp            |  1160 +
+ ggml/src/ggml-sycl/fused-gemm-esimd.hpp            |    33 +
+ ggml/src/ggml-sycl/fused-gemm.cpp                  |   505 +-
+ ggml/src/ggml-sycl/fused-gemm.hpp                  |    67 +-
+ ggml/src/ggml-sycl/fusion.cpp                      |    22 +
+ ggml/src/ggml-sycl/gated_delta_net.cpp             |   263 +-
+ ggml/src/ggml-sycl/getrows.cpp                     |    14 +
+ ggml/src/ggml-sycl/ggml-sycl.cpp                   |   332 +-
+ ggml/src/ggml-sycl/mmvq.cpp                        |   136 +-
+ ggml/src/ggml-sycl/mmvq.hpp                        |     3 +
+ ggml/src/ggml-sycl/norm.cpp                        |   190 +-
+ ggml/src/ggml-sycl/norm.hpp                        |     5 +
+ ggml/src/ggml-sycl/presets.hpp                     |     2 -
+ ggml/src/ggml-sycl/quants.hpp                      |    65 +
+ ggml/src/ggml-sycl/rope.cpp                        |     2 +-
+ ggml/src/ggml-sycl/vecdotq.hpp                     |    92 +
+ ggml/src/ggml-version.h.in                         |     4 +
+ ggml/src/ggml-virtgpu/ggml-backend-device.cpp      |     5 +-
+ ggml/src/ggml-vulkan/CMakeLists.txt                |    13 +-
+ ggml/src/ggml-vulkan/ggml-vulkan-buffers.cpp       |   343 +-
+ ggml/src/ggml-vulkan/ggml-vulkan-comm.cpp          |     6 +-
+ ggml/src/ggml-vulkan/ggml-vulkan-common.h          |    23 +-
+ ggml/src/ggml-vulkan/ggml-vulkan-debug.cpp         |    66 +-
+ ggml/src/ggml-vulkan/ggml-vulkan-push-constants.h  |   155 +-
+ ggml/src/ggml-vulkan/ggml-vulkan-types.h           |   242 +-
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp               |  2395 +-
+ ggml/src/ggml-vulkan/vulkan-shaders/CMakeLists.txt |     4 +
+ ggml/src/ggml-vulkan/vulkan-shaders/add.comp       |     4 +-
+ ggml/src/ggml-vulkan/vulkan-shaders/col2im_1d.comp |     4 +-
+ .../vulkan-shaders/concat_transpose.comp           |    39 +
+ ggml/src/ggml-vulkan/vulkan-shaders/conv3d_mm.comp |    19 +-
+ ggml/src/ggml-vulkan/vulkan-shaders/cumsum.comp    |     2 +
+ .../vulkan-shaders/dequant_funcs_cm2.glsl          |    92 +-
+ ggml/src/ggml-vulkan/vulkan-shaders/diag.comp      |     5 +-
+ .../ggml-vulkan/vulkan-shaders/diag_mask_inf.comp  |    34 -
+ ggml/src/ggml-vulkan/vulkan-shaders/div.comp       |     2 +-
+ .../feature-tests/coopmat_maintenance1.comp        |     8 +
+ .../src/ggml-vulkan/vulkan-shaders/flash_attn.comp |    18 +-
+ .../vulkan-shaders/flash_attn_base.glsl            |     9 +
+ .../ggml-vulkan/vulkan-shaders/flash_attn_cm1.comp |   161 +-
+ .../vulkan-shaders/flash_attn_cm1_flip.comp        |   441 +
+ .../ggml-vulkan/vulkan-shaders/flash_attn_cm2.comp |    15 +-
+ .../vulkan-shaders/flash_attn_decode_phase_1.comp  |   514 +-
+ .../vulkan-shaders/flash_attn_decode_phase_2.comp  |   762 +-
+ .../vulkan-shaders/flash_attn_prefill.comp         |   817 +
+ ggml/src/ggml-vulkan/vulkan-shaders/fwht.comp      |    10 +-
+ .../vulkan-shaders/gated_delta_net.comp            |    22 +-
+ .../vulkan-shaders/gated_delta_net_cm.comp         |   437 +
+ .../vulkan-shaders/gated_delta_net_cm2.comp        |   320 +
+ ggml/src/ggml-vulkan/vulkan-shaders/glu_head.glsl  |     1 +
+ ggml/src/ggml-vulkan/vulkan-shaders/glu_main.glsl  |     6 +-
+ .../src/ggml-vulkan/vulkan-shaders/group_norm.comp |     8 +-
+ ggml/src/ggml-vulkan/vulkan-shaders/l2_norm.comp   |     2 +
+ ggml/src/ggml-vulkan/vulkan-shaders/log.comp       |     4 +-
+ ggml/src/ggml-vulkan/vulkan-shaders/mul.comp       |     2 +-
+ .../vulkan-shaders/mul_mat_stream_k_fixup.comp     |    86 +
+ ggml/src/ggml-vulkan/vulkan-shaders/mul_mm.comp    |   183 +-
+ .../src/ggml-vulkan/vulkan-shaders/mul_mm_cm2.comp |   168 +-
+ ggml/src/ggml-vulkan/vulkan-shaders/mul_mmq.comp   |     9 +
+ .../ggml-vulkan/vulkan-shaders/mul_mmq_funcs.glsl  |   117 +-
+ ggml/src/ggml-vulkan/vulkan-shaders/norm.comp      |     2 +
+ ggml/src/ggml-vulkan/vulkan-shaders/rms_norm.comp  |    44 +-
+ .../ggml-vulkan/vulkan-shaders/rms_norm_back.comp  |     2 +
+ ggml/src/ggml-vulkan/vulkan-shaders/scale.comp     |     2 +-
+ ggml/src/ggml-vulkan/vulkan-shaders/sleep.comp     |    37 +
+ ggml/src/ggml-vulkan/vulkan-shaders/sub.comp       |     2 +-
+ ggml/src/ggml-vulkan/vulkan-shaders/sum_rows.comp  |     2 +
+ ggml/src/ggml-vulkan/vulkan-shaders/sum_rows.glsl  |     2 +-
+ .../src/ggml-vulkan/vulkan-shaders/top_k_mask.comp |    95 +
+ .../vulkan-shaders/topk_radix_select.comp          |   161 +-
+ ggml/src/ggml-vulkan/vulkan-shaders/tri.comp       |     5 +-
+ ggml/src/ggml-vulkan/vulkan-shaders/types.glsl     |    21 +
+ ggml/src/ggml-vulkan/vulkan-shaders/unary.comp     |     6 +-
+ .../vulkan-shaders/vulkan-shaders-gen.cpp          |   175 +-
+ ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp    |   197 +-
+ ggml/src/ggml-webgpu/ggml-webgpu.cpp               |   563 +-
+ ggml/src/ggml-webgpu/wgsl-shaders/col2im_1d.wgsl   |    45 +
+ ggml/src/ggml-webgpu/wgsl-shaders/count_equal.wgsl |    57 +
+ ggml/src/ggml-webgpu/wgsl-shaders/cpy.wgsl         |     8 +-
+ ggml/src/ggml-webgpu/wgsl-shaders/flash_attn.wgsl  |     2 +-
+ .../ggml-webgpu/wgsl-shaders/flash_attn_decls.tmpl |     3 +
+ .../wgsl-shaders/flash_attn_staging.tmpl           |     4 +-
+ .../ggml-webgpu/wgsl-shaders/flash_attn_tile.wgsl  |     2 +-
+ .../wgsl-shaders/flash_attn_vec_blk.wgsl           |    12 +-
+ .../wgsl-shaders/flash_attn_vec_split.wgsl         |     7 +-
+ ggml/src/ggml-webgpu/wgsl-shaders/group_norm.wgsl  |   154 +
+ .../ggml-webgpu/wgsl-shaders/mul_mat_decls.tmpl    |   172 +-
+ ggml/src/ggml-webgpu/wgsl-shaders/pad.wgsl         |    13 +
+ ggml/src/ggml-webgpu/wgsl-shaders/pool2d.wgsl      |    74 +
+ .../wgsl-shaders/quant_inner_loops.tmpl            |    18 +-
+ .../src/ggml-webgpu/wgsl-shaders/set_tensor_n.wgsl |    42 +
+ ggml/src/ggml-webgpu/wgsl-shaders/sum_rows.wgsl    |    15 +-
+ .../wgsl-shaders/timestep_embedding.wgsl           |    48 +
+ ggml/src/ggml-zdnn/common.hpp                      |     6 +-
+ ggml/src/ggml-zdnn/fattn.cpp                       |     6 -
+ ggml/src/ggml-zdnn/ggml-zdnn.cpp                   |    73 +-
+ ggml/src/ggml-zdnn/mmf.cpp                         |    38 +-
+ ggml/src/ggml-zdnn/mmf.hpp                         |     2 +-
+ ggml/src/ggml-zdnn/mmq.cpp                         |    14 +-
+ ggml/src/ggml-zdnn/utils.cpp                       |    14 +
+ ggml/src/ggml-zdnn/utils.hpp                       |     2 +
+ ggml/src/ggml-zendnn/ggml-zendnn.cpp               |     4 +
+ ggml/src/ggml.c                                    |   309 +-
+ ggml/src/gguf.cpp                                  |    31 +-
+ gguf-py/gguf/constants.py                          |   625 +-
+ gguf-py/gguf/gguf_reader.py                        |     6 +-
+ gguf-py/gguf/gguf_writer.py                        |    67 +-
+ gguf-py/gguf/lazy.py                               |     2 +-
+ gguf-py/gguf/tensor_mapping.py                     |   225 +
+ gguf-py/gguf/vocab.py                              |    42 +-
+ gguf-py/tests/test_gguf_reader_validation.py       |    12 +-
+ gguf-py/tests/test_gguf_writer.py                  |    23 +
+ grammars/README.md                                 |     6 +-
+ include/llama.h                                    |   213 +-
+ media/llama0-banner.png                            |   Bin 144615 -> 0 bytes
+ media/llama0-logo.png                              |   Bin 179940 -> 0 bytes
+ media/llama1-banner.png                            |   Bin 33331 -> 0 bytes
+ media/llama1-icon-transparent.png                  |   Bin 14270 -> 0 bytes
+ media/llama1-icon-transparent.svg                  |    77 -
+ media/llama1-icon.png                              |   Bin 16045 -> 0 bytes
+ media/llama1-icon.svg                              |    87 -
+ media/llama1-logo.png                              |   Bin 32494 -> 0 bytes
+ media/llama1-logo.svg                              |    34 -
+ models/templates/LFM2.5-VL.jinja                   |    92 +
+ .../templates/MiniMaxAI-MiniMax-Music3-tts.jinja   |    52 +
+ models/templates/Qwen3-ASR.jinja                   |     8 +
+ models/templates/Zyphra-ZONOS3-Mini-tts.jinja      |   627 +
+ .../google-gemma-4-31B-it-interleaved.jinja        |   282 -
+ models/templates/hexgrad-Kokoro-82M-tts.jinja      |   585 +
+ models/templates/n4ze3m-tiny-voca-tts.jinja        |  2672 +++
+ .../thinkingmachines-Inkling-2-Small.jinja         |   130 +
+ models/templates/thinkingmachines-Inkling.jinja    |   129 +
+ pyproject.toml                                     |    11 +-
+ requirements/requirements-all.txt                  |     1 -
+ requirements/requirements-compare-llama-bench.txt  |     3 +-
+ requirements/requirements-convert_hf_to_gguf.txt   |     3 +-
+ requirements/requirements-convert_legacy_llama.txt |     2 +-
+ requirements/requirements-gguf_editor_gui.txt      |     2 +-
+ requirements/requirements-pydantic.txt             |     3 -
+ requirements/requirements-server-bench.txt         |     5 +-
+ .../requirements-test-tokenizer-random.txt         |     2 +-
+ requirements/requirements-tool_bench.txt           |     8 +-
+ scripts/chat_tts_norm.py                           |   578 +
+ scripts/hip/gcn-cdna-vgpr-check.py                 |    67 +-
+ scripts/jinja/jinja-tester.py                      |    16 +-
+ scripts/make-release-summary.txt                   |     2 +-
+ scripts/moe-cache-tune.py                          |   630 +
+ scripts/server-bench.py                            |     2 +-
+ scripts/snapdragon/build.py                        |    29 +-
+ scripts/snapdragon/ggml-hexagon-align-macros.py    |   247 +-
+ scripts/snapdragon/ggml-hexagon-profile.py         |     6 +-
+ scripts/snapdragon/ggml-hexagon-trace.py           |    20 +-
+ scripts/snapdragon/qdc/run_qdc_jobs.py             |    75 +-
+ scripts/snapdragon/run.py                          |    27 +-
+ scripts/sync-ggml.last                             |     2 +-
+ scripts/sync_vendor.py                             |    12 +-
+ scripts/tool_bench.py                              |     4 +-
+ scripts/ui-assets.cmake                            |    67 +-
+ skills/add-new-model/SKILL.md                      |    16 +-
+ skills/code-review/SKILL.md                        |    24 +-
+ src/CMakeLists.txt                                 |     3 +-
+ src/llama-arch.cpp                                 |   127 +
+ src/llama-arch.h                                   |    68 +
+ src/llama-batch.cpp                                |    74 +-
+ src/llama-batch.h                                  |     9 +
+ src/llama-context.cpp                              |   498 +-
+ src/llama-context.h                                |    51 +-
+ src/llama-cparams.h                                |    12 +-
+ src/llama-ext.h                                    |    55 +-
+ src/llama-grammar.cpp                              |   443 +-
+ src/llama-grammar.h                                |    25 +-
+ src/llama-graph.cpp                                |  1090 +-
+ src/llama-graph.h                                  |   171 +-
+ src/llama-hparams.cpp                              |    15 +
+ src/llama-hparams.h                                |    23 +
+ src/llama-impl.cpp                                 |    10 -
+ src/llama-impl.h                                   |     2 -
+ src/llama-kv-cache-dsa.cpp                         |     3 +-
+ src/llama-kv-cache-dsv4.cpp                        |     1 +
+ src/llama-kv-cache.cpp                             |   187 +-
+ src/llama-kv-cache.h                               |    22 +-
+ src/llama-kv-cells.h                               |    29 +
+ src/llama-memory-hybrid-idx.cpp                    |    81 +-
+ src/llama-memory-hybrid-idx.h                      |     3 +-
+ src/llama-memory-recurrent.cpp                     |     8 +-
+ src/llama-memory.cpp                               |    21 +-
+ src/llama-mmap.cpp                                 |   312 +-
+ src/llama-mmap.h                                   |     2 -
+ src/llama-model-loader.cpp                         |   207 +-
+ src/llama-model-saver.cpp                          |    22 +-
+ src/llama-model.cpp                                |   296 +-
+ src/llama-model.h                                  |   104 +-
+ src/llama-moe-cache.cpp                            |   512 +-
+ src/llama-moe-cache.h                              |    42 +-
+ src/llama-quant.cpp                                |    30 +-
+ src/llama-sampler.cpp                              |    42 +-
+ src/llama-vocab.cpp                                |   296 +-
+ src/llama-vocab.h                                  |     1 +
+ src/llama.cpp                                      |     6 -
+ src/models/afmoe.cpp                               |    32 +-
+ src/models/apertus.cpp                             |    13 +-
+ src/models/arcee.cpp                               |    20 +-
+ src/models/arctic.cpp                              |    17 +-
+ src/models/arwkv7.cpp                              |     4 +-
+ src/models/baichuan.cpp                            |    30 +-
+ src/models/bailingmoe.cpp                          |    20 +-
+ src/models/bailingmoe2.cpp                         |    10 +-
+ src/models/bailingmoe3.cpp                         |   103 +-
+ src/models/beam.cpp                                |    16 +-
+ src/models/bert.cpp                                |    11 +-
+ src/models/bitnet.cpp                              |    17 +-
+ src/models/bloom.cpp                               |     4 +-
+ src/models/chameleon.cpp                           |    17 +-
+ src/models/chatglm.cpp                             |    17 +-
+ src/models/clef.cpp                                |    82 +-
+ src/models/clip.cpp                                |     2 +-
+ src/models/clover-moe.cpp                          |    25 +-
+ src/models/codeshell.cpp                           |    17 +-
+ src/models/cogvlm.cpp                              |    24 +-
+ src/models/cohere2.cpp                             |    36 +-
+ src/models/cohere2moe.cpp                          |    66 +-
+ src/models/command-r.cpp                           |    10 +-
+ src/models/dbrx.cpp                                |    17 +-
+ src/models/deci.cpp                                |    13 +-
+ src/models/deepseek.cpp                            |    14 +-
+ src/models/deepseek2.cpp                           |    34 +-
+ src/models/deepseek2ocr.cpp                        |    19 +-
+ src/models/deepseek32.cpp                          |    84 +-
+ src/models/deepseek4.cpp                           |    64 +-
+ src/models/deepseek41.cpp                          |    15 +-
+ src/models/delta-net-base.cpp                      |   467 +-
+ src/models/dflash.cpp                              |  1645 +-
+ src/models/dflash2.cpp                             |   224 +
+ src/models/domyn-edge.cpp                          |   164 +
+ src/models/dots1.cpp                               |    10 +-
+ src/models/dots3note.cpp                           |    70 +-
+ src/models/dream.cpp                               |    11 +-
+ src/models/dspark.cpp                              |   873 +
+ src/models/eagle3.cpp                              |    23 +-
+ src/models/ernie4-5-moe.cpp                        |    11 +-
+ src/models/ernie4-5.cpp                            |    11 +-
+ src/models/eurobert.cpp                            |    17 +-
+ src/models/exaone-moe.cpp                          |    29 +-
+ src/models/exaone.cpp                              |    14 +-
+ src/models/exaone4.cpp                             |    28 +-
+ src/models/falcon-h1.cpp                           |    21 +-
+ src/models/falcon.cpp                              |    17 +-
+ src/models/flint.cpp                               |    27 +-
+ src/models/gemma-embedding.cpp                     |    12 +-
+ src/models/gemma-embedding2.cpp                    |    17 +-
+ src/models/gemma.cpp                               |    15 +-
+ src/models/gemma2.cpp                              |    17 +-
+ src/models/gemma3.cpp                              |    27 +-
+ src/models/gemma3n.cpp                             |    17 +-
+ src/models/gemma4-assistant.cpp                    |    16 +-
+ src/models/gemma4.cpp                              |   194 +-
+ src/models/glm-dsa.cpp                             |    92 +-
+ src/models/glm4-moe.cpp                            |    50 +-
+ src/models/glm4.cpp                                |    32 +-
+ src/models/glm5-next.cpp                           |    81 +-
+ src/models/gpt2.cpp                                |     4 +-
+ src/models/gptneox.cpp                             |    17 +-
+ src/models/granite-hybrid.cpp                      |    34 +-
+ src/models/granite-moe.cpp                         |     2 +-
+ src/models/granite-swa.cpp                         |    50 +-
+ src/models/granite-switch.cpp                      |    24 +-
+ src/models/granite.cpp                             |    41 +-
+ src/models/grok.cpp                                |    17 +-
+ src/models/grovemoe.cpp                            |    10 +-
+ src/models/hrm-text.cpp                            |    26 +-
+ src/models/hunyuan-dense.cpp                       |    10 +-
+ src/models/hunyuan-moe.cpp                         |    27 +-
+ src/models/hunyuan-vl.cpp                          |    39 +-
+ src/models/hy-v3.cpp                               |    40 +-
+ src/models/hy-v4.cpp                               |    65 +-
+ src/models/inkling2-loop.cpp                       |   115 +
+ src/models/inkling2.cpp                            |   457 +
+ src/models/internlm2.cpp                           |    17 +-
+ src/models/jais.cpp                                |     4 +-
+ src/models/jais2.cpp                               |    21 +-
+ src/models/jamba.cpp                               |     6 +-
+ src/models/jina-bert-v2.cpp                        |     2 +-
+ src/models/jina-bert-v3.cpp                        |     2 +-
+ src/models/k2-horizon.cpp                          |    12 +-
+ src/models/kimi-k3.cpp                             |    46 +-
+ src/models/kimi-k31.cpp                            |   684 +
+ src/models/kimi-linear.cpp                         |     9 +-
+ src/models/kokoro.cpp                              |   145 +
+ src/models/kolibri1.cpp                            |    28 +-
+ src/models/laguna.cpp                              |    42 +-
+ src/models/lfm-base.cpp                            |    37 +-
+ src/models/lfm2.cpp                                |    47 +-
+ src/models/lfm2moe.cpp                             |     4 +-
+ src/models/lfm3.cpp                                |    36 +-
+ src/models/lilicorr.cpp                            |   280 +
+ src/models/limite.cpp                              |    33 +-
+ src/models/llada-moe.cpp                           |    17 +-
+ src/models/llada.cpp                               |    19 +-
+ src/models/llama-embed.cpp                         |     2 +-
+ src/models/llama.cpp                               |    26 +-
+ src/models/llama4.cpp                              |    28 +-
+ src/models/maincoder.cpp                           |    25 +-
+ src/models/maion-coder.cpp                         |    12 +-
+ src/models/mamba-base.cpp                          |    16 +-
+ src/models/mamba.cpp                               |     8 +-
+ src/models/mamba2.cpp                              |     2 +-
+ src/models/maple.cpp                               |    17 +-
+ src/models/mellum.cpp                              |    85 +-
+ src/models/metis16.cpp                             |    10 +-
+ src/models/mimo2.cpp                               |    40 +-
+ src/models/minicpm.cpp                             |     2 +-
+ src/models/minicpm3.cpp                            |    18 +-
+ src/models/minimax-01.cpp                          |    17 +-
+ src/models/minimax-m2.cpp                          |    17 +-
+ src/models/minimax-m3.cpp                          |    52 +-
+ src/models/mistral-large4.cpp                      |    76 +-
+ src/models/mistral3.cpp                            |    26 +-
+ src/models/mistral4.cpp                            |     2 +-
+ src/models/models.h                                |  1033 +-
+ src/models/modern-bert.cpp                         |    22 +-
+ src/models/moshi.cpp                               |   132 +
+ src/models/mpt.cpp                                 |     4 +-
+ src/models/muse-glimmer.cpp                        |    27 +-
+ src/models/muse-spark.cpp                          |    29 +-
+ src/models/nanbeige.cpp                            |    16 +-
+ src/models/nemotron-h-moe.cpp                      |    15 +-
+ src/models/nemotron-h.cpp                          |    20 +-
+ src/models/nemotron.cpp                            |    17 +-
+ src/models/neo-bert.cpp                            |    17 +-
+ src/models/nomic-bert-moe.cpp                      |     2 +-
+ src/models/nomic-bert.cpp                          |     2 +-
+ src/models/olmo.cpp                                |    17 +-
+ src/models/olmo2.cpp                               |    53 +-
+ src/models/olmoe.cpp                               |    17 +-
+ src/models/openai-moe.cpp                          |    20 +-
+ src/models/openelm.cpp                             |    17 +-
+ src/models/orion.cpp                               |    17 +-
+ src/models/paddleocr.cpp                           |    20 +-
+ src/models/pangu-embed.cpp                         |    24 +-
+ src/models/phi2.cpp                                |    17 +-
+ src/models/phi3.cpp                                |    21 +-
+ src/models/phimoe.cpp                              |     4 +-
+ src/models/plamo.cpp                               |    17 +-
+ src/models/plamo2.cpp                              |    18 +-
+ src/models/plamo3.cpp                              |    24 +-
+ src/models/plm.cpp                                 |    16 +-
+ src/models/pockettts.cpp                           |    17 +-
+ src/models/qwen.cpp                                |    17 +-
+ src/models/qwen2.cpp                               |    23 +-
+ src/models/qwen2moe.cpp                            |    17 +-
+ src/models/qwen2vl.cpp                             |    26 +-
+ src/models/qwen3.cpp                               |    20 +-
+ src/models/qwen35.cpp                              |   110 +-
+ src/models/qwen35moe.cpp                           |    62 +-
+ src/models/qwen3moe.cpp                            |    22 +-
+ src/models/qwen3next.cpp                           |    45 +-
+ src/models/qwen3vl.cpp                             |    33 +-
+ src/models/qwen3vlmoe.cpp                          |    19 +-
+ src/models/qwen4exp.cpp                            |    99 +-
+ src/models/refact.cpp                              |     4 +-
+ src/models/ricursive.cpp                           |   229 +
+ src/models/rnd1.cpp                                |    16 +-
+ src/models/rwkv6-base.cpp                          |     5 +-
+ src/models/rwkv6.cpp                               |     6 +-
+ src/models/rwkv6qwen2.cpp                          |     4 +-
+ src/models/rwkv7-base.cpp                          |     5 +-
+ src/models/rwkv7.cpp                               |     6 +-
+ src/models/seed-oss.cpp                            |    17 +-
+ src/models/sensenova-u1.cpp                        |     6 +-
+ src/models/smallthinker.cpp                        |    25 +-
+ src/models/smollm3.cpp                             |    24 +-
+ src/models/spark2-5.cpp                            |    15 +-
+ src/models/stablelm.cpp                            |    17 +-
+ src/models/starcoder.cpp                           |     4 +-
+ src/models/starcoder2.cpp                          |    17 +-
+ src/models/step35.cpp                              |    57 +-
+ src/models/t5.cpp                                  |     8 +-
+ src/models/t5encoder.cpp                           |     2 +-
+ src/models/talkie.cpp                              |    15 +-
+ src/models/tiny-voca.cpp                           |   171 +
+ src/models/vllm-decision2.cpp                      |    24 +-
+ src/models/wavtokenizer-dec.cpp                    |     4 +-
+ src/models/xing4-0.cpp                             |   820 +
+ src/models/xverse.cpp                              |    17 +-
+ src/models/zaya1.cpp                               |   337 +
+ src/models/zonos3.cpp                              |   351 +
+ src/unicode.cpp                                    |    11 +-
+ tests/CMakeLists.txt                               |    30 +-
+ tests/fusion/MTL.csv                               |    64 +-
+ tests/gguf-model-data.cpp                          |     6 +-
+ tests/llama-context/cases-kv.cpp                   |     3 +-
+ tests/llama-context/test-runner.cpp                |     6 +-
+ tests/llama-context/test-util.cpp                  |    28 +-
+ tests/peg-parser/test-basic.cpp                    |    43 +
+ tests/peg-parser/test-gbnf-generation.cpp          |   362 +-
+ tests/snapshots/qwen3.6-27b.schema                 |  1928 +-
+ tests/test-arg-parser.cpp                          |    58 +
+ tests/test-backend-ops.cpp                         |  1769 +-
+ tests/test-backend-sched.cpp                       |  1084 +
+ tests/test-backend-tensor.cpp                      |   133 +-
+ tests/test-batch-alloc.cpp                         |     8 +-
+ tests/test-chat.cpp                                |   719 +-
+ tests/test-fp8.cpp                                 |   375 +-
+ tests/test-grammar-integration.cpp                 |   215 +-
+ tests/test-grammar-parser.cpp                      |    24 +
+ tests/test-jinja.cpp                               |   604 +-
+ tests/test-json-schema-to-grammar.cpp              |    60 +
+ tests/test-kv-cache.cpp                            |   180 +
+ tests/test-llama-archs.cpp                         |   529 +-
+ tests/test-llama-context.cpp                       |    29 +-
+ tests/test-llama-grammar.cpp                       |     2 +-
+ tests/test-llama-mmap.cpp                          |   232 +
+ tests/test-mtmd-impl.cpp                           |   778 +-
+ tests/test-quantize-be.sh                          |     2 +-
+ tests/test-quantize-fns.cpp                        |    36 +-
+ tests/test-rope.cpp                                |    87 +
+ tests/test-rpc-unreachable.cpp                     |    33 +
+ tests/test-server-component.cpp                    |   277 +-
+ tests/test-sleep.cpp                               |   154 +
+ tests/test-tokenizer-0.py                          |     3 +-
+ tests/test-tokenizer-random.py                     |    11 +-
+ tests/test_conversion_fp8.py                       |   410 +
+ tests/test_kv_cache_scales.py                      |    57 +
+ tools/CMakeLists.txt                               |     3 +-
+ tools/cli/README.md                                |    15 +-
+ tools/cli/cli-context.cpp                          |     2 +-
+ tools/completion/README.md                         |    13 +-
+ tools/fit-params/fit-params.cpp                    |     5 +-
+ tools/imatrix/imatrix.cpp                          |     1 -
+ tools/llama-bench/llama-bench.cpp                  |    21 +-
+ tools/mtmd/CMakeLists.txt                          |    62 +-
+ tools/mtmd/README-dev.md                           |    74 +-
+ tools/mtmd/README.md                               |     2 +-
+ tools/mtmd/clip.cpp                                |  8124 -------
+ tools/mtmd/clip.h                                  |   192 -
+ tools/mtmd/debug/mtmd-debug.cpp                    |     6 +-
+ tools/mtmd/models/chatterbox-gen.cpp               |    33 +-
+ tools/mtmd/models/chatterbox-spkenc.cpp            |    14 +-
+ tools/mtmd/models/cogvlm.cpp                       |     2 +-
+ tools/mtmd/models/conformer.cpp                    |     2 +-
+ tools/mtmd/models/deepseek4v.cpp                   |    10 +-
+ tools/mtmd/models/deepseekocr.cpp                  |     6 +-
+ tools/mtmd/models/deepseekocr2.cpp                 |     4 +-
+ tools/mtmd/models/dots3note.cpp                    |     4 +-
+ tools/mtmd/models/dotsocr.cpp                      |     4 +-
+ tools/mtmd/models/drama3-gen.cpp                   |    41 +-
+ tools/mtmd/models/exaone4_5.cpp                    |     2 +-
+ tools/mtmd/models/fish-s2-gen.cpp                  |    74 +
+ tools/mtmd/models/fish-s2-spkenc.cpp               |   154 +
+ tools/mtmd/models/gemma4a.cpp                      |    88 +-
+ tools/mtmd/models/gemma4ua.cpp                     |     2 +-
+ tools/mtmd/models/gemma4uv.cpp                     |     2 +-
+ tools/mtmd/models/gemma4v.cpp                      |     6 +-
+ tools/mtmd/models/glm4v.cpp                        |     4 +-
+ tools/mtmd/models/granite-speech.cpp               |     4 +-
+ tools/mtmd/models/granite4-vision.cpp              |    22 +-
+ tools/mtmd/models/hunyuanvl.cpp                    |     4 +-
+ tools/mtmd/models/inkling2v.cpp                    |    33 +
+ tools/mtmd/models/internvl.cpp                     |     2 +-
+ tools/mtmd/models/kimik25.cpp                      |    29 +-
+ tools/mtmd/models/kimivl.cpp                       |     4 +-
+ tools/mtmd/models/kokoro.cpp                       |   515 +
+ tools/mtmd/models/lfm3a-gen.cpp                    |    18 +-
+ tools/mtmd/models/lfm3a.cpp                        |     4 +-
+ tools/mtmd/models/lfm3vl.cpp                       |     2 +-
+ tools/mtmd/models/ling3vl.cpp                      |     4 +-
+ tools/mtmd/models/llama4.cpp                       |     4 +-
+ tools/mtmd/models/llava.cpp                        |     8 +-
+ tools/mtmd/models/magevl.cpp                       |    61 +
+ tools/mtmd/models/mimo-audio.cpp                   |     4 +-
+ tools/mtmd/models/mimovl.cpp                       |     6 +-
+ tools/mtmd/models/minicpmv.cpp                     |     4 +-
+ tools/mtmd/models/minimax-m3.cpp                   |     6 +-
+ tools/mtmd/models/mobilenetv5.cpp                  |    12 +-
+ tools/mtmd/models/models.h                         |   773 +-
+ tools/mtmd/models/moshi.cpp                        |   265 +
+ tools/mtmd/models/muse-glimmer.cpp                 |    16 +-
+ tools/mtmd/models/muse-spark-audio.cpp             |     2 +-
+ tools/mtmd/models/music3-gen.cpp                   |   224 +
+ tools/mtmd/models/nemotron-omni.cpp                |     4 +-
+ tools/mtmd/models/nemotron-transcribe.cpp          |    28 +-
+ tools/mtmd/models/nemotron-v2-vl.cpp               |     2 +-
+ tools/mtmd/models/paddleocr.cpp                    |     4 +-
+ tools/mtmd/models/parakeet.cpp                     |    19 +-
+ tools/mtmd/models/pixtral.cpp                      |     4 +-
+ tools/mtmd/models/pockettts-gen.cpp                |   110 +-
+ tools/mtmd/models/pockettts-seanet.cpp             |   150 +-
+ tools/mtmd/models/pockettts-spkenc.cpp             |    54 +-
+ tools/mtmd/models/qwen2vl.cpp                      |     2 +-
+ tools/mtmd/models/qwen3a.cpp                       |    19 +-
+ tools/mtmd/models/qwen3tts-gen.cpp                 |   150 +-
+ tools/mtmd/models/qwen3tts-spkenc.cpp              |    14 +-
+ tools/mtmd/models/qwen3vl.cpp                      |     2 +-
+ tools/mtmd/models/sensenova-u1.cpp                 |     2 +-
+ tools/mtmd/models/siglip.cpp                       |     2 +-
+ tools/mtmd/models/snake-vae.cpp                    |    64 +
+ tools/mtmd/models/soprano.cpp                      |     4 +-
+ tools/mtmd/models/step3vl.cpp                      |     4 +-
+ tools/mtmd/models/tiny-voca.cpp                    |   307 +
+ tools/mtmd/models/vibevoice-asr.cpp                |   138 +
+ tools/mtmd/models/voxcpm2-gen.cpp                  |   273 +
+ tools/mtmd/models/voxcpm2-spkenc.cpp               |    59 +
+ tools/mtmd/models/voxtral-rt.cpp                   |     2 +-
+ tools/mtmd/models/whisper-enc.cpp                  |    17 +-
+ tools/mtmd/models/yasa2.cpp                        |     6 +-
+ tools/mtmd/models/youtuvl.cpp                      |     2 +-
+ tools/mtmd/models/yue2-gen.cpp                     |    34 +
+ tools/mtmd/models/zonos3-gen.cpp                   |   207 +
+ tools/mtmd/models/zonos3-spkenc.cpp                |   221 +
+ tools/mtmd/mtmd-audio.cpp                          |  1369 +-
+ tools/mtmd/mtmd-audio.h                            |   222 +-
+ tools/mtmd/mtmd-cli.cpp                            |    12 +-
+ tools/mtmd/mtmd-graph.cpp                          |  1188 +
+ tools/mtmd/{clip-graph.h => mtmd-graph.h}          |    38 +-
+ tools/mtmd/mtmd-helper-common.h                    |    11 +-
+ tools/mtmd/mtmd-helper-gen.cpp                     |  4950 +++-
+ tools/mtmd/mtmd-helper-video-ffmpeg.cpp            |   428 +
+ tools/mtmd/mtmd-helper.cpp                         |   755 +-
+ tools/mtmd/mtmd-helper.h                           |   138 +-
+ tools/mtmd/mtmd-image.cpp                          |   534 +-
+ tools/mtmd/mtmd-image.h                            |   192 +-
+ tools/mtmd/{clip-impl.h => mtmd-impl.h}            |   252 +-
+ tools/mtmd/mtmd-model.cpp                          |  5327 +++++
+ tools/mtmd/{clip-model.h => mtmd-model.h}          |   434 +-
+ tools/mtmd/mtmd-subcontext.cpp                     |  3070 +++
+ tools/mtmd/mtmd-subcontext.h                       |   235 +
+ tools/mtmd/mtmd.cpp                                |  2893 ++-
+ tools/mtmd/mtmd.h                                  |    54 +-
+ tools/mtmd/requirements.txt                        |     8 +-
+ tools/quantize/quantize.cpp                        |     6 +-
+ tools/rpc/CMakeLists.txt                           |     5 +
+ tools/rpc/rpc-server.cpp                           |    24 +-
+ tools/server/CMakeLists.txt                        |     3 +
+ tools/server/README-dev.md                         |    22 +-
+ tools/server/README.md                             |   119 +-
+ tools/server/server-chat.cpp                       |    83 +-
+ tools/server/server-chat.h                         |     3 +
+ tools/server/server-common.cpp                     |   199 +-
+ tools/server/server-common.h                       |    43 +-
+ tools/server/server-connect.cpp                    |     6 +-
+ tools/server/server-context.cpp                    |   942 +-
+ tools/server/server-context.h                      |     7 +
+ tools/server/server-cors-proxy.h                   |    27 +-
+ tools/server/server-decision.cpp                   |    72 +-
+ tools/server/server-decision.h                     |    15 +-
+ tools/server/server-http.cpp                       |   162 +-
+ tools/server/server-mcp.cpp                        |    65 +-
+ tools/server/server-mcp.h                          |     3 +-
+ tools/server/server-models.cpp                     |   149 +-
+ tools/server/server-models.h                       |    25 +-
+ tools/server/server-queue.cpp                      |    13 +-
+ tools/server/server-queue.h                        |     5 +
+ tools/server/server-realtime.cpp                   |   472 +-
+ tools/server/server-realtime.h                     |    21 +-
+ tools/server/server-schema.cpp                     |    26 +-
+ tools/server/server-slot-sched.cpp                 |   436 +
+ tools/server/server-slot-sched.h                   |   134 +
+ tools/server/server-stream.h                       |     2 +-
+ tools/server/server-task.cpp                       |   233 +-
+ tools/server/server-task.h                         |    79 +-
+ tools/server/server-tools.cpp                      |   114 +-
+ tools/server/server-tools.h                        |     3 +-
+ tools/server/server.cpp                            |   208 +-
+ tools/server/tests/README.md                       |    44 +-
+ tools/server/tests/fixtures/mcp_slow_server.py     |     5 +
+ tools/server/tests/pytest.ini                      |     1 +
+ tools/server/tests/requirements.txt                |     3 +-
+ tools/server/tests/unit/test_basic.py              |    20 +-
+ tools/server/tests/unit/test_chat_completion.py    |     4 +
+ tools/server/tests/unit/test_compat_anthropic.py   |    28 +-
+ tools/server/tests/unit/test_compat_oai_speech.py  |   213 +
+ .../tests/unit/test_compat_oai_transcription.py    |   144 +
+ tools/server/tests/unit/test_completion.py         |    93 +
+ tools/server/tests/unit/test_ignore_eos.py         |    19 +
+ tools/server/tests/unit/test_lora.py               |   103 +-
+ tools/server/tests/unit/test_mcp_servers.py        |    72 +-
+ tools/server/tests/unit/test_proxy.py              |    61 +
+ tools/server/tests/unit/test_realtime.py           |   415 +
+ tools/server/tests/unit/test_router.py             |   115 +-
+ tools/server/tests/unit/test_security.py           |   188 +-
+ tools/server/tests/unit/test_slot_save.py          |     6 +-
+ tools/server/tests/unit/test_spec_methods.py       |   212 +
+ tools/server/tests/unit/test_speculative.py        |     2 +-
+ tools/server/tests/unit/test_stream.py             |     2 +-
+ tools/server/tests/unit/test_systemone.py          |   378 +-
+ tools/server/tests/unit/test_template.py           |    20 +
+ tools/server/tests/unit/test_tools_builtin.py      |   128 +-
+ tools/server/tests/unit/test_vision_api.py         |    45 +-
+ tools/server/tests/utils.py                        |   172 +-
+ tools/tts/README.md                                |   172 +-
+ tools/tts/tts.cpp                                  |    36 +-
+ tools/ui/.npmrc                                    |     3 -
+ .../decorators/ModeWatcherDecorator.svelte         |    36 -
+ tools/ui/.storybook/preview.ts                     |    42 -
+ tools/ui/README.md                                 |   757 -
+ tools/ui/scripts/favicon-colorize.ts               |   113 -
+ tools/ui/src/app.css                               |   303 -
+ tools/ui/src/lib/assets/logo.svg                   |     7 -
+ .../app/actions/ActionIconCopyToClipboard.svelte   |    18 -
+ .../ChatAttachmentsPreviewCurrentItemAudio.svelte  |    26 -
+ .../components/app/chat/ChatForm/ChatForm.svelte   |   679 -
+ .../ChatFormActions/ChatFormActionRecord.svelte    |    53 -
+ .../ChatFormActions/ChatFormActionSubmit.svelte    |    47 -
+ .../ChatFormActions/ChatFormActions.svelte         |   217 -
+ .../ChatFormContextGauge.svelte                    |    62 -
+ .../ChatFormContextGauge/ContextGaugeDial.svelte   |    44 -
+ .../ChatForm/ChatFormContextGauge/context-gauge.ts |    40 -
+ .../ChatFormContextGauge/gauge-popup.svelte.ts     |    99 -
+ .../ChatForm/ChatFormInput/ChatFormInput.svelte    |    78 -
+ .../ChatFormInput/ChatFormInputBasic.svelte        |    82 -
+ .../ChatFormInput/ChatFormInputRich.svelte         |   867 -
+ .../ChatScreen/ChatScreenActionScrollDown.svelte   |    19 -
+ .../chat/ChatScreen/ChatScreenDragOverlay.svelte   |    17 -
+ .../app/chat/ChatScreen/ChatScreenGreeting.svelte  |    53 -
+ .../ChatScreen/ChatScreenStreamResumeStatus.svelte |    19 -
+ .../components/app/content/MermaidPreview.svelte   |   124 -
+ .../app/dialogs/DialogMermaidPreview.svelte        |    21 -
+ .../lib/components/app/dialogs/DialogSearch.svelte |   261 -
+ .../app/mcp/McpCapabilitiesBadges.svelte           |    84 -
+ tools/ui/src/lib/components/app/misc/Logo.svelte   |    15 -
+ .../src/lib/components/app/models/ModelId.svelte   |   261 -
+ .../components/app/models/ModelRowActions.svelte   |    74 -
+ .../ModelsManager/ModelsManagerModelRow.svelte     |   150 -
+ .../ModelsManager/ModelsManagerQuantRow.svelte     |    78 -
+ .../app/navigation/DropdownMenuActions.svelte      |   189 -
+ .../app/navigation/DropdownMenuSearchable.svelte   |    79 -
+ .../SidebarNavigationConversationItem.svelte       |   370 -
+ .../SidebarNavigationConversationList.svelte       |   175 -
+ .../SettingsChatParameterSourceIndicator.svelte    |    19 -
+ .../app/settings/SettingsChatMobileHeader.svelte   |    61 -
+ .../src/lib/components/pwa/PwaRefreshAlert.svelte  |    35 -
+ .../ui/alert-dialog/alert-dialog-action.svelte     |    18 -
+ tools/ui/src/lib/components/ui/alert/alert.svelte  |    44 -
+ tools/ui/src/lib/components/ui/badge/badge.svelte  |    51 -
+ .../ui/button-group/button-group-root.svelte       |    21 -
+ .../ui/button-group/button-group-separator.svelte  |     8 -
+ .../ui/src/lib/components/ui/button/button.svelte  |    92 -
+ .../ui/collapsible/collapsible-content.svelte      |     7 -
+ .../lib/components/ui/drawer/drawer-content.svelte |    40 -
+ .../ui/dropdown-menu/dropdown-menu-content.svelte  |    27 -
+ .../ui/dropdown-menu/dropdown-menu-item.svelte     |    27 -
+ .../dropdown-menu/dropdown-menu-sub-content.svelte |    20 -
+ .../dropdown-menu/dropdown-menu-sub-trigger.svelte |    30 -
+ tools/ui/src/lib/components/ui/input/input.svelte  |    52 -
+ .../lib/components/ui/select/select-trigger.svelte |    47 -
+ .../ui/src/lib/components/ui/switch/switch.svelte  |    29 -
+ .../ui/toggle-group/toggle-group-item.svelte       |    35 -
+ .../components/ui/toggle-group/toggle-group.svelte |    75 -
+ .../ui/src/lib/components/ui/toggle/toggle.svelte  |    54 -
+ tools/ui/src/lib/components/ui/utils.ts            |    13 -
+ tools/ui/src/lib/constants/chat-form.constants.ts  |    30 -
+ tools/ui/src/lib/constants/code-block.constants.ts |    50 -
+ .../lib/constants/context-gauge-popup.constants.ts |     8 -
+ .../ui/src/lib/constants/context-keys.constants.ts |     3 -
+ .../ui/src/lib/constants/css-classes.constants.ts  |   110 -
+ .../src/lib/constants/mermaid-blocks.constants.ts  |     9 -
+ .../lib/constants/model-compatibility.constants.ts |    32 -
+ tools/ui/src/lib/constants/ui.constants.ts         |   123 -
+ .../src/lib/contexts/chat-form-actions.context.ts  |    19 -
+ .../lib/contexts/chat-message-actions.context.ts   |    21 -
+ .../src/lib/contexts/chat-message-edit.context.ts  |    19 -
+ tools/ui/src/lib/hooks/use-pwa.svelte.ts           |    86 -
+ tools/ui/src/lib/stores/ui.svelte.ts               |   162 -
+ tools/ui/src/lib/stores/version.svelte.ts          |    65 -
+ tools/ui/src/lib/types/chat-form-input-rich.d.ts   |    11 -
+ tools/ui/src/lib/types/navigation.d.ts             |    17 -
+ tools/ui/src/lib/utils/audio-recording.ts          |   263 -
+ .../lib/utils/chat-form-input-rich-tokenizer.ts    |  1074 -
+ tools/ui/src/lib/utils/css.ts                      |     9 -
+ tools/ui/src/lib/utils/get-datetime.ts             |    38 -
+ tools/ui/src/lib/utils/model-compatibility.ts      |    37 -
+ tools/ui/src/lib/utils/near-viewport.ts            |    34 -
+ tools/ui/src/lib/utils/source-history.ts           |    56 -
+ tools/ui/src/virtual-nerdamer.d.ts                 |     4 -
+ tools/ui/svelte.config.js                          |    34 -
+ .../chat-form-enter-code-block.svelte.test.ts      |   124 -
+ .../chat-form-input-rich-blocks.svelte.test.ts     |   179 -
+ .../chat-form-input-rich-undo.svelte.test.ts       |   161 -
+ .../client/chat-form-input-rich.svelte.test.ts     |   804 -
+ .../components/ChatFormInputRichHarness.svelte     |    27 -
+ .../client/components/ChatFormTestWrapper.svelte   |    12 -
+ .../client/context-panel-mobile.svelte.test.ts     |    42 -
+ tools/ui/tests/stories/ChatMessage.stories.svelte  |   416 -
+ .../ui/tests/stories/ChatScreenForm.stories.svelte |    95 -
+ tools/ui/tests/stories/Introduction.mdx            |    44 -
+ .../tests/stories/MarkdownContent.stories.svelte   |   139 -
+ .../ui/tests/stories/ModelsSelector.stories.svelte |   268 -
+ .../tests/stories/PwaRefreshAlert.stories.svelte   |    64 -
+ .../ChatAttachmentsPreview.stories.svelte          |    47 -
+ tools/ui/tests/stories/fixtures/api-docs.ts        |   160 -
+ .../fixtures/assets/beautiful-flowers-lotus.webp   |   Bin 817630 -> 0 bytes
+ tools/ui/tests/stories/fixtures/blog-post.ts       |   125 -
+ tools/ui/tests/stories/fixtures/data-analysis.ts   |   124 -
+ tools/ui/tests/stories/fixtures/empty.ts           |     2 -
+ tools/ui/tests/stories/fixtures/math-formulas.ts   |   221 -
+ tools/ui/tests/stories/fixtures/mobile-tables.ts   |    27 -
+ tools/ui/tests/stories/fixtures/readme.ts          |   136 -
+ tools/ui/tests/stories/fixtures/storybook-mocks.ts |    87 -
+ .../unit/chat-form-input-rich-tokenizer.test.ts    |   215 -
+ .../unit/chat-form-input-rich-word-jump.test.ts    |    83 -
+ tools/ui/tests/unit/favicon-colorize.test.ts       |   211 -
+ tools/ui/tests/unit/source-history.test.ts         |    72 -
+ tools/ui/tsconfig.json                             |    34 -
+ ty.toml                                            |    14 +-
+ ui/README.md                                       |    41 +
+ {tools/ui => ui/apps/chat}/.env.example            |     2 +-
+ {tools/ui => ui/apps/chat}/.gitignore              |     0
+ ui/apps/chat/.npmrc                                |     6 +
+ {tools/ui => ui/apps/chat}/.prettierignore         |     0
+ {tools/ui => ui/apps/chat}/.prettierrc             |     0
+ ui/apps/chat/.storybook/color-scheme.ts            |    24 +
+ .../decorators/ModeWatcherDecorator.svelte         |    27 +
+ .../decorators/TooltipProviderDecorator.svelte     |    13 +
+ ui/apps/chat/.storybook/main.ts                    |    58 +
+ ui/apps/chat/.storybook/manager-head.html          |    86 +
+ ui/apps/chat/.storybook/mockups/MacDock.svelte     |   174 +
+ ui/apps/chat/.storybook/mockups/MacMenuBar.svelte  |   119 +
+ .../chat/.storybook/mockups/MacStatusIcon.svelte   |    56 +
+ ui/apps/chat/.storybook/mockups/MockDesktop.svelte |    76 +
+ .../chat/.storybook/mockups/WindowsTaskbar.svelte  |   234 +
+ ui/apps/chat/.storybook/mockups/index.ts           |    15 +
+ ui/apps/chat/.storybook/preview.ts                 |   142 +
+ ui/apps/chat/AGENTS.md                             |    23 +
+ {tools/ui => ui/apps/chat}/CMakeLists.txt          |     0
+ ui/apps/chat/DESIGN.md                             |  1206 +
+ ui/apps/chat/LICENSE                               |    21 +
+ ui/apps/chat/README.md                             |   198 +
+ ui/apps/chat/alias/LICENSE                         |    21 +
+ ui/apps/chat/alias/README.md                       |     9 +
+ ui/apps/chat/alias/cli.js                          |     3 +
+ ui/apps/chat/alias/package.json                    |    33 +
+ ui/apps/chat/bin/cli.js                            |     5 +
+ ui/apps/chat/cli/server.js                         |   385 +
+ {tools/ui => ui/apps/chat}/demo/.gitignore         |     0
+ {tools/ui => ui/apps/chat}/demo/README.md          |     4 +-
+ {tools/ui => ui/apps/chat}/demo/cli.ts             |     6 +-
+ .../apps/chat}/demo/fixtures/demo-config.ts        |     0
+ .../apps/chat}/demo/fixtures/mcp-servers.ts        |     0
+ {tools/ui => ui/apps/chat}/demo/fixtures/traces.ts |    30 +
+ {tools/ui => ui/apps/chat}/demo/helpers.ts         |   153 +-
+ .../ui => ui/apps/chat}/demo/playwright.config.ts  |     7 +-
+ {tools/ui => ui/apps/chat}/demo/recorder.ts        |     0
+ {tools/ui => ui/apps/chat}/demo/storage.ts         |     0
+ {tools/ui => ui/apps/chat}/eslint.config.js        |     3 +-
+ {tools/ui => ui/apps/chat}/package-lock.json       | 22512 +++++++-----------
+ {tools/ui => ui/apps/chat}/package.json            |   130 +-
+ {tools/ui => ui/apps/chat}/playwright.config.ts    |     0
+ .../ui => ui/apps/chat}/pwa-assets-dark.config.ts  |     8 +-
+ {tools/ui => ui/apps/chat}/pwa-assets.config.ts    |     9 +-
+ ui/apps/chat/scripts/brand-favicons.ts             |    27 +
+ ui/apps/chat/scripts/design-md.js                  |   332 +
+ {tools/ui => ui/apps/chat}/scripts/dev.sh          |     8 +-
+ .../apps/chat}/scripts/git-hooks/install.sh        |     6 +-
+ .../apps/chat}/scripts/git-hooks/pre-commit.sh     |    14 +-
+ .../apps/chat}/scripts/git-hooks/pre-push.sh       |     8 +-
+ ui/apps/chat/scripts/llama-ui.js                   |    77 +
+ .../apps/chat}/scripts/make-icons-circular.js      |     0
+ .../apps/chat}/scripts/vite-plugin-build-info.ts   |    14 +-
+ ui/apps/chat/scripts/vite-plugin-llama-ui.ts       |    53 +
+ .../apps/chat}/scripts/vite-plugin-nerdamer.ts     |    12 +-
+ ui/apps/chat/scripts/vite-plugin-pwa-manifest.ts   |    32 +
+ .../chat}/scripts/vite-plugin-relativize-base.ts   |    26 +-
+ .../chat}/scripts/vite-plugin-splash-screen.ts     |    14 +-
+ {tools/ui => ui/apps/chat}/sources.cmake           |     8 +-
+ {tools/ui => ui/apps/chat}/src/.gitignore          |     0
+ ui/apps/chat/src/app.css                           |   390 +
+ {tools/ui => ui/apps/chat}/src/app.d.ts            |     6 +-
+ {tools/ui => ui/apps/chat}/src/app.html            |     2 +-
+ .../apps/chat}/src/lib/components/app/SKILL.md     |     0
+ .../app/actions/ActionIconCopyToClipboard.svelte   |    49 +
+ .../src/lib/components/app/actions/GlassKey.svelte |    64 +
+ .../chat}/src/lib/components/app/actions/index.ts  |     5 +-
+ .../src/lib/components/app/badges/BadgeInfo.svelte |     0
+ .../components/app/badges/BadgesModality.svelte    |     8 +-
+ .../chat}/src/lib/components/app/badges/index.ts   |     0
+ .../ChatAttachmentsList/ChatAttachmentsList.svelte |     8 +-
+ .../ChatAttachmentsListItem.svelte                 |    23 +-
+ .../ChatAttachmentsListItemMcpPrompt.svelte        |     6 +-
+ .../ChatAttachmentsListItemMcpResource.svelte      |    28 +-
+ .../ChatAttachmentsListItemThumbnailFile.svelte    |    22 +-
+ .../ChatAttachmentsListItemThumbnailImage.svelte   |    10 +-
+ .../ChatAttachmentsListItemVoice.svelte            |   126 +
+ .../ChatAttachmentsPreview.svelte                  |    10 +-
+ .../ChatAttachmentsPreviewCurrentItem.svelte       |     2 +-
+ .../ChatAttachmentsPreviewCurrentItemAudio.svelte  |    50 +
+ .../ChatAttachmentsPreviewCurrentItemImage.svelte  |     2 +-
+ .../ChatAttachmentsPreviewCurrentItemPdf.svelte    |    30 +-
+ .../ChatAttachmentsPreviewCurrentItemText.svelte   |     2 +-
+ ...AttachmentsPreviewCurrentItemUnavailable.svelte |     2 +-
+ .../ChatAttachmentsPreviewCurrentItemVideo.svelte  |     4 +-
+ .../ChatAttachmentsPreviewFileInfo.svelte          |     4 +-
+ .../ChatAttachmentsPreviewNavButtons.svelte        |    10 +-
+ .../ChatAttachmentsPreviewThumbnailStrip.svelte    |    14 +-
+ .../components/app/chat/ChatForm/ChatForm.svelte   |   929 +
+ .../ChatFormActionAddButton.svelte                 |     8 +-
+ .../ChatFormActionAddDrawer.svelte                 |    63 +-
+ .../ChatFormActionAddDropdown.svelte               |    49 +-
+ .../ChatFormActionAddToolsSubmenu.svelte           |    57 +-
+ .../ChatFormActionAdd/ChatFormActionsAdd.svelte    |     2 +-
+ .../ChatFormActions/ChatFormActionReasoning.svelte |    36 +-
+ .../ChatFormActions/ChatFormActionRecord.svelte    |   148 +
+ .../ChatFormActions/ChatFormActionSubmit.svelte    |    59 +
+ .../ChatFormActions/ChatFormActions.svelte         |   259 +
+ .../ChatFormActionsRecording.svelte                |    63 +
+ .../ChatFormContextGauge.svelte                    |   106 +
+ .../ContextGaugeDetailRow.svelte                   |     2 +-
+ .../ContextGaugeDetails.svelte                     |    10 +-
+ .../ChatFormContextGauge/ContextGaugeDial.svelte   |    49 +
+ .../ChatFormContextGauge/ContextGaugeDrawer.svelte |    20 +
+ .../ContextGaugeLoadModel.svelte                   |    14 +-
+ .../ChatFormContextGauge/ContextGaugePanel.svelte  |   122 +-
+ .../ChatForm/ChatFormContextGauge/context-gauge.ts |    80 +
+ .../ChatFormContextGauge/gauge-popup.svelte.ts     |    11 +
+ .../ChatFormCurrentWorkingDirectory.svelte         |   291 +-
+ .../ChatFormCurrentWorkingDirectoryChip.svelte     |    20 +-
+ ...atFormCurrentWorkingDirectoryResultsList.svelte |    14 +-
+ .../ChatForm/ChatFormInput/ChatFormInput.svelte    |   241 +
+ .../ChatFormInputFileInputInvisible.svelte         |     0
+ .../ChatForm/ChatFormInput/mention-badge-widget.ts |   104 +
+ .../chat/ChatForm/ChatFormMcpResourcesList.svelte  |     6 +-
+ .../ChatFormPicker/ChatFormPickerItemHeader.svelte |    10 +-
+ .../ChatFormPicker/ChatFormPickerList.svelte       |    10 +-
+ .../ChatFormPicker/ChatFormPickerListItem.svelte   |     2 +-
+ .../ChatFormPickerListItemSkeleton.svelte          |     2 +-
+ .../ChatFormPicker/ChatFormPickerPopover.svelte    |     8 +-
+ .../ChatFormPickers/ChatFormPickerCommand.svelte   |    26 +-
+ .../ChatFormPickerMcpPrompts.svelte                |    15 +-
+ .../ChatFormPromptPickerArgumentForm.svelte        |     8 +-
+ .../ChatFormPromptPickerArgumentInput.svelte       |    12 +-
+ .../ChatFormPickers/ChatFormPickerMention.svelte   |    37 +-
+ .../ChatFormPickers/ChatFormPickers.svelte         |    11 +-
+ .../chat/ChatForm/chat-form-collapsed-height.ts    |    89 +
+ .../app/chat/ChatForm/chat-form-expand.ts          |    63 +
+ .../ChatMessages/ChatMessage/ChatMessage.svelte    |    34 +-
+ .../ChatMessageAssistant.svelte                    |    44 +-
+ .../ChatMessageAssistantModel.svelte               |     8 +-
+ .../ChatMessageAssistantProcessingInfo.svelte      |     4 +-
+ .../ChatMessageAssistantRawOutput.svelte           |     6 +-
+ .../ChatMessageAssistantStatistics.svelte          |     8 +-
+ .../ChatMessage/ChatMessageCompaction.svelte       |    16 +-
+ .../ChatMessage/ChatMessageCwdChange.svelte        |    12 +-
+ .../ChatMessageMcpPrompt.svelte                    |    12 +-
+ .../ChatMessageMcpPromptContent.svelte             |    26 +-
+ .../ChatMessage/ChatMessageSynthetic.svelte        |     6 +-
+ .../ChatMessageSystem/ChatMessageSystem.svelte     |    36 +-
+ .../ChatMessageToolCallBlock.svelte                |     6 +-
+ .../ChatMessageToolCallBlockDefault.svelte         |    36 +-
+ .../ChatMessageToolCallBlockEditFile.svelte        |    43 +-
+ ...ChatMessageToolCallBlockExecShellCommand.svelte |    70 +-
+ .../ChatMessageToolCallBlockFileGlobSearch.svelte  |    20 +-
+ .../ChatMessageToolCallBlockGetDatetime.svelte     |    21 +-
+ .../ChatMessageToolCallBlockGetInfo.svelte         |    20 +-
+ .../ChatMessageToolCallBlockGrepSearch.svelte      |    20 +-
+ .../ChatMessageToolCallBlockReadFile.svelte        |     8 +-
+ .../ChatMessageToolCallBlockReadMedia.svelte       |    23 +-
+ .../ChatMessageToolCallBlockRunJavascript.svelte   |    26 +-
+ .../ChatMessageToolCallBlockSearchResults.svelte   |    34 +-
+ .../ChatMessageToolCallBlockWriteFile.svelte       |    26 +-
+ .../ChatMessageToolCall/ToolCallBlock.svelte       |    12 +-
+ .../ChatMessageToolCall/parsers/_shared.ts         |     8 +-
+ .../ChatMessageToolCall/parsers/edit-file.ts       |    13 +-
+ .../parsers/exec-shell-command.ts                  |     4 +-
+ .../parsers/file-glob-search.ts                    |     6 +-
+ .../ChatMessageToolCall/parsers/grep-search.ts     |     6 +-
+ .../ChatMessageToolCall/parsers/read-file.ts       |     8 +-
+ .../ChatMessageToolCall/parsers/read-media.ts      |     6 +-
+ .../ChatMessageToolCall/parsers/run-javascript.ts  |     6 +-
+ .../ChatMessageToolCall/parsers/write-file.ts      |     8 +-
+ .../ChatMessageUser/ChatMessageUser.svelte         |    29 +-
+ .../ChatMessageUser/ChatMessageUserBubble.svelte   |    12 +-
+ .../ChatMessageUser/ChatMessageUserPending.svelte  |    10 +-
+ .../ChatMessageActionCard.svelte                   |     6 +-
+ .../ChatMessageActionCardContinueRequest.svelte    |     2 +-
+ .../ChatMessageActionCardPermissionRequest.svelte  |    33 +-
+ .../ChatMessageActionIcons.svelte                  |    47 +-
+ .../ChatMessageActionIconsBranchingControls.svelte |    12 +-
+ .../ChatMessageContextMenu.svelte                  |    70 +
+ .../ChatMessages/ChatMessageAgenticContent.svelte  |    16 +-
+ .../chat/ChatMessages/ChatMessageEditForm.svelte   |    26 +-
+ .../ChatMessages/ChatMessageReasoningBlock.svelte  |    20 +-
+ .../ChatMessageStatistics.svelte                   |    26 +-
+ .../ChatMessageStatisticsBadge.svelte              |    10 +-
+ .../app/chat/ChatMessages/ChatMessages.svelte      |    16 +-
+ .../app/chat/ChatMessages/LazyChatMessage.svelte   |    15 +-
+ .../app/chat/ChatScreen/ChatScreen.svelte          |   166 +-
+ .../ChatScreen/ChatScreenActionScrollDown.svelte   |    19 +
+ .../ChatScreen/ChatScreenDialogsAndAlerts.svelte   |     4 +-
+ .../chat/ChatScreen/ChatScreenDragOverlay.svelte   |    17 +
+ .../app/chat/ChatScreen/ChatScreenForm.svelte      |    35 +-
+ .../app/chat/ChatScreen/ChatScreenGreeting.svelte  |    70 +
+ .../chat/ChatScreen/ChatScreenMobileHeader.svelte  |    45 +
+ .../chat/ChatScreen/ChatScreenServerError.svelte   |    12 +-
+ .../ChatScreen/ChatScreenStreamResumeStatus.svelte |    19 +
+ .../components/app/chat/ChatTabs/ChatTabs.svelte   |    78 +-
+ .../app/chat/ChatTabs/ChatTabsItem.svelte          |    18 +-
+ .../app/chat/ChatTabs/ChatTabsNewChatButton.svelte |     4 +-
+ .../chat}/src/lib/components/app/chat/index.ts     |    49 +-
+ .../app/content/CollapsibleContentBlock.svelte     |    38 +-
+ .../app/content/CollapsibleTerminalBlock.svelte    |    22 +-
+ .../content/MarkdownContent/MarkdownContent.svelte |   260 +-
+ .../content/MarkdownContent/MarkdownSurface.svelte |    22 +
+ .../content/MarkdownContent/markdown-content.css   |   186 +-
+ .../content/MarkdownContent/markdown-diagrams.ts   |   201 +
+ .../content/MarkdownContent/markdown-handlers.ts   |     6 +-
+ .../content/MarkdownContent/markdown-processor.ts  |    18 +-
+ .../app/content/MarkdownContent/markdown-utils.ts  |     2 +-
+ .../plugins/rehype/code-block-utils.ts             |     7 +-
+ .../plugins/rehype/enhance-code-blocks.ts          |     6 +-
+ .../plugins/rehype/enhance-links.ts                |     2 +-
+ .../plugins/rehype/enhance-mermaid-blocks.ts       |     2 +-
+ .../plugins/rehype/enhance-svg-blocks.ts           |     2 +-
+ .../plugins/rehype/enhance-tables.ts               |     0
+ .../MarkdownContent/plugins/rehype/file-badge.ts   |    12 +-
+ .../plugins/rehype/lazy-highlight.ts               |   149 +
+ .../MarkdownContent/plugins/rehype/lazy-katex.ts   |    56 +
+ .../plugins/rehype/lowlight-core.ts                |     3 +
+ .../MarkdownContent/plugins/rehype/mermaid-pre.ts  |     2 +-
+ .../plugins/rehype/pre-transform.ts                |     9 +-
+ .../plugins/rehype/rehype-rtl-support.ts           |     0
+ .../plugins/rehype/resolve-attachment-images.ts    |     4 +-
+ .../MarkdownContent/plugins/rehype/svg-pre.ts      |     2 +-
+ .../plugins/rehype/table-html-restorer.ts          |     2 +-
+ .../MarkdownContent/plugins/remark/literal-html.ts |     9 +-
+ .../content/MarkdownContent/safe-html-config.ts    |     0
+ .../content/MarkdownEditor/MarkdownEditor.svelte   |   414 +
+ .../MarkdownEditor/markdown-block-widget.ts        |   344 +
+ .../app/content/MarkdownEditor/markdown-blocks.ts  |   145 +
+ .../MarkdownEditor/markdown-live-preview.ts        |   209 +
+ .../content/MarkdownEditor/markdown-structure.ts   |    16 +
+ .../app/content/MarkdownEditor/markdown-syntax.ts  |    26 +
+ .../lib/components/app/content/MentionBadge.svelte |     6 +-
+ .../lib/components/app/content/MentionText.svelte  |     2 +-
+ .../components/app/content/MermaidPreview.svelte   |   261 +
+ .../app/content/MermaidPreviewControls.svelte      |    17 +-
+ .../chat}/src/lib/components/app/content/index.ts  |    33 +-
+ .../dialogs/DialogChatAttachmentsPreview.svelte    |    12 +-
+ .../components/app/dialogs/DialogChatError.svelte  |    12 +-
+ .../app/dialogs/DialogCodePreview.svelte           |     0
+ .../app/dialogs/DialogConfirmDownload.svelte       |     6 +-
+ .../app/dialogs/DialogConfirmation.svelte          |    13 +-
+ .../app/dialogs/DialogConversationDelete.svelte    |     2 +-
+ .../app/dialogs/DialogConversationRename.svelte    |    10 +-
+ .../app/dialogs/DialogConversationSelection.svelte |     4 +-
+ .../app/dialogs/DialogDiscoverModels.svelte        |    12 +-
+ .../app/dialogs/DialogEmptyFileAlert.svelte        |     8 +-
+ .../app/dialogs/DialogExportSettings.svelte        |    17 +-
+ .../app/dialogs/DialogFileUploadError.svelte       |    18 +-
+ .../lib/components/app/dialogs/DialogGroup.svelte  |   103 +
+ .../app/dialogs/DialogGroupPicker.svelte           |    94 +
+ .../app/dialogs/DialogMcpResourcePreview.svelte    |    32 +-
+ .../app/dialogs/DialogMcpResourcesBrowser.svelte   |    38 +-
+ .../app/dialogs/DialogMcpServerAddNew.svelte       |    22 +-
+ .../components/app/dialogs/DialogMcpServers.svelte |    12 +-
+ .../app/dialogs/DialogMermaidPreview.svelte        |    22 +
+ .../app/dialogs/DialogModelNotAvailable.svelte     |    16 +-
+ .../lib/components/app/dialogs/DialogSearch.svelte |   483 +
+ .../app/dialogs/DialogSettingsChat.svelte          |    12 +-
+ .../chat}/src/lib/components/app/dialogs/index.ts  |    45 +-
+ .../components/app/forms/HighlightedMatch.svelte   |     2 +-
+ .../app/forms/InputWithSuggestions.svelte          |    10 +-
+ .../lib/components/app/forms/KeyValuePairs.svelte  |    25 +-
+ .../chat}/src/lib/components/app/forms/index.ts    |     2 +-
+ .../apps/chat}/src/lib/components/app/index.ts     |     2 +-
+ .../app/mcp/McpActiveServersAvatars.svelte         |    10 +-
+ .../app/mcp/McpCapabilitiesBadges.svelte           |    90 +
+ .../components/app/mcp/McpConnectionLogs.svelte    |    24 +-
+ .../src/lib/components/app/mcp/McpLogo.svelte      |     0
+ .../components/app/mcp/McpResourcePreview.svelte   |    48 +-
+ .../app/mcp/McpResourceTemplateForm.svelte         |    20 +-
+ .../McpResourcesBrowser/McpResourcesBrowser.svelte |    10 +-
+ .../McpResourcesBrowserEmptyState.svelte           |     2 +-
+ .../McpResourcesBrowserHeader.svelte               |    10 +-
+ .../McpResourcesBrowserServerItem.svelte           |    54 +-
+ .../McpResourcesBrowser/mcp-resources-browser.ts   |     4 +-
+ .../app/mcp/McpServerCard/McpServerCard.svelte     |    20 +-
+ .../mcp/McpServerCard/McpServerCardActions.svelte  |    14 +-
+ .../mcp/McpServerCard/McpServerCardCompact.svelte  |     8 +-
+ .../McpServerCard/McpServerCardDeleteDialog.svelte |     9 +-
+ .../mcp/McpServerCard/McpServerCardEditForm.svelte |     8 +-
+ .../mcp/McpServerCard/McpServerCardHeader.svelte   |    18 +-
+ .../McpServerCard/McpServerCardToolsList.svelte    |    16 +-
+ .../app/mcp/McpServerCardSkeleton.svelte           |    12 +-
+ .../lib/components/app/mcp/McpServerForm.svelte    |    30 +-
+ .../components/app/mcp/McpServerIdentity.svelte    |    16 +-
+ .../lib/components/app/mcp/McpServerInfo.svelte    |    12 +-
+ .../apps/chat}/src/lib/components/app/mcp/index.ts |     0
+ .../components/app/misc/CodeBlockActions.svelte    |     4 +-
+ .../components/app/misc/CollapsibleSection.svelte  |    16 +-
+ .../app/misc/ConversationSelection.svelte          |    24 +-
+ .../src/lib/components/app/misc/GroupedList.svelte |    30 +-
+ .../app/misc/KeyboardShortcutInfo.svelte           |     2 +-
+ .../src/lib/components/app/misc/MenuIcon.svelte    |    18 +
+ .../lib/components/app/misc/ScrollCarousel.svelte  |    12 +-
+ .../lib/components/app/misc/TruncatedText.svelte   |     8 +-
+ .../chat}/src/lib/components/app/misc/index.ts     |     6 +-
+ .../lib/components/app/models/ModelAvatar.svelte   |    14 +-
+ .../lib/components/app/models/ModelBadge.svelte    |    10 +-
+ .../components/app/models/ModelCapabilities.svelte |    19 +-
+ .../lib/components/app/models/ModelContext.svelte  |    14 +-
+ .../components/app/models/ModelDraftSubline.svelte |    14 +-
+ .../src/lib/components/app/models/ModelId.svelte   |    88 +
+ .../components/app/models/ModelLoadControl.svelte  |    60 +-
+ .../app/models/ModelLoadHighlight.svelte           |     0
+ .../components/app/models/ModelOrgAvatar.svelte    |    18 +
+ .../components/app/models/ModelRowActions.svelte   |   107 +
+ .../components/app/models/ModelVoiceRole.svelte    |    60 +
+ .../app/models/ModelsManager/ModelsManager.svelte  |    14 +-
+ .../ModelsManagerDownloadControl.svelte            |    16 +-
+ .../ModelsManager/ModelsManagerFilters.svelte      |    17 +-
+ .../ModelsManagerModelConfiguration.svelte         |    28 +-
+ .../ModelsManagerModelConfigurationActions.svelte  |    36 +-
+ .../ModelsManagerModelConfigurationHeader.svelte   |    31 +-
+ ...delsManagerModelConfigurationInformation.svelte |    38 +-
+ .../ModelsManager/ModelsManagerModelDrawer.svelte  |    14 +-
+ .../ModelsManager/ModelsManagerModelRow.svelte     |   174 +
+ .../ModelsManager/ModelsManagerModelsTable.svelte  |    71 +-
+ .../ModelsManager/ModelsManagerQuantRow.svelte     |    90 +
+ .../ModelsManager/ModelsManagerRepoRow.svelte      |    16 +-
+ .../ModelsManager/ModelsManagerStatusCell.svelte   |    10 +-
+ .../ModelsManager/ModelsManagerTableToolbar.svelte |    12 +-
+ .../app/models/ModelsManager/row-actions.ts        |    20 +-
+ .../components/app/models/ModelsManager/utils.ts   |    12 +-
+ .../lib/components/app/models/ModelsSection.svelte |    14 +-
+ .../models/ModelsSelector/ModelsSelector.svelte    |   101 +-
+ .../ModelsSelectorDownloadItem.svelte              |    38 +-
+ .../ModelsSelector/ModelsSelectorDrawer.svelte     |     6 +-
+ .../ModelsSelector/ModelsSelectorDropdown.svelte   |    82 +-
+ .../ModelsSelector/ModelsSelectorList.svelte       |    48 +-
+ .../ModelsSelector/ModelsSelectorOption.svelte     |    19 +-
+ .../ModelsSelector/ModelsSelectorReasoning.svelte  |    87 +
+ .../ModelsSelectorReasoningBadge.svelte            |    34 +
+ .../ModelsSelectorTriggerIcon.svelte               |     6 +-
+ .../components/app/models/ModelsSelector/index.ts  |     0
+ .../app/models/discover/ModelsDiscover.svelte      |    40 +-
+ .../ModelsDiscoverChatTemplateDialog.svelte        |    22 +-
+ .../ModelsDiscoverDetails.svelte                   |    32 +-
+ .../ModelsDiscoverDetailsContainer.svelte          |     4 +-
+ .../ModelsDiscoverDetailsDownloadOptions.svelte    |    24 +-
+ ...verDetailsDownloadOptionsDownloadCommand.svelte |    25 +-
+ ...etailsDownloadOptionsDraftDownloadButton.svelte |    14 +-
+ ...etailsDownloadOptionsQuantDownloadButton.svelte |    50 +-
+ .../ModelsDiscoverDetailsDownloadOptionsRow.svelte |    14 +-
+ .../download-options.utils.ts                      |    10 +-
+ .../ModelsDiscoverDetailsDownloadOptions/index.ts  |     0
+ .../ModelsDiscoverDetailsHeader.svelte             |    47 +-
+ .../ModelsDiscoverDetailsHfHubStats.svelte         |    10 +-
+ .../ModelsDiscoverDetailsMetadata.svelte           |    16 +-
+ .../ModelsDiscoverDetailsMetadataItem.svelte       |     2 +-
+ .../ModelsDiscoverDetailsReadme.svelte             |     6 +-
+ .../ModelsDiscoverDetailsSkeleton.svelte           |     8 +-
+ .../models/discover/ModelsDiscoverDetails/index.ts |     0
+ .../ModelsDiscoverList/ModelsDiscoverList.svelte   |     2 +-
+ .../ModelsDiscoverListItem.svelte                  |    52 +-
+ .../ModelsDiscoverListItemSkeleton.svelte          |     4 +-
+ .../ModelsDiscoverListSearch.svelte                |     2 +-
+ .../models/discover/ModelsDiscoverList/index.ts    |     0
+ .../lib/components/app/models/discover/index.ts    |     0
+ .../chat}/src/lib/components/app/models/index.ts   |     8 +-
+ .../app/navigation/ContextMenuActions.svelte       |    31 +
+ .../app/navigation/DropdownMenuActions.svelte      |   139 +
+ .../app/navigation/DropdownMenuSearchable.svelte   |    98 +
+ .../app/navigation/MenuActionsList.svelte          |    75 +
+ .../SidebarNavigation/SidebarNavigation.svelte     |   380 +-
+ .../SidebarNavigationActions.svelte                |    59 +-
+ .../SidebarNavigationConversationItem.svelte       |   496 +
+ .../SidebarNavigationConversationList.svelte       |   386 +
+ .../SidebarNavigationDropZone.svelte               |    39 +
+ .../SidebarNavigationFooter.svelte                 |    19 +
+ .../SidebarNavigationGroupSection.svelte           |   178 +
+ .../SidebarNavigationGroupSubmenu.svelte           |   120 +
+ .../SidebarNavigationSearch.svelte                 |     2 +-
+ .../SidebarNavigationSearchResults.svelte          |     8 +-
+ .../SidebarNavigationSectionHeading.svelte         |    67 +
+ .../SidebarNavigationSelectionBar.svelte           |    26 +-
+ .../SidebarNavigationShowMore.svelte               |    19 +
+ .../src/lib/components/app/navigation/index.ts     |    25 +-
+ .../app/servers}/ServerErrorSplash.svelte          |    38 +-
+ .../app/servers}/ServerLoadingSplash.svelte        |    10 +-
+ .../components/app/servers}/ServerStatus.svelte    |    24 +-
+ .../chat/src/lib/components/app/servers}/index.ts  |     2 +-
+ .../app/settings/SettingsChat/SettingsChat.svelte  |    41 +-
+ .../SettingsChat/SettingsChatFields.svelte         |    87 +-
+ .../SettingsChatImportExportSection.svelte         |    12 +-
+ .../SettingsChatImportExportTab.svelte             |    17 +-
+ .../SettingsChatParameterSourceIndicator.svelte    |    19 +
+ .../SettingsChat/SettingsChatToolsTab.svelte       |    57 +-
+ .../SettingsChat/SettingsChatVoiceTab.svelte       |   226 +
+ .../app/settings/SettingsChatDesktopSidebar.svelte |     6 +-
+ .../app/settings/SettingsChatMobileHeader.svelte   |    86 +
+ .../components/app/settings/SettingsFooter.svelte  |     2 +-
+ .../components/app/settings/SettingsGroup.svelte   |     2 +-
+ .../app/settings/SettingsMcpServers.svelte         |    21 +-
+ .../app/settings/SettingsResetButton.svelte        |     8 +-
+ .../chat}/src/lib/components/app/settings/index.ts |     9 +
+ .../src/lib/components/pwa/PwaMetaTags.svelte      |     2 +-
+ .../src/lib/components/pwa/PwaRefreshAlert.svelte  |    32 +
+ .../apps/chat}/src/lib/components/pwa/index.ts     |     0
+ .../chat}/src/lib/constants/agentic.constants.ts   |     2 +-
+ .../src/lib/constants/api-endpoints.constants.ts   |     0
+ .../apps/chat}/src/lib/constants/app.constants.ts  |     0
+ .../src/lib/constants/attachment-menu.constants.ts |    10 +-
+ .../src/lib/constants/auto-scroll.constants.ts     |     4 -
+ .../chat}/src/lib/constants/backend.constants.ts   |     0
+ .../lib/constants/binary-detection.constants.ts    |     2 +-
+ .../apps/chat}/src/lib/constants/browser-info.ts   |     4 +-
+ .../chat}/src/lib/constants/cache.constants.ts     |     0
+ .../chat/src/lib/constants/chat-form.constants.ts  |    67 +
+ .../chat}/src/lib/constants/chat-tabs.constants.ts |     0
+ .../chat}/src/lib/constants/cli-flags.constants.ts |     0
+ .../chat/src/lib/constants/code-block.constants.ts |     9 +
+ .../src/lib/constants/compaction.constants.ts      |     0
+ .../lib/constants/content-detection.constants.ts   |     0
+ .../lib/constants/context-gauge-dial.constants.ts  |    14 +
+ .../src/lib/constants/control-actions.constants.ts |     0
+ .../lib/constants/conversation-import.constants.ts |     0
+ .../lib/constants/conversation-search.constants.ts |    28 +
+ .../src/lib/constants/css-classes.constants.ts     |    71 +
+ .../chat}/src/lib/constants/database.constants.ts  |    12 +
+ .../src/lib/constants/diagram-blocks.constants.ts  |     0
+ .../chat}/src/lib/constants/error.constants.ts     |     0
+ .../src/lib/constants/formatters.constants.ts      |     0
+ .../apps/chat}/src/lib/constants/get-datetime.ts   |     4 +-
+ ui/apps/chat/src/lib/constants/groups.constants.ts |     2 +
+ .../chat}/src/lib/constants/headers.constants.ts   |     0
+ .../src/lib/constants/huggingface.constants.ts     |    32 +-
+ .../chat}/src/lib/constants/icons.constants.ts     |    99 +-
+ .../chat}/src/lib/constants/image.constants.ts     |     0
+ .../ui => ui/apps/chat}/src/lib/constants/index.ts |     9 +-
+ .../src/lib/constants/key-value-pairs.constants.ts |     0
+ .../lib/constants/keyboard-shortcuts.constants.ts  |     1 +
+ .../lib/constants/latex-protection.constants.ts    |     0
+ .../src/lib/constants/literal-html.constants.ts    |     0
+ .../chat}/src/lib/constants/markdown.constants.ts  |     0
+ .../src/lib/constants/max-bundle-size.constants.ts |     0
+ .../chat}/src/lib/constants/mcp-form.constants.ts  |     0
+ .../src/lib/constants/mcp-resource.constants.ts    |     2 +-
+ .../apps/chat}/src/lib/constants/mcp.constants.ts  |    10 +-
+ .../src/lib/constants/mention-badge.constants.ts   |    17 +-
+ .../src/lib/constants/mermaid-blocks.constants.ts  |    28 +
+ .../src/lib/constants/message-export.constants.ts  |     0
+ .../lib/constants/model-compatibility.constants.ts |    18 +
+ .../chat}/src/lib/constants/model-id.constants.ts  |     2 +-
+ .../src/lib/constants/model-loading.constants.ts   |     0
+ .../models-discover-download.constants.ts          |    16 +-
+ .../src/lib/constants/models-discover.constants.ts |     0
+ .../src/lib/constants/models-manager.constants.ts  |     4 +-
+ .../src/lib/constants/path-display.constants.ts    |     2 +-
+ .../chat}/src/lib/constants/precision.constants.ts |     0
+ .../apps/chat}/src/lib/constants/pwa.constants.ts  |   130 +-
+ .../apps/chat}/src/lib/constants/read-media.ts     |     4 +-
+ .../lib/constants/reasoning-effort.constants.ts    |     4 +-
+ .../constants/recommended-mcp-servers.constants.ts |     2 +-
+ .../chat}/src/lib/constants/routes.constants.ts    |    10 +-
+ .../chat}/src/lib/constants/sandbox.constants.ts   |     2 +-
+ ui/apps/chat/src/lib/constants/search-chats.ts     |   127 +
+ .../src/lib/constants/settings-keys.constants.ts   |    18 +-
+ .../chat}/src/lib/constants/settings.constants.ts  |   193 +-
+ .../lib/constants/special-characters.constants.ts  |     0
+ .../chat}/src/lib/constants/storage.constants.ts   |     7 +-
+ .../chat}/src/lib/constants/stream.constants.ts    |     0
+ .../constants/supported-file-types.constants.ts    |     4 +-
+ .../src/lib/constants/svg-blocks.constants.ts      |     0
+ .../lib/constants/table-html-restorer.constants.ts |     0
+ .../lib/constants/title-generation.constants.ts    |     0
+ .../src/lib/constants/tool-call-args.constants.ts  |     0
+ .../chat}/src/lib/constants/tool-ui.constants.ts   |    32 +-
+ ui/apps/chat/src/lib/constants/ui.constants.ts     |   192 +
+ .../src/lib/constants/uri-template.constants.ts    |     0
+ .../apps/chat}/src/lib/constants/url.constants.ts  |     2 +-
+ ui/apps/chat/src/lib/constants/voice.constants.ts  |   130 +
+ .../lib/constants/working-directory.constants.ts   |     0
+ .../src/lib/contexts/chat-form-actions.context.ts  |     6 +
+ .../lib/contexts/chat-message-actions.context.ts   |     6 +
+ .../src/lib/contexts/chat-message-edit.context.ts  |     6 +
+ .../ui => ui/apps/chat}/src/lib/contexts/index.ts  |     0
+ .../apps/chat}/src/lib/enums/agentic.enums.ts      |     0
+ .../apps/chat}/src/lib/enums/attachment.enums.ts   |     3 +-
+ ui/apps/chat/src/lib/enums/boolean-string.enums.ts |     1 +
+ .../apps/chat}/src/lib/enums/chat.enums.ts         |    10 -
+ .../src/lib/enums/conversation-import.enums.ts     |     0
+ .../apps/chat}/src/lib/enums/files.enums.ts        |     0
+ .../apps/chat}/src/lib/enums/huggingface.enums.ts  |     0
+ {tools/ui => ui/apps/chat}/src/lib/enums/index.ts  |    14 +-
+ .../apps/chat}/src/lib/enums/keyboard.enums.ts     |     0
+ .../apps/chat/src/lib/enums/llama-server.enums.ts  |     0
+ .../ui => ui/apps/chat}/src/lib/enums/mcp.enums.ts |     2 +
+ .../apps/chat}/src/lib/enums/model.enums.ts        |    27 +-
+ .../chat}/src/lib/enums/reasoning-effort.enums.ts  |     0
+ .../apps/chat}/src/lib/enums/settings.enums.ts     |     0
+ .../apps/chat}/src/lib/enums/splash.enums.ts       |     0
+ .../apps/chat}/src/lib/enums/tools.enums.ts        |    14 +
+ .../ui => ui/apps/chat}/src/lib/enums/ui.enums.ts  |    30 +-
+ ui/apps/chat/src/lib/enums/voice.enums.ts          |    36 +
+ .../src/lib/hooks/use-attachment-menu.svelte.ts    |     2 +-
+ .../lib/hooks/use-chat-form-expansion.svelte.ts    |   317 +
+ .../src/lib/hooks/use-chat-form-model.svelte.ts    |     6 +-
+ .../src/lib/hooks/use-chat-form-pickers.svelte.ts  |    14 +-
+ .../src/lib/hooks/use-chat-form-voice.svelte.ts    |   411 +
+ .../hooks/use-chat-message-edit-context.svelte.ts  |     6 +-
+ .../hooks/use-chat-screen-active-model.svelte.ts   |     4 +-
+ .../hooks/use-chat-screen-drag-and-drop.svelte.ts  |     2 +-
+ .../hooks/use-chat-screen-file-upload.svelte.ts    |     4 +-
+ .../src/lib/hooks/use-context-gauge.svelte.ts      |    35 +-
+ .../src/lib/hooks/use-debounced-search.svelte.ts   |     2 +-
+ .../src/lib/hooks/use-draft-messages.svelte.ts     |     2 +-
+ .../src/lib/hooks/use-keyboard-inset.svelte.ts     |    39 +
+ .../src/lib/hooks/use-keyboard-shortcuts.svelte.ts |     8 +-
+ .../chat/src/lib/hooks/use-long-press.svelte.ts    |    99 +
+ .../src/lib/hooks/use-marquee-selection.svelte.ts  |     2 +-
+ .../src/lib/hooks/use-models-selector.svelte.ts    |    10 +-
+ .../src/lib/hooks/use-picker-navigation.svelte.ts  |     2 +-
+ .../src/lib/hooks/use-processing-state.svelte.ts   |    10 +-
+ ui/apps/chat/src/lib/hooks/use-pwa.svelte.ts       |   122 +
+ .../src/lib/hooks/use-reasoning-menu.svelte.ts     |    12 +-
+ .../src/lib/hooks/use-scroll-active-row.svelte.ts  |     0
+ .../src/lib/hooks/use-scroll-carousel.svelte.ts    |     0
+ .../src/lib/hooks/use-sidebar-reveal.svelte.ts     |   373 +
+ .../src/lib/hooks/use-stick-to-bottom.svelte.ts    |    44 +-
+ .../chat}/src/lib/hooks/use-tools-panel.svelte.ts  |    17 +-
+ .../apps/chat}/src/lib/services/chat.service.ts    |    80 +-
+ .../lib/services/conversation-search.service.ts    |    70 +
+ .../lib/services/conversation-transfer.service.ts  |    15 +-
+ .../chat}/src/lib/services/database.service.ts     |   177 +-
+ .../chat}/src/lib/services/huggingface.service.ts  |   130 +-
+ .../ui => ui/apps/chat}/src/lib/services/index.ts  |    26 +-
+ .../apps/chat}/src/lib/services/mcp.service.ts     |    14 +-
+ .../chat}/src/lib/services/migration.service.ts    |    53 +-
+ .../apps/chat}/src/lib/services/models.service.ts  |    14 +-
+ .../lib/services/parameter-sync.service.spec.ts    |     0
+ .../src/lib/services/parameter-sync.service.ts     |    13 +-
+ .../apps/chat}/src/lib/services/props.service.ts   |     2 +-
+ .../chat}/src/lib/services/read-media.service.ts   |     6 +-
+ .../apps/chat}/src/lib/services/router.service.ts  |     2 +-
+ .../apps/chat}/src/lib/services/sandbox-harness.ts |     2 +-
+ .../apps/chat}/src/lib/services/sandbox-worker.js  |     0
+ .../apps/chat}/src/lib/services/sandbox.service.ts |    10 +-
+ .../chat/src/lib/services/search-chats.service.ts  |    89 +
+ .../chat}/src/lib/services/settings.service.ts     |     4 +-
+ .../apps/chat}/src/lib/services/tools.service.ts   |    45 +-
+ ui/apps/chat/src/lib/services/voice.service.ts     |   138 +
+ .../chat}/src/lib/stores/agentic/gates.svelte.ts   |     8 +-
+ .../chat}/src/lib/stores/agentic/index.svelte.ts   |    67 +-
+ .../chat}/src/lib/stores/chat/activity.svelte.ts   |     0
+ .../src/lib/stores/chat/context-stats.svelte.ts    |    14 +-
+ .../chat}/src/lib/stores/chat/drafts.svelte.ts     |     2 +-
+ .../apps/chat}/src/lib/stores/chat/flows.svelte.ts |    14 +-
+ .../apps/chat}/src/lib/stores/chat/index.svelte.ts |    44 +-
+ .../chat}/src/lib/stores/chat/processing.svelte.ts |    10 +-
+ .../chat}/src/lib/stores/chat/streams.svelte.ts    |    20 +-
+ .../src/lib/stores/conversations/index.svelte.ts   |   121 +-
+ .../lib/stores/conversations/preferences.svelte.ts |    20 +-
+ .../apps/chat}/src/lib/stores/device.svelte.ts     |    11 +-
+ ui/apps/chat/src/lib/stores/groups.svelte.ts       |   148 +
+ {tools/ui => ui/apps/chat}/src/lib/stores/index.ts |    12 +-
+ {tools/ui => ui/apps/chat}/src/lib/stores/init.ts  |     8 +-
+ .../chat/src/lib/stores/llama-server.svelte.ts     |     6 +-
+ .../apps/chat}/src/lib/stores/mcp/health.svelte.ts |    10 +-
+ .../apps/chat}/src/lib/stores/mcp/index.svelte.ts  |    39 +-
+ .../chat}/src/lib/stores/mcp/resources.svelte.ts   |     8 +-
+ .../src/lib/stores/models-discover/index.svelte.ts |    40 +-
+ .../chat}/src/lib/stores/models/index.svelte.ts    |    26 +-
+ .../chat}/src/lib/stores/models/props.svelte.ts    |    16 +-
+ .../chat}/src/lib/stores/models/status.svelte.ts   |    75 +-
+ .../chat}/src/lib/stores/permissions.svelte.ts     |     4 +-
+ .../chat}/src/lib/stores/settings/index.svelte.ts  |    37 +-
+ ui/apps/chat/src/lib/stores/sidebar-drag.svelte.ts |   404 +
+ .../apps/chat}/src/lib/stores/tabs.svelte.ts       |    32 +-
+ .../apps/chat}/src/lib/stores/tools.svelte.ts      |    31 +-
+ ui/apps/chat/src/lib/stores/ui.svelte.ts           |   360 +
+ ui/apps/chat/src/lib/stores/version.svelte.ts      |    47 +
+ .../src/lib/stores/voice-transcripts.svelte.ts     |   176 +
+ ui/apps/chat/src/lib/stores/voice.svelte.ts        |   117 +
+ .../apps/chat}/src/lib/styles/katex-custom.scss    |     0
+ ui/apps/chat/src/lib/styles/safe-area.css          |    46 +
+ .../ui => ui/apps/chat}/src/lib/types/agentic.d.ts |     4 +-
+ {tools/ui => ui/apps/chat}/src/lib/types/api.d.ts  |    13 +-
+ {tools/ui => ui/apps/chat}/src/lib/types/chat.d.ts |    16 +-
+ .../ui => ui/apps/chat}/src/lib/types/common.d.ts  |     2 +-
+ .../apps/chat}/src/lib/types/database.d.ts         |    16 +-
+ {tools/ui => ui/apps/chat}/src/lib/types/glob.d.ts |     2 +-
+ ui/apps/chat/src/lib/types/groups.d.ts             |     7 +
+ .../apps/chat}/src/lib/types/huggingface.d.ts      |     8 +-
+ {tools/ui => ui/apps/chat}/src/lib/types/index.ts  |    13 +-
+ {tools/ui => ui/apps/chat}/src/lib/types/mcp.d.ts  |     6 +-
+ .../apps/chat}/src/lib/types/models-discover.d.ts  |     6 +-
+ .../ui => ui/apps/chat}/src/lib/types/models.d.ts  |    18 +-
+ ui/apps/chat/src/lib/types/navigation.d.ts         |    39 +
+ .../ui => ui/apps/chat}/src/lib/types/reasoning.ts |     0
+ .../ui => ui/apps/chat}/src/lib/types/search.d.ts  |     0
+ .../apps/chat}/src/lib/types/settings.d.ts         |     6 +-
+ {tools/ui => ui/apps/chat}/src/lib/types/splash.ts |     0
+ .../ui => ui/apps/chat}/src/lib/types/tools.d.ts   |     2 +-
+ {tools/ui => ui/apps/chat}/src/lib/utils/abort.ts  |     0
+ .../ui => ui/apps/chat}/src/lib/utils/agentic.ts   |    10 +-
+ .../ui => ui/apps/chat}/src/lib/utils/api-fetch.ts |    12 +-
+ .../apps/chat}/src/lib/utils/api-headers.ts        |     6 +-
+ .../apps/chat}/src/lib/utils/api-key-validation.ts |    12 +-
+ .../apps/chat}/src/lib/utils/attachment-display.ts |    10 +-
+ .../apps/chat}/src/lib/utils/attachment-type.ts    |     4 +-
+ .../apps/chat}/src/lib/utils/audio-format.ts       |     4 +-
+ ui/apps/chat/src/lib/utils/audio-recording.ts      |    98 +
+ .../chat}/src/lib/utils/autoresize-textarea.ts     |     0
+ ui/apps/chat/src/lib/utils/base-path.ts            |    10 +
+ .../ui => ui/apps/chat}/src/lib/utils/branching.ts |     2 +-
+ .../apps/chat}/src/lib/utils/browser-info.ts       |     6 +-
+ .../apps/chat}/src/lib/utils/browser-only.ts       |    11 +-
+ .../ui => ui/apps/chat}/src/lib/utils/cache-ttl.ts |     2 +-
+ .../apps/chat}/src/lib/utils/cap-img-size.ts       |     4 +-
+ .../apps/chat}/src/lib/utils/chat-commands.ts      |    10 +-
+ .../ui => ui/apps/chat}/src/lib/utils/chat-tabs.ts |     4 +-
+ .../lib/utils/chat-template-thinking-detector.ts   |     0
+ .../src/lib/utils/chat-template-tool-detector.ts   |     0
+ .../ui => ui/apps/chat}/src/lib/utils/clipboard.ts |    14 +-
+ {tools/ui => ui/apps/chat}/src/lib/utils/code.ts   |    89 +-
+ .../apps/chat}/src/lib/utils/command-token.ts      |     0
+ .../apps/chat}/src/lib/utils/compaction.ts         |     6 +-
+ .../apps/chat}/src/lib/utils/compute-line-diff.ts  |     2 +-
+ .../apps/chat}/src/lib/utils/config-helpers.ts     |     0
+ ui/apps/chat/src/lib/utils/conversation-search.ts  |   116 +
+ .../apps/chat}/src/lib/utils/conversation-utils.ts |    34 +-
+ .../chat}/src/lib/utils/convert-files-to-extra.ts  |    27 +-
+ .../apps/chat}/src/lib/utils/cors-proxy.ts         |     8 +-
+ ui/apps/chat/src/lib/utils/css.ts                  |    21 +
+ .../ui => ui/apps/chat}/src/lib/utils/data-url.ts  |     0
+ .../ui => ui/apps/chat}/src/lib/utils/debounce.ts  |     0
+ ui/apps/chat/src/lib/utils/diagram-viewport.ts     |    75 +
+ .../apps/chat}/src/lib/utils/file-preview.ts       |     0
+ .../ui => ui/apps/chat}/src/lib/utils/file-type.ts |     4 +-
+ .../apps/chat}/src/lib/utils/formatters.ts         |    49 +-
+ ui/apps/chat/src/lib/utils/get-datetime.ts         |    23 +
+ ui/apps/chat/src/lib/utils/gguf-metadata.ts        |   153 +
+ .../apps/chat}/src/lib/utils/glob-search.ts        |     8 +-
+ ui/apps/chat/src/lib/utils/haptics.ts              |    31 +
+ .../ui => ui/apps/chat}/src/lib/utils/headers.ts   |     0
+ .../apps/chat}/src/lib/utils/heic-to-jpeg.ts       |     4 +-
+ ui/apps/chat/src/lib/utils/highlight-theme.ts      |    30 +
+ .../chat}/src/lib/utils/image-error-fallback.ts    |     0
+ {tools/ui => ui/apps/chat}/src/lib/utils/index.ts  |    52 +-
+ .../apps/chat}/src/lib/utils/is-ime-composing.ts   |     0
+ .../apps/chat}/src/lib/utils/jpeg-orientation.ts   |     4 +-
+ .../apps/chat}/src/lib/utils/latex-protection.ts   |     2 +-
+ {tools/ui => ui/apps/chat}/src/lib/utils/mcp.ts    |    26 +-
+ .../apps/chat}/src/lib/utils/mention-badge.ts      |     8 +-
+ .../apps/chat}/src/lib/utils/mention-token.ts      |     0
+ .../src/lib/utils/modality-file-validation.ts      |     8 +-
+ ui/apps/chat/src/lib/utils/model-compatibility.ts  |    12 +
+ .../apps/chat}/src/lib/utils/model-families.ts     |     2 +-
+ .../apps/chat}/src/lib/utils/model-list.ts         |     4 +-
+ .../apps/chat}/src/lib/utils/model-names.ts        |     2 +-
+ ui/apps/chat/src/lib/utils/near-viewport.ts        |    32 +
+ .../chat}/src/lib/utils/parse-exec-shell-error.ts  |     0
+ .../chat}/src/lib/utils/parse-exec-shell-status.ts |     0
+ .../chat}/src/lib/utils/parse-partial-json-args.ts |     0
+ .../apps/chat}/src/lib/utils/path-display.ts       |     4 +-
+ .../apps/chat}/src/lib/utils/pdf-processing.ts     |    38 +-
+ .../apps/chat}/src/lib/utils/portal-to-body.ts     |     0
+ .../ui => ui/apps/chat}/src/lib/utils/precision.ts |     2 +-
+ .../chat}/src/lib/utils/process-uploaded-files.ts  |    10 +-
+ .../ui => ui/apps/chat}/src/lib/utils/progress.ts  |     2 +-
+ {tools/ui => ui/apps/chat}/src/lib/utils/redact.ts |     0
+ .../apps/chat}/src/lib/utils/request-helpers.ts    |     0
+ .../apps/chat}/src/lib/utils/sandbox-tool.ts       |     6 +-
+ .../apps/chat}/src/lib/utils/sanitize-svg.ts       |     2 +-
+ .../ui => ui/apps/chat}/src/lib/utils/sanitize.ts  |     2 +-
+ ui/apps/chat/src/lib/utils/search-chats.ts         |   665 +
+ .../apps/chat}/src/lib/utils/search-results.ts     |     2 +-
+ .../ui => ui/apps/chat}/src/lib/utils/sidecars.ts  |     9 +-
+ {tools/ui => ui/apps/chat}/src/lib/utils/sse.ts    |     2 +-
+ .../apps/chat}/src/lib/utils/stream-identity.ts    |     2 +-
+ .../apps/chat}/src/lib/utils/svg-shadow.ts         |     0
+ .../apps/chat}/src/lib/utils/svg-to-png.ts         |     2 +-
+ .../src/lib/utils/syntax-highlight-language.ts     |     0
+ .../apps/chat}/src/lib/utils/text-files.ts         |     6 +-
+ {tools/ui => ui/apps/chat}/src/lib/utils/text.ts   |     2 +-
+ .../apps/chat}/src/lib/utils/tool-call-meta.ts     |     2 +-
+ .../ui => ui/apps/chat}/src/lib/utils/tool-ui.ts   |     4 +-
+ ui/apps/chat/src/lib/utils/type-to-focus.ts        |    28 +
+ .../apps/chat}/src/lib/utils/uri-template.ts       |     0
+ {tools/ui => ui/apps/chat}/src/lib/utils/url.ts    |     4 +-
+ {tools/ui => ui/apps/chat}/src/lib/utils/uuid.ts   |     0
+ ui/apps/chat/src/lib/utils/voice-attachment.ts     |   109 +
+ ui/apps/chat/src/lib/utils/voice-mode.ts           |   128 +
+ .../apps/chat}/src/lib/utils/webp-to-png.ts        |     2 +-
+ .../apps/chat}/src/lib/utils/working-directory.ts  |     4 +-
+ .../src/lib/vendors/big-integer/BigInteger.js      |     0
+ .../apps/chat}/src/lib/vendors/big-integer/LICENSE |     0
+ .../chat}/src/lib/vendors/decimal.js/LICENCE.md    |     0
+ .../chat}/src/lib/vendors/decimal.js/decimal.js    |     0
+ .../src/lib/vendors/nerdamer-prime/Algebra.js      |     0
+ .../src/lib/vendors/nerdamer-prime/Calculus.js     |     0
+ .../chat}/src/lib/vendors/nerdamer-prime/Extra.js  |     0
+ .../chat}/src/lib/vendors/nerdamer-prime/LICENSE   |     0
+ .../chat}/src/lib/vendors/nerdamer-prime/Solve.js  |     0
+ .../chat}/src/lib/vendors/nerdamer-prime/all.js    |     0
+ .../src/lib/vendors/nerdamer-prime/constants.js    |     0
+ .../lib/vendors/nerdamer-prime/nerdamer.core.js    |     0
+ .../apps/chat}/src/lib/vendors/package.json        |     0
+ .../apps/chat}/src/routes/(chat)/+layout.svelte    |     6 +-
+ .../apps/chat}/src/routes/(chat)/+page.svelte      |    12 +-
+ .../ui => ui/apps/chat}/src/routes/(chat)/+page.ts |     2 +-
+ .../chat}/src/routes/(chat)/chat/[id]/+page.svelte |    12 +-
+ .../chat}/src/routes/(chat)/chat/[id]/+page.ts     |     2 +-
+ .../ui => ui/apps/chat}/src/routes/+error.svelte   |    16 +-
+ .../ui => ui/apps/chat}/src/routes/+layout.svelte  |   214 +-
+ ui/apps/chat/src/routes/mcp-servers/+page.svelte   |    24 +
+ .../apps/chat/src/routes/mcp-servers}/+page.ts     |     2 +-
+ .../apps/chat}/src/routes/models/+page.svelte      |    18 +-
+ ui/apps/chat/src/routes/models/+page.ts            |     4 +
+ .../apps/chat}/src/routes/search/+page.svelte      |    16 +-
+ ui/apps/chat/src/routes/settings/+page.svelte      |    30 +
+ ui/apps/chat/src/routes/settings/+page.ts          |     4 +
+ ui/apps/chat/src/service-worker/index.ts           |    55 +
+ ui/apps/chat/src/service-worker/tsconfig.json      |     4 +
+ ui/apps/chat/src/virtual-nerdamer.d.ts             |     4 +
+ .../apps/chat}/static/recommended-mcp/context7.png |   Bin
+ .../apps/chat}/static/recommended-mcp/exa.ico      |   Bin
+ .../chat}/static/recommended-mcp/github-dark.png   |   Bin
+ .../chat}/static/recommended-mcp/github-light.png  |   Bin
+ .../chat}/static/recommended-mcp/huggingface.ico   |   Bin
+ ui/apps/chat/static/sw.js                          |    12 +
+ .../apps/chat}/tests/client/README-perf.md         |     0
+ .../client/agentic-stream.perf.svelte.test.ts      |     6 +-
+ .../tests/client/apikey-splash.svelte.test.ts      |     6 +-
+ .../chat}/tests/client/cap-img-size.svelte.test.ts |     4 +-
+ .../tests/client/chat-form-enter.svelte.test.ts    |   109 +
+ .../client/chat-form-expansion.svelte.test.ts      |   170 +
+ .../tests/client/chat-form-input.svelte.test.ts    |   166 +
+ .../chat-form-mention-picker-gate.svelte.test.ts   |    10 +-
+ .../client/chat-form-pickers-touch.svelte.test.ts  |    48 +
+ .../client/chat-form-single-row.svelte.test.ts     |    81 +
+ .../client/chat-form-slash-commands.svelte.test.ts |     0
+ .../tests/client/chat-form-voice.svelte.test.ts    |   573 +
+ ...t-screen-form-single-row-setting.svelte.test.ts |    33 +
+ .../tests/client/chat-tabs-store.svelte.test.ts    |     4 +-
+ .../client/collapsible-lazy-body.svelte.test.ts    |    14 +-
+ .../client/components/AgenticPerfWrapper.svelte    |     4 +-
+ .../components/ChatFormActionRecordWrapper.svelte  |    18 +
+ .../components/ChatFormPickersHarness.svelte       |     3 +-
+ .../client/components/ChatFormTestWrapper.svelte   |    26 +
+ .../components/ChatFormVoiceTestWrapper.svelte     |    25 +
+ .../components/ChatMessagesPerfWrapper.svelte      |     6 +-
+ .../components/ChatScreenFormTestWrapper.svelte    |     8 +
+ .../components/CollapsibleLazyBodyHarness.svelte   |     4 +-
+ .../components/ConversationRowHarness.svelte       |    12 +
+ .../client/components/DialogPanelWrapper.svelte    |     4 +-
+ .../client/components/McpServerFormWrapper.svelte  |     2 +-
+ .../components/ModelsManagerRowWrapper.svelte      |     6 +-
+ .../client/components/ModelsManagerWrapper.svelte  |     4 +-
+ .../components/ModelsSelectorHookHarness.svelte    |     2 +-
+ .../components/ModelsSelectorListWrapper.svelte    |    18 +
+ .../components/PickerListScrollHarness.svelte      |     2 +-
+ .../components/SidebarNavigationHarness.svelte     |     9 +
+ .../tests/client/components/TestWrapper.svelte     |     2 +-
+ .../client/components/agentic-perf-state.svelte.ts |     2 +-
+ .../chat/tests/client/context-panel.svelte.test.ts |    62 +
+ .../client/conversation-import-db.svelte.test.ts   |     6 +-
+ .../conversation-row-hold-mobile.svelte.test.ts    |    94 +
+ .../conversation-search.service.svelte.test.ts     |    92 +
+ .../client/dialog-focus-mobile.svelte.test.ts      |     0
+ .../exec-shell-command-streaming.svelte.test.ts    |    12 +-
+ ui/apps/chat/tests/client/groups-db.svelte.test.ts |    98 +
+ ui/apps/chat/tests/client/haptics.svelte.test.ts   |    51 +
+ .../tests/client/highlight-theme.svelte.test.ts    |    26 +
+ .../tests/client/keyboard-inset.svelte.test.ts     |    63 +
+ .../markdown-content-sanitize.svelte.test.ts       |     4 +-
+ .../client/markdown-editor-margins.svelte.test.ts  |    61 +
+ .../tests/client/markdown-editor.svelte.test.ts    |   305 +
+ .../tests/client/mcp-display-name.svelte.test.ts   |     6 +-
+ .../tests/client/mcp-icon-proxy-url.svelte.test.ts |     8 +-
+ .../tests/client/mcp-server-form.svelte.test.ts    |     0
+ .../client/microphone-unavailable.svelte.test.ts   |    92 +
+ .../tests/client/model-avatar-orgs.svelte.test.ts  |     8 +-
+ .../client/models-download-flows.svelte.test.ts    |    15 +-
+ .../client/models-manager-rows.svelte.test.ts      |    10 +-
+ .../models-manager-sort-filter.svelte.test.ts      |    12 +-
+ .../client/models-manager-utils.svelte.test.ts     |    10 +-
+ .../client/models-selector-hidden.svelte.test.ts   |     8 +-
+ .../client/models-selector-mobile.svelte.test.ts   |    12 +-
+ .../client/models-sidecar-badges.svelte.test.ts    |     6 +-
+ .../tests/client/models-voice-role.svelte.test.ts  |   180 +
+ .../tests/client/nested-surfaces.svelte.test.ts    |    94 +
+ .../apps/chat}/tests/client/page.svelte.test.ts    |     0
+ .../tests/client/pdf-processing.svelte.test.ts     |    48 +
+ .../tests/client/picker-list-scroll.svelte.test.ts |     0
+ .../client/reasoning-block-viewport.svelte.test.ts |    51 +
+ .../client/reasoning-control-mobile.svelte.test.ts |     6 +-
+ .../tests/client/sandbox.service.svelte.test.ts    |     6 +-
+ ...chats-default-disabled-migration.svelte.test.ts |   117 +
+ .../client/search-chats.service.svelte.test.ts     |   113 +
+ ...ngs-model-org-name-key-migration.svelte.test.ts |     6 +-
+ .../settings-registry-invariants.svelte.test.ts    |    10 +-
+ .../settings-render-keys-migration.svelte.test.ts  |     6 +-
+ .../client/settings-tools-policy.svelte.test.ts    |    61 +
+ .../client/sidebar-hidden-clicks.svelte.test.ts    |    66 +
+ .../stick-to-bottom-affordance.svelte.test.ts      |    67 +
+ .../tests/client/stick-to-bottom.svelte.test.ts    |    89 +
+ .../tool-call-block-streamed-body.svelte.test.ts   |     8 +-
+ .../client/tool-call-in-progress.svelte.test.ts    |    10 +-
+ .../chat/tests/client/type-to-focus.svelte.test.ts |    72 +
+ .../tests/client/ui-settings-sync.svelte.test.ts   |     8 +-
+ .../client/update-message-in-place.svelte.test.ts  |     6 +-
+ .../chat/tests/client/voice-capture.svelte.test.ts |   184 +
+ .../chat/tests/client/voice-service.svelte.test.ts |   136 +
+ .../tests/client/voice-waveform.svelte.test.ts     |    39 +
+ ui/apps/chat/tests/debug/ViewportProbe.svelte      |    74 +
+ {tools/ui => ui/apps/chat}/tests/e2e/pwa.e2e.ts    |    52 +-
+ ui/apps/chat/tests/stories/DesignGuidelines.mdx    |    30 +
+ .../ActionIconCopyToClipboard.stories.svelte       |    23 +
+ .../tests/stories/actions/GlassKey.stories.svelte  |    40 +
+ .../tests/stories/badges/InfoBadges.stories.svelte |    53 +
+ .../stories/brand/assets/OpticalCentre.svelte      |   552 +
+ .../assets/files/native/macos/icon_512x512@2x.png  |   Bin 0 -> 16054 bytes
+ .../native/windows/Square150x150Logo.scale-400.png |   Bin 0 -> 24813 bytes
+ .../native/windows/Square44x44Logo.scale-400.png   |   Bin 0 -> 4433 bytes
+ .../brand/logo-showcase/ShowcaseFrame.svelte       |    57 +
+ .../logo-showcase/lib/components/Figure.svelte     |   189 +
+ .../logo-showcase/lib/components/Figures.svelte    |    31 +
+ .../tests/stories/brand/logo-showcase/lib/logo.ts  |    72 +
+ .../brand/logo-showcase/lib/styles/logo.css        |    50 +
+ .../stories/brand/logo-usage/IconUsage.svelte      |   966 +
+ .../attachments/ChatAttachmentsList.stories.svelte |   141 +
+ ...atAttachmentsListItemMcpResource.stories.svelte |    61 +
+ .../ChatAttachmentsPreview.stories.svelte          |   136 +
+ .../form/ChatFormActionReasoning.stories.svelte    |    56 +
+ .../chat/form/ChatFormActionRecord.stories.svelte  |    74 +
+ .../chat/form/ChatFormActionSubmit.stories.svelte  |    42 +
+ .../chat/form/ChatFormContextGauge.stories.svelte  |   112 +
+ .../ChatFormCurrentWorkingDirectory.stories.svelte |   105 +
+ .../stories/chat/form/ChatFormInput.stories.svelte |    49 +
+ .../chat/form/ChatFormPickerCommand.stories.svelte |    46 +
+ .../form/ChatFormPickerMcpPrompts.stories.svelte   |    74 +
+ .../chat/form/ChatFormPickerMention.stories.svelte |    78 +
+ .../stories/chat/form/ChatFormVoice.stories.svelte |   118 +
+ .../chat/form/ChatFormVoiceStoryHost.svelte        |    33 +
+ .../chat/form}/ChatScreenForm.a11y.stories.svelte  |    12 +-
+ .../chat/form/ChatScreenForm.stories.svelte        |   208 +
+ ui/apps/chat/tests/stories/chat/form/fixtures.ts   |   463 +
+ .../chat/messages/ActionIconsStoryHost.svelte      |    90 +
+ .../chat/messages/ChatMessage.stories.svelte       |   275 +
+ .../messages/ChatMessageActionCard.stories.svelte  |    42 +
+ .../messages/ChatMessageActionIcons.stories.svelte |    78 +
+ .../ChatMessageReasoningBlock.stories.svelte       |    60 +
+ .../ChatMessageStatistics.a11y.stories.svelte      |     4 +-
+ .../messages/ChatMessageStatistics.stories.svelte  |    74 +
+ .../ChatMessageToolCallBlock.stories.svelte        |   156 +
+ .../messages/ChatMessageUserPending.stories.svelte |    34 +
+ .../chat/messages/ChatMessageVoice.stories.svelte  |   162 +
+ .../chat/tests/stories/chat/messages/fixtures.ts   |   728 +
+ .../stories/chat/screen/ChatScreen.stories.svelte  |   242 +
+ .../ChatScreenActionScrollDown.stories.svelte      |    19 +
+ .../screen/ChatScreenDragOverlay.stories.svelte    |    20 +
+ .../chat/screen/ChatScreenGreeting.stories.svelte  |    33 +
+ .../screen/ChatScreenServerError.stories.svelte    |    56 +
+ .../ChatScreenStreamResumeStatus.stories.svelte    |    27 +
+ .../stories/chat/screen/chat-screen.fixtures.ts    |   179 +
+ ui/apps/chat/tests/stories/chat/screen/fixtures.ts |   286 +
+ .../stories/chat/tabs/ChatTabs.stories.svelte      |    96 +
+ .../stories/chat/tabs/ChatTabsItem.stories.svelte  |    63 +
+ .../CollapsibleTerminalBlock.stories.svelte        |    26 +
+ .../stories/content/MarkdownContent.stories.svelte |    66 +
+ .../stories/content/MermaidPreview.stories.svelte  |   143 +
+ .../dialogs/DialogConfirmation.stories.svelte      |    43 +
+ .../dialogs/DialogMermaidPreview.stories.svelte    |    41 +
+ ui/apps/chat/tests/stories/editorial/Figure.svelte |    60 +
+ .../chat}/tests/stories/fixtures/ai-tutorial.ts    |     0
+ .../apps/chat}/tests/stories/fixtures/assets/1.jpg |   Bin
+ .../chat/tests/stories/fixtures/assets/clip.webm   |   Bin 0 -> 8101 bytes
+ .../tests/stories/fixtures/assets/example.pdf      |   Bin
+ .../tests/stories/fixtures/assets/hf-logo.svg      |     0
+ .../chat/tests/stories/fixtures/assets/tone.wav    |   Bin 0 -> 8078 bytes
+ .../tests/stories/fixtures/mermaid-diagrams.ts     |    57 +
+ .../chat/tests/stories/fixtures/mermaid-preview.ts |    30 +
+ .../stories/forms/HighlightedMatch.stories.svelte  |    31 +
+ .../forms/InputWithSuggestions.stories.svelte      |    68 +
+ .../stories/forms/KeyValuePairs.stories.svelte     |    47 +
+ .../tests/stories/foundations/Brand.stories.svelte |    18 +
+ .../stories/foundations/SafeAreas.stories.svelte   |    86 +
+ .../introduction/Introduction.stories.svelte       |    20 +
+ .../tests/stories/introduction/Introduction.svx    |    60 +
+ .../tests/stories/introduction/Principles.svelte   |   228 +
+ .../tests/stories/introduction/Products.svelte     |   343 +
+ .../tests/stories/introduction/Sections.svelte     |   159 +
+ .../chat/tests/stories/introduction/Stack.svelte   |   129 +
+ .../chat/tests/stories/introduction/Uses.svelte    |    81 +
+ .../chat/tests/stories/introduction/sections.ts    |    50 +
+ .../mcp/McpCapabilitiesBadges.stories.svelte       |    15 +
+ .../stories/mcp/McpConnectionLogs.stories.svelte   |    18 +
+ .../tests/stories/mcp/McpServerCard.stories.svelte |    41 +
+ ui/apps/chat/tests/stories/mcp/fixtures.ts         |   109 +
+ .../stories/misc/CollapsibleSection.stories.svelte |    37 +
+ .../misc/KeyboardShortcutInfo.stories.svelte       |    35 +
+ .../misc}/ScrollCarousel.a11y.stories.svelte       |    10 +-
+ .../stories/misc/ScrollCarousel.stories.svelte     |    36 +
+ .../stories/misc/TruncatedText.stories.svelte      |    31 +
+ .../models}/ModelsManager.a11y.stories.svelte      |     8 +-
+ .../stories/models}/ModelsManager.stories.svelte   |    38 +-
+ .../stories/models/ModelsSelector.stories.svelte   |    98 +
+ .../navigation}/SidebarNavigation.stories.svelte   |    51 +-
+ ...rNavigationConversationItem.a11y.stories.svelte |     4 +-
+ ui/apps/chat/tests/stories/pace.ts                 |    37 +
+ .../stories/pwa/PwaRefreshAlert.stories.svelte     |    31 +
+ .../stories/servers/ServerSplash.stories.svelte    |    31 +
+ .../settings/DialogSettingsChat.stories.svelte     |    26 +
+ .../settings/SettingsNavigation.stories.svelte     |    34 +
+ .../settings/SettingsSections.stories.svelte       |    36 +
+ .../chat/tests/stories/voice/VoiceLiveDemo.svelte  |    54 +
+ .../stories/voice/VoiceWaveformLive.stories.svelte |    82 +
+ .../stories/voice/fake-voice-recorder.svelte.ts    |   154 +
+ ui/apps/chat/tests/stories/voice/fixtures.ts       |     2 +
+ .../ui => ui/apps/chat}/tests/unit/abort.test.ts   |     2 +-
+ .../apps/chat}/tests/unit/agentic-hotpath.bench.ts |    19 +-
+ .../tests/unit/agentic-max-turns-default.test.ts   |     4 +-
+ .../tests/unit/agentic-section-expansion.test.ts   |     6 +-
+ .../apps/chat}/tests/unit/agentic-sections.test.ts |     8 +-
+ .../apps/chat}/tests/unit/agentic-strip.test.ts    |     2 +-
+ .../chat}/tests/unit/assistant-raw-output.test.ts  |     8 +-
+ .../apps/chat}/tests/unit/branching.test.ts        |     6 +-
+ ui/apps/chat/tests/unit/brand-favicons.test.ts     |    37 +
+ .../apps/chat}/tests/unit/chat-activity.test.ts    |     2 +-
+ ui/apps/chat/tests/unit/chat-form-expand.test.ts   |    70 +
+ .../chat}/tests/unit/classify-tool-result.test.ts  |     2 +-
+ ui/apps/chat/tests/unit/cli.test.ts                |   212 +
+ .../apps/chat}/tests/unit/clipboard.test.ts        |     4 +-
+ {tools/ui => ui/apps/chat}/tests/unit/code.test.ts |    45 +-
+ .../apps/chat}/tests/unit/command-token.test.ts    |     2 +-
+ .../apps/chat}/tests/unit/compaction.test.ts       |     8 +-
+ .../chat}/tests/unit/compute-line-diff.test.ts     |     4 +-
+ .../apps/chat}/tests/unit/continue-intent.test.ts  |     6 +-
+ .../chat}/tests/unit/conversation-export.test.ts   |    16 +-
+ .../chat}/tests/unit/conversation-import.test.ts   |    22 +-
+ .../chat/tests/unit/conversation-search.test.ts    |    91 +
+ .../chat}/tests/unit/conversations-store.test.ts   |    33 +-
+ ui/apps/chat/tests/unit/diagram-viewport.test.ts   |   111 +
+ .../apps/chat}/tests/unit/formatters.test.ts       |     8 +-
+ ui/apps/chat/tests/unit/gguf-metadata.test.ts      |    98 +
+ .../chat}/tests/unit/glob-search-children.test.ts  |     8 +-
+ .../ui => ui/apps/chat}/tests/unit/headers.test.ts |     2 +-
+ .../apps/chat}/tests/unit/hf-helpers.test.ts       |     2 +-
+ .../chat/tests/unit/hf-mmproj-modalities.test.ts   |   148 +
+ .../apps/chat}/tests/unit/jpeg-orientation.test.ts |     2 +-
+ .../apps/chat}/tests/unit/latex-protection.test.ts |     2 +-
+ ui/apps/chat/tests/unit/lazy-highlight.test.ts     |   117 +
+ ui/apps/chat/tests/unit/lazy-katex.test.ts         |    32 +
+ .../tests/unit/llama-ui-tsconfig-paths.test.ts     |    30 +
+ ui/apps/chat/tests/unit/markdown-structure.test.ts |    22 +
+ ui/apps/chat/tests/unit/markdown-syntax.test.ts    |    21 +
+ .../tests/unit/mcp-default-overrides-merge.test.ts |     8 +-
+ .../chat}/tests/unit/mcp-servers-default.test.ts   |     4 +-
+ .../apps/chat}/tests/unit/mcp-service.test.ts      |     8 +-
+ .../apps/chat}/tests/unit/mention-badge.test.ts    |     4 +-
+ .../apps/chat}/tests/unit/mention-segments.test.ts |     2 +-
+ .../apps/chat}/tests/unit/mention-token.test.ts    |     2 +-
+ .../chat}/tests/unit/model-compatibility.test.ts   |     4 +-
+ .../apps/chat}/tests/unit/model-families.test.ts   |     2 +-
+ .../apps/chat}/tests/unit/model-id-parser.test.ts  |     6 +-
+ .../apps/chat}/tests/unit/model-list.test.ts       |     4 +-
+ .../apps/chat}/tests/unit/model-names.test.ts      |     2 +-
+ .../chat}/tests/unit/model-sidecar-grammar.test.ts |     8 +-
+ .../tests/unit/parse-exec-shell-status.test.ts     |     2 +-
+ .../tests/unit/parse-mcp-server-settings.test.ts   |     4 +-
+ .../chat}/tests/unit/parse-toolcalls-memo.test.ts  |     8 +-
+ .../tests/unit/partial-tool-call-cleanup.test.ts   |     6 +-
+ {tools/ui => ui/apps/chat}/tests/unit/pwa.spec.ts  |   123 +-
+ .../tests/unit/queued-message-isolation.test.ts    |     8 +-
+ .../chat}/tests/unit/reasoning-context.test.ts     |     2 +-
+ .../ui => ui/apps/chat}/tests/unit/redact.test.ts  |     2 +-
+ .../apps/chat}/tests/unit/request-helpers.test.ts  |     2 +-
+ .../apps/chat}/tests/unit/sanitize-headers.test.ts |     4 +-
+ ui/apps/chat/tests/unit/search-chats.test.ts       |   386 +
+ .../tests/unit/search-results-fixture.test.ts      |     2 +-
+ .../apps/chat}/tests/unit/search-results.test.ts   |     2 +-
+ .../tests/unit/settings-private-fields.test.ts     |     2 +-
+ .../unit/settings-tool-call-in-progress.test.ts    |     4 +-
+ {tools/ui => ui/apps/chat}/tests/unit/sse.test.ts  |     2 +-
+ ui/apps/chat/tests/unit/storybook-sections.test.ts |    35 +
+ .../apps/chat}/tests/unit/stream-discovery.test.ts |     4 +-
+ .../apps/chat}/tests/unit/stream-finish.test.ts    |     2 +-
+ .../apps/chat}/tests/unit/stream-resume.test.ts    |     4 +-
+ ui/apps/chat/tests/unit/token-roles.test.ts        |    56 +
+ .../apps/chat}/tests/unit/tool-call-meta.test.ts   |     2 +-
+ .../apps/chat}/tests/unit/tool-calls.test.ts       |    29 +-
+ .../apps/chat}/tests/unit/uri-template.test.ts     |     0
+ ui/apps/chat/tests/unit/voice-message-send.test.ts |   119 +
+ ui/apps/chat/tests/unit/voice-microphone.test.ts   |    71 +
+ ui/apps/chat/tests/unit/voice-mode.test.ts         |   240 +
+ .../chat}/tests/unit/working-directory.test.ts     |     4 +-
+ ui/apps/chat/tsconfig.json                         |    71 +
+ {tools/ui => ui/apps/chat}/ui.cpp.in               |     0
+ {tools/ui => ui/apps/chat}/ui.h.in                 |     0
+ {tools/ui => ui/apps/chat}/vite.config.ts          |    61 +-
+ {tools/ui => ui/apps/chat}/vitest-setup-client.ts  |     0
+ {tools/ui => ui/apps/chat}/vitest.shims.d.ts       |     0
+ ui/lib/ui/.gitignore                               |    28 +
+ ui/lib/ui/.npmrc                                   |     2 +
+ ui/lib/ui/.storybook/color-scheme.ts               |    12 +
+ .../decorators/ModeWatcherDecorator.svelte         |    26 +
+ .../decorators/TooltipProviderDecorator.svelte     |     0
+ ui/lib/ui/.storybook/docs.css                      |    91 +
+ {tools => ui/lib}/ui/.storybook/main.ts            |     0
+ ui/lib/ui/.storybook/preview.ts                    |    93 +
+ ui/lib/ui/LICENSE                                  |    21 +
+ ui/lib/ui/README.md                                |   103 +
+ {tools => ui/lib}/ui/components.json               |     0
+ ui/lib/ui/package-lock.json                        |  7182 ++++++
+ ui/lib/ui/package.json                             |   138 +
+ ui/lib/ui/scripts/alias-package.mjs                |    43 +
+ ui/lib/ui/scripts/dev.sh                           |    19 +
+ ui/lib/ui/scripts/generate-highlight-languages.mjs |    98 +
+ ui/lib/ui/scripts/npm-version-check.mjs            |   133 +
+ ui/lib/ui/src/app.css                              |     7 +
+ ui/lib/ui/src/app.d.ts                             |    13 +
+ ui/lib/ui/src/app.html                             |    13 +
+ ui/lib/ui/src/lib/assets/fonts/LlamaMono.woff2     |   Bin 0 -> 76896 bytes
+ ui/lib/ui/src/lib/assets/fonts/LlamaSans.woff2     |   Bin 0 -> 79224 bytes
+ ui/lib/ui/src/lib/assets/fonts/OFL.txt             |    93 +
+ ui/lib/ui/src/lib/assets/hf-logo.svg               |     8 +
+ ui/lib/ui/src/lib/assets/model-logos/gemma.svg     |     8 +
+ ui/lib/ui/src/lib/assets/model-logos/gpt.svg       |     3 +
+ ui/lib/ui/src/lib/assets/model-logos/liquid.svg    |     5 +
+ ui/lib/ui/src/lib/assets/model-logos/meta.svg      |     3 +
+ ui/lib/ui/src/lib/assets/model-logos/qwen.svg      |     3 +
+ ui/lib/ui/src/lib/assets/qr-network.svg            |     1 +
+ .../lib/components/app/actions/ActionIcon.svelte   |    10 +-
+ ui/lib/ui/src/lib/components/app/actions/index.ts  |     2 +
+ .../app/content/SyntaxHighlightedCode.svelte       |    18 +-
+ ui/lib/ui/src/lib/components/app/content/index.ts  |     1 +
+ .../lib/components/app/forms/SearchInput.svelte    |     4 +-
+ ui/lib/ui/src/lib/components/app/forms/index.ts    |     1 +
+ ui/lib/ui/src/lib/components/app/misc/Logo.svelte  |    19 +
+ ui/lib/ui/src/lib/components/app/misc/index.ts     |     2 +
+ .../ui/src/lib/components/mockups/MacMenu.svelte   |   477 +
+ .../src/lib/components/mockups/WindowsTray.svelte  |   650 +
+ ui/lib/ui/src/lib/components/mockups/index.ts      |    11 +
+ .../components}/models/ModelCapabilityIcons.svelte |    42 +-
+ .../ui/src/lib/components/models/ModelCard.svelte  |   104 +
+ .../models/ModelDownloadProgressBar.svelte         |     0
+ .../components}/models/ModelDraftSidecars.svelte   |    15 +-
+ .../lib/components/models/ModelFamilyCard.svelte   |   130 +
+ ui/lib/ui/src/lib/components/models/ModelId.svelte |   245 +
+ .../lib/components/models/ModelMetadataItem.svelte |    19 +
+ .../lib/components}/models/ModelOrgAvatar.svelte   |   111 +-
+ .../lib/components/models/ModelQuantChip.svelte    |   301 +
+ .../lib/components/models/ModelQuantOptions.svelte |    34 +
+ .../src/lib/components/models/ModelQuantRow.svelte |    89 +
+ ui/lib/ui/src/lib/components/models/index.ts       |    18 +
+ .../ui/alert-dialog/alert-dialog-action.svelte     |    19 +
+ .../ui/alert-dialog/alert-dialog-cancel.svelte     |     4 +-
+ .../ui/alert-dialog/alert-dialog-content.svelte    |    18 +-
+ .../alert-dialog/alert-dialog-description.svelte   |     4 +-
+ .../ui/alert-dialog/alert-dialog-footer.svelte     |     7 +-
+ .../ui/alert-dialog/alert-dialog-header.svelte     |     2 +-
+ .../ui/alert-dialog/alert-dialog-overlay.svelte    |     4 +-
+ .../ui/alert-dialog/alert-dialog-title.svelte      |     4 +-
+ .../ui/alert-dialog/alert-dialog-trigger.svelte    |     0
+ .../ui/src/lib/components/ui/alert-dialog/index.ts |     0
+ .../components/ui/alert/alert-description.svelte   |     4 +-
+ .../src/lib/components/ui/alert/alert-title.svelte |     2 +-
+ ui/lib/ui/src/lib/components/ui/alert/alert.svelte |    51 +
+ .../lib}/ui/src/lib/components/ui/alert/index.ts   |     0
+ ui/lib/ui/src/lib/components/ui/badge/badge.svelte |    60 +
+ .../lib}/ui/src/lib/components/ui/badge/index.ts   |     0
+ .../ui/button-group/button-group-root.svelte       |    30 +
+ .../ui/button-group/button-group-separator.svelte  |    12 +
+ .../ui/src/lib/components/ui/button-group/index.ts |     0
+ .../ui/src/lib/components/ui/button/button.svelte  |    96 +
+ .../lib}/ui/src/lib/components/ui/button/index.ts  |     0
+ .../src/lib/components/ui/card/card-action.svelte  |     2 +-
+ .../src/lib/components/ui/card/card-content.svelte |     2 +-
+ .../lib/components/ui/card/card-description.svelte |     4 +-
+ .../src/lib/components/ui/card/card-footer.svelte  |     2 +-
+ .../src/lib/components/ui/card/card-header.svelte  |     2 +-
+ .../src/lib/components/ui/card/card-title.svelte   |     2 +-
+ .../lib}/ui/src/lib/components/ui/card/card.svelte |     9 +-
+ .../lib}/ui/src/lib/components/ui/card/index.ts    |     0
+ .../src/lib/components/ui/checkbox/checkbox.svelte |     4 +-
+ .../ui/src/lib/components/ui/checkbox/index.ts     |     0
+ .../ui/collapsible/collapsible-content.svelte      |    19 +
+ .../ui/collapsible/collapsible-region.svelte       |    26 +-
+ .../ui/collapsible/collapsible-trigger.svelte      |     0
+ .../components/ui/collapsible/collapsible.svelte   |     0
+ .../ui/src/lib/components/ui/collapsible/index.ts  |     0
+ .../ui/context-menu/context-menu-content.svelte    |    25 +
+ .../ui/context-menu/context-menu-group.svelte      |     7 +
+ .../ui/context-menu/context-menu-item.svelte       |    27 +
+ .../ui/context-menu/context-menu-label.svelte      |    24 +
+ .../ui/context-menu/context-menu-separator.svelte  |    17 +
+ .../ui/context-menu/context-menu-shortcut.svelte   |    20 +
+ .../context-menu/context-menu-sub-content.svelte   |    39 +
+ .../context-menu/context-menu-sub-trigger.svelte   |    30 +
+ .../ui/context-menu/context-menu-trigger.svelte    |     7 +
+ .../ui/src/lib/components/ui/context-menu/index.ts |    37 +
+ .../lib/components/ui/dialog/dialog-close.svelte   |     0
+ .../lib/components/ui/dialog/dialog-content.svelte |    10 +-
+ .../components/ui/dialog/dialog-description.svelte |     4 +-
+ .../lib/components/ui/dialog/dialog-footer.svelte  |     2 +-
+ .../lib/components/ui/dialog/dialog-header.svelte  |     6 +-
+ .../lib/components/ui/dialog/dialog-overlay.svelte |     4 +-
+ .../lib/components/ui/dialog/dialog-title.svelte   |     4 +-
+ .../lib/components/ui/dialog/dialog-trigger.svelte |     0
+ .../lib}/ui/src/lib/components/ui/dialog/index.ts  |     0
+ .../lib/components/ui/drawer/drawer-close.svelte   |     0
+ .../lib/components/ui/drawer/drawer-content.svelte |    40 +
+ .../components/ui/drawer/drawer-description.svelte |     4 +-
+ .../lib/components/ui/drawer/drawer-footer.svelte  |     2 +-
+ .../lib/components/ui/drawer/drawer-header.svelte  |     2 +-
+ .../lib/components/ui/drawer/drawer-nested.svelte  |     0
+ .../lib/components/ui/drawer/drawer-overlay.svelte |     2 +-
+ .../lib/components/ui/drawer/drawer-portal.svelte  |     0
+ .../lib/components/ui/drawer/drawer-title.svelte   |     4 +-
+ .../lib/components/ui/drawer/drawer-trigger.svelte |     0
+ .../ui/src/lib/components/ui/drawer/drawer.svelte  |     0
+ .../lib}/ui/src/lib/components/ui/drawer/index.ts  |     0
+ .../dropdown-menu-checkbox-item.svelte             |     4 +-
+ .../ui/dropdown-menu/dropdown-menu-content.svelte  |    27 +
+ .../dropdown-menu-group-heading.svelte             |     4 +-
+ .../ui/dropdown-menu/dropdown-menu-group.svelte    |     0
+ .../ui/dropdown-menu/dropdown-menu-item.svelte     |    27 +
+ .../ui/dropdown-menu/dropdown-menu-label.svelte    |     4 +-
+ .../dropdown-menu/dropdown-menu-radio-group.svelte |     0
+ .../dropdown-menu/dropdown-menu-radio-item.svelte  |     4 +-
+ .../dropdown-menu/dropdown-menu-separator.svelte   |     2 +-
+ .../ui/dropdown-menu/dropdown-menu-shortcut.svelte |     4 +-
+ .../dropdown-menu/dropdown-menu-sub-content.svelte |    39 +
+ .../dropdown-menu/dropdown-menu-sub-trigger.svelte |    30 +
+ .../ui/dropdown-menu/dropdown-menu-trigger.svelte  |     0
+ .../src/lib/components/ui/dropdown-menu/index.ts   |     5 +-
+ .../lib/components/ui/empty/empty-content.svelte   |     4 +-
+ .../components/ui/empty/empty-description.svelte   |     4 +-
+ .../lib/components/ui/empty/empty-header.svelte    |     2 +-
+ .../src/lib/components/ui/empty/empty-media.svelte |     7 +-
+ .../src/lib/components/ui/empty/empty-title.svelte |     4 +-
+ .../ui/src/lib/components/ui/empty/empty.svelte    |     2 +-
+ .../lib}/ui/src/lib/components/ui/empty/index.ts   |     0
+ .../ui/hover-card/hover-card-content.svelte        |     4 +-
+ .../ui/hover-card/hover-card-portal.svelte         |     0
+ .../ui/hover-card/hover-card-trigger.svelte        |     0
+ .../lib/components/ui/hover-card/hover-card.svelte |     0
+ .../ui/src/lib/components/ui/hover-card/index.ts   |     0
+ .../lib}/ui/src/lib/components/ui/input/index.ts   |     0
+ ui/lib/ui/src/lib/components/ui/input/input.svelte |    52 +
+ .../lib}/ui/src/lib/components/ui/label/index.ts   |     0
+ .../ui/src/lib/components/ui/label/label.svelte    |     4 +-
+ .../lib}/ui/src/lib/components/ui/popover/index.ts |     0
+ .../lib/components/ui/popover/popover-close.svelte |     0
+ .../components/ui/popover/popover-content.svelte   |     4 +-
+ .../components/ui/popover/popover-portal.svelte    |     0
+ .../components/ui/popover/popover-trigger.svelte   |     2 +-
+ .../src/lib/components/ui/popover/popover.svelte   |     0
+ .../ui/src/lib/components/ui/radio-group/index.ts  |     0
+ .../ui/radio-group/radio-group-item.svelte         |     2 +-
+ .../components/ui/radio-group/radio-group.svelte   |     2 +-
+ .../ui/src/lib/components/ui/scroll-area/index.ts  |     0
+ .../ui/scroll-area/scroll-area-scrollbar.svelte    |     2 +-
+ .../components/ui/scroll-area/scroll-area.svelte   |     2 +-
+ .../lib}/ui/src/lib/components/ui/select/index.ts  |     0
+ .../lib/components/ui/select/select-content.svelte |     4 +-
+ .../ui/select/select-group-heading.svelte          |     4 +-
+ .../lib/components/ui/select/select-group.svelte   |     0
+ .../lib/components/ui/select/select-item.svelte    |     4 +-
+ .../lib/components/ui/select/select-label.svelte   |     4 +-
+ .../ui/select/select-scroll-down-button.svelte     |     2 +-
+ .../ui/select/select-scroll-up-button.svelte       |     2 +-
+ .../components/ui/select/select-separator.svelte   |     4 +-
+ .../lib/components/ui/select/select-trigger.svelte |    47 +
+ .../ui/src/lib/components/ui/separator/index.ts    |     0
+ .../lib/components/ui/separator/separator.svelte   |     2 +-
+ .../ui/src/lib/components/ui/skeleton/index.ts     |     0
+ .../src/lib/components/ui/skeleton/skeleton.svelte |     2 +-
+ .../lib}/ui/src/lib/components/ui/switch/index.ts  |     0
+ .../ui/src/lib/components/ui/switch/switch.svelte  |    29 +
+ .../lib}/ui/src/lib/components/ui/table/index.ts   |     0
+ .../src/lib/components/ui/table/table-body.svelte  |     2 +-
+ .../lib/components/ui/table/table-caption.svelte   |     4 +-
+ .../src/lib/components/ui/table/table-cell.svelte  |     2 +-
+ .../lib/components/ui/table/table-footer.svelte    |     2 +-
+ .../src/lib/components/ui/table/table-head.svelte  |     2 +-
+ .../lib/components/ui/table/table-header.svelte    |     2 +-
+ .../src/lib/components/ui/table/table-row.svelte   |     2 +-
+ .../ui/src/lib/components/ui/table/table.svelte    |     4 +-
+ ui/lib/ui/src/lib/components/ui/tabs/index.ts      |    18 +
+ .../src/lib/components/ui/tabs/tabs-content.svelte |    17 +
+ .../ui/src/lib/components/ui/tabs/tabs-list.svelte |   170 +
+ .../src/lib/components/ui/tabs/tabs-trigger.svelte |    22 +
+ ui/lib/ui/src/lib/components/ui/tabs/tabs.svelte   |    19 +
+ .../ui/src/lib/components/ui/textarea/index.ts     |     0
+ .../src/lib/components/ui/textarea/textarea.svelte |     4 +-
+ .../ui/src/lib/components/ui/toggle-group/index.ts |     0
+ .../ui/toggle-group/toggle-group-item.svelte       |    36 +
+ .../components/ui/toggle-group/toggle-group.svelte |    72 +
+ .../lib}/ui/src/lib/components/ui/toggle/index.ts  |     0
+ .../ui/src/lib/components/ui/toggle/toggle.svelte  |    56 +
+ .../lib}/ui/src/lib/components/ui/tooltip/index.ts |     7 +-
+ .../components/ui/tooltip/tooltip-content.svelte   |     6 +-
+ .../components/ui/tooltip/tooltip-trigger.svelte   |     0
+ ui/lib/ui/src/lib/components/ui/utils.ts           |    33 +
+ .../lib/components/voice/VoiceRecordingBar.svelte  |   185 +
+ .../lib/components/voice/VoiceSpokenText.svelte    |    53 +
+ .../components/voice/VoiceTranscriptReveal.svelte  |   171 +
+ .../src/lib/components/voice/VoiceWaveform.svelte  |   303 +
+ .../lib/components/voice/VoiceWaveformLive.svelte  |    58 +
+ ui/lib/ui/src/lib/components/voice/index.ts        |    14 +
+ .../ui/src/lib/constants/code-block.constants.ts   |    69 +
+ .../ui/src/lib/constants/css-classes.constants.ts  |    36 +
+ ui/lib/ui/src/lib/constants/index.ts               |     4 +
+ ui/lib/ui/src/lib/constants/ui.constants.ts        |    12 +
+ ui/lib/ui/src/lib/constants/voice.constants.ts     |    76 +
+ .../lib}/ui/src/lib/enums/boolean-string.enums.ts  |     0
+ ui/lib/ui/src/lib/enums/index.ts                   |     4 +
+ ui/lib/ui/src/lib/enums/ui.enums.ts                |    35 +
+ ui/lib/ui/src/lib/enums/voice.enums.ts             |    20 +
+ ui/lib/ui/src/lib/index.ts                         |    42 +
+ ui/lib/ui/src/lib/models/constants.ts              |    91 +
+ ui/lib/ui/src/lib/models/enums.ts                  |    28 +
+ ui/lib/ui/src/lib/models/format.ts                 |   112 +
+ ui/lib/ui/src/lib/models/index.ts                  |     4 +
+ ui/lib/ui/src/lib/models/types.ts                  |    36 +
+ ui/lib/ui/src/lib/styles/fonts.css                 |    22 +
+ ui/lib/ui/src/lib/styles/surfaces.css              |   244 +
+ ui/lib/ui/src/lib/styles/theme.css                 |   110 +
+ ui/lib/ui/src/lib/styles/tokens.css                |     7 +
+ ui/lib/ui/src/lib/styles/tokens/components.css     |   120 +
+ ui/lib/ui/src/lib/styles/tokens/primitives.css     |    58 +
+ ui/lib/ui/src/lib/styles/tokens/semantic.css       |   274 +
+ ui/lib/ui/src/lib/utils/code.ts                    |   215 +
+ ui/lib/ui/src/lib/utils/highlight-languages.ts     |   474 +
+ ui/lib/ui/src/lib/utils/index.ts                   |     8 +
+ ui/lib/ui/src/lib/voice/index.ts                   |     4 +
+ ui/lib/ui/src/lib/voice/spoken.ts                  |    72 +
+ ui/lib/ui/src/lib/voice/waveform.ts                |   106 +
+ ui/lib/ui/src/routes/+layout.svelte                |    10 +
+ ui/lib/ui/src/routes/+page.svelte                  |    24 +
+ ui/lib/ui/src/svelte.config.js                     |     5 +
+ ui/lib/ui/static/favicon.ico                       |   Bin 0 -> 486 bytes
+ ui/lib/ui/static/favicon.svg                       |     7 +
+ ui/lib/ui/tests/client/button.svelte.spec.ts       |    52 +
+ .../stories/app}/ActionIcon.a11y.stories.svelte    |     4 +-
+ .../ui/tests/stories/app/ActionIcon.stories.svelte |    34 +
+ .../tests/stories/app/SearchInput.stories.svelte   |    31 +
+ .../app/SyntaxHighlightedCode.stories.svelte       |    23 +
+ .../components/actions/Button.stories.svelte       |    54 +
+ .../components/actions/ButtonGroup.stories.svelte  |    92 +
+ .../components/actions/Toggle.stories.svelte       |    66 +
+ .../components/actions/ToggleGroup.stories.svelte  |    75 +
+ .../components/display/Alert.stories.svelte        |    77 +
+ .../components/display/Badge.stories.svelte        |    35 +
+ .../stories/components/display/Card.stories.svelte |    33 +
+ .../components/display/Collapsible.stories.svelte  |    55 +
+ .../components/display/Empty.stories.svelte        |    32 +
+ .../components/display/ScrollArea.stories.svelte   |    29 +
+ .../components/display/Separator.stories.svelte    |    34 +
+ .../components/display/Skeleton.stories.svelte     |    40 +
+ .../components/display/Table.stories.svelte        |    60 +
+ .../components/forms/Checkbox.stories.svelte       |    39 +
+ .../stories/components/forms/Input.stories.svelte  |    38 +
+ .../stories/components/forms/Label.stories.svelte  |    21 +
+ .../components/forms/RadioGroup.stories.svelte     |    43 +
+ .../stories/components/forms/Select.stories.svelte |    60 +
+ .../stories/components/forms/Switch.stories.svelte |    35 +
+ .../components/forms/Textarea.stories.svelte       |    34 +
+ .../components/navigation/Tabs.stories.svelte      |    71 +
+ .../components/overlays/AlertDialog.stories.svelte |    41 +
+ .../components/overlays/Dialog.stories.svelte      |    51 +
+ .../components/overlays/Drawer.stories.svelte      |    49 +
+ .../overlays/DropdownMenu.stories.svelte           |    71 +
+ .../components/overlays/HoverCard.stories.svelte   |    36 +
+ .../components/overlays/Popover.stories.svelte     |    45 +
+ .../components/overlays/Submenus.stories.svelte    |   139 +
+ .../components/overlays/Tooltip.stories.svelte     |    28 +
+ ui/lib/ui/tests/stories/editorial/Chapters.svelte  |   153 +
+ ui/lib/ui/tests/stories/editorial/Editorial.svelte |   204 +
+ .../stories/foundations/Colors.stories.svelte      |    37 +
+ .../stories/foundations/Elevation.stories.svelte   |    35 +
+ .../stories/foundations/Shapes.stories.svelte      |    34 +
+ .../stories/foundations/Sizing.stories.svelte      |    82 +
+ .../stories/foundations/Surfaces.stories.svelte    |    91 +
+ .../ui/tests/stories/foundations/TokenTier.svelte  |    50 +
+ .../stories/foundations/Typography.stories.svelte  |    62 +
+ ui/lib/ui/tests/stories/foundations/tokens.ts      |    69 +
+ .../ui/tests/stories/helpers/StateGallery.svelte   |    52 +
+ .../tests/stories/helpers/StateGalleryItem.svelte  |    35 +
+ .../introduction/Introduction.stories.svelte       |    20 +
+ .../ui/tests/stories/introduction/Introduction.svx |    44 +
+ .../stories/mockups/AppMockups.stories.svelte      |    59 +
+ .../models/ModelCapabilityIcons.stories.svelte     |    54 +
+ .../tests/stories/models/ModelCard.stories.svelte  |    54 +
+ .../stories/models/ModelFamilyCard.stories.svelte  |    69 +
+ .../ui/tests/stories/models/ModelId.stories.svelte |    78 +
+ .../stories/models/ModelOrgAvatar.stories.svelte   |    50 +
+ .../stories/models/ModelQuantChip.stories.svelte   |    88 +
+ ui/lib/ui/tests/stories/svelte.config.js           |     5 +
+ ui/lib/ui/tests/stories/svx.d.ts                   |     6 +
+ .../stories/voice/VoiceRecordingBar.stories.svelte |   128 +
+ .../voice/VoiceTranscriptReveal.stories.svelte     |   153 +
+ .../stories/voice/VoiceWaveform.stories.svelte     |   150 +
+ ui/lib/ui/tests/stories/voice/fixtures.ts          |   128 +
+ ui/lib/ui/tests/unit/models/format.spec.ts         |    53 +
+ ui/lib/ui/tests/unit/voice/spoken.spec.ts          |    37 +
+ ui/lib/ui/tests/unit/voice/waveform.spec.ts        |   104 +
+ ui/lib/ui/tsconfig.json                            |     7 +
+ ui/lib/ui/vite.config.ts                           |   131 +
+ ui/lib/voice/.gitignore                            |     6 +
+ ui/lib/voice/.npmrc                                |     1 +
+ ui/lib/voice/LICENSE                               |    21 +
+ ui/lib/voice/README.md                             |    74 +
+ ui/lib/voice/package-lock.json                     |  1544 ++
+ ui/lib/voice/package.json                          |    53 +
+ ui/lib/voice/src/audio-context.ts                  |    87 +
+ ui/lib/voice/src/capture.ts                        |   468 +
+ ui/lib/voice/src/constants.ts                      |   322 +
+ ui/lib/voice/src/dictation-span.ts                 |   122 +
+ ui/lib/voice/src/dictation.ts                      |   187 +
+ ui/lib/voice/src/enums.ts                          |    35 +
+ ui/lib/voice/src/env.d.ts                          |     4 +
+ ui/lib/voice/src/errors.ts                         |    43 +
+ ui/lib/voice/src/gain.ts                           |   168 +
+ ui/lib/voice/src/http-pieces.ts                    |    88 +
+ ui/lib/voice/src/index.ts                          |    61 +
+ ui/lib/voice/src/levels.ts                         |    59 +
+ ui/lib/voice/src/microphone.ts                     |   123 +
+ ui/lib/voice/src/pauses.ts                         |    86 +
+ ui/lib/voice/src/pcm-tap.ts                        |   166 +
+ ui/lib/voice/src/pcm.ts                            |   140 +
+ ui/lib/voice/src/peaks.ts                          |    79 +
+ ui/lib/voice/src/realtime.ts                       |   474 +
+ ui/lib/voice/src/session.ts                        |   245 +
+ ui/lib/voice/src/speech-detector.ts                |    64 +
+ ui/lib/voice/src/support.ts                        |    52 +
+ ui/lib/voice/src/svelte/index.ts                   |     6 +
+ ui/lib/voice/src/svelte/voice-recorder.svelte.ts   |   107 +
+ ui/lib/voice/src/transcribe.ts                     |    92 +
+ ui/lib/voice/src/transcript.ts                     |    55 +
+ ui/lib/voice/src/types.ts                          |   129 +
+ ui/lib/voice/src/warm-microphone.ts                |    92 +
+ ui/lib/voice/src/wav.ts                            |    36 +
+ ui/lib/voice/tests/audio-context.test.ts           |    38 +
+ ui/lib/voice/tests/audio.test.ts                   |   195 +
+ ui/lib/voice/tests/dictation-span.test.ts          |    90 +
+ ui/lib/voice/tests/dictation.test.ts               |   158 +
+ ui/lib/voice/tests/gain.test.ts                    |   219 +
+ ui/lib/voice/tests/pauses.test.ts                  |    64 +
+ ui/lib/voice/tests/realtime.test.ts                |   463 +
+ ui/lib/voice/tests/session.test.ts                 |   355 +
+ ui/lib/voice/tests/speech-detector.test.ts         |    73 +
+ ui/lib/voice/tests/transcribe.test.ts              |   129 +
+ ui/lib/voice/tests/transcript.test.ts              |    53 +
+ ui/lib/voice/tests/warm-microphone.test.ts         |   121 +
+ ui/lib/voice/tsconfig.build.json                   |    10 +
+ ui/lib/voice/tsconfig.json                         |    13 +
+ ui/lib/voice/vitest.config.ts                      |     5 +
+ vendor/cpp-httplib/CMakeLists.txt                  |     4 +-
+ vendor/cpp-httplib/httplib.cpp                     |   698 +-
+ vendor/cpp-httplib/httplib.h                       |   124 +-
+ vendor/hash/hash.cpp                               |    11 +-
+ vendor/hash/hash.h                                 |     5 +
+ vendor/stb/stb_image.h                             |  2286 +-
+ 2654 files changed, 214518 insertions(+), 77356 deletions(-)
+git -C third_party/llama.cpp diff --name-only 5851a8e505f4d5fbb183f2847698eb6155d176b7 03813c56e47f6cd7a9b9bc2ad8edcebed88ce342 -- src/models/lfm3.cpp ggml/src/ggml-metal common/jinja common/chat.cpp common/sampling.cpp licenses LICENSE exit=0
+common/chat.cpp
+common/jinja/caps.cpp
+common/jinja/caps.h
+common/jinja/lexer.cpp
+common/jinja/lexer.h
+common/jinja/parser.cpp
+common/jinja/runtime.cpp
+common/jinja/runtime.h
+common/jinja/string.cpp
+common/jinja/string.h
+common/jinja/value.cpp
+common/jinja/value.h
+common/sampling.cpp
+ggml/src/ggml-metal/ggml-metal-common.cpp
+ggml/src/ggml-metal/ggml-metal-context.m
+ggml/src/ggml-metal/ggml-metal-device.cpp
+ggml/src/ggml-metal/ggml-metal-device.h
+ggml/src/ggml-metal/ggml-metal-device.m
+ggml/src/ggml-metal/ggml-metal-fusion.cpp
+ggml/src/ggml-metal/ggml-metal-impl.h
+ggml/src/ggml-metal/ggml-metal-ops.cpp
+ggml/src/ggml-metal/ggml-metal-ops.h
+ggml/src/ggml-metal/ggml-metal.cpp
+ggml/src/ggml-metal/kernels/argsort.metal
+ggml/src/ggml-metal/kernels/conv.metal
+ggml/src/ggml-metal/kernels/fa_vec_common.metal
+ggml/src/ggml-metal/kernels/mul_mm.metal
+ggml/src/ggml-metal/kernels/mul_mv.metal
+ggml/src/ggml-metal/kernels/norm.metal
+ggml/src/ggml-metal/kernels/solve_tri.metal
+ggml/src/ggml-metal/kernels/tri.metal
+src/models/lfm3.cpp
+git -C third_party/llama.cpp status --short exit=0

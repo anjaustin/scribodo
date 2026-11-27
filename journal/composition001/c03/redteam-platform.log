@@ -1,0 +1,33 @@
+['sw_vers'] exit 0
+ProductName:		macOS
+ProductVersion:		26.7.3
+BuildVersion:		25G342
+
+['uname', '-m'] exit 0
+arm64
+
+['sysctl', '-n', 'machdep.cpu.brand_string'] exit 0
+Apple M4
+
+['sysctl', '-n', 'hw.memsize'] exit 0
+17179869184
+
+['clang', '--version'] exit 0
+Apple clang version 21.0.0 (clang-2100.1.1.101)
+Target: arm64-apple-darwin25.6.0
+Thread model: posix
+InstalledDir: /Library/Developer/CommandLineTools/usr/bin
+
+['uv', '--version'] exit 0
+uv 0.13.6 (Homebrew 2026-10-26 aarch64-apple-darwin)
+
+['git', '-C', 'third_party/llama.cpp', 'rev-parse', 'HEAD'] exit 0
+5851a8e505f4d5fbb183f2847698eb6155d176b7
+
+['git', '-C', 'third_party/llama.cpp', 'status', '--porcelain'] exit 0
+
+['git', '-C', '/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-c03-runtime.D8CKUp/source', 'rev-parse', 'HEAD'] exit 0
+03813c56e47f6cd7a9b9bc2ad8edcebed88ce342
+
+['git', '-C', '/private/var/folders/zq/1xg6mmv1627btc7ghn90_hlh0000gn/T/opencode/scribodo-c03-runtime.D8CKUp/source', 'status', '--porcelain'] exit 0
+

@@ -1,0 +1,135 @@
+.FFFFFFFFF.FFFF
+======================================================================
+FAIL: test_duplicate_template_cases_are_refused (__main__.AcceptanceTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/ztflynn/Projects/scribodo/tests/test_c03_acceptance.py", line 114, in test_duplicate_template_cases_are_refused
+    self.refused(change)
+  File "/Users/ztflynn/Projects/scribodo/tests/test_c03_acceptance.py", line 63, in refused
+    self.assertNotEqual(result, 0, "mutated evidence was falsely accepted")
+AssertionError: 0 == 0 : mutated evidence was falsely accepted
+
+======================================================================
+FAIL: test_empty_reference_and_runtime_are_not_a_pass (__main__.AcceptanceTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/ztflynn/Projects/scribodo/tests/test_c03_acceptance.py", line 74, in test_empty_reference_and_runtime_are_not_a_pass
+    self.refused(change)
+  File "/Users/ztflynn/Projects/scribodo/tests/test_c03_acceptance.py", line 63, in refused
+    self.assertNotEqual(result, 0, "mutated evidence was falsely accepted")
+AssertionError: 0 == 0 : mutated evidence was falsely accepted
+
+======================================================================
+FAIL: test_f16_kv_is_refused (__main__.AcceptanceTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/ztflynn/Projects/scribodo/tests/test_c03_acceptance.py", line 90, in test_f16_kv_is_refused
+    self.refused(change)
+  File "/Users/ztflynn/Projects/scribodo/tests/test_c03_acceptance.py", line 63, in refused
+    self.assertNotEqual(result, 0, "mutated evidence was falsely accepted")
+AssertionError: 0 == 0 : mutated evidence was falsely accepted
+
+======================================================================
+FAIL: test_false_template_boolean_cannot_hide_mismatch (__main__.AcceptanceTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/ztflynn/Projects/scribodo/tests/test_c03_acceptance.py", line 106, in test_false_template_boolean_cannot_hide_mismatch
+    self.refused(lambda d: d["candidate/runtime.json"]["templates"][0].update(actual="different"))
+  File "/Users/ztflynn/Projects/scribodo/tests/test_c03_acceptance.py", line 63, in refused
+    self.assertNotEqual(result, 0, "mutated evidence was falsely accepted")
+AssertionError: 0 == 0 : mutated evidence was falsely accepted
+
+======================================================================
+FAIL: test_false_tokenizer_boolean_cannot_hide_mismatch (__main__.AcceptanceTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/ztflynn/Projects/scribodo/tests/test_c03_acceptance.py", line 109, in test_false_tokenizer_boolean_cannot_hide_mismatch
+    self.refused(lambda d: d["candidate/runtime.json"]["tokenize"][0].update(actual=[2]))
+  File "/Users/ztflynn/Projects/scribodo/tests/test_c03_acceptance.py", line 63, in refused
+    self.assertNotEqual(result, 0, "mutated evidence was falsely accepted")
+AssertionError: 0 == 0 : mutated evidence was falsely accepted
+
+======================================================================
+FAIL: test_identity_failure_is_refused (__main__.AcceptanceTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/ztflynn/Projects/scribodo/tests/test_c03_acceptance.py", line 83, in test_identity_failure_is_refused
+    self.refused(lambda d: d["reference/identity.json"].update(exit=1))
+  File "/Users/ztflynn/Projects/scribodo/tests/test_c03_acceptance.py", line 63, in refused
+    self.assertNotEqual(result, 0, "mutated evidence was falsely accepted")
+AssertionError: 0 == 0 : mutated evidence was falsely accepted
+
+======================================================================
+FAIL: test_missing_greedy_observations_are_refused (__main__.AcceptanceTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/ztflynn/Projects/scribodo/tests/test_c03_acceptance.py", line 117, in test_missing_greedy_observations_are_refused
+    self.refused(lambda d: d["candidate/runtime.json"]["short"][0].update(greedy=[]))
+  File "/Users/ztflynn/Projects/scribodo/tests/test_c03_acceptance.py", line 63, in refused
+    self.assertNotEqual(result, 0, "mutated evidence was falsely accepted")
+AssertionError: 0 == 0 : mutated evidence was falsely accepted
+
+======================================================================
+FAIL: test_mixed_provenance_is_refused (__main__.AcceptanceTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/ztflynn/Projects/scribodo/tests/test_c03_acceptance.py", line 99, in test_mixed_provenance_is_refused
+    self.refused(change)
+  File "/Users/ztflynn/Projects/scribodo/tests/test_c03_acceptance.py", line 63, in refused
+    self.assertNotEqual(result, 0, "mutated evidence was falsely accepted")
+AssertionError: 0 == 0 : mutated evidence was falsely accepted
+
+======================================================================
+FAIL: test_negative_token_id_is_refused (__main__.AcceptanceTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/ztflynn/Projects/scribodo/tests/test_c03_acceptance.py", line 120, in test_negative_token_id_is_refused
+    self.refused(lambda d: d["candidate/runtime.json"]["short"][0]["reply"]
+  File "/Users/ztflynn/Projects/scribodo/tests/test_c03_acceptance.py", line 63, in refused
+    self.assertNotEqual(result, 0, "mutated evidence was falsely accepted")
+AssertionError: 0 == 0 : mutated evidence was falsely accepted
+
+======================================================================
+FAIL: test_reference_precision_is_refused (__main__.AcceptanceTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/ztflynn/Projects/scribodo/tests/test_c03_acceptance.py", line 124, in test_reference_precision_is_refused
+    self.refused(lambda d: d["reference/reference.json"].update(param_dtypes=["torch.bfloat16"]))
+  File "/Users/ztflynn/Projects/scribodo/tests/test_c03_acceptance.py", line 63, in refused
+    self.assertNotEqual(result, 0, "mutated evidence was falsely accepted")
+AssertionError: 0 == 0 : mutated evidence was falsely accepted
+
+======================================================================
+FAIL: test_same_binary_mislabeled_is_refused (__main__.AcceptanceTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/ztflynn/Projects/scribodo/tests/test_c03_acceptance.py", line 102, in test_same_binary_mislabeled_is_refused
+    self.refused(lambda d: d["candidate/runtime.json"].update(
+  File "/Users/ztflynn/Projects/scribodo/tests/test_c03_acceptance.py", line 63, in refused
+    self.assertNotEqual(result, 0, "mutated evidence was falsely accepted")
+AssertionError: 0 == 0 : mutated evidence was falsely accepted
+
+======================================================================
+FAIL: test_truncated_long_reference_is_not_a_pass (__main__.AcceptanceTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/ztflynn/Projects/scribodo/tests/test_c03_acceptance.py", line 77, in test_truncated_long_reference_is_not_a_pass
+    self.refused(lambda d: d["reference/longctx_ref.json"].update(logprobs=[]))
+  File "/Users/ztflynn/Projects/scribodo/tests/test_c03_acceptance.py", line 63, in refused
+    self.assertNotEqual(result, 0, "mutated evidence was falsely accepted")
+AssertionError: 0 == 0 : mutated evidence was falsely accepted
+
+======================================================================
+FAIL: test_wrong_artifact_hash_is_refused (__main__.AcceptanceTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/ztflynn/Projects/scribodo/tests/test_c03_acceptance.py", line 93, in test_wrong_artifact_hash_is_refused
+    self.refused(lambda d: d["candidate/runtime.json"].update(gguf_sha256="0" * 64))
+  File "/Users/ztflynn/Projects/scribodo/tests/test_c03_acceptance.py", line 63, in refused
+    self.assertNotEqual(result, 0, "mutated evidence was falsely accepted")
+AssertionError: 0 == 0 : mutated evidence was falsely accepted
+
+----------------------------------------------------------------------
+Ran 15 tests in 2.993s
+
+FAILED (failures=13)
